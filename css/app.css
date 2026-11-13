@@ -622,10 +622,11 @@ table.journal {
   background: rgba(0, 0, 0, .35);
   z-index: 60;
   opacity: 0;
+  pointer-events: none;
   transition: opacity .25s var(--ease-out);
   backdrop-filter: blur(2px);
 }
-.sheet-backdrop.show { opacity: 1; }
+.sheet-backdrop.show { opacity: 1; pointer-events: auto; }
 
 .sheet {
   position: fixed;
@@ -745,9 +746,10 @@ table.journal {
   place-items: center;
   padding: 24px;
   opacity: 0;
+  pointer-events: none;
   transition: opacity .2s;
 }
-.dialog-backdrop.show { opacity: 1; }
+.dialog-backdrop.show { opacity: 1; pointer-events: auto; }
 .dialog {
   background: var(--card);
   border-radius: 20px;
