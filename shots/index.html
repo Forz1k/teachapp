@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Галерея экранов</title>
+<style>
+  :root {
+    --bg: #e9e9ee; --card: #fff; --text: #101014; --text2: #6b6b73; --accent: #FF7A1A; --sep: #d9d9e0;
+  }
+  [data-theme="dark"] { --bg: #101014; --card: #1a1a20; --text: #f2f2f5; --text2: #a0a0aa; --sep: #2c2c34; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 24px 64px; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header { max-width: 1200px; margin: 0 auto 36px; }
+  h1 { font-size: 32px; letter-spacing: -.6px; margin: 0 0 8px; }
+  .lead { color: var(--text2); font-size: 16px; max-width: 720px; line-height: 1.5; margin: 0; }
+  .lead b { color: var(--text); }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 28px; max-width: 1200px; margin: 0 auto;
+  }
+  figure { margin: 0; }
+  .phone {
+    border-radius: 28px; overflow: hidden; background: var(--card);
+    box-shadow: 0 2px 4px rgba(0,0,0,.08), 0 14px 34px rgba(0,0,0,.14);
+    border: 1px solid var(--sep);
+  }
+  .phone img { display: block; width: 100%; height: auto; }
+  figcaption { margin-top: 10px; font-size: 14px; }
+  figcaption b { display: block; font-size: 15px; margin-bottom: 2px; }
+  figcaption span { color: var(--text2); font-size: 13px; line-height: 1.4; }
+  .wide .phone { border-radius: 20px; }
+  .wide { grid-column: span 2; }
+  @media (max-width: 640px) { .wide { grid-column: span 1; } }
+  .note {
+    max-width: 1200px; margin: 40px auto 0; padding: 18px 20px; border-radius: 16px;
+    background: var(--card); border: 1px solid var(--sep); font-size: 14px; color: var(--text2); line-height: 1.55;
+  }
+  .note b { color: var(--text); }
+  code { background: rgba(128,128,128,.14); padding: 2px 6px; border-radius: 5px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Журнал учителя физкультуры</h1>
+  <p class="lead">
+    Офлайн-PWA на чистом HTML/CSS/JS. Скриншоты сняты в headless-браузере на ширине <b>390 px</b>
+    (iPhone, портрет) с демонстрационными данными: 3 класса, 90 учеников, 66 уроков, 1 343 отметки.
+  </p>
+</header>
+
+<div class="grid">
+  <figure>
+    <div class="phone"><img src="classes.png" alt="Список классов"></div>
+    <figcaption><b>Классы</b><span>Карточки с числом учеников, последним уроком и кольцом посещаемости за триместр</span></figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone"><img src="journal.png" alt="Журнал"></div>
+    <figcaption><b>Журнал</b><span>Закреплённые ФИО и шапка дат, оценки цветными бейджами, средний балл и посещаемость</span></figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone"><img src="sheet.png" alt="Шторка отметки"></div>
+    <figcaption><b>Шторка отметки</b><span>Крупные кнопки 1–5, ОСВ, Н, М и очистка. Минимум 48×48 px</span></figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone"><img src="osv.png" alt="Второй шаг ОСВ"></div>
+    <figcaption><b>ОСВ: на какой срок</b><span>Только урок / до даты с пресетами / бессрочно</span></figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone"><img src="monthly.png" alt="Месячные отметки"></div>
+    <figcaption><b>Месячные</b><span>Ученики × 12 месяцев. ✨ — расчётное, жирное — принятое</span></figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone"><img src="msheet.png" alt="Шторка месячной отметки"></div>
+    <figcaption><b>Месячная отметка</b><span>Средний балл, расчётная «М» и кнопка «Принять»</span></figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone"><img src="quick.png" alt="Быстрый ввод"></div>
+    <figcaption><b>Быстрый ввод</b><span>Все ученики крупными строками — для ввода прямо в спортзале</span></figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone"><img src="exemptions.png" alt="Освобождения"></div>
+    <figcaption><b>Освобождения</b><span>Активные, будущие и завершённые справки с причиной и датами</span></figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone"><img src="settings.png" alt="Настройки"></div>
+    <figcaption><b>Настройки</b><span>Учебный год, триместры, правила «М», классы, импорт и экспорт</span></figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone"><img src="dark.png" alt="Тёмная тема"></div>
+    <figcaption><b>Тёмная тема</b><span>Автоматически по системе или вручную; цвета бейджей пересчитаны</span></figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone"><img src="empty.png" alt="Пустое состояние"></div>
+    <figcaption><b>Первый запуск</b><span>Пустое состояние предлагает демо-данные или импорт из Excel</span></figcaption>
+  </figure>
+
+  <figure class="wide">
+    <div class="phone"><img src="landscape.png" alt="Ландшафтная ориентация"></div>
+    <figcaption><b>Ландшафт</b><span>Сетка продолжает работать: закреплённая колонка ФИО, горизонтальная прокрутка дат</span></figcaption>
+  </figure>
+</div>
+
+<div class="note">
+  <b>Как переснять:</b> поднимите сервер (<code>npm start</code>), выполните <code>npm run snapshot</code>,
+  затем <code>npm run shots</code>. Файл <code>shots/preview.html</code> заполняет состояние приложения
+  напрямую из <code>seed.json</code> — так снимки не зависят от того, успела ли IndexedDB
+  инициализироваться в headless-режиме.
+</div>
+</body>
+</html>

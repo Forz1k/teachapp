@@ -1,0 +1,46 @@
+{
+  "name": "Журнал учителя физкультуры",
+  "short_name": "Журнал",
+  "description": "Электронный журнал учителя физической культуры: классы, ученики, оценки, посещаемость и месячные отметки. Работает офлайн.",
+  "lang": "ru",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F5F5F7",
+  "theme_color": "#F5F5F7",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Журнал",
+      "short_name": "Журнал",
+      "url": "./index.html#journal"
+    },
+    {
+      "name": "Быстрый ввод",
+      "short_name": "Ввод",
+      "url": "./index.html#quick"
+    }
+  ]
+}

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F5F5F7">
+<title>Журнал учителя — предпросмотр</title>
+<link rel="stylesheet" href="../css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* Страница предпросмотра для скриншотов и дизайн-проверок.
+   В headless-браузере IndexedDB не успевает завершиться до снимка,
+   поэтому здесь подменяем db.js и store.js на синхронные версии из seed.json.
+   Само приложение при этом не меняется — меняется только окружение страницы.
+
+   Параметры: ?screen=classes|journal|monthly|exemptions|settings|sheet|osv|monthly-sheet|quick|empty
+             &theme=dark|light                                              */
+
+(async function boot() {
+  const params = new URLSearchParams(location.search);
+  const screenName = params.get('screen') || 'classes';
+  const theme = params.get('theme') || null;
+
+  const seedResp = await fetch('../shots/seed.json', { cache: 'no-store' });
+  if (!seedResp.ok) {
+    document.getElementById('app').textContent = 'seed.json не найден — запустите node tools/prepare-snapshot.mjs';
+    return;
+  }
+  const seed = await seedResp.json();
+
+  // Мокаем базу и загрузку store: оба модуля уже прочитаны приложением,
+  // поэтому подменяем их через import map не получится — импортируем приложение
+  // после подмены глобального индекса через preload-хук.
+  const Model = await import('../js/model.js');
+  const Store = await import('../js/store.js');
+
+  // Заполняем состояние из seed
+  Store.state.settings = { ...Model.defaultSettings(), ...(seed.meta[0] || {}) };
+  Store.state.classes = seed.classes;
+  Store.state.students = Model.sortStudents(seed.students);
+  Store.state.lessons = Model.sortLessons(seed.lessons);
+  Store.state.topics = seed.topics;
+  Store.state.marks = seed.marks;
+  Store.state.exemptions = seed.exemptions;
+  Store.state.monthly = seed.monthly;
+  Store.state.lastBackupAt = new Date().toISOString();
+  Store.state.currentClassId = seed.classes[0]?.id;
+  Store.state.currentTrimesterId = 't1';
+  Store.state.ready = true;
+
+  if (theme) Store.state.settings.theme = theme;
+
+  const UI = await import('../js/ui.js');
+  const Classes = await import('../js/screens/classes.js');
+  const Journal = await import('../js/screens/journal.js');
+  const Monthly = await import('../js/screens/monthly.js');
+  const Exemptions = await import('../js/screens/exemptions.js');
+  const Settings = await import('../js/screens/settings.js');
+
+  Settings.applyTheme(theme || 'auto');
+
+  const app = document.getElementById('app');
+  const screen = document.createElement('div');
+  screen.className = 'screen';
+  app.append(screen);
+
+  const classId = seed.classes[0].id;
+  const students = Store.studentsOfClass(classId);
+  const lessons = Store.lessonsOfClass(classId);
+  const noop = () => {};
+
+  switch (screenName) {
+    case 'classes':
+      Classes.renderClasses(screen, { onOpenJournal: noop, onGoSettings: noop });
+      break;
+
+    case 'empty':
+      Store.state.classes = [];
+      Classes.renderClasses(screen, { onOpenJournal: noop, onGoSettings: noop });
+      break;
+
+    case 'journal':
+      Journal.renderJournal(screen, { onOpenClassPicker: noop, onOpenExemptions: noop, onOpenLessonPlanner: noop });
+      break;
+
+    case 'monthly':
+      Monthly.renderMonthly(screen, classId, { onBack: noop });
+      break;
+
+    case 'exemptions': {
+      const tb = document.createElement('div');
+      tb.className = 'topbar';
+      tb.innerHTML = '<div class="topbar-row"><h1>Освобождения</h1></div>';
+      screen.append(tb);
+      const body = document.createElement('div');
+      Exemptions.renderExemptionsInto(body, classId, {});
+      screen.append(body);
+      break;
+    }
+
+    case 'settings':
+      Settings.renderSettings(screen, {});
+      break;
+
+    case 'sheet': {
+      Journal.renderJournal(screen, { onOpenClassPicker: noop, onOpenExemptions: noop, onOpenLessonPlanner: noop });
+      const lesson = lessons[Math.floor(lessons.length * 0.6)];
+      Journal.openMarkSheet(students[2].id, lesson.id, classId);
+      break;
+    }
+
+    case 'osv': {
+      Journal.renderJournal(screen, { onOpenClassPicker: noop, onOpenExemptions: noop, onOpenLessonPlanner: noop });
+      const lesson = lessons[Math.floor(lessons.length * 0.75)];
+      Journal.openMarkSheet(students[5].id, lesson.id, classId);
+      await new Promise((r) => setTimeout(r, 400));
+      const osvBtn = [].slice.call(document.querySelectorAll('.sheet-buttons button'))
+        .filter(function (b) { return b.textContent === 'ОСВ'; })[0];
+      if (osvBtn) osvBtn.click();
+      break;
+    }
+
+    case 'monthly-sheet': {
+      Monthly.renderMonthly(screen, classId, {});
+      await new Promise((r) => setTimeout(r, 200));
+      const cells = [].slice.call(document.querySelectorAll('td.mcell'));
+      const target = cells.filter(function (c) { return c.dataset.month === '11'; })[0];
+      if (target) target.click();
+      break;
+    }
+
+    case 'quick':
+      Journal.openQuickEntrySheet(classId, lessons[lessons.length - 1].date);
+      break;
+
+    default:
+      screen.textContent = 'неизвестный экран: ' + screenName;
+  }
+
+  if (params.get('scroll') === 'x') {
+    const wrap = document.querySelector('.grid-wrap');
+    if (wrap) wrap.scrollLeft = Number(params.get('x') || 500);
+  }
+
+  document.documentElement.setAttribute('data-ready', '1');
+})().catch(function (e) {
+  document.getElementById('app').innerHTML =
+    '<div style="padding:24px;color:#d33a34;font:13px monospace;white-space:pre-wrap">' +
+    (e && (e.stack || e)) + '</div>';
+});
+</script>
+</body>
+</html>
