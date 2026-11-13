@@ -16,10 +16,41 @@ export function openLessonSheet(lessonId, classId) {
 
   const topicSelect = el('select', {});
   topicSelect.append(el('option', { value: '', text: '— без темы —' }));
-  for (const t of store.state.topics) {
-    const opt = el('option', { value: t.id, text: `${t.ktpOrder}. ${t.name}` });
-    if (t.id === lesson.topicId) opt.selected = true;
-    topicSelect.append(opt);
+
+  // Темы берём только из КТП этого класса (плюс общие без привязки).
+  const available = store.topicsForClass(classId);
+  const groups = new Map(); // ktpId → темы
+  for (const t of available) {
+    const key = t.ktpId || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  }
+
+  for (const [ktpId, list] of groups) {
+    const ktp = store.state.ktp.find((k) => k.id === ktpId);
+    const group = document.createElement('optgroup');
+    group.label = ktp ? ktp.name : 'Без КТП';
+    for (const t of list) {
+      const opt = el('option', { value: t.id, text: `${t.ktpOrder}. ${t.name}` });
+      if (t.id === lesson.topicId) opt.selected = true;
+      group.append(opt);
+    }
+    topicSelect.append(group);
+  }
+
+  // Если тема урока из другого плана (например, КТП перепривязали) — показываем её отдельно,
+  // чтобы при сохранении она не потерялась незаметно.
+  if (lesson.topicId && !available.some((t) => t.id === lesson.topicId)) {
+    const current = store.state.topics.find((t) => t.id === lesson.topicId);
+    if (current) {
+      const opt = el('option', { value: current.id, text: `⚠ ${current.name} (не из КТП класса)` });
+      opt.selected = true;
+      topicSelect.append(opt);
+    }
+  }
+
+  if (!available.length) {
+    topicSelect.append(el('option', { value: '', text: '— тем нет, загрузите КТП —', disabled: true }));
   }
 
   const noteInput = el('textarea', { placeholder: 'заметка к уроку (необязательно)' });
@@ -164,16 +195,19 @@ export function openLessonPlanner(classId) {
           const fresh = dates.filter((d) => !existing.has(d));
           if (!fresh.length) { ui.toast('Все эти уроки уже есть'); return; }
 
-          // Темы: продолжаем нумерацию с того места, где остановились
+          // Темы: берём только те, что относятся к КТП этого класса,
+          // и продолжаем нумерацию с того места, где остановились.
           const existingLessons = store.lessonsOfClass(classId);
           const usedTopicIds = new Set(existingLessons.map((l) => l.topicId).filter(Boolean));
-          let topicCursor = store.state.topics.findIndex((t) => !usedTopicIds.has(t.id));
+          const classTopics = store.topicsForClass(classId);
+
+          let topicCursor = classTopics.findIndex((t) => !usedTopicIds.has(t.id));
           if (topicCursor < 0) topicCursor = 0;
 
           for (const date of fresh) {
             let topicId = null;
-            if (withTopics && store.state.topics.length) {
-              topicId = store.state.topics[topicCursor % store.state.topics.length].id;
+            if (withTopics && classTopics.length) {
+              topicId = classTopics[topicCursor % classTopics.length].id;
               topicCursor += 1;
             }
             await store.addLesson(classId, date, topicId);

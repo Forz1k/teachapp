@@ -133,10 +133,25 @@ export function renderSettings(root, ctx = {}) {
   body.append(clsBlock);
 
   /* ---------- КТП ---------- */
-  const ktpBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: `Темы КТП (${store.state.topics.length})` })]);
+  const ktpBlock = el('div', { class: 'card-block' }, [
+    el('div', { class: 'head', text: `КТП (${store.state.ktp.length})` }),
+  ]);
   ktpBlock.append(el('div', { class: 'row-item' }, [
-    el('div', { class: 'label', text: 'Редактировать список тем' }),
-    el('button', { class: 'btn small', type: 'button', text: 'Открыть', onclick: () => openTopicsEditor() }),
+    el('div', { class: 'label' }, [
+      el('div', { text: 'Планы по классам' }),
+      el('div', {
+        style: 'font-size:12px;color:var(--text-3)',
+        text: store.state.ktp.length
+          ? store.state.ktp.map((k) => k.name).slice(0, 3).join(', ') + (store.state.ktp.length > 3 ? '…' : '')
+          : 'ещё не созданы',
+      }),
+    ]),
+    el('button', {
+      class: 'btn small', type: 'button', text: 'Открыть',
+      onclick: () => {
+        import('./ktp.js').then((m) => m.renderKtpInSheet());
+      },
+    }),
   ]));
   body.append(ktpBlock);
 
@@ -385,65 +400,6 @@ function openClassStudents(classId) {
           await store.addStudent(classId, v, students.length + 1);
           ui.closeSheet();
           ui.toast('Ученик добавлен');
-        },
-      }),
-    ]),
-  );
-
-  ui.openSheet(sheet);
-}
-
-/* ---------- редактор тем КТП ---------- */
-
-function openTopicsEditor() {
-  const sheet = el('div', {}, [
-    el('h2', { text: 'Темы КТП' }),
-    el('div', { class: 'sub', text: `${store.state.topics.length} тем · порядок важен` }),
-  ]);
-
-  const list = el('div', { class: 'preview-list' });
-  const renderList = () => {
-    list.innerHTML = '';
-    store.state.topics.forEach((t, i) => {
-      const row = el('div', { class: 'preview-item' }, [
-        el('div', { style: 'width:24px;color:var(--text-3);font-size:12px', text: String(t.ktpOrder ?? i + 1) }),
-        el('div', { class: 'txt', text: t.name }),
-        el('button', {
-          class: 'btn small', type: 'button', text: '↑',
-          onclick: async () => {
-            if (i === 0) return;
-            const prev = store.state.topics[i - 1];
-            await store.updateTopic(t.id, { ktpOrder: prev.ktpOrder ?? i });
-            await store.updateTopic(prev.id, { ktpOrder: t.ktpOrder ?? i + 1 });
-            renderList();
-          },
-        }),
-        el('button', {
-          class: 'btn small danger', type: 'button', text: '✕',
-          onclick: async () => {
-            await store.deleteTopic(t.id);
-            renderList();
-          },
-        }),
-      ]);
-      list.append(row);
-    });
-  };
-  renderList();
-  sheet.append(list);
-
-  const newTopic = el('input', { type: 'text', placeholder: 'Название новой темы' });
-  sheet.append(
-    el('label', { class: 'field', style: 'margin-top:8px' }, [newTopic]),
-    el('div', { class: 'actions' }, [
-      el('button', {
-        class: 'btn primary wide', type: 'button', text: 'Добавить тему',
-        onclick: async () => {
-          const v = newTopic.value.trim();
-          if (!v) return;
-          await store.addTopic(v, store.state.topics.length + 1);
-          newTopic.value = '';
-          renderList();
         },
       }),
     ]),
