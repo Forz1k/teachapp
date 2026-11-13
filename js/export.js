@@ -259,6 +259,202 @@ export async function copyTsvFlat({ classId, from, to }) {
   return { ok, text };
 }
 
+/* ---------- импорт расписания ---------- */
+
+const WD_MAP = {
+  'пн': 1, 'пон': 1, 'понедельник': 1, 'monday': 1, 'mon': 1, '1': 1,
+  'вт': 2, 'втор': 2, 'вторник': 2, 'tuesday': 2, 'tue': 2, '2': 2,
+  'ср': 3, 'сред': 3, 'среда': 3, 'wednesday': 3, 'wed': 3, '3': 3,
+  'чт': 4, 'чет': 4, 'четверг': 4, 'thursday': 4, 'thu': 4, '4': 4,
+  'пт': 5, 'пят': 5, 'пятница': 5, 'friday': 5, 'fri': 5, '5': 5,
+  'сб': 6, 'суб': 6, 'суббота': 6, 'saturday': 6, 'sat': 6, '6': 6,
+};
+
+/** Угадывает день недели из строки. Возвращает 1..6 или null. */
+function parseWeekday(raw) {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim().toLowerCase().replace(/\./g, '');
+  if (!s) return null;
+  if (WD_MAP[s]) return WD_MAP[s];
+  // «Понедельник, 14 ноября» — ищем первое известное слово
+  for (const key of Object.keys(WD_MAP)) {
+    if (key.length > 1 && s.startsWith(key)) return WD_MAP[key];
+  }
+  return null;
+}
+
+/**
+ * Разбирает Excel с расписанием.
+ * Ожидаемые колонки (порядок и названия — гибко): Номер урока | Класс | Время урока | [День недели].
+ * Если колонки дня недели нет — считается, что каждый лист соответствует одному дню (имя листа = день).
+ *
+ * @returns {{entries: Array<{weekday, slot, classId, time, className}>, unknownClasses: string[], warnings: string[]}}
+ */
+export async function parseScheduleFile(file) {
+  if (!hasXlsx()) throw new Error('Модуль XLSX не загружен');
+  const XLSX = window.XLSX;
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+
+  const entries = [];
+  const warnings = [];
+  const unknownClasses = new Set();
+  const byName = new Map(store.state.classes.map((c) => [c.name.toLowerCase().trim(), c]));
+
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws) continue;
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: '' });
+    if (!aoa.length) continue;
+
+    // Заголовок: ищем строку с «урок» / «класс» / «время» / «день»
+    let headerRow = -1;
+    let colSlot = 0, colClass = 1, colTime = 2, colDay = -1;
+
+    for (let i = 0; i < Math.min(4, aoa.length); i++) {
+      const row = aoa[i].map((c) => String(c).toLowerCase().trim());
+      const joined = row.join('|');
+      if (/урок|класс|время|день|slot|class|time|day/.test(joined)) {
+        headerRow = i;
+        row.forEach((h, idx) => {
+          if (/номер\s*урок|^урок|^№\s*урок|slot/.test(h)) colSlot = idx;
+          else if (/^класс|class/.test(h)) colClass = idx;
+          else if (/время|time/.test(h)) colTime = idx;
+          else if (/день|day/.test(h)) colDay = idx;
+        });
+        break;
+      }
+    }
+
+    // День недели из имени листа, если колонки нет
+    const sheetDay = colDay === -1 ? parseWeekday(sheetName) : null;
+    if (colDay === -1 && !sheetDay) {
+      warnings.push(`Лист «${sheetName}»: не удалось определить день недели (ни в имени листа, ни в колонке)`);
+    }
+
+    const start = headerRow >= 0 ? headerRow + 1 : 0;
+
+    for (let r = start; r < aoa.length; r++) {
+      const row = aoa[r];
+      if (!row || !row.length) continue;
+
+      const weekday = colDay >= 0 ? parseWeekday(row[colDay]) : sheetDay;
+      const slotRaw = String(row[colSlot] ?? '').trim();
+      const className = String(row[colClass] ?? '').trim();
+      const timeRaw = String(row[colTime] ?? '').trim();
+
+      if (!className && !slotRaw) continue;
+      if (/^итого|^всего|^номер/i.test(className)) continue;
+
+      const slot = Number(slotRaw);
+      if (!Number.isFinite(slot) || slot <= 0) continue;
+      if (!className) continue;
+
+      const cls = byName.get(className.toLowerCase().trim());
+      if (!cls) {
+        unknownClasses.add(className);
+        continue;
+      }
+
+      entries.push({
+        weekday,
+        slot,
+        classId: cls.id,
+        className,
+        time: M.normalizeTime(timeRaw) || '',
+      });
+    }
+  }
+
+  if (unknownClasses.size) {
+    warnings.push(`Классы не найдены в приложении: ${[...unknownClasses].join(', ')}`);
+  }
+
+  return { entries, unknownClasses: [...unknownClasses], warnings };
+}
+
+/** Применяет разобранное расписание. */
+export async function applySchedule(entries) {
+  return store.replaceSchedule(entries);
+}
+
+/* ---------- импорт КТП ---------- */
+
+/**
+ * Разбирает Excel с темами КТП.
+ * Колонки: [Номер |] Тема. Строка заголовка опциональна.
+ * Возвращает [{order, name}].
+ */
+export async function parseKtpFile(file) {
+  if (!hasXlsx()) throw new Error('Модуль XLSX не загружен');
+  const XLSX = window.XLSX;
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+
+  const items = [];
+  const warnings = [];
+
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws) continue;
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: '' });
+    if (!aoa.length) continue;
+
+    // Ищем заголовок, чтобы понять, где тема
+    let headerRow = -1;
+    let colName = 0, colOrder = -1;
+    for (let i = 0; i < Math.min(3, aoa.length); i++) {
+      const row = aoa[i].map((c) => String(c).toLowerCase().trim());
+      const joined = row.join('|');
+      if (/тема|назван|topic|name|содержан/.test(joined) && !/^\d/.test(joined.trim())) {
+        headerRow = i;
+        row.forEach((h, idx) => {
+          if (/тема|назван|topic|name|содержан/.test(h)) colName = idx;
+          else if (/^№|^номер|^п\/п|order/.test(h)) colOrder = idx;
+        });
+        break;
+      }
+    }
+
+    const start = headerRow >= 0 ? headerRow + 1 : 0;
+    let autoOrder = items.length;
+
+    for (let r = start; r < aoa.length; r++) {
+      const row = aoa[r];
+      if (!row || !row.length) continue;
+
+      // Если колонки темы нет, но есть номер — тема может быть в первой непустой ячейке после номера
+      let name = String(row[colName] ?? '').trim();
+      if (!name) name = String(row[1] ?? '').trim();
+      if (!name) name = String(row[0] ?? '').trim();
+      if (!name) continue;
+      if (/^(№|номер|п\/п|тема|итого|всего)$/i.test(name)) continue;
+      // Слишком короткие строки-мусор пропускаем
+      if (name.length < 3) continue;
+
+      const orderRaw = colOrder >= 0 ? Number(String(row[colOrder] ?? '').trim()) : NaN;
+      autoOrder += 1;
+      items.push({
+        order: Number.isFinite(orderRaw) && orderRaw > 0 ? orderRaw : autoOrder,
+        name,
+        sheet: sheetName,
+      });
+    }
+  }
+
+  // Сортируем по указанному порядку, если он был
+  items.sort((a, b) => a.order - b.order);
+
+  if (!items.length) warnings.push('В файле не найдено ни одной темы');
+  return { items, warnings, sheets: wb.SheetNames };
+}
+
+/** Применяет темы к КТП: заменить целиком или дописать. */
+export async function applyKtpTopics(ktpId, items, { append = false } = {}) {
+  if (append) return store.appendKtpTopics(ktpId, items);
+  return store.replaceKtpTopics(ktpId, items);
+}
+
 /* ---------- бэкап ---------- */
 
 export async function exportBackup() {

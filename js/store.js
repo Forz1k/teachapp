@@ -14,6 +14,9 @@ export const state = {
   students: [],   // все ученики
   lessons: [],    // все уроки
   topics: [],
+  ktp: [],
+  schedule: [],
+  scheduleOverrides: [],
   marks: [],      // все отметки
   exemptions: [],
   monthly: [],
@@ -53,12 +56,15 @@ export function notify() {
 
 /** Первичная загрузка всей базы в кэш. */
 export async function load() {
-  const [settingsArr, classes, students, lessons, topics, marks, exemptions, monthly] = await Promise.all([
+  const [settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides, marks, exemptions, monthly] = await Promise.all([
     db.getAll('meta'),
     db.getAll('classes'),
     db.getAll('students'),
     db.getAll('lessons'),
     db.getAll('topics'),
+    db.getAll('ktp'),
+    db.getAll('schedule'),
+    db.getAll('scheduleOverrides'),
     db.getAll('marks'),
     db.getAll('exemptions'),
     db.getAll('monthly'),
@@ -73,6 +79,10 @@ export async function load() {
   state.students = M.sortStudents(students);
   state.lessons = M.sortLessons(lessons);
   state.topics = topics.sort((a, b) => (a.ktpOrder || 0) - (b.ktpOrder || 0));
+  state.ktp = ktp.sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
+  state.schedule = schedule.sort((a, b) =>
+    (a.weekday - b.weekday) || (a.slot - b.slot) || ((M.parseTime(a.time) ?? 0) - (M.parseTime(b.time) ?? 0)));
+  state.scheduleOverrides = scheduleOverrides;
   state.marks = marks;
   state.exemptions = exemptions;
   state.monthly = monthly;
@@ -598,8 +608,89 @@ export async function bulkSetMonthly(items) {
 
 /* ---------- КТП ---------- */
 
-export async function addTopic(name, ktpOrder) {
-  const t = { id: M.uid('top'), name: name.trim(), ktpOrder: ktpOrder || state.topics.length + 1 };
+/** Список КТП. */
+export const allKtp = () => state.ktp;
+
+/** КТП, привязанные к классу (по classIds). */
+export function ktpOfClass(classId) {
+  return state.ktp.filter((k) => Array.isArray(k.classIds) && k.classIds.includes(classId));
+}
+
+/** Темы конкретного КТП, по порядку. */
+export function topicsOfKtp(ktpId) {
+  return state.topics
+    .filter((t) => t.ktpId === ktpId)
+    .sort((a, b) => (a.ktpOrder || 0) - (b.ktpOrder || 0));
+}
+
+/** Все темы, доступные для класса (из всех его КТП), плюс общие без КТП. */
+export function topicsForClass(classId) {
+  const lists = ktpOfClass(classId);
+  const ids = new Set(lists.map((k) => k.id));
+  return state.topics
+    .filter((t) => !t.ktpId || ids.has(t.ktpId))
+    .sort((a, b) => (a.ktpOrder || 0) - (b.ktpOrder || 0));
+}
+
+/**
+ * Создать КТП и сразу привязать к классам.
+ * @param {{name: string, classIds: string[]}} p
+ */
+export async function addKtp({ name, classIds = [] }) {
+  const k = {
+    id: M.uid('ktp'),
+    name: name.trim(),
+    classIds: [...classIds],
+    createdAt: new Date().toISOString(),
+  };
+  await db.put('ktp', k);
+  state.ktp.push(k);
+  state.ktp.sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
+  notify();
+  return k;
+}
+
+export async function updateKtp(id, patch) {
+  const k = state.ktp.find((x) => x.id === id);
+  if (!k) return;
+  Object.assign(k, patch);
+  await db.put('ktp', k);
+  state.ktp.sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
+  notify();
+}
+
+/** Привязать/отвязать класс к КТП. */
+export async function setKtpClasses(ktpId, classIds) {
+  await updateKtp(ktpId, { classIds: [...new Set(classIds)] });
+}
+
+/** Удалить КТП вместе с его темами. Темы в уроках обнуляются. */
+export async function deleteKtp(id) {
+  const topics = state.topics.filter((t) => t.ktpId === id);
+  const topicIds = new Set(topics.map((t) => t.id));
+  const affectedLessons = state.lessons.filter((l) => topicIds.has(l.topicId));
+
+  await db.transaction(['ktp', 'topics', 'lessons'], 'readwrite', (s) => {
+    for (const l of affectedLessons) {
+      s.lessons.put({ ...l, topicId: null });
+    }
+    for (const t of topics) s.topics.delete(t.id);
+    s.ktp.delete(id);
+  });
+
+  for (const l of affectedLessons) l.topicId = null;
+  state.topics = state.topics.filter((t) => !topicIds.has(t.id));
+  state.ktp = state.ktp.filter((k) => k.id !== id);
+  notify();
+}
+
+export async function addTopic(name, ktpOrder, ktpId = null) {
+  const t = {
+    id: M.uid('top'),
+    name: name.trim(),
+    ktpOrder: ktpOrder || state.topics.length + 1,
+    ktpId,
+  };
   await db.put('topics', t);
   state.topics.push(t);
   state.topics.sort((a, b) => (a.ktpOrder || 0) - (b.ktpOrder || 0));
@@ -624,6 +715,182 @@ export async function deleteTopic(id) {
     await db.put('lessons', l);
   }
   notify();
+}
+
+/** Массовая замена тем в КТП — одной транзакцией (для импорта из Excel). */
+export async function replaceKtpTopics(ktpId, items) {
+  const old = state.topics.filter((t) => t.ktpId === ktpId);
+  const oldIds = new Set(old.map((t) => t.id));
+  const affectedLessons = state.lessons.filter((l) => oldIds.has(l.topicId));
+
+  const created = items.map((it, i) => ({
+    id: M.uid('top'),
+    name: String(it.name).trim(),
+    ktpOrder: it.order ?? i + 1,
+    ktpId,
+  }));
+
+  await db.transaction(['topics', 'lessons'], 'readwrite', (s) => {
+    for (const l of affectedLessons) s.lessons.put({ ...l, topicId: null });
+    for (const t of old) s.topics.delete(t.id);
+    for (const t of created) s.topics.put(t);
+  });
+
+  for (const l of affectedLessons) l.topicId = null;
+  state.topics = state.topics.filter((t) => !oldIds.has(t.id)).concat(created);
+  state.topics.sort((a, b) => (a.ktpOrder || 0) - (b.ktpOrder || 0));
+  notify();
+  return created.length;
+}
+
+/** Дозаписать темы в существующее КТП (не удаляя старые). */
+export async function appendKtpTopics(ktpId, items) {
+  const existing = state.topics.filter((t) => t.ktpId === ktpId);
+  let maxOrder = existing.reduce((mx, t) => Math.max(mx, t.ktpOrder || 0), 0);
+  const created = items.map((it) => {
+    maxOrder += 1;
+    return {
+      id: M.uid('top'),
+      name: String(it.name).trim(),
+      ktpOrder: it.order ?? maxOrder,
+      ktpId,
+    };
+  });
+  if (!created.length) return 0;
+  await db.bulkPut('topics', created);
+  state.topics.push(...created);
+  state.topics.sort((a, b) => (a.ktpOrder || 0) - (b.ktpOrder || 0));
+  notify();
+  return created.length;
+}
+
+/* ---------- расписание ---------- */
+
+/** Записи расписания на день недели. */
+export function scheduleOfDay(weekday) {
+  return state.schedule
+    .filter((r) => r.weekday === weekday)
+    .sort((a, b) => (a.slot || 0) - (b.slot || 0) || ((M.parseTime(a.time) ?? 0) - (M.parseTime(b.time) ?? 0)));
+}
+
+/** Расписание на конкретную дату с учётом переопределений. */
+export function scheduleForDate(dateIso) {
+  return M.scheduleForDate(state.schedule, state.scheduleOverrides, dateIso);
+}
+
+/** Добавить или обновить урок в расписании (по дню недели и номеру). */
+export async function setScheduleEntry({ id = null, weekday, slot, classId, time }) {
+  const existing = id
+    ? state.schedule.find((r) => r.id === id)
+    : state.schedule.find((r) => r.weekday === weekday && r.slot === slot);
+
+  const record = {
+    id: existing?.id || M.uid('sch'),
+    weekday,
+    slot,
+    classId,
+    time: M.normalizeTime(time) || '',
+  };
+  await db.put('schedule', record);
+  if (existing) Object.assign(existing, record);
+  else state.schedule.push(record);
+  state.schedule.sort((a, b) => (a.weekday - b.weekday) || (a.slot - b.slot));
+  notify();
+  return record;
+}
+
+export async function deleteScheduleEntry(id) {
+  await db.del('schedule', id);
+  state.schedule = state.schedule.filter((r) => r.id !== id);
+  // заодно снимаем переопределения, ссылавшиеся на эту запись
+  const linked = state.scheduleOverrides.filter((o) => o.ruleId === id);
+  for (const o of linked) await db.del('scheduleOverrides', o.id);
+  const linkedIds = new Set(linked.map((o) => o.id));
+  state.scheduleOverrides = state.scheduleOverrides.filter((o) => !linkedIds.has(o.id));
+  notify();
+}
+
+/** Массовая замена расписания (импорт из Excel). */
+export async function replaceSchedule(items) {
+  const old = [...state.schedule];
+  const oldOverrides = [...state.scheduleOverrides];
+  const created = items.map((it) => ({
+    id: M.uid('sch'),
+    weekday: it.weekday,
+    slot: it.slot,
+    classId: it.classId,
+    time: M.normalizeTime(it.time) || '',
+  }));
+
+  await db.transaction(['schedule', 'scheduleOverrides'], 'readwrite', (s) => {
+    for (const r of old) s.schedule.delete(r.id);
+    for (const o of oldOverrides) s.scheduleOverrides.delete(o.id);
+    for (const r of created) s.schedule.put(r);
+  });
+
+  state.schedule = created.sort((a, b) => (a.weekday - b.weekday) || (a.slot - b.slot));
+  state.scheduleOverrides = [];
+  notify();
+  return created.length;
+}
+
+/**
+ * Переопределение расписания на дату.
+ * action: 'cancel' | 'move' | 'add'
+ */
+export async function setScheduleOverride({ id = null, date, ruleId = null, action, classId = null, slot = null, time = null }) {
+  // Ищем существующую правку только для той же записи расписания.
+  // Для action='add' ruleId пустой — там каждая добавка самостоятельная,
+  // поэтому дедупликацию делаем по (дата + номер урока + класс).
+  let existing = null;
+  if (id) {
+    existing = state.scheduleOverrides.find((o) => o.id === id) || null;
+  } else if (action === 'add') {
+    existing = state.scheduleOverrides.find((o) =>
+      o.date === date && o.action === 'add' && o.slot === slot && o.classId === classId) || null;
+  } else {
+    existing = state.scheduleOverrides.find((o) =>
+      o.date === date && o.ruleId === ruleId && o.action === action) || null;
+  }
+
+  const record = {
+    id: existing?.id || M.uid('sov'),
+    date,
+    ruleId,
+    action,
+    classId,
+    slot,
+    time: time ? M.normalizeTime(time) : null,
+  };
+  await db.put('scheduleOverrides', record);
+  if (existing) Object.assign(existing, record);
+  else state.scheduleOverrides.push(record);
+  notify();
+  return record;
+}
+
+export async function deleteScheduleOverride(id) {
+  await db.del('scheduleOverrides', id);
+  state.scheduleOverrides = state.scheduleOverrides.filter((o) => o.id !== id);
+  notify();
+}
+
+/** Стереть ВСЕ переопределения на дату — «вернуть как в расписании». */
+export async function clearOverridesForDate(dateIso) {
+  const list = state.scheduleOverrides.filter((o) => o.date === dateIso);
+  if (!list.length) return 0;
+  await db.transaction(['scheduleOverrides'], 'readwrite', (s) => {
+    for (const o of list) s.scheduleOverrides.delete(o.id);
+  });
+  const ids = new Set(list.map((o) => o.id));
+  state.scheduleOverrides = state.scheduleOverrides.filter((o) => !ids.has(o.id));
+  notify();
+  return list.length;
+}
+
+/** Переопределения на конкретную дату. */
+export function overridesOfDate(dateIso) {
+  return state.scheduleOverrides.filter((o) => o.date === dateIso);
 }
 
 /* ---------- резервная копия ---------- */

@@ -6,6 +6,7 @@ import { renderClasses } from './screens/classes.js';
 import { renderJournal } from './screens/journal.js';
 import { renderMonthly } from './screens/monthly.js';
 import { renderExemptionsInto } from './screens/exemptions.js';
+import { renderSchedule } from './screens/schedule.js';
 import { renderSettings, applyTheme, openExportSheet } from './screens/settings.js';
 
 const { el, icon } = ui;
@@ -13,7 +14,7 @@ const { el, icon } = ui;
 const TABS = [
   { id: 'classes', label: 'Классы', icon: 'classes' },
   { id: 'journal', label: 'Журнал', icon: 'journal' },
-  { id: 'quick', label: 'Ввод', icon: 'quick' },
+  { id: 'schedule', label: 'Расписание', icon: 'calendar' },
   { id: 'settings', label: 'Настройки', icon: 'settings' },
 ];
 
@@ -40,8 +41,8 @@ function render() {
     });
   } else if (tab === 'journal') {
     renderJournalScreen(screen);
-  } else if (tab === 'quick') {
-    renderQuickTab(screen);
+  } else if (tab === 'schedule') {
+    renderSchedule(screen, { onChanged: render });
   } else if (tab === 'settings') {
     renderSettings(screen, { onChanged: render });
   }
@@ -99,34 +100,6 @@ function renderJournalScreen(screen) {
     onclick: () => { store.state.classSubtab = id; render(); },
   })));
   screen.append(switcher);
-}
-
-function renderQuickTab(screen) {
-  const classId = store.state.currentClassId;
-  screen.append(el('div', { class: 'topbar' }, [
-    el('div', { class: 'topbar-row' }, [
-      el('button', {
-        class: 'chip', type: 'button',
-        text: `${store.state.classes.find((c) => c.id === classId)?.name || 'Класс'} ▾`,
-        onclick: () => openClassPicker(),
-      }),
-    ]),
-  ]));
-
-  const body = el('div', { class: 'empty' }, [
-    icon('quick'),
-    el('div', { text: 'Быстрый ввод на один урок: все ученики крупными строками.' }),
-    el('div', { style: 'margin-top:18px' }, [
-      el('button', {
-        class: 'btn primary', type: 'button', text: 'Открыть',
-        onclick: () => {
-          if (!classId) { ui.toast('Сначала выберите класс'); return; }
-          import('./screens/journal.js').then((m) => m.openQuickEntrySheet(classId));
-        },
-      }),
-    ]),
-  ]);
-  screen.append(body);
 }
 
 function renderTabbar() {

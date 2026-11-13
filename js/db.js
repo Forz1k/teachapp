@@ -4,7 +4,7 @@
    Индексы: по classId, studentId, lessonId, date — чтобы выборки были без полного скана. */
 
 const DB_NAME = 'teachapp';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 /** Список хранилищ и их индексы. Единственное место, где описана схема. */
 const STORES = {
@@ -19,7 +19,19 @@ const STORES = {
                  ['classId_date', ['classId', 'date'], { unique: false }],
                  ['date', 'date'],
                ] },
-  topics:    { keyPath: 'id', indexes: [['ktpOrder', 'ktpOrder']] },
+  topics:    { keyPath: 'id', indexes: [
+                 ['ktpOrder', 'ktpOrder'],
+                 ['ktpId', 'ktpId'],
+               ] },
+  // КТП как отдельная сущность: свой список тем, привязанный к одному или нескольким классам
+  ktp:       { keyPath: 'id', indexes: [] },
+  // Расписание: «день недели + номер урока» → класс и время
+  schedule:  { keyPath: 'id', indexes: [
+                 ['weekday', 'weekday'],
+                 ['weekday_slot', ['weekday', 'slot'], { unique: false }],
+               ] },
+  // Переопределения расписания на конкретную дату (замена, отмена, сдвиг)
+  scheduleOverrides: { keyPath: 'id', indexes: [['date', 'date']] },
   marks:     { keyPath: 'id', indexes: [
                  ['lessonId', 'lessonId'],
                  ['studentId', 'studentId'],

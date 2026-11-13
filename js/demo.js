@@ -129,10 +129,46 @@ export async function seedDemo(opts = {}) {
   const marks = [];
   const exemptions = [];
   const topics = [];
+  const ktpList = [];
+  const schedule = [];
 
-  // --- КТП ---
-  TOPICS.forEach((name, i) => {
-    topics.push({ id: `demo_top_${i + 1}`, name, ktpOrder: i + 1 });
+  // --- КТП: один план на каждую параллель (5, 6, 7), привязан к классу ---
+  CLASSES.forEach((name, ci) => {
+    const ktpId = `demo_ktp_${ci + 1}`;
+    ktpList.push({
+      id: ktpId,
+      name: `Физическая культура, ${name.slice(0, 1)} класс`,
+      classIds: [`demo_cls_${ci + 1}`],
+      isDemo: true,
+    });
+    TOPICS.forEach((topicName, i) => {
+      topics.push({
+        id: `demo_top_${ci + 1}_${i + 1}`,
+        name: topicName,
+        ktpOrder: i + 1,
+        ktpId,
+        isDemo: true,
+      });
+    });
+  });
+
+  // --- Расписание: каждый класс два раза в неделю ---
+  CLASSES.forEach((name, ci) => {
+    const classId = `demo_cls_${ci + 1}`;
+    // 5А — пн/ср, 6Б — вт/чт, 7В — ср/пт
+    const days = ci === 0 ? [1, 3] : ci === 1 ? [2, 4] : [3, 5];
+    const slot = ci + 1;
+    const times = ci === 0 ? ['09:00', '10:00'] : ci === 1 ? ['11:00', '12:00'] : ['13:00', '14:00'];
+    days.forEach((weekday, i) => {
+      schedule.push({
+        id: `demo_sch_${ci + 1}_${i + 1}`,
+        weekday,
+        slot,
+        classId,
+        time: times[i],
+        isDemo: true,
+      });
+    });
   });
 
   // --- классы и ученики ---
@@ -151,7 +187,6 @@ export async function seedDemo(opts = {}) {
       });
     }
   });
-
   // --- уроки: до сегодняшнего дня включительно, но не больше 60 на класс ---
   const today = M.todayIso();
   const pastDates = dates.filter((d) => d <= today);
@@ -159,12 +194,14 @@ export async function seedDemo(opts = {}) {
 
   classes.forEach((cls, ci) => {
     dateList.forEach((date, i) => {
-      const topic = topics[(i + ci * 3) % topics.length];
+      // Тема — из КТП именно этого класса
+      const classTopics = topics.filter((t) => t.ktpId === `demo_ktp_${ci + 1}`);
+      const topic = classTopics[i % classTopics.length];
       lessons.push({
         id: `demo_les_${ci + 1}_${i + 1}`,
         classId: cls.id,
         date,
-        topicId: topic.id,
+        topicId: topic ? topic.id : null,
         note: '',
         isDemo: true,
       });
@@ -273,6 +310,8 @@ export async function seedDemo(opts = {}) {
   await db.bulkPut('classes', classes);
   await db.bulkPut('students', students);
   await db.bulkPut('topics', topics);
+  await db.bulkPut('ktp', ktpList);
+  await db.bulkPut('schedule', schedule);
   await db.bulkPut('lessons', lessons);
   await db.bulkPut('marks', marks);
   await db.bulkPut('exemptions', exemptions);

@@ -195,6 +195,131 @@ export function exemptionLabel(ex) {
   return `${fmtFull(ex.dateFrom)} — ${fmtFull(ex.dateTo)}`;
 }
 
+/* ---------- расписание ---------- */
+
+/** Дни недели в порядке, принятом в школе: 1 = понедельник … 6 = суббота. */
+export const WEEKDAYS = [
+  { n: 1, short: 'Пн', full: 'Понедельник' },
+  { n: 2, short: 'Вт', full: 'Вторник' },
+  { n: 3, short: 'Ср', full: 'Среда' },
+  { n: 4, short: 'Чт', full: 'Четверг' },
+  { n: 5, short: 'Пт', full: 'Пятница' },
+  { n: 6, short: 'Сб', full: 'Суббота' },
+];
+
+/** День недели ISO-даты: 1..7, где вс = 7. Приводим к школьному 1..6. */
+export function weekdayOf(isoStr) {
+  const dow = parseIso(isoStr).getDay(); // 0 = вс
+  return dow === 0 ? 7 : dow;
+}
+
+export const weekdayName = (n) => {
+  const w = WEEKDAYS.find((x) => x.n === n);
+  return w ? w.short : '';
+};
+
+export const weekdayFull = (n) => {
+  const w = WEEKDAYS.find((x) => x.n === n);
+  return w ? w.full : '';
+};
+
+/**
+ * Разбор строки времени «08:30» / «8.30» / «8 30» в минуты от полуночи.
+ * Возвращает null, если разобрать не удалось.
+ */
+export function parseTime(str) {
+  if (!str) return null;
+  const m = String(str).trim().match(/^(\d{1,2})\s*[:.\-\s]\s*(\d{2})$/);
+  if (!m) {
+    // Может быть просто число — считаем часами ровно
+    const h = String(str).trim().match(/^(\d{1,2})$/);
+    if (h) {
+      const hh = Number(h[1]);
+      return hh >= 0 && hh <= 23 ? hh * 60 : null;
+    }
+    return null;
+  }
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return hh * 60 + mm;
+}
+
+/** Приводит время к виду «08:30» (для хранения и отображения). */
+export function normalizeTime(str) {
+  const minutes = parseTime(str);
+  if (minutes === null) return '';
+  const hh = String(Math.floor(minutes / 60)).padStart(2, '0');
+  const mm = String(minutes % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+export const fmtTime = (str) => normalizeTime(str) || '';
+
+/**
+ * Собирает расписание на конкретную дату с учётом переопределений.
+ * @param {Array} rules     — записи расписания [{id, weekday, slot, classId, time}]
+ * @param {Array} overrides — переопределения на дату [{id, date, ruleId|null, action, classId, slot, time}]
+ * @param {string} dateIso
+ * @returns {Array} отсортированные по номеру урока записи {slot, classId, time, override?}
+ */
+export function scheduleForDate(rules, overrides, dateIso) {
+  const weekday = weekdayOf(dateIso);
+  const dayOverrides = overrides.filter((o) => o.date === dateIso);
+  const byRule = new Map();
+  const added = [];
+
+  for (const rule of rules) {
+    if (rule.weekday !== weekday) continue;
+    byRule.set(rule.id, { ...rule, override: null });
+  }
+
+  for (const ov of dayOverrides) {
+    if (ov.action === 'cancel' && ov.ruleId && byRule.has(ov.ruleId)) {
+      byRule.delete(ov.ruleId);
+    } else if (ov.action === 'move' && ov.ruleId && byRule.has(ov.ruleId)) {
+      const item = byRule.get(ov.ruleId);
+      if (ov.time) item.time = ov.time;
+      if (ov.classId) item.classId = ov.classId;
+      if (ov.slot) item.slot = ov.slot;
+      item.override = ov;
+    } else if (ov.action === 'add') {
+      added.push({
+        id: ov.id,
+        slot: ov.slot,
+        classId: ov.classId,
+        time: ov.time,
+        weekday,
+        override: ov,
+      });
+    }
+  }
+
+  const list = [...byRule.values(), ...added];
+  return list.sort((a, b) => {
+    if (a.slot !== b.slot) return (a.slot || 0) - (b.slot || 0);
+    const ta = parseTime(a.time) ?? 9999;
+    const tb = parseTime(b.time) ?? 9999;
+    return ta - tb;
+  });
+}
+
+/** Есть ли переопределения на дату (чтобы показать маркер «изменено»). */
+export function hasOverrides(overrides, dateIso) {
+  return overrides.some((o) => o.date === dateIso);
+}
+
+/** Следующая дата после указанной, когда у учителя есть уроки. Для кнопки «сегодня». */
+export function findNextDateWithLessons(rules, overrides, fromIso, limit = 60) {
+  let d = fromIso;
+  for (let i = 0; i < limit; i++) {
+    const list = scheduleForDate(rules, overrides, d);
+    if (list.length) return { date: d, list };
+    d = addDays(d, 1);
+  }
+  return null;
+}
+
 /* ---------- посещаемость ---------- */
 
 /**
