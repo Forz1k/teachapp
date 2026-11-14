@@ -59,31 +59,6 @@ npx serve .
 
 ---
 
-## Публикация на GitHub Pages
-
-```powershell
-cd D:\projects\teachapp
-git init
-git add .
-git commit -m "Журнал учителя физкультуры: офлайн-PWA"
-git branch -M main
-git remote add origin https://github.com/Forz1k/teachapp.git
-git push -u origin main
-```
-
-В репозитории: **Settings → Pages → Source: Deploy from a branch → Branch: `main`, папка `/ (root)` → Save**.
-
-Через минуту приложение будет доступно по адресу
-`https://Forz1k.github.io/teachapp/`.
-
-> Service Worker регистрируется с относительным путём `./sw.js`, поэтому приложение
-> корректно работает и из подпапки (`/teachapp/`), и из корня домена.
-
-Любой другой статический хостинг (Netlify, Cloudflare Pages, Vercel) подойдёт так же:
-это просто набор файлов, сборка не требуется.
-
----
-
 ## Расписание
 
 Раздел открывается с нижней панели (вместо прежнего «Ввод»). Два режима:
