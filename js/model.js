@@ -245,8 +245,22 @@ export function parseTime(str) {
   return hh * 60 + mm;
 }
 
-/** Приводит время к виду «08:30» (для хранения и отображения). */
+/** Приводит время к виду «08:30» или «08:30-09:15» (для хранения и отображения). */
 export function normalizeTime(str) {
+  if (!str) return '';
+  const s = String(str).trim();
+  
+  // Проверяем, является ли строка диапазоном времени (например, "15:00-15:40" или "15.00 - 15.40")
+  const rangeMatch = s.match(/^(\d{1,2})\s*[:.]\s*(\d{2})\s*[-–]\s*(\d{1,2})\s*[:.]\s*(\d{2})$/);
+  if (rangeMatch) {
+    const h1 = String(Number(rangeMatch[1])).padStart(2, '0');
+    const m1 = String(Number(rangeMatch[2])).padStart(2, '0');
+    const h2 = String(Number(rangeMatch[3])).padStart(2, '0');
+    const m2 = String(Number(rangeMatch[4])).padStart(2, '0');
+    return `${h1}:${m1}-${h2}:${m2}`;
+  }
+
+  // Стандартная обработка одиночного времени
   const minutes = parseTime(str);
   if (minutes === null) return '';
   const hh = String(Math.floor(minutes / 60)).padStart(2, '0');
