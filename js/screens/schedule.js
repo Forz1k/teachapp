@@ -133,26 +133,19 @@ export function renderSchedule(root, opts = {}) {
       return;
     }
 
-    for (const item of list) {
-      const cls = store.state.classes.find((c) => c.id === item.classId);
-      const isChanged = !!item.override;
-
-      const row = el('div', {
-        class: 'ex-item',
-        style: isChanged ? 'border:1.5px solid var(--accent)' : '',
-      }, [
-        el('div', {
-          style: 'width:44px;text-align:center;flex:0 0 auto',
-        }, [
-          el('div', { style: 'font-size:11px;color:var(--text-3);font-weight:600', text: 'урок' }),
-          el('div', { style: 'font-size:22px;font-weight:800;font-feature-settings:"tnum" 1', text: String(item.slot) }),
-        ]),
-        el('div', { class: 'who' }, [
-          el('div', { class: 'fio', text: cls ? cls.name : 'класс не найден' }),
-          el('div', { class: 'dates', text: item.time ? item.time : 'время не указано' }),
-          isChanged ? el('div', { class: 'reason', style: 'color:var(--accent)', text: 'изменено на этот день' }) : null,
-        ]),
-      ]);
+      for (const item of list) {
+        const isWindow = item.classId === 'window';
+        const cls = isWindow ? null : store.state.classes.find((c) => c.id === item.classId);
+        const row = el('div', { class: 'ex-item', style: isWindow ? 'opacity: 0.6;' : '' }, [
+          el('div', { style: 'width:36px;text-align:center;flex:0 0 auto' }, [
+            el('div', { style: 'font-size:11px;color:var(--text-3);font-weight:600', text: '№' }),
+            el('div', { style: 'font-size:20px;font-weight:800;font-feature-settings:"tnum" 1', text: String(item.slot) }),
+          ]),
+          el('div', { class: 'who' }, [
+            el('div', { class: 'fio', style: isWindow ? 'color:var(--text-3); font-style: italic;' : '', text: isWindow ? 'окно' : (cls ? cls.name : 'класс не найден') }),
+            el('div', { class: 'dates', text: item.time || 'время не указано' }),
+          ]),
+        ]);
 
       row.append(el('button', {
         class: 'icon-btn plain', type: 'button', title: 'Изменить',
@@ -213,17 +206,26 @@ export function renderSchedule(root, opts = {}) {
       }));
 
       for (const item of list) {
-        const cls = store.state.classes.find((c) => c.id === item.classId);
-        const row = el('div', { class: 'ex-item' }, [
-          el('div', { style: 'width:36px;text-align:center;flex:0 0 auto' }, [
-            el('div', { style: 'font-size:11px;color:var(--text-3);font-weight:600', text: '№' }),
-            el('div', { style: 'font-size:20px;font-weight:800;font-feature-settings:"tnum" 1', text: String(item.slot) }),
-          ]),
-          el('div', { class: 'who' }, [
-            el('div', { class: 'fio', text: cls ? cls.name : 'класс не найден' }),
-            el('div', { class: 'dates', text: item.time || 'время не указано' }),
-          ]),
-        ]);
+      const isWindow = item.classId === 'window';
+      const cls = isWindow ? null : store.state.classes.find((c) => c.id === item.classId);
+      const isChanged = !!item.override;
+
+      const row = el('div', {
+        class: 'ex-item',
+        style: isChanged ? 'border:1.5px solid var(--accent)' : (isWindow ? 'opacity: 0.6;' : ''),
+      }, [
+        el('div', {
+          style: 'width:44px;text-align:center;flex:0 0 auto',
+        }, [
+          el('div', { style: 'font-size:11px;color:var(--text-3);font-weight:600', text: 'урок' }),
+          el('div', { style: 'font-size:22px;font-weight:800;font-feature-settings:"tnum" 1', text: String(item.slot) }),
+        ]),
+        el('div', { class: 'who' }, [
+          el('div', { class: 'fio', style: isWindow ? 'color:var(--text-3); font-style: italic;' : '', text: isWindow ? 'окно' : (cls ? cls.name : 'класс не найден') }),
+          el('div', { class: 'dates', text: item.time ? item.time : 'время не указано' }),
+          isChanged ? el('div', { class: 'reason', style: 'color:var(--accent)', text: 'изменено на этот день' }) : null,
+        ]),
+      ]);
 
         row.append(el('button', {
           class: 'icon-btn plain', type: 'button', title: 'Изменить',
@@ -267,6 +269,12 @@ export function renderSchedule(root, opts = {}) {
 function classSelect(selectedId = null) {
   const sel = el('select', {});
   sel.append(el('option', { value: '', text: '— выберите класс —' }));
+  
+  // Добавляем опцию "окно" для ручного добавления
+  const windowOpt = el('option', { value: 'window', text: 'окно (нет урока)' });
+  if (selectedId === 'window') windowOpt.selected = true;
+  sel.append(windowOpt);
+
   for (const c of store.state.classes) {
     const o = el('option', { value: c.id, text: c.name });
     if (c.id === selectedId) o.selected = true;
