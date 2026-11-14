@@ -350,6 +350,18 @@ export async function parseScheduleFile(file) {
       if (!Number.isFinite(slot) || slot <= 0) continue;
       if (!className) continue;
 
+      // Специальная обработка для "окно"
+      if (className.toLowerCase() === 'окно') {
+        entries.push({
+          weekday,
+          slot,
+          classId: 'window',
+          className: 'окно',
+          time: M.normalizeTime(timeRaw) || '',
+        });
+        continue;
+      }
+
       const cls = byName.get(className.toLowerCase().trim());
       if (!cls) {
         unknownClasses.add(className);
