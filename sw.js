@@ -4,7 +4,7 @@
      • статика — cache-first, сеть только при промахе;
      • чужие домены игнорируем полностью (никаких сетевых вызовов у приложения нет). */
 
-const VERSION = 'v1.2.0';
+const VERSION = 'v1.3.0';
 const CACHE = `teachapp-${VERSION}`;
 
 /* Всё, что нужно для запуска. Пути относительные — работает и на GitHub Pages из подпапки. */
@@ -14,6 +14,7 @@ const PRECACHE = [
   './manifest.webmanifest',
   './css/app.css',
   './js/app.js',
+  './js/version.js',
   './js/db.js',
   './js/store.js',
   './js/model.js',

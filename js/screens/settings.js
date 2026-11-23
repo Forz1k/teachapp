@@ -1,5 +1,6 @@
 /* screens/settings.js — настройки, импорт, экспорт, резервные копии, управление классами. */
 
+import { APP_VERSION } from '../version.js';
 import * as M from '../model.js';
 import * as store from '../store.js';
 import * as ui from '../ui.js';
@@ -319,7 +320,7 @@ export function renderSettings(root, ctx = {}) {
     style: 'padding:14px 16px;font-size:13px;color:var(--text-2);line-height:1.55',
     html: 'Журнал учителя физкультуры. Все данные хранятся <b>только на этом устройстве</b> (IndexedDB), '
       + 'без сервера, аккаунтов и телеметрии. Приложение работает офлайн.<br><br>'
-      + `Версия 1.0 · записей в базе: ${store.state.students.length + store.state.marks.length + store.state.lessons.length}`,
+      + `Версия ${APP_VERSION} · записей в базе: ${store.state.students.length + store.state.marks.length + store.state.lessons.length}`,
   }));
   body.append(aboutBlock);
 

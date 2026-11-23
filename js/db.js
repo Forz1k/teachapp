@@ -47,6 +47,29 @@ const STORES = {
                ] },
 };
 
+function ensureSchema(db, transaction, schema) {
+  for (const [name, def] of Object.entries(schema)) {
+    let store;
+    if (!db.objectStoreNames.contains(name)) {
+      store = db.createObjectStore(name, { keyPath: def.keyPath });
+    } else {
+      store = transaction.objectStore(name);
+    }
+    for (const [idxName, keyPath, opts] of def.indexes) {
+      if (!store.indexNames.contains(idxName)) {
+        store.createIndex(idxName, keyPath, opts || {});
+      }
+    }
+  }
+}
+
+// Обе исторические версии приводим к совместимой схеме добавлением хранилищ и индексов.
+// Следующие миграции выполняются внутри той же versionchange-транзакции.
+const migrations = {
+  1() {}, // чистая установка продолжится миграцией 2
+  2(db, transaction) { ensureSchema(db, transaction, STORES); },
+};
+
 let _db = null;
 
 /** Открывает базу, при первом запуске создаёт хранилища. Кэширует соединение. */
@@ -56,19 +79,8 @@ export function open() {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
 
     req.onupgradeneeded = (event) => {
-      const db = req.result;
-      for (const [name, def] of Object.entries(STORES)) {
-        let store;
-        if (!db.objectStoreNames.contains(name)) {
-          store = db.createObjectStore(name, { keyPath: def.keyPath });
-        } else {
-          store = req.transaction.objectStore(name);
-        }
-        for (const [idxName, keyPath, opts] of def.indexes) {
-          if (!store.indexNames.contains(idxName)) {
-            store.createIndex(idxName, keyPath, opts || {});
-          }
-        }
+      for (let version = event.oldVersion + 1; version <= DB_VERSION; version++) {
+        migrations[version](req.result, req.transaction);
       }
     };
 
