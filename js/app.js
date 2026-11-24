@@ -57,7 +57,7 @@ function render() {
   const tab = store.state.currentTab;
 
   if (tab === 'today') {
-    renderToday(screen,{onSchedule:()=>setTab('schedule'),onCoach:()=>setTab('coach'),onJournal:()=>setTab('journal'),onNorms:()=>setTab('norms'),onAnalytics:()=>setTab('analytics')});
+    renderToday(screen,{onSchedule:()=>setTab('schedule'),onCoach:()=>setTab('coach'),onJournal:()=>setTab('journal'),onNorms:()=>setTab('norms'),onAnalytics:()=>setTab('analytics'),onSettings:()=>setTab('settings')});
   } else if (tab === 'classes') {
     renderClasses(screen, {
       onOpenJournal: () => { setTab('journal'); },
@@ -73,7 +73,7 @@ function render() {
   } else if (tab === 'analytics') {
     renderAnalytics(screen,{onBack:()=>setTab('settings')});
   } else if (tab === 'coach') {
-    renderCoach(screen,{section:navigation.coach,onBack:()=>switchWorkspace('school'),onSection:id=>{navigation=saveNavigation({...navigation,coach:id});renderTabbar();}});
+    renderCoach(screen,{section:navigation.coach,onSettings:()=>setTab('settings'),onBack:()=>switchWorkspace('school'),onSection:id=>{navigation=saveNavigation({...navigation,coach:id});renderTabbar();}});
   } else if (tab === 'settings') {
     renderSettings(screen, { onChanged: render,onCoach:()=>setTab('coach'),onAnalytics:()=>setTab('analytics') });
   }
