@@ -49,7 +49,8 @@ export function validateVolleyImport(m){
   if(r.playerId!==null){check(errors.has(r.playerId)&&(errorKeys.includes(r.kind)?r.winner==='theirs':r.winner==='ours'),'неверный автор');if(errorKeys.includes(r.kind))errors.get(r.playerId)[r.kind]++;}
  }
  check(progress.every((s,i)=>s.ours===m.sets[i].ours&&s.theirs===m.sets[i].theirs),'журнал не соответствует счёту');
- for(const id of m.roster){const p=v.players[id];
+ for(const id of m.roster){const p=v.players[id],stats=m.stats[id];
+  check(only(stats,['attackKills','blocks','aces','points'])&&['attackKills','blocks','aces','points'].every(k=>count(stats[k]))&&stats.points===stats.attackKills+stats.blocks+stats.aces,'некорректные результативные действия');
   check(only(p,['errors',...errorKeys,'serviceSeries'])&&count(p.errors)&&errorKeys.every(k=>count(p[k])&&p[k]===errors.get(id)[k])&&errorKeys.reduce((n,k)=>n+p[k],0)<=p.errors&&Array.isArray(p.serviceSeries)&&p.serviceSeries.length<=10000,'некорректные ошибки игрока');
   check(p.serviceSeries.every(s=>only(s,['set','wins','aces','errors'])&&Number.isInteger(s.set)&&s.set>=1&&s.set<=m.sets.length&&count(s.wins)&&count(s.aces)&&count(s.errors)&&s.aces<=s.wins),'некорректная серия');
  }
