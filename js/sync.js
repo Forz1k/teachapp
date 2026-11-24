@@ -2,6 +2,7 @@
 import * as db from './db.js';
 import {validateBackup,BACKUP_VERSION} from './backup.js';
 import {defaultSettings} from './model.js';
+import {gradeState,finalState} from './grade-history.js';
 import {encryptBackup,decryptBackup,isEncryptedBackup} from './privacy.js';
 
 export const syncAreas={school:'Школа',coach:'Тренер'};
@@ -61,7 +62,7 @@ export function projectScope(data,area){
 }
 export function combineScope(current,snapshot,area){
  validateScope(snapshot,area);
- const out=Object.fromEntries(names.map(n=>[n,copy(current[n])]));
+ const out=Object.fromEntries(names.map(n=>[n,structuredClone(current[n])]));
  for(const n of keysFor(area)){
   if(n==='meta'){
    const old=out.meta.find(r=>r.id==='settings')||defaultSettings(),local={...old};
@@ -79,6 +80,11 @@ export function combineScope(current,snapshot,area){
 const byId=rows=>new Map(rows.map(r=>[r.id,r]));
 export function mergeScopes(base,local,remote,area,choices={}){
  for(const s of [base,local,remote])validateScope(s,area);
+ if(area==='school'&&!same(local,remote)){
+  const year=s=>s.meta[0].year,other=s=>Object.fromEntries(Object.entries(s).filter(([n])=>n!=='meta'));
+  check(same(year(base),year(local))||same(other(base),other(remote)),'Учебный год изменён на одном устройстве, школьные записи — на другом. Согласуйте перенос года вручную.');
+  check(same(year(base),year(remote))||same(other(base),other(local)),'Учебный год изменён на одном устройстве, школьные записи — на другом. Согласуйте перенос года вручную.');
+ }
  const result={},conflicts=[];
  for(const store of keysFor(area)){
   const [b,l,r]=[base,local,remote].map(s=>byId(s[store]));
@@ -99,7 +105,28 @@ export function mergeScopes(base,local,remote,area,choices={}){
   }
   result[store]=rows;
  }
+ if(area==='school'&&!conflicts.length)assertGradePairs(result,local,remote);
  return {snapshot:result,conflicts};
+}
+function gradePairs(snapshot){
+ const history=byId(snapshot.workRecords.filter(r=>r.kind==='gradeHistory'));
+ const marks=new Map(snapshot.marks.map(r=>[JSON.stringify([r.studentId,r.lessonId]),r]));
+ const finals=new Map(snapshot.finalGrades.map(r=>[JSON.stringify([r.studentId,r.from,r.to]),r]));
+ const students=new Set(snapshot.students.map(r=>r.id));
+ const lessons=new Set(snapshot.lessons.map(r=>r.id));
+ return {history,grade:r=>{
+  if(!students.has(r.studentId)||r.scope==='lesson'&&!lessons.has(r.lessonId))return null; // archived
+  if(r.scope==='final')return finalState(finals.get(JSON.stringify([r.studentId,r.from,r.to])));
+  const mark=marks.get(JSON.stringify([r.studentId,r.lessonId]));
+  return gradeState(mark&&Object.hasOwn(mark,'baseMark')?mark.baseMark:mark);
+ }};
+}
+function assertGradePairs(merged,local,remote){
+ const m=gradePairs(merged),sources=[gradePairs(local),gradePairs(remote)];
+ for(const [id,row] of m.history){
+  const grade=m.grade(row);if(grade===null)continue;
+  check(sources.some(src=>same(src.history.get(id),row)&&same(src.grade(row),grade)),'Оценка и история выбраны из разных несовместимых версий. Согласуйте связанные записи.');
+ }
 }
 function counts(before,after){
  const result={added:0,changed:0,deleted:0};
@@ -211,7 +238,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false}
    const cp={id:keyOf(plan.area),endpoint:plan.endpoint,workspaceId:plan.workspaceId,revision:nextRevision,envelope};
    data.meta=data.meta.filter(r=>r.id!==cp.id).concat(cp);
    // Delete changed keys first to avoid transient unique-index collisions. One atomic transaction.
-   for(const n of names){
+   for(const n of [...new Set([...keysFor(plan.area),'meta'])]){
     const a=byId(current[n]),b=byId(data[n]);
     for(const [id,row] of a)if(!b.has(id)||!same(row,b.get(id)))await s[n].delete(id);
     for(const [id,row] of b)if(!a.has(id)||!same(row,a.get(id)))await s[n].put(row);
