@@ -4,6 +4,7 @@ import * as db from './db.js';
 import {uid,todayIso} from './model.js';
 import {catalog,validPeriod,active,ancestorIds} from './health.js';
 import {replay,appendEvent,undoEvent,validateLiveData} from './volleyball.js';
+import {replayDetailed} from './match-protocol.js';
 export const coachStores=['coachTeams','coachPlayers','coachTrainings','coachMatches','coachLive','coachLineups'];
 export const positions={setter:'Связующая',outside:'Доигровщица',opposite:'Диагональная',middle:'Центральная блокирующая',libero:'Либеро',universal:'Универсальная'};
 export const attendanceLabels={present:'Присутствовала',absent:'Отсутствовала',limited:'Присутствовала, нагрузка ограничена'};
@@ -126,6 +127,39 @@ export function summarizeStats(matches,playerIds=null){
     for(const k of keys)if(s[k]!=null){sums[k]=(sums[k]??0)+s[k];recorded[k]++;}
   }
   return {sums,recorded};
+}
+// Aggregate only comparable observations. A terminal-action protocol does not
+// provide the denominator of all attacks or receptions.
+export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
+ const chosen=matches.filter(m=>m.roster.includes(playerId)&&(!from||m.date>=from)&&(!to||m.date<=to));
+ const summary=summarizeStats(chosen,[playerId]);
+ const errors={serve:0,attack:0,receive:0,other:0};
+ let detailedMatches=0,rallies=0,serviceRallies=0,serviceWins=0,serviceAces=0,serviceErrors=0,unclassifiedServiceLosses=0,unknownOnCourt=0;
+ const rates={serve:{total:0,success:0},receive:{total:0,success:0},attack:{total:0,success:0}};
+ for(const m of chosen){
+  if(m.detail){
+   const state=replayDetailed(m.detail);detailedMatches++;
+   const stat=state.sides.ours.stats[playerId]||{};
+   errors.serve+=stat.serveErrors||0;errors.attack+=stat.attackErrors||0;errors.receive+=stat.receiveErrors||0;errors.other+=stat.otherErrors||0;
+   for(const e of state.timeline){
+    if(e.type!=='rally'||!e.before?.lineups.ours.includes(playerId))continue;
+    rallies++;
+    if(e.kind==='point'||e.player==null)unknownOnCourt++;
+    if(e.before.serve!=='ours'||e.before.lineups.ours[0]!==playerId)continue;
+    serviceRallies++;if(e.side==='ours')serviceWins++;
+    if(e.kind==='ace')serviceAces++;
+    if(e.kind==='serveError')serviceErrors++;
+    if(e.side==='theirs'&&e.kind==='point')unclassifiedServiceLosses++;
+   }
+   continue;
+  }
+  const x=m.stats[playerId]||{};
+  for(const [key,total,success,complement] of [['serve','serves','serveErrors',true],['receive','receptions','receptionGood',false],['attack','attacks','attackKills',false]]){
+   if(x[total]==null||x[success]==null||x[total]<=0)continue;
+   rates[key].total+=x[total];rates[key].success+=complement?x[total]-x[success]:x[success];
+  }
+ }
+ return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,rates,chosen};
 }
 export function teamView(data,teamId){
   return {players:data.coachPlayers.filter(p=>p.teamId===teamId),trainings:data.coachTrainings.filter(t=>t.teamId===teamId).sort(dateOrder),
