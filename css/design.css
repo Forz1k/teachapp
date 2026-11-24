@@ -431,3 +431,5 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .match-history{min-width:0}.match-history>h2{font-size:19px;margin:4px 0}.match-history details>summary{font-weight:650;cursor:pointer;min-height:44px;display:flex;align-items:center}.history-compare{display:grid;gap:8px;grid-template-columns:repeat(2,minmax(0,1fr))}.history-compare>*{min-width:0;overflow-wrap:anywhere}@media(max-width:360px){.history-compare{grid-template-columns:1fr}}
 
 .day-next{display:grid;gap:8px;background:var(--accent-soft);border-color:var(--accent)}.day-next small{font-weight:700;color:var(--accent-ink)}.day-next h2{margin:0;font-size:20px}.day-lesson-list{display:grid;gap:12px;min-width:0}.day-lesson-list>[hidden]{display:none!important}
+
+.about-credit{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:0 16px 14px;color:var(--text-2);font-size:13px}.about-credit a{color:var(--accent-ink);text-decoration:underline;padding:10px 0;min-height:44px;display:flex;align-items:center}.document-table>p{font-size:12px;padding:8px;color:var(--text-2)}

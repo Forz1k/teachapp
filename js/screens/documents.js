@@ -7,7 +7,7 @@ import * as T from '../tournaments.js';
 import {testHistory,summarizeTests} from '../coach-tests.js';
 import {assignmentOverview,checklistLabels} from '../school-tools.js';
 import {matchDebrief,matchTactics} from '../match-tactics.js';
-import {documentTypes,buildDocument,makeDocx,documentWorkbook,documentColumnWidths} from '../documents.js';
+import {documentTypes,buildDocument,makeDocx,documentWorkbook,documentColumnWidths,previewRows} from '../documents.js';
 import {readPresets,savePreset,removePreset,normalizePreset} from '../document-presets.js';
 import {el,openSheet,closeSheet,toast,confirmDialog,downloadBlob} from '../ui.js';
 const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
@@ -18,11 +18,16 @@ const select=(rows,value)=>{const n=el('select',{},rows.map(([value,text])=>el('
 const card=(title,children)=>el('section',{class:'card-block coach-card'},[el('h3',{text:title}),...children]);
 const stack=children=>el('div',{class:'coach-form'},children);
 const val=v=>v==null?'—':String(v);
-function reportView(report){
- return el('article',{class:'document-preview'},[el('h1',{text:report.title}),...report.sections.map(s=>el('section',{},[el('h2',{text:s.heading}),...s.paragraphs.map(p),s.matrix?el('div',{class:'document-table'},[el('table',{},[el('colgroup',{},documentColumnWidths(s.matrix).map(w=>el('col',{style:'width:'+w/100+'%'}))),el('thead',{},[el('tr',{},s.matrix[0].map(v=>el('th',{text:val(v)})))]),el('tbody',{},s.matrix.slice(1).map(row=>el('tr',{},row.map(v=>el('td',{text:val(v)})))))])]):null]))]);
+function reportView(report,{full=false}={}){
+ return el('article',{class:'document-preview'},[el('h1',{text:report.title}),...report.sections.map(s=>{
+  let table=null;
+  if(s.matrix){const v=full?{rows:s.matrix.slice(1),omitted:0}:previewRows(s.matrix);
+   table=el('div',{class:'document-table'},[el('table',{},[el('colgroup',{},documentColumnWidths(s.matrix).map(w=>el('col',{style:'width:'+w/100+'%'}))),el('thead',{},[el('tr',{},s.matrix[0].map(v=>el('th',{text:val(v),scope:'col'})))]),el('tbody',{},v.rows.map(row=>el('tr',{},row.map(v=>el('td',{text:val(v)})))))]),v.omitted?p('Предпросмотр: показано '+v.rows.length+' строк; ещё '+v.omitted+' войдут в полный экспорт и печать.'):null]);}
+  return el('section',{},[el('h2',{text:s.heading}),...s.paragraphs.map(p),table]);
+ })]);
 }
 function printReport(report){
- document.getElementById('teachapp-print-report')?.remove();const node=el('div',{id:'teachapp-print-report'},[reportView(report)]);document.body.append(node);
+ document.getElementById('teachapp-print-report')?.remove();const node=el('div',{id:'teachapp-print-report'},[reportView(report,{full:true})]);document.body.append(node);
  const clean=()=>node.remove();window.addEventListener('afterprint',clean,{once:true});try{window.print();}catch{clean();toast('Печать недоступна');}
 }
 export function openDocumentPreview(report,back=closeSheet){
