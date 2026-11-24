@@ -3,7 +3,8 @@
 import * as db from './db.js';
 import {uid,todayIso} from './model.js';
 import {catalog,validPeriod,active,ancestorIds} from './health.js';
-export const coachStores=['coachTeams','coachPlayers','coachTrainings','coachMatches'];
+import {replay,appendEvent,undoEvent,validateLiveData} from './volleyball.js';
+export const coachStores=['coachTeams','coachPlayers','coachTrainings','coachMatches','coachLive','coachLineups'];
 export const positions={setter:'Связующая',outside:'Доигровщица',opposite:'Диагональная',middle:'Центральная блокирующая',libero:'Либеро',universal:'Универсальная'};
 export const attendanceLabels={present:'Присутствовала',absent:'Отсутствовала',limited:'Присутствовала, нагрузка ограничена'};
 export const metrics={serves:'Подачи (всего)',serveErrors:'Ошибки на подаче',aces:'Эйсы',receptions:'Приёмы (всего)',receptionGood:'Положительные приёмы',attacks:'Атаки (всего)',attackKills:'Результативные атаки',blocks:'Результативные блоки',points:'Очки (всего)'};
@@ -48,6 +49,7 @@ export function validateCoachData(data){
       roster(m,m.roster)&&only(m.stats,m.roster),'Проверьте матч, партии и состав');
     for(const s of Object.values(m.stats))validateStats(s);
   }
+  validateLiveData(data);
   return data;
 }
 export async function loadCoach(){
@@ -143,4 +145,38 @@ export function attendanceCsv(view){
   const rows=[['Дата','Время','Тренировка','Проведена','Игрок','Посещаемость']];
   for(const t of view.trainings)for(const id of t.roster)rows.push([t.date,t.time,t.title,t.held?'Да':'Нет',view.players.find(p=>p.id===id)?.name||'',attendanceLabels[t.attendance[id]]||'Не отмечено']);
   return '\uFEFF'+rows.map(r=>r.map(csvCell).join(';')).join('\r\n');
+}
+
+export async function saveLineup(input){
+ const r={id:input.id||uid('lineup'),teamId:input.teamId,name:String(input.name||'').trim(),scheme:input.scheme,roster:[...input.roster],lineup:[...input.lineup],libero:input.libero||null};
+ return write('coachLineups',r,(d,old)=>teamGuard(d,old,r));
+}
+export async function deleteLineup(id){await db.del('coachLineups',id);}
+export async function startLiveMatch(input){
+ const d={id:uid('live'),teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),
+   scheme:input.scheme,roster:[...input.roster],lineup:[...input.lineup],libero:input.libero||null,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,events:[],revision:0};
+ assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
+ return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&!p.archived)),'Состав изменился');});
+}
+export async function changeLiveMatch(id,revision,event){
+ return db.transaction(['coachLive'],'readwrite',async s=>{
+  const d=await s.coachLive.get(id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');
+  const next=event===null?undoEvent(d):appendEvent(d,event);
+  next.revision++;await s.coachLive.put(next);return next;
+ });
+}
+export async function discardLiveMatch(id,revision){
+ return db.transaction(['coachLive'],'readwrite',async s=>{
+  const d=await s.coachLive.get(id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');await s.coachLive.delete(id);
+ });
+}
+export async function finishLiveMatch(id,revision){
+ return db.transaction(coachStores,'readwrite',async s=>{
+  const data=Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()])));
+  const d=data.coachLive.find(x=>x.id===id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');
+  const state=replay(d);assert(state.finished,'Сначала завершите матч по партиям');
+  const m={id:uid('match'),teamId:d.teamId,date:d.date,opponent:d.opponent,competition:d.competition,sets:state.sets,roster:d.roster,stats:state.stats};
+  data.coachMatches.push(m);data.coachLive=data.coachLive.filter(x=>x.id!==id);validateCoachData(data);
+  await s.coachMatches.add(m);await s.coachLive.delete(id);return m;
+ });
 }

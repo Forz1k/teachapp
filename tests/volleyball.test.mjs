@@ -1,0 +1,40 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as V from '../js/volleyball.js';
+import * as C from '../js/coach.js';
+import * as S from '../js/store.js';
+import * as db from '../js/db.js';
+const base={roster:['a','b','c','d','e','f','g','h'],lineup:['a','b','c','d','e','f'],libero:'g',scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'theirs',events:[]};
+test('Переход при получении подачи, эйс, тайм-аут, либеро и отмена',()=>{
+ let d=V.appendEvent(base,{type:'rally',side:'ours',kind:'point'});assert.deepEqual(V.replay(d).lineup,['b','c','d','e','f','a']);
+ d=V.appendEvent(d,{type:'rally',side:'ours',kind:'ace',player:'b'});assert.equal(V.replay(d).stats.b.aces,1);
+ d=V.appendEvent(d,{type:'libero',for:'f'});assert.equal(V.replay(d).liberoFor,'f');
+ d=V.appendEvent(d,{type:'sub',out:'c',in:'h'});assert.equal(V.replay(d).lineup[1],'h');
+ d=V.appendEvent(d,{type:'timeout',side:'ours'});assert.equal(V.replay(d).timeouts.ours,1);
+ assert.equal(V.replay(V.undoEvent(d)).timeouts.ours,0);assert.throws(()=>V.appendEvent(d,{type:'rally',side:'ours',kind:'ace',player:'a'}),/подающего/);
+});
+test('Партия требует два очка преимущества, матч до двух побед',()=>{
+ let d={...base,events:[]};const point=side=>{d=V.appendEvent(d,{type:'rally',side,kind:'point'});};
+ for(let i=0;i<14;i++){point('ours');point('theirs');}point('ours');assert.equal(V.replay(d).setEnded,false);point('ours');assert.equal(V.replay(d).setEnded,true);
+ d=V.appendEvent(d,{type:'next',lineup:base.lineup,serve:'ours'});for(let i=0;i<15;i++)point('ours');
+ assert.equal(V.replay(d).finished,true);assert.throws(()=>point('ours'),/завершён/);
+});
+test('Сохранение расстановки и черновика, копия и атомарный перенос в историю',async()=>{
+ await db.clearAll();await S.load();const team=await C.saveTeam({name:'Команда'}),players=[];
+ for(let i=0;i<7;i++)players.push(await C.savePlayer({teamId:team.id,name:'Игрок '+i,number:i,position:'universal'}));
+ const roster=players.map(p=>p.id),lineup=roster.slice(0,6),libero=roster[6];
+ await C.saveLineup({teamId:team.id,name:'Старт',scheme:'5-1',roster,lineup,libero});
+ let d=await C.startLiveMatch({...base,teamId:team.id,date:'2026-01-01',opponent:'Соперник',roster,lineup,libero});
+ d=await C.changeLiveMatch(d.id,d.revision,{type:'rally',side:'ours',kind:'point'});
+ await assert.rejects(C.changeLiveMatch(d.id,0,null),/изменился/);
+ const backup=await S.makeBackup();assert.equal(backup.version,7);await S.restoreBackup(backup);
+ assert.equal((await C.loadCoach()).coachLineups.length,1);assert.equal(V.replay((await C.loadCoach()).coachLive[0]).ours,1);
+ await assert.rejects(C.finishLiveMatch(d.id,d.revision),/завершите/);
+ for(let i=1;i<15;i++)d=await C.changeLiveMatch(d.id,d.revision,{type:'rally',side:'ours',kind:'point'});
+ d=await C.changeLiveMatch(d.id,d.revision,{type:'next',lineup,serve:'ours'});
+ for(let i=0;i<15;i++)d=await C.changeLiveMatch(d.id,d.revision,{type:'rally',side:'ours',kind:'point'});
+ const m=await C.finishLiveMatch(d.id,d.revision);assert.equal(m.sets.length,2);assert.equal((await C.loadCoach()).coachLive.length,0);
+ await assert.rejects(C.finishLiveMatch(d.id,d.revision),/изменился/);
+ const old=structuredClone(backup);old.version=6;delete old.data.coachLive;delete old.data.coachLineups;await S.restoreBackup(old);assert.equal((await C.loadCoach()).coachLive.length,0);
+});
