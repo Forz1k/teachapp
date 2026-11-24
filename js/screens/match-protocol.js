@@ -16,10 +16,34 @@ const score=x=>x.ours+' : '+x.theirs;
 const sides=['ours','theirs'];
 const errors=['serveError','attackError','receiveError','otherError'];
 function playerLabel(p){return (p.number==null?'':'№'+p.number+' · ')+p.name;}
-function six(players,initial=[]){
- const options=[['','Выберите игрока'],...players.map(p=>[p.id,playerLabel(p)])];
- const selects=Array.from({length:6},(_,i)=>select(options,initial[i]||''));
- return {node:el('div',{class:'vp-six'},selects.map((n,i)=>field('P'+(i+1),n))),get:()=>selects.map(n=>n.value)};
+export function six(players,initial=[],excluded=()=>null){
+ const available=new Set(players.map(p=>p.id));
+ let values=Array.from({length:6},(_,i)=>available.has(initial[i])&&initial.indexOf(initial[i])===i?initial[i]:'');
+ let active=values.findIndex(v=>!v);if(active<0)active=null;
+ const node=el('div',{class:'vp-stack'});
+ function draw(){
+  const zones=el('div',{class:'vp-six'},values.map((id,i)=>{
+   const player=players.find(p=>p.id===id);
+   return el('button',{type:'button',class:'btn '+(i===active?'primary':''),'aria-pressed':String(i===active),'data-zone':String(i+1),text:'P'+(i+1)+' · '+(player?playerLabel(player):'Выбрать'),onclick:()=>{active=i;draw();}});
+  }));
+  const choices=el('div',{class:'vp-stack'});
+  if(active!==null){
+   const idx=active;
+   choices.append(el('strong',{text:'Позиция P'+(idx+1)+' · выберите игрока'}));
+   for(const player of players.filter(p=>p.id!==excluded()&&!values.some((id,i)=>i!==idx&&id===p.id))){
+    choices.append(el('button',{type:'button',class:'btn wide','data-player-id':player.id,text:playerLabel(player),onclick:()=>{
+     values[idx]=player.id;
+     active=values.findIndex((v,i)=>i>idx&&!v);
+     if(active<0)active=values.findIndex(v=>!v);
+     if(active<0)active=null;draw();
+    }}));
+   }
+   if(values[idx])choices.append(btn('Очистить позицию',()=>{values[idx]='';draw();},'wide'));
+  }else choices.append(p('Все шесть позиций заполнены. Нажмите на позицию, чтобы изменить игрока.'));
+  node.replaceChildren(p('Заполнено '+values.filter(Boolean).length+' из 6'),zones,choices,btn('Очистить расстановку',()=>{values=Array(6).fill('');active=0;draw();},'wide'));
+ }
+ draw();
+ return {node,get:()=>[...values],refresh:draw};
 }
 function parseAway(text){
  const rows=text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
@@ -45,8 +69,9 @@ export function openDetailedSetup(team,players,back,refresh,preset=null){
   const warnings=C.trainingWarnings({date:date.value,roster:players.map(p=>p.id),exercises:[{name:'Волейбол',activityId:'volley'},{name:'Прыжки',activityId:'jump'},{name:'Соревнование',activityId:'competition'}]},players);
   const restricted=new Set(warnings.map(x=>x.player.id));
   eligible=players.filter(p=>!p.archived&&!restricted.has(p.id)&&checked.has(p.id));
-  ownFields=six(eligible,previous.map(id=>eligible.some(p=>p.id===id)?id:''));
   libero=select([['','Без либеро'],...eligible.map(p=>[p.id,playerLabel(p)])],eligible.some(p=>p.id===previousLib)?previousLib:'');
+  ownFields=six(eligible,previous.map(id=>eligible.some(p=>p.id===id)?id:''),()=>libero.value);
+  libero.onchange=()=>{if(ownFields.get().includes(libero.value)&&libero.value){toast('Либеро должен быть вне стартовой шестёрки');libero.value='';}ownFields.refresh();};
   const rows=players.map(p=>{
    const check=el('input',{type:'checkbox'});check.checked=checked.has(p.id)&&!restricted.has(p.id);check.disabled=restricted.has(p.id);
    check.onchange=()=>{if(check.checked)checked.add(p.id);else checked.delete(p.id);refreshOwn();};
@@ -56,7 +81,7 @@ export function openDetailedSetup(team,players,back,refresh,preset=null){
  }
  function parse(){
   awayPlayers=parseAway(awayInput.value);parsedText=awayInput.value;
-  awayFields=six(awayPlayers,awayPlayers.slice(0,6).map(p=>p.id));
+  awayFields=six(awayPlayers);
   awayArea.replaceChildren(awayPlayers.length?awayFields.node:p('Соперник без состава: счёт и причины очков доступны, авторы и расстановка неизвестны.'));
  }
  date.onchange=refreshOwn;refreshOwn();parse();
@@ -126,7 +151,8 @@ export function openDetailedMatch(initial,back,refresh){
      busy=true;try{const m=await C.finishLiveMatch(d.id,d.revision);await refresh();openMatchReport(m,back);}catch(e){toast(e.message);}finally{busy=false;}
     },'primary wide'));
    }else if(s.setEnded){
-    const own=six(d.ourPlayers.filter(p=>p.id!==d.libero),s.lineup),away=six(d.awayPlayers,s.awayLineup),first=select(sides.map(side=>[side,sideName(d,side)]),s.sets.length%2?d.firstServe==='ours'?'theirs':'ours':d.firstServe);
+    const previous=s.setDetails.at(-1)?.lineups;
+    const own=six(d.ourPlayers.filter(p=>p.id!==d.libero),previous?.ours||s.lineup),away=six(d.awayPlayers,previous?.theirs||s.awayLineup),first=select(sides.map(side=>[side,sideName(d,side)]),s.sets.length%2?d.firstServe==='ours'?'theirs':'ours':d.firstServe);
     body.append(el('h3',{text:'Старт следующей партии'}),p(d.teamName),own.node,...(d.awayPlayers.length?[p(d.opponent),away.node]:[]),field('Первая подача',first),btn('Начать партию',()=>perform({type:'next',lineup:own.get(),awayLineup:d.awayPlayers.length?away.get():[],serve:first.value},()=>selected=null),'primary wide'));
    }else{
     const add=side=>perform({type:'rally',side,kind:'point',player:null},()=>{selected=null;attributing=true;});
