@@ -4,7 +4,7 @@ import * as db from './db.js';
 import {uid,todayIso} from './model.js';
 import {catalog,validPeriod,active,ancestorIds} from './health.js';
 import {replay,appendEvent,undoEvent,validateLiveData} from './volleyball.js';
-import {replayDetailed} from './match-protocol.js';
+import {replayDetailed,validBoardColors} from './match-protocol.js';
 import {validateVolleyImport,duplicateVolleyMatch} from './volleypoint-import.js';
 import {validateCoachTests,guardTestWrite} from './coach-tests.js';
 export const coachStores=['coachTeams','coachPlayers','coachTrainings','coachMatches','coachLive','coachLineups','coachTests'];
@@ -221,7 +221,7 @@ export async function startLiveMatch(input){
 export async function startDetailedMatch(input){
  const d={id:uid('live'),mode:'dual',teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),venue:String(input.venue||'').trim(),
    teamName:String(input.teamName||'').trim(),roster:[...input.roster],ourPlayers:input.ourPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),awayPlayers:input.awayPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),
-   lineup:[...input.lineup],awayLineup:[...input.awayLineup],libero:input.libero||null,...(input.substitutionMode!==undefined?{substitutionMode:input.substitutionMode}:{}),scheme:input.scheme,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,startedAt:new Date().toISOString(),events:[],revision:0};
+   lineup:[...input.lineup],awayLineup:[...input.awayLineup],libero:input.libero||null,...(input.substitutionMode!==undefined?{substitutionMode:input.substitutionMode}:{}),...(input.boardColors!==undefined?{boardColors:{...input.boardColors}}:{}),scheme:input.scheme,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,startedAt:new Date().toISOString(),events:[],revision:0};
  assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
  return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&p.teamId===d.teamId&&!p.archived)),'Состав изменился');});
 }
@@ -230,6 +230,14 @@ export async function changeLiveMatch(id,revision,event){
   const d=await s.coachLive.get(id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');
   const next=event===null?undoEvent(d):appendEvent(d,event);
   next.revision++;await s.coachLive.put(next);return next;
+ });
+}
+export async function changeLiveColors(id,revision,colors){
+ assert(validBoardColors(colors),'Выберите два разных цвета команд');
+ return db.transaction(['coachLive'],'readwrite',async s=>{
+  const d=await s.coachLive.get(id);assert(d?.mode==='dual'&&d.revision===revision,'Матч изменился. Откройте его заново');
+  const next={...d,boardColors:{...colors},revision:d.revision+1};replayDetailed(next);
+  await s.coachLive.put(next);return next;
  });
 }
 export async function discardLiveMatch(id,revision){

@@ -623,3 +623,13 @@ test('lesson preparation opens school plans and does not change the lesson',asyn
  assert.match(sheet.textContent,/Суставная разминка/);assert.match(sheet.textContent,/Мячи/);
  assert.deepEqual(store.state.lessons.find(l=>l.id===l1.id),before);ui.closeSheet();
 });
+
+test('Wake lock освобождается при выходе и не включается после закрытия',async()=>{
+ const {matchWakeLock}=await import('../js/screens/match-protocol.js');
+ const fakeDoc=new EventTarget();fakeDoc.visibilityState='visible';let requests=0,releases=0;
+ const api={request:async()=>{requests++;return {released:false,release:async()=>{releases++;},addEventListener(){}};}};
+ const wake=matchWakeLock(fakeDoc,api);assert.ok(wake.supported);assert.equal(await wake.toggle(),true);assert.equal(requests,1);
+ fakeDoc.visibilityState='hidden';fakeDoc.dispatchEvent(new Event('visibilitychange'));assert.equal(releases,1);
+ fakeDoc.visibilityState='visible';fakeDoc.dispatchEvent(new Event('visibilitychange'));await Promise.resolve();assert.equal(requests,2);
+ wake.stop();assert.equal(releases,2);assert.equal(await wake.toggle(),false);
+});

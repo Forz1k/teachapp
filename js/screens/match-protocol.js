@@ -17,6 +17,24 @@ const score=x=>x.ours+' : '+x.theirs;
 const sides=['ours','theirs'];
 function playerLabel(p){return (p.number==null?'':'№'+p.number+' · ')+p.name;}
 function six(players,initial=[],options={}){return lineupPicker(players,initial,options);}
+function colorFields(initial=V.defaultBoardColors){
+ const rows=Object.entries(V.boardPalette).map(([id,c])=>[id,c.label]);
+ const ours=select(rows,initial.ours),theirs=select(rows,initial.theirs);
+ const preview=el('div',{class:'vp-color-preview'});
+ function draw(){preview.replaceChildren(...[ours,theirs].map((n,i)=>{const c=V.boardPalette[n.value];return el('span',{style:'background:'+c.end,text:i?'Соперник':'Наши'});}));}
+ ours.addEventListener('change',draw);theirs.addEventListener('change',draw);draw();
+ return {node:el('div',{class:'vp-stack'},[preview,field('Цвет нашей команды',ours),field('Цвет соперника',theirs)]),get:()=>({ours:ours.value,theirs:theirs.value})};
+}
+// Wake lock is opt-in, scoped to this mounted match and released on navigation.
+export function matchWakeLock(doc=document,api=globalThis.navigator?.wakeLock){
+ let enabled=false,closed=false,lock=null,pending=false;
+ const release=()=>{const old=lock;lock=null;if(old)Promise.resolve(old.release()).catch(()=>{});};
+ const acquire=async()=>{if(!enabled||closed||pending||lock&&!lock.released||doc.visibilityState!=='visible')return false;
+  pending=true;try{const next=await api.request('screen');if(!enabled||closed||doc.visibilityState!=='visible'){await next.release();return false;}lock=next;next.addEventListener?.('release',()=>{if(lock===next)lock=null;});return true;}catch{return false;}finally{pending=false;}};
+ const visibility=()=>{if(doc.visibilityState==='visible')void acquire();else release();};
+ doc.addEventListener('visibilitychange',visibility);
+ return {supported:typeof api?.request==='function',get enabled(){return enabled;},async toggle(){if(closed||!api?.request)return false;enabled=!enabled;if(!enabled){release();return false;}const ok=await acquire();if(!ok&&doc.visibilityState==='visible')enabled=false;return enabled;},stop(){closed=true;enabled=false;release();doc.removeEventListener('visibilitychange',visibility);}};
+}
 function parseAway(text){
  const rows=text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
  if(!rows.length)return [];
@@ -29,14 +47,24 @@ function parseAway(text){
  if(new Set(result.map(p=>p.number)).size!==result.length)throw Error('Номера соперника не должны повторяться');
  return result;
 }
-export function openDetailedSetup(team,players,back,refresh,preset=null){
+export function openDetailedSetup(team,players,back,refresh,preset=null,{matches=[],presets=[]}={}){
  const date=input(todayIso(),'date',{max:todayIso()}),opp=input('','text',{placeholder:'Название соперника'}),comp=input('','text',{placeholder:'Турнир'}),venue=input('','text',{placeholder:'Спортивный зал'});
  const best=select([[3,'До двух побед'],[5,'До трёх побед']],5),target=select([15,21,25].map(n=>[n,n]),25),decider=select([15,21,25].map(n=>[n,n]),15);
  const serve=select([['ours',team.name],['theirs','Соперник']],'ours'),scheme=select([['5-1','5–1'],['4-2','4–2'],['free','Свободная']],preset?.scheme||'5-1');
  const substitutions=select([['simple','Упрощённые (до 6)'],['paired','Парные (возврат стартового игрока)']],'simple');
+ const colors=colorFields();
+ const previousMatches=matches.filter(m=>m.teamId===team.id&&m.detail?.mode==='dual').sort((a,b)=>b.date.localeCompare(a.date)||b.detail.startedAt.localeCompare(a.detail.startedAt));
+ const previous=previousMatches[0]?.detail;
+ const templates=presets.filter(x=>x.teamId===team.id);
+ const history=V.opponentHistory(matches,team.id);
  const awayInput=el('textarea',{placeholder:'7 Иванова\n8 Петрова\n9\n10\n11\n12',rows:5});const awayArea=el('div',{class:'vp-stack'}),ownArea=el('div',{class:'vp-stack'});
  let awayPlayers=[],awayFields=six([]),parsedText='',ownFields,eligible=[],libero;
  const checked=new Set(players.map(p=>p.id));
+ const template=select([['','Выберите шаблон'],...templates.map(x=>[x.id,x.name])],'');
+ const loadOwn=(line,lib)=>{ownFields.set(line);libero.value=eligible.some(p=>p.id===lib)?lib:'';ownFields.setExcluded(libero.value?[libero.value]:[]);};
+ const shortcuts=el('div',{class:'vp-stack'},[templates.length?field('Сохранённая шестёрка',template):null,templates.length?btn('Применить шаблон',()=>{const t=templates.find(x=>x.id===template.value);if(!t)return;scheme.value=t.scheme;loadOwn(t.lineup,t.libero);},'wide'):null,previous?btn('Старт последнего матча',()=>{scheme.value=previous.scheme;loadOwn(previous.lineup,previous.libero);},'wide'):null]);
+ const opponentPick=select([['','Выберите соперника'],...history.map(m=>[m.id,m.opponent+' · '+m.date])],'');
+ const loadOpponent=()=>{const m=history.find(x=>x.id===opponentPick.value);if(!m)return;opp.value=m.opponent;awayInput.value=m.detail.awayPlayers.map(p=>p.number+' '+p.name).join('\n');parse();const numbers=new Map(m.detail.awayPlayers.map(p=>[p.id,p.number]));awayFields.set(m.detail.awayLineup.map(id=>awayPlayers.find(p=>p.number===numbers.get(id))?.id));};
  function refreshOwn(){
   const previous=ownFields?.get()||preset?.lineup||[],previousLib=libero?.value??preset?.libero??'';
   const warnings=C.trainingWarnings({date:date.value,roster:players.map(p=>p.id),exercises:[{name:'Волейбол',activityId:'volley'},{name:'Прыжки',activityId:'jump'},{name:'Соревнование',activityId:'competition'}]},players);
@@ -50,7 +78,7 @@ export function openDetailedSetup(team,players,back,refresh,preset=null){
    check.onchange=()=>{if(check.checked)checked.add(p.id);else checked.delete(p.id);refreshOwn();};
    return field(playerLabel(p)+(restricted.has(p.id)?' · ограничение нагрузки':''),check);
   });
-  ownArea.replaceChildren(p('Выберите фактический состав. Совпадения с внесёнными ограничениями исключены; отсутствие совпадений не является допуском.'),el('details',{},[el('summary',{text:'Заявка · '+eligible.length}),...rows]),ownFields.node,field('Либеро нашей команды (не входит в стартовую шестёрку)',libero));
+  ownArea.replaceChildren(p('Выберите фактический состав. Совпадения с внесёнными ограничениями исключены; отсутствие совпадений не является допуском.'),el('details',{},[el('summary',{text:'Заявка · '+eligible.length}),...rows]),shortcuts,ownFields.node,field('Либеро нашей команды (не входит в стартовую шестёрку)',libero));
  }
  function parse(){
   awayPlayers=parseAway(awayInput.value);parsedText=awayInput.value;
@@ -66,14 +94,15 @@ export function openDetailedSetup(team,players,back,refresh,preset=null){
    if(new Set(line).size!==6||line.some(id=>!eligible.some(p=>p.id===id))||line.includes(libero.value))throw Error('Проверьте шесть стартовых игроков и либеро');
    if(awayPlayers.length&&(new Set(away).size!==6||away.some(id=>!awayPlayers.some(p=>p.id===id))))throw Error('Проверьте расстановку соперника');
    if(!opp.value.trim())throw Error('Укажите соперника');
+   if(!V.validBoardColors(colors.get()))throw Error('Выберите два разных цвета команд');
    if(!await ui.confirmDialog({title:'Начать матч?',text:'Подтвердите фактические составы и выбранный регламент.',ok:'Начать'}))return;
    const d=await C.startDetailedMatch({teamId:team.id,teamName:team.name,opponent:opp.value,date:date.value,competition:comp.value,venue:venue.value,
-     roster:eligible.map(p=>p.id),ourPlayers:eligible,awayPlayers,awayLineup:away,lineup:line,libero:libero.value||null,bestOf:Number(best.value),target:Number(target.value),decider:Number(decider.value),firstServe:serve.value,scheme:scheme.value,substitutionMode:substitutions.value});
+     roster:eligible.map(p=>p.id),ourPlayers:eligible,awayPlayers,awayLineup:away,lineup:line,libero:libero.value||null,bestOf:Number(best.value),target:Number(target.value),decider:Number(decider.value),firstServe:serve.value,scheme:scheme.value,substitutionMode:substitutions.value,boardColors:colors.get()});
    openDetailedMatch(d,back,refresh);
   }catch(e){toast(e.message);}finally{save.disabled=false;}
  },'primary wide');
- openSheet(el('div',{class:'vp-stack vp-setup'},[el('h2',{text:'Новый подробный матч'}),field('Соперник',opp),field('Дата',date),field('Турнир',comp),field('Место',venue),field('Формат',best),field('Очков в партии',target),field('Решающая партия',decider),field('Первая подача',serve),field('Тактическая схема',scheme),field('Правила замен',substitutions),p('Парные замены: один запасной на стартового игрока, один возврат за партию. Исключительные замены и все судейские правила не реализованы.'),
-  el('h3',{text:team.name}),ownArea,el('h3',{text:'Состав соперника (необязательно)'}),p('Один игрок в строке: номер и имя. Если фамилии неизвестны, достаточно номера.'),awayInput,btn('Подготовить расстановку соперника',()=>{try{parse();}catch(e){toast(e.message);}},'wide'),awayArea,save,btn('Назад',back,'wide')]));
+ openSheet(el('div',{class:'vp-stack vp-setup'},[el('h2',{text:'Новый подробный матч'}),field('Соперник',opp),field('Дата',date),field('Турнир',comp),field('Место',venue),field('Формат',best),field('Очков в партии',target),field('Решающая партия',decider),field('Первая подача',serve),field('Тактическая схема',scheme),field('Правила замен',substitutions),el('details',{class:'vp-match-more'},[el('summary',{text:'Цвета табло'}),colors.node]),p('Парные замены: один запасной на стартового игрока, один возврат за партию. Исключительные замены и все судейские правила не реализованы.'),
+  el('h3',{text:team.name}),ownArea,el('h3',{text:'Состав соперника (необязательно)'}),p('Один игрок в строке: номер и имя. Если фамилии неизвестны, достаточно номера.'),history.length?field('Состав из истории',opponentPick):null,history.length?btn('Загрузить состав соперника',loadOpponent,'wide'):null,awayInput,btn('Подготовить расстановку соперника',()=>{try{parse();}catch(e){toast(e.message);}},'wide'),awayArea,save,btn('Назад',back,'wide')]));
 }
 function court(d,lineups,serve,selected,choose){
  function half(side,zones){
@@ -91,6 +120,8 @@ function shown(d,s){return {ours:s.lineup.map(id=>s.liberoFor===id?d.libero:id),
 export function openDetailedMatch(initial,back,refresh){
  let d=initial,busy=false,selected=null,pointDraft=null,section='match',nextDraft=null,quick=false,swapped=false;
  const body=el('div',{class:'vp-stack vp-live'});
+ const wake=matchWakeLock();let observer=null;
+ const stop=()=>{wake.stop();observer?.disconnect();};
  const perform=async(event,after)=>{
   if(busy)return;busy=true;
   const buttons=[...body.querySelectorAll('button')].filter(x=>!x.disabled);buttons.forEach(x=>x.disabled=true);
@@ -105,6 +136,8 @@ export function openDetailedMatch(initial,back,refresh){
   const cancel=()=>{pointDraft=null;selected=null;draw();};
   const courtState=pre?last.before.lineups:shown(d,s),serve=pre?last.before.serve:s.serve;
   const active=section==='match'&&!s.setEnded&&!s.finished;
+  const palette=d.boardColors||V.defaultBoardColors;
+  for(const side of sides){const c=V.boardPalette[palette[side]];body.style.setProperty('--vp-'+side+'-start',c.start);body.style.setProperty('--vp-'+side+'-end',c.end);}
   body.classList.toggle('vp-live-board',active);
   const order=swapped?[...sides].reverse():sides;
   const choose=(side,id)=>{if(!busy){selected={side,id};draw();}};
@@ -165,7 +198,7 @@ export function openDetailedMatch(initial,back,refresh){
    }else if(s.finished){
     body.append(p('Матч завершён'),btn('Сохранить матч и открыть протокол',async()=>{
      if(busy||!await ui.confirmDialog({title:'Завершить матч?',text:'События, счёт и статистика сохранятся в истории.',ok:'Сохранить'}))return;
-     busy=true;try{const m=await C.finishLiveMatch(d.id,d.revision);await refresh();openMatchReport(m,back);}catch(e){toast(e.message);}finally{busy=false;}
+     busy=true;try{const m=await C.finishLiveMatch(d.id,d.revision);stop();await refresh();openMatchReport(m,back);}catch(e){toast(e.message);}finally{busy=false;}
     },'primary wide'));
    }else if(s.setEnded){
     if(!nextDraft||nextDraft.revision!==d.revision){
@@ -216,13 +249,18 @@ export function openDetailedMatch(initial,back,refresh){
   if(pointDraft)return;
   const undo=btn('Отменить последнее событие',()=>{if(d.events.length)perform(null,()=>{selected=null;pointDraft=null;});},'wide');undo.disabled=!d.events.length;
   if(!active){if(section==='match')body.querySelector('.vp-match-head').append(undo);else body.append(undo);}
+  const liveColors=colorFields(palette);
+  const saveColors=btn('Сохранить цвета',async()=>{if(busy)return;busy=true;saveColors.disabled=true;try{d=await C.changeLiveColors(d.id,d.revision,liveColors.get());draw();}catch(e){toast(e.message);}finally{busy=false;saveColors.disabled=false;}},'wide');
+  const wakeBtn=btn(wake.enabled?'Экран: не выключать':'Экран: обычный режим',async()=>{if(busy)return;wakeBtn.disabled=true;const enabled=await wake.toggle();wakeBtn.textContent=enabled?'Экран: не выключать':'Экран: обычный режим';wakeBtn.setAttribute('aria-pressed',String(enabled));wakeBtn.disabled=false;if(!enabled&&wake.enabled===false)toast('Обычный режим экрана');},'wide');wakeBtn.setAttribute('aria-pressed',String(wake.enabled));
   const menu=el('details',{class:'vp-match-more'},[el('summary',{text:'Управление матчем · черновик сохранён'}),
+   wake.supported?wakeBtn:p('Удержание экрана недоступно в этом браузере.'),liveColors.node,saveColors,
    p('Замены: '+(d.substitutionMode==='paired'?'парные':'упрощённые')+' · Событий: '+d.events.length),
-   btn('Выйти · черновик сохранён',()=>{if(!busy)back();},'wide'),
-   btn('Удалить черновик',async()=>{if(busy||!await ui.confirmDialog({title:'Удалить черновик?',text:'Вся история этого матча будет удалена.',ok:'Удалить',danger:true}))return;busy=true;try{await C.discardLiveMatch(d.id,d.revision);back();}catch(e){toast(e.message);}finally{busy=false;}},'wide')]);
+   btn('Выйти · черновик сохранён',()=>{if(!busy){stop();back();}},'wide'),
+   btn('Удалить черновик',async()=>{if(busy||!await ui.confirmDialog({title:'Удалить черновик?',text:'Вся история этого матча будет удалена.',ok:'Удалить',danger:true}))return;busy=true;try{await C.discardLiveMatch(d.id,d.revision);stop();back();}catch(e){toast(e.message);}finally{busy=false;}},'wide')]);
   body.append(menu);
  }
- draw();openSheet(body,{fullHeight:true,match:true});
+ draw();const sheet=openSheet(body,{fullHeight:true,match:true,onClose:stop});
+ if(typeof MutationObserver==='function'){observer=new MutationObserver(()=>{if(!body.isConnected||!sheet.classList.contains('show'))stop();});observer.observe(sheet,{childList:true,attributes:true,attributeFilter:['class']});}
 }
 function table(headers,rows){
  return el('div',{class:'vp-table'},[el('table',{},[el('thead',{},[el('tr',{},headers.map(t=>el('th',{text:String(t)})))]),el('tbody',{},rows.map(row=>el('tr',{},row.map(t=>el('td',{text:String(t??'—')})))))])]);

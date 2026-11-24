@@ -2,7 +2,7 @@ import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates,setMomentum} from '../js/match-protocol.js';
+import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates,setMomentum,validBoardColors,opponentHistory} from '../js/match-protocol.js';
 import * as C from '../js/coach.js';
 import * as S from '../js/store.js';
 import * as db from '../js/db.js';
@@ -36,7 +36,8 @@ test('Подробный матч переносит историю и обе к
  d=await C.changeLiveMatch(d.id,d.revision,{type:'next',lineup,awayLineup:base.awayLineup,serve:'ours'});
  for(let i=0;i<15;i++)d=await C.changeLiveMatch(d.id,d.revision,{type:'rally',side:'ours',kind:'point'});
  d=await C.changeLiveMatch(d.id,d.revision,{type:'attribute',kind:'kill',player:lineup[0]});
- const m=await C.finishLiveMatch(d.id,d.revision);assert.equal(m.detail.events.length,31);assert.equal(reportData(m.detail).sets.length,2);
+ const beforeColors=d.events;d=await C.changeLiveColors(d.id,d.revision,{ours:'green',theirs:'purple'});assert.deepEqual(d.events,beforeColors);assert.equal(d.boardColors.ours,'green');
+ const m=await C.finishLiveMatch(d.id,d.revision);assert.equal(m.detail.boardColors.theirs,'purple');assert.equal(m.detail.events.length,31);assert.equal(reportData(m.detail).sets.length,2);
  assert.equal(m.stats[lineup[0]].attackKills,1);
  const b=await S.makeBackup();assert.equal(b.version,BACKUP_VERSION);await S.restoreBackup(b);
  assert.equal((await C.loadCoach()).coachMatches[0].detail.awayPlayers.length,7);
@@ -93,4 +94,12 @@ test('Ход партии учитывает только розыгрыши в�
  d=detailEvent(d,{type:'timeout',side:'theirs'});const a=setMomentum(replayDetailed(d).timeline,1);
  assert.deepEqual(a.points.at(-1),{ours:4,theirs:3});assert.deepEqual(a.maxRun,{ours:2,theirs:3});assert.deepEqual(a.maxLead,{ours:2,theirs:1});assert.equal(a.ties,2);assert.equal(a.changes,2);
  assert.equal(setMomentum(replayDetailed(d).timeline,2).points.length,1);
+});
+
+test('Цвета проверяются, старый матч остаётся допустим, история соперника берёт последнюю встречу',()=>{
+ assert.equal(validBoardColors({ours:'green',theirs:'purple'}),true);assert.equal(validBoardColors({ours:'green',theirs:'green'}),false);
+ assert.throws(()=>replayDetailed({...base,boardColors:{ours:'invalid',theirs:'red'}}),/параметры/);
+ assert.equal(replayDetailed(base).ours,0);assert.equal(replayDetailed({...base,boardColors:{ours:'green',theirs:'purple'}}).ours,0);
+ const matches=[{id:'old',teamId:'t',date:'2026-01-01',opponent:'Гости',detail:base},{id:'new',teamId:'t',date:'2026-02-01',opponent:' гости ',detail:base},{id:'other',teamId:'x',date:'2026-03-01',opponent:'Гости',detail:base}];
+ assert.deepEqual(opponentHistory(matches,'t').map(m=>m.id),['new']);
 });
