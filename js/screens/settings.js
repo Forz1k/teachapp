@@ -13,6 +13,7 @@ import { seedDemo } from '../demo.js';
 
 import {openTournaments} from './tournaments.js';
 import {openWorkCalendar} from './work-calendar.js';
+import {openDocuments} from './documents.js';
 import {openRubrics} from './school-tools.js';
 import {openArchive} from './school-archive.js';
 import {openLibrary} from './library.js';
@@ -35,6 +36,7 @@ export function renderSettings(root, ctx = {}) {
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Методические материалы'}),el('button',{class:'btn wide',type:'button',text:'Библиотека упражнений и конспекты',onclick:()=>openLibrary('school')}),el('button',{class:'btn wide',type:'button',text:'Конструктор оценивания техники',onclick:openRubrics})]));
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Рабочий календарь'}),el('button',{class:'btn wide',type:'button',text:'Календарь и напоминания',onclick:openWorkCalendar})]));
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Соревнования'}),el('button',{class:'btn wide',type:'button',text:'Организация соревнований',onclick:openTournaments})]));
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Генератор документов'}),el('button',{class:'btn wide',type:'button',text:'Word, Excel и PDF',onclick:()=>openDocuments()})]));
   /* ---------- учебный год ---------- */
   const yearBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Учебный год' })]);
   const yearFrom = el('input', { type: 'date', value: settings.year.from });
@@ -644,7 +646,7 @@ function showTsvHelp() {
 
 /** Keep original controls and handlers; group them without rebuilding inputs. */
 export function organizeSettings(body){
- const groups=[{name:'Рабочие инструменты',id:'tools',match:/Аналитика|Режим тренера|Методические|Рабочий календарь|Соревнования/},{name:'Учебный год и классы',id:'school',match:/Учебный год|Учебные периоды|^Классы$|КТП/},{name:'Данные и безопасность',id:'data',match:/^Импорт$|^Экспорт$|Резервная копия|Диагностика базы|Конфиденциальность|Демонстрационные/},{name:'Приложение',id:'app',match:/Оформление|О приложении/}];
+ const groups=[{name:'Рабочие инструменты',id:'tools',match:/Аналитика|Режим тренера|Методические|Рабочий календарь|Соревнования|Генератор документов/},{name:'Учебный год и классы',id:'school',match:/Учебный год|Учебные периоды|^Классы$|КТП/},{name:'Данные и безопасность',id:'data',match:/^Импорт$|^Экспорт$|Резервная копия|Диагностика базы|Конфиденциальность|Демонстрационные/},{name:'Приложение',id:'app',match:/Оформление|О приложении/}];
  const cards=[...body.children],sections=[];
  for(const g of groups){const list=cards.filter(c=>g.match.test(c.querySelector('.head')?.textContent||''));if(!list.length)continue;const section=el('section',{class:'settings-group','data-group':g.id},[dashboardHeading(g.name),...list]);sections.push(section);}
  const extras=cards.filter(c=>!sections.some(s=>s.contains(c)));if(extras.length)sections.push(el('section',{class:'settings-group'},extras));
