@@ -1,10 +1,11 @@
 import { catalog, types, validPeriod } from './health.js';
 import { validateNorm, validateNormSnapshot, validNormGroup, validGradeLevel, gradeNorm } from './assessment.js';
 import { validateCoachData, coachStores } from './coach.js';
+import {validateArchive} from './school-archive.js';
 import {validateWorkRecord} from './workbench.js';
 import { SCHEMA } from './db.js';
 
-export const BACKUP_VERSION = 11;
+export const BACKUP_VERSION = 12;
 const legacyCore = ['meta','classes','students','lessons','topics','marks','exemptions','monthly'];
 const text = s => typeof s === 'string' && s.trim().length > 0;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -12,7 +13,7 @@ const date = s => validPeriod(s, null);
 
 export function validateBackup(payload) {
   if (payload?.app !== 'teachapp' || !object(payload.data)) throw new Error('Файл не похож на резервную копию TeachApp');
-  if (![1,2,3,4,5,6,7,8,9,10,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
+  if (![1,2,3,4,5,6,7,8,9,10,11,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
   const data = payload.data;
   const names = Object.keys(SCHEMA);
   if (Object.keys(data).some(n => !names.includes(n))) throw new Error('В копии есть неизвестный раздел');
@@ -94,6 +95,6 @@ export function validateBackup(payload) {
     && (r.retentionDays===undefined || (Number.isInteger(r.retentionDays)&&r.retentionDays>=0&&r.retentionDays<=3650))
     && (!r.lastBackupAt || typeof r.lastBackupAt === 'string')));
   validateCoachData(tables);
-  for(const r of tables.workRecords)validateWorkRecord(r);
+  for(const r of tables.workRecords){if(r.kind==='archive')validateArchive(r);else validateWorkRecord(r);}
   return tables;
 }
