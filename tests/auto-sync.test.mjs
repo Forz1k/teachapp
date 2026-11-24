@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import * as db from '../js/db.js';
 import {defaultSettings} from '../js/model.js';
-import {prepareSync,executeSync,syncPersonalArea,localSyncState,disconnectSync} from '../js/sync.js';
+import {prepareSync,executeSync,syncPersonalArea,localSyncState,disconnectSync,relayClient} from '../js/sync.js';
 import {createPersonalCode} from '../js/personal-sync.js';
-import {runPersonalSync,openSyncSession,autoSyncStatus} from '../js/auto-sync.js';
+import {runPersonalSync,openSyncSession,autoSyncStatus,syncRetryDelay} from '../js/auto-sync.js';
 const endpoint='https://sync.example.test',area='school',password='synthetic-only-long-passphrase';
 const empty=()=>Object.fromEntries(Object.keys(db.SCHEMA).map(n=>[n,[]]));
 test('auto never initializes, avoids redundant PUT, pulls without revision churn and blocks deletion',async()=>{
@@ -110,4 +110,25 @@ test('local state detects unsent changes and retains only matching confirmation 
  assert.equal((await localSyncState(params)).status,'setup');
  assert.equal(await db.get('meta','sync-checkpoint-status-school'),undefined);
  assert.ok(await db.get('classes','pending-class'));
+});
+
+test('only transient transport failures receive bounded expedited retries',async()=>{
+ const token='a'.repeat(43);
+ const clientFor=status=>relayClient(endpoint,area,token,{fetcher:async()=>new Response('{}',{status})});
+ await assert.rejects(clientFor(503).get(),e=>e.retryable===true);
+ await assert.rejects(clientFor(401).get(),e=>e.retryable!==true);
+ await assert.rejects(clientFor(409).get(),e=>e.retryable!==true);
+ await assert.rejects(clientFor(429).get(),e=>e.retryable!==true);
+ const offline=relayClient(endpoint,area,token,{fetcher:async()=>{throw new TypeError('synthetic network error');}});
+ await assert.rejects(offline.get(),e=>e.retryable===true);
+ const code=createPersonalCode(endpoint);
+ const report=await runPersonalSync({getCode:()=>code,online:()=>true,clientFactory:()=>({}),runArea:async({area})=>{
+  if(area==='school')throw Object.assign(Error('temporary'),{retryable:true});return {area,status:'synced'};
+ }});
+ assert.equal(report.areas[0].retryable,true);
+ assert.equal(syncRetryDelay(report,0),5000);
+ assert.equal(syncRetryDelay(report,1),15000);
+ assert.equal(syncRetryDelay(report,2),null);
+ assert.equal(syncRetryDelay({phase:'finished',areas:[{status:'conflict'}]},0),null);
+ assert.equal(syncRetryDelay({...report,phase:'interrupted'},0),null);
 });
