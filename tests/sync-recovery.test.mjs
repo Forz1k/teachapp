@@ -8,7 +8,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import * as db from '../js/db.js';
 import {defaultSettings} from '../js/model.js';
 import {createRelay} from '../server/sync-relay.mjs';
-import {relayClient,prepareSync,executeSync,syncStatus} from '../js/sync.js';
+import {relayClient,prepareSync,executeSync,syncStatus,syncPersonalArea,localSyncState} from '../js/sync.js';
 const token='R'.repeat(43),replacement='S'.repeat(43),password='recovery-synthetic-password';
 test('recover from acknowledged remote write with stale local data; restart preserves revision and revoked access is denied',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'teachapp-sync-recovery-'));
@@ -49,4 +49,28 @@ test('recover from acknowledged remote write with stale local data; restart pres
   await assert.rejects(relayClient(endpoint,'school',token).get(),/отказал в доступе/);
   assert.deepEqual(await relayClient(endpoint,'school',replacement).get(),persisted);
  }finally{await stop();await rm(directory,{recursive:true,force:true});}
+});
+
+test('lost response after server commit recovers with fresh revision and no duplicate upload',async()=>{
+ const endpoint='https://synthetic.example.test',area='school',password='recovery-synthetic-password';
+ let remote={revision:0,envelope:null},writes=0;
+ const client={get:async()=>structuredClone(remote),put:async(expectedRevision,envelope)=>{
+  assert.equal(expectedRevision,remote.revision);writes++;remote={revision:remote.revision+1,envelope};return structuredClone(remote);
+ }};
+ const params={area,endpoint,password,client};
+ await db.replaceAll(Object.fromEntries(Object.keys(db.SCHEMA).map(n=>[n,[]])));
+ await db.put('meta',defaultSettings());
+ await executeSync({plan:await prepareSync(params),choices:{},password,client,confirmed:true});
+ await db.put('classes',{id:'synthetic-lost-response',name:'Synthetic class'});
+ const dropped={...client,put:async(...args)=>{
+  await client.put(...args);throw Object.assign(Error('synthetic lost response'),{retryable:true});
+ }};
+ await assert.rejects(syncPersonalArea({...params,client:dropped}),/lost response/);
+ assert.equal(remote.revision,2);assert.equal((await syncStatus(area)).revision,1);
+ assert.ok(await db.get('classes','synthetic-lost-response'));
+ assert.equal((await localSyncState(params)).status,'pending');
+ const recovered=await syncPersonalArea(params);
+ assert.equal(recovered.status,'synced');assert.equal(recovered.revision,2);
+ assert.equal(writes,2);assert.equal((await localSyncState(params)).status,'clean');
+ assert.ok(await db.get('classes','synthetic-lost-response'));
 });
