@@ -14,6 +14,7 @@ import { seedDemo } from '../demo.js';
 import {openTournaments} from './tournaments.js';
 import {openWorkCalendar} from './work-calendar.js';
 import {openSelectiveBackup} from './selective-backup.js';
+import {openSync} from './sync.js';
 import {openInventory,openAchievements} from './resources.js';
 import {openDocuments} from './documents.js';
 import {openRubrics} from './school-tools.js';
@@ -264,6 +265,7 @@ export function renderSettings(root, ctx = {}) {
     el('button', { class: 'btn small', type: 'button', text: 'Выбрать файл', onclick: () => restoreInput.click() }),
   ]));
   backupBlock.append(el('button',{class:'btn wide',type:'button',text:'Выборочная копия / восстановление',onclick:openSelectiveBackup}));
+  backupBlock.append(el('button',{class:'btn wide',type:'button',text:'Синхронизация устройств · бета',onclick:openSync}));
   body.append(backupBlock);
   const diagnostics=el('p',{role:'status',text:'Проверка не меняет данные и ничего не отправляет.'});
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Диагностика базы'}),diagnostics,el('button',{class:'btn wide',type:'button',text:'Проверить целостность и хранилище',onclick:async e=>{
