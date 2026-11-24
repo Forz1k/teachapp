@@ -1,179 +1,40 @@
-/* make-icons.mjs — генерирует PNG-иконки без внешних зависимостей.
-   Рисует оранжевый градиентный фон и белый знак «журнал с галочкой».
-   Запуск: node tools/make-icons.mjs */
-
-import { deflateSync } from 'node:zlib';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const outDir = join(__dirname, '..', 'icons');
-mkdirSync(outDir, { recursive: true });
-
-/* ---------- PNG-энкодер ---------- */
-
-function crc32(buf) {
-  let c, crc = 0xFFFFFFFF;
-  for (let n = 0; n < buf.length; n++) {
-    c = (crc ^ buf[n]) & 0xFF;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-    crc = c ^ (crc >>> 8);
+/* Reproducible local TeachApp icons; no external libraries. */
+import {writeFileSync,mkdirSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import {resolve} from 'node:path';
+export function pngIcon(size,maskable=false){
+ const array=n=>new Uint8Array(n),u32=n=>Uint8Array.of(n>>>24,n>>>16&255,n>>>8&255,n&255);
+ function concat(parts){const out=array(parts.reduce((n,x)=>n+x.length,0));let i=0;for(const p of parts){out.set(p,i);i+=p.length;}return out;}
+ function crc32(a){let c=0xffffffff;for(const b of a){c^=b;for(let j=0;j<8;j++)c=(c>>>1)^((c&1)?0xedb88320:0);}return (c^0xffffffff)>>>0;}
+ function chunk(name,data){const a=concat([Uint8Array.from(name,x=>x.charCodeAt(0)),data]);return concat([u32(data.length),a,u32(crc32(a))]);}
+ const palette=[],mix=(a,b,t)=>a.map((v,i)=>Math.round(v+(b[i]-v)*t));
+ for(let layer=0;layer<3;layer++)for(let n=0;n<32;n++){const bg=mix([29,70,173],[106,58,190],n/31);palette.push(...(layer===0?bg:layer===1?mix(bg,[255,255,255],.5):mix(bg,[189,213,255],.85)));}
+ palette.push(255,255,255);const white=96;
+ const pixels=array((size+1)*size),s=maskable?.86:1;
+ function inside(x,y,rx,ry,w,h,r){const dx=Math.max(rx+r-x,0,x-(rx+w-r)),dy=Math.max(ry+r-y,0,y-(ry+h-r));return dx*dx+dy*dy<=r*r;}
+ function lineDist(x,y,ax,ay,bx,by){const dx=bx-ax,dy=by-ay,t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/(dx*dx+dy*dy)));return Math.hypot(x-ax-t*dx,y-ay-t*dy);}
+ for(let y=0;y<size;y++){let previous=0;const row=y*(size+1);pixels[row]=1;
+  for(let x=0;x<size;x++){const idx=Math.round(31*(x+y)/(2*(size-1)));let hit=0,slash=0;
+   for(const [dx,dy] of [[.25,.25],[.75,.25],[.25,.75],[.75,.75]]){
+    const X=((x+dx)/size-.5)/s+.5,Y=((y+dy)/size-.5)/s+.5;
+    if(inside(X,Y,.22,.25,.56,.13,.045)||inside(X,Y,.435,.34,.13,.40,.045))hit++;
+    else if(lineDist(X,Y,.61,.70,.77,.52)<.049)slash++;
+   }
+   const p=hit>=3?white:hit?32+idx:slash>=2?64+idx:idx;
+   pixels[row+x+1]=(p-previous)&255;previous=p;
   }
-  return (crc ^ 0xFFFFFFFF) >>> 0;
+ }
+ // Deterministic zlib stream, fixed Huffman codes and distance-one runs.
+ const bytes=[];let bit=0,bits=0;
+ function put(v,n){bit|=v<<bits;bits+=n;while(bits>=8){bytes.push(bit&255);bit>>>=8;bits-=8;}}
+ function reverse(v,n){let r=0;while(n--){r=r*2+(v&1);v>>>=1;}return r;}
+ function literal(v){if(v<=143)put(reverse(48+v,8),8);else if(v<=255)put(reverse(400+v-144,9),9);else if(v<=279)put(reverse(v-256,7),7);else put(reverse(192+v-280,8),8);}
+ const lengths=[3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258],extra=[0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+ function repeat(n){let i=lengths.length-1;while(lengths[i]>n)i--;literal(257+i);put(n-lengths[i],extra[i]);put(0,5);}
+ put(1,1);put(1,2);
+ for(let i=0;i<pixels.length;){const v=pixels[i];literal(v);i++;let n=0;while(i+n<pixels.length&&pixels[i+n]===v)n++;i+=n;while(n>=3){const len=Math.min(258,n);repeat(len);n-=len;}while(n-->0)literal(v);}
+ literal(256);if(bits)bytes.push(bit&255);let a=1,b=0;for(const v of pixels){a=(a+v)%65521;b=(b+a)%65521;}
+ const z=concat([Uint8Array.of(0x78,0x01),Uint8Array.from(bytes),u32((b<<16)|a)]);
+ return concat([Uint8Array.of(137,80,78,71,13,10,26,10),chunk('IHDR',concat([u32(size),u32(size),Uint8Array.of(8,3,0,0,0)])),chunk('PLTE',Uint8Array.from(palette)),chunk('IDAT',z),chunk('IEND',array(0))]);
 }
-
-function chunk(type, data) {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length);
-  const typeBuf = Buffer.from(type, 'ascii');
-  const crcBuf = Buffer.alloc(4);
-  crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])));
-  return Buffer.concat([len, typeBuf, data, crcBuf]);
-}
-
-function encodePng(width, height, rgba) {
-  const sig = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;   // bit depth
-  ihdr[9] = 6;   // color type RGBA
-  const raw = Buffer.alloc((width * 4 + 1) * height);
-  for (let y = 0; y < height; y++) {
-    raw[y * (width * 4 + 1)] = 0; // filter none
-    rgba.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
-  }
-  return Buffer.concat([
-    sig,
-    chunk('IHDR', ihdr),
-    chunk('IDAT', deflateSync(raw, { level: 9 })),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
-}
-
-/* ---------- рисование ---------- */
-
-/** Сглаженное покрытие прямоугольника со скругление��и: 0..1 на пиксель. */
-function roundRectCoverage(x, y, rx, ry, rw, rh, radius) {
-  // расстояние от точки до скруглённого прямоугольника
-  const cx = Math.max(rx + radius, Math.min(x, rx + rw - radius));
-  const cy = Math.max(ry + radius, Math.min(y, ry + rh - radius));
-  const dx = x - cx, dy = y - cy;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  // Внутри核心 прямоугольника
-  if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
-    if (radius <= 0) return 1;
-    if (dist <= radius) return 1;
-  }
-  const edge = radius - dist;
-  return Math.max(0, Math.min(1, edge + 0.5));
-}
-
-/** Сэмплирование со сверхвыборкой (SSAA 3x3) — сглаженные края без библиотек. */
-function sample(px, py, fn, ss = 3) {
-  let acc = 0;
-  for (let sy = 0; sy < ss; sy++) {
-    for (let sx = 0; sx < ss; sx++) {
-      acc += fn(px + (sx + 0.5) / ss, py + (sy + 0.5) / ss);
-    }
-  }
-  return acc / (ss * ss);
-}
-
-function makeIcon(size, { maskable = false } = {}) {
-  const buf = Buffer.alloc(size * size * 4);
-  const S = size;
-
-  // Пропорции: у maskable-safe зоны знак меньше
-  const pad = maskable ? S * 0.22 : S * 0.16;
-
-  for (let y = 0; y < S; y++) {
-    for (let x = 0; x < S; x++) {
-      const i = (y * S + x) * 4;
-
-      // Фон: диагональный градиент оранжевый → янтарный
-      const t = ((x / S) * 0.5 + (y / S) * 0.5);
-      const r0 = 255, g0 = 122, b0 = 26;     // #FF7A1A
-      const r1 = 255, g1 = 178, b1 = 34;     // #FFB222
-      let R = Math.round(r0 + (r1 - r0) * t);
-      let G = Math.round(g0 + (g1 - g0) * t);
-      let B = Math.round(b0 + (b1 - b0) * t);
-      let A = 255;
-
-      // Скруглённые углы (для обычной иконки; maskable — во весь квадрат)
-      if (!maskable) {
-        const rad = S * 0.225;
-        const cov = sample(x, y, (px, py) => roundRectCoverage(px, py, 0, 0, S, S, rad));
-        A = Math.round(255 * cov);
-      }
-
-      // Знак: открытый журнал (две страницы) + галочка
-      const cw = S - pad * 2;             // ширина знака
-      const ch = cw * 0.78;
-      const ox = pad, oy = (S - ch) / 2;
-      const white = (px, py) => {
-        // левая страница
-        const lp = roundRectCoverage(px, py, ox, oy, cw * 0.46, ch, S * 0.035);
-        // правая страница (чуть сдвинута)
-        const rp = roundRectCoverage(px, py, ox + cw * 0.54, oy, cw * 0.46, ch, S * 0.035);
-        return Math.max(lp, rp);
-      };
-
-      const markCov = sample(x, y, white);
-      if (markCov > 0.01) {
-        // Внутри знака — «прорези» под строки и галочку: рисуем вычитанием
-        const lineCov = sample(x, y, (px, py) => {
-          let v = 0;
-          // три коротких строки на левой странице
-          for (let k = 0; k < 3; k++) {
-            const ly = oy + ch * (0.28 + k * 0.18);
-            v = Math.max(v, roundRectCoverage(px, py, ox + cw * 0.09, ly, cw * 0.28, S * 0.022, S * 0.011));
-          }
-          // галочка на правой странице — два прямоугольника-штриха
-          const cx = ox + cw * 0.77;
-          const cy = oy + ch * 0.58;
-          const th = S * 0.034;
-          // штрих 1 (короткий, вниз-вправо)
-          v = Math.max(v, strokeCoverage(px, py, cx - S * 0.075, cy - S * 0.005, cx - S * 0.018, cy + S * 0.052, th));
-          // штрих 2 (длинный, вверх-вправо)
-          v = Math.max(v, strokeCoverage(px, py, cx - S * 0.02, cy + S * 0.052, cx + S * 0.085, cy - S * 0.062, th));
-          return v;
-        });
-
-        const inkAlpha = markCov * (1 - lineCov * 0.92);
-        R = Math.round(R * (1 - inkAlpha) + 255 * inkAlpha);
-        G = Math.round(G * (1 - inkAlpha) + 255 * inkAlpha);
-        B = Math.round(B * (1 - inkAlpha) + 255 * inkAlpha);
-      }
-
-      buf[i] = R; buf[i + 1] = G; buf[i + 2] = B; buf[i + 3] = A;
-    }
-  }
-  return encodePng(S, S, buf);
-}
-
-/** Покрытие «капсулы» (толстого отрезка) с радиусом. */
-function strokeCoverage(x, y, x1, y1, x2, y2, thickness) {
-  const r = thickness / 2;
-  const dx = x2 - x1, dy = y2 - y1;
-  const len2 = dx * dx + dy * dy;
-  let t = len2 ? ((x - x1) * dx + (y - y1) * dy) / len2 : 0;
-  t = Math.max(0, Math.min(1, t));
-  const px = x1 + t * dx, py = y1 + t * dy;
-  const dist = Math.hypot(x - px, y - py);
-  return Math.max(0, Math.min(1, r - dist + 0.5));
-}
-
-const sizes = [
-  ['icon-192.png', 192, {}],
-  ['icon-512.png', 512, {}],
-  ['icon-maskable-512.png', 512, { maskable: true }],
-  ['apple-touch-icon.png', 180, {}],
-];
-
-for (const [name, size, opts] of sizes) {
-  const png = makeIcon(size, opts);
-  writeFileSync(join(outDir, name), png);
-  console.log(`${name}: ${size}×${size}, ${png.length} байт`);
-}
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){const dir=new URL('../icons/',import.meta.url);mkdirSync(dir,{recursive:true});for(const [name,size,mask] of [['icon-192.png',192,false],['icon-512.png',512,false],['icon-maskable-512.png',512,true],['apple-touch-icon.png',180,false]])writeFileSync(new URL(name,dir),pngIcon(size,mask));}

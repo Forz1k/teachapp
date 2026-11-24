@@ -49,3 +49,12 @@ test('Календарь: месячная сетка, високосный фе
  const m=calendarMonth('2024-02-13');assert.equal(m.from,'2024-02-01');assert.equal(m.to,'2024-02-29');assert.equal(m.offset,3);assert.equal(m.days.length,29);
  assert.equal(calendarMonth('2026-11-24').days.length,30);
 });
+
+test('Фирменный стиль: иконки воспроизводимы и имеют правильный размер',async()=>{
+ const {pngIcon}=await import('../tools/make-icons.mjs');
+ const {inflateSync}=await import('node:zlib');
+ for(const [file,size,mask] of [['icon-192.png',192,false],['icon-512.png',512,false],['icon-maskable-512.png',512,true],['apple-touch-icon.png',180,false]]){
+  const png=readFileSync('icons/'+file);assert.deepEqual(png,Buffer.from(pngIcon(size,mask)));assert.equal(png.readUInt32BE(16),size);assert.equal(png.readUInt32BE(20),size);
+  let i=8;while(i<png.length){const n=png.readUInt32BE(i),type=png.toString('ascii',i+4,i+8);if(type==='IDAT')assert.equal(inflateSync(png.subarray(i+8,i+8+n)).length,(size+1)*size);i+=n+12;}
+ }
+});

@@ -52,7 +52,7 @@ function render() {
   const switcher=el('div',{class:'workspace-switch',role:'group','aria-label':'Рабочее пространство'},[
     ...[['school','Учитель'],['coach','Тренер']].map(([id,label])=>el('button',{type:'button',class:'workspace-option'+(workspace===id?' selected':''),'aria-pressed':String(workspace===id),text:label,onclick:()=>switchWorkspace(id)}))
   ]);
-  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('span',{class:'brand-mark',text:'T'}),el('span',{text:'TeachApp'})]),switcher,el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':'Скрыть данные',title:'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
+  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('img',{class:'brand-mark',src:'./icons/brand.svg',alt:'',width:32,height:32}),el('span',{text:'TeachApp'})]),switcher,el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':'Скрыть данные',title:'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
 
   const tab = store.state.currentTab;
 
@@ -225,6 +225,9 @@ async function boot() {
     } else {ui.toast('Операция не завершена. Повторите действие.');}
   });
   await store.load();
+  const shortcut=location.hash.slice(1);
+  if(shortcut==='coach')navigation=saveNavigation({...navigation,workspace:'coach'});
+  else if(shortcut==='journal'||shortcut==='quick')navigation=saveNavigation({...navigation,workspace:'school',school:shortcut==='journal'?'journal':'today'});
   store.state.currentTab=navigation.workspace==='coach'?'coach':navigation.school;
   applyTheme(store.state.settings.theme || 'auto');
 
