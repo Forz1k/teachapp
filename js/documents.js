@@ -1,5 +1,5 @@
 /* Document descriptions and local Office Open XML writer. No external service. */
-export const documentTypes={lesson:'Технологическая карта урока',training:'План-конспект тренировки',classReport:'Отчёт о работе за период',ktp:'Отчёт о выполнении КТП',norms:'Ведомость нормативов',registration:'Заявка на соревнования',tournament:'Протокол соревнований',teamReport:'Отчёт команды',playerReport:'Индивидуальный отчёт спортсменки',event:'Сценарий спортивного мероприятия'};
+export const documentTypes={lesson:'Технологическая карта урока',training:'План-конспект тренировки',classReport:'Отчёт о работе за период',ktp:'Отчёт о выполнении КТП',norms:'Ведомость нормативов',registration:'Заявка на соревнования',tournament:'Протокол соревнований',teamReport:'Отчёт команды',playerReport:'Индивидуальный отчёт спортсменки',event:'Сценарий спортивного мероприятия',assignmentReport:'Отчёт по назначениям нормативов',matchDebrief:'Послематчевый отчёт тренера'};
 const phase={intro:'Подготовительная',main:'Основная',end:'Заключительная'};
 const check=(ok,m)=>{if(!ok)throw Error(m);};
 const val=v=>v==null?'—':String(v);
@@ -19,6 +19,14 @@ export function buildDocument(type,input={}){
  }else if(['classReport','ktp','norms'].includes(type)){
   check(Array.isArray(input.matrix)&&input.matrix.length,'Выберите класс и период');personal=type!=='ktp';
   sections.push(section('Результаты за выбранный период',[input.period||'',input.className?'Класс: '+input.className:'',type==='classReport'?'Посещаемость и оценки рассчитаны по внесённым данным; пустые отметки не заменяются нулём.':''],input.matrix));
+ }else if(type==='assignmentReport'){
+  check(input.className&&Array.isArray(input.matrix)&&input.matrix.length,'Выберите класс с назначениями');personal=!!input.includeNames;
+  sections.push(section('Выполнение назначений',[input.className,input.period||'','Сведения отражают выбранные критерии и сроки; не выставляют оценку и не подтверждают допуск.',...(input.summary||[])],input.matrix));
+ }else if(type==='matchDebrief'){
+  check(input.teamName&&input.opponent&&Array.isArray(input.matrix)&&Array.isArray(input.notes),'Выберите подробный матч');
+  sections.push(section('Матч',[input.teamName+' — '+input.opponent,input.period||'',...(input.summary||[])],input.matrix));
+  sections.push(section('Выводы для тренера',input.notes.length?input.notes:['Недостаточно оснований для выраженных выводов.']));
+  sections.push(section('Ограничения',['Только зарегистрированные действия. Не является полным учётом попыток и не доказывает индивидуальный вклад. Для внутренней работы тренера.']));
  }else if(type==='registration'){
   check(Array.isArray(input.players)&&input.players.length,'Выберите участников заявки');personal=true;
   sections.push(section('Состав команды',[input.teamName||'',input.additional||''],[['№','ФИО / имя в составе','Игровой номер','Амплуа'],...input.players.map((p,i)=>[i+1,p.name,p.number??'',p.positionLabel||p.position])]));

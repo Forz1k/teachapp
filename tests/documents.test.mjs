@@ -25,3 +25,6 @@ test('Документы: настоящая книга Excel и данные б
  const book=XLSX.read(documentWorkbook(report,XLSX),{type:'array'});assert.equal(book.Sheets['Таблица 1'].B2.v,'=Тест');assert.equal(book.Sheets['Таблица 1'].B2.f,undefined);assert.equal(report.personal,true);
  assert.throws(()=>buildDocument('registration',{players:[]}));assert.throws(()=>buildDocument('lesson',{}));
 });
+
+test('Отчёт назначений не включает персональные данные без явного выбора',()=>{const base={className:'7А',matrix:[['Норматив','Выполнено'],['Прыжок',10]]};const summary=buildDocument('assignmentReport',base);assert.equal(summary.personal,false);assert.equal(buildDocument('assignmentReport',{...base,includeNames:true}).personal,true);assert.throws(()=>buildDocument('assignmentReport',{}));});
+test('Послематчевый отчёт сохраняет основания выводов',()=>{const r=buildDocument('matchDebrief',{teamName:'Наши',opponent:'Гости',matrix:[['Партия','Счёт'],[1,'25:20']],notes:['Только записанные события']});assert.equal(r.personal,false);assert.match(docxEntries(r)['word/document.xml'],/Только записанные события/);assert.match(docxEntries(r)['word/document.xml'],/Для внутренней работы тренера/);});

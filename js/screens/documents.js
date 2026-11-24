@@ -5,6 +5,8 @@ import * as M from '../model.js';
 import * as W from '../workbench.js';
 import * as T from '../tournaments.js';
 import {testHistory,summarizeTests} from '../coach-tests.js';
+import {assignmentOverview,checklistLabels} from '../school-tools.js';
+import {matchDebrief,matchTactics} from '../match-tactics.js';
 import {documentTypes,buildDocument,makeDocx,documentWorkbook,documentColumnWidths} from '../documents.js';
 import {readPresets,savePreset,removePreset,normalizePreset} from '../document-presets.js';
 import {el,openSheet,closeSheet,toast,confirmDialog,downloadBlob} from '../ui.js';
@@ -37,17 +39,20 @@ export function openDocumentPreview(report,back=closeSheet){
 export async function openDocuments(defaultType='lesson'){
  try{
   if(!Object.hasOwn(documentTypes,defaultType))defaultType='lesson';
-  const [plans,coach,tournaments]=await Promise.all([W.listWork('plan'),C.loadCoach(),W.listWork('tournament')]);
+  const [plans,coach,tournaments,assignments]=await Promise.all([W.listWork('plan'),C.loadCoach(),W.listWork('tournament'),W.listWork('normAssignment')]);
   const type=select(Object.entries(documentTypes),defaultType),title=input(documentTypes[defaultType]),organization=input(),author=input(),date=input(M.todayIso(),'date'),venue=input(),audience=input(),additional=area(),rules=area(),conclusion=area(),signature=el('input',{type:'checkbox'});signature.checked=true;
   const signatureLabel=input('Ответственный','text',{maxlength:100});
   function applyPreset(){const preset=normalizePreset(readPresets()[type.value]);title.value=preset.title||documentTypes[type.value];organization.value=preset.organization;venue.value=preset.venue;signature.checked=preset.signatures;signatureLabel.value=preset.signatureLabel;}
   applyPreset();
   const cls=select(S.state.classes.map(c=>[c.id,c.name]),S.state.currentClassId),period=select(S.state.settings.trimesters.map(t=>[t.id,M.fmtFull(t.from)+' — '+M.fmtFull(t.to)]),S.currentTrimester()?.id),plan=select([]),team=select(coach.coachTeams.map(t=>[t.id,t.name])),player=select([]),tournament=select(tournaments.map(t=>[t.id,t.name])),from=input(S.state.settings.year.from,'date'),to=input(M.todayIso(),'date'),specific=el('div',{class:'coach-stack'}),roster=el('div',{class:'coach-stack'});
+  const includeNames=el('input',{type:'checkbox'}),match=select([]);
   let selectedPlayers=new Set();
-  function updateRoster(){const players=coach.coachPlayers.filter(p=>p.teamId===team.value&&!p.archived);player.replaceChildren(...players.map(p=>el('option',{value:p.id,text:p.name})));selectedPlayers=new Set();roster.replaceChildren(...players.map(p=>{const n=el('input',{type:'checkbox'});n.onchange=()=>{if(n.checked)selectedPlayers.add(p.id);else selectedPlayers.delete(p.id);};return field(p.name,n);}));}
+  function updateRoster(){const players=coach.coachPlayers.filter(p=>p.teamId===team.value&&!p.archived);player.replaceChildren(...players.map(p=>el('option',{value:p.id,text:p.name})));selectedPlayers=new Set();match.replaceChildren(...coach.coachMatches.filter(m=>m.teamId===team.value&&m.detail).map(m=>el('option',{value:m.id,text:m.date+' · '+m.opponent})));roster.replaceChildren(...players.map(p=>{const n=el('input',{type:'checkbox'});n.onchange=()=>{if(n.checked)selectedPlayers.add(p.id);else selectedPlayers.delete(p.id);};return field(p.name,n);}));}
   function draw(){specific.replaceChildren();const k=type.value;
    if(['lesson','training','event'].includes(k)){const list=plans.filter(p=>k==='event'||p.context===(k==='training'?'coach':'school'));plan.replaceChildren(...list.map(p=>el('option',{value:p.id,text:p.name})));specific.append(field('Конспект-основа',plan),field('Дополнение к цели / организации',additional),k==='event'?field('Правила и организационные условия',rules):el('span',{text:''}));}
    else if(['classReport','ktp','norms'].includes(k))specific.append(field('Класс',cls),field('Учебный период',period));
+   else if(k==='assignmentReport')specific.append(field('Класс',cls),field('Учебный период',period),field('Включить имена учеников (необязательно)',includeNames));
+   else if(k==='matchDebrief'){updateRoster();specific.append(field('Команда',team),field('Подробный матч',match));}
    else if(k==='tournament')specific.append(field('Соревнование',tournament));
    else{updateRoster();specific.append(field('Команда',team));if(k==='registration')specific.append(p('Отметьте только необходимых участников.'),roster,field('Дополнительные сведения',additional));else{if(k==='playerReport')specific.append(field('Игрок',player));specific.append(el('div',{class:'coach-columns'},[field('С',from),field('По',to)]));}}
   }
@@ -58,6 +63,14 @@ export async function openDocuments(defaultType='lesson'){
    else if(['classReport','ktp','norms'].includes(k)){
     const t=S.state.settings.trimesters.find(t=>t.id===period.value),c=S.state.classes.find(c=>c.id===cls.value);if(!t||!c)throw Error('Выберите класс и период');
     base.className=c.name;base.period=M.fmtFull(t.from)+' — '+M.fmtFull(t.to);base.matrix=A.reportMatrix(k==='classReport'?'class':k,A.schoolAnalytics(c.id,t.from,t.to));
+   }else if(k==='assignmentReport'){
+    const t=S.state.settings.trimesters.find(t=>t.id===period.value),c=S.state.classes.find(c=>c.id===cls.value),y=S.state.settings.year;if(!t||!c)throw Error('Выберите класс и период');
+    const chosen=assignments.filter(a=>a.classId===c.id&&a.yearFrom===y.from&&a.yearTo===y.to&&a.from<=t.to&&a.to>=t.from).map(a=>({a,v:assignmentOverview(S.state,a)})).filter(x=>x.v.state!=='unavailable');
+    if(!chosen.length)throw Error('Нет доступных назначений в выбранном периоде');
+    base.className=c.name;base.period=M.fmtFull(t.from)+' — '+M.fmtFull(t.to);base.includeNames=includeNames.checked;base.summary=['Назначений: '+chosen.length,'Включены назначения, пересекающиеся с выбранным периодом; результаты считаются по полному сроку каждого назначения.'];
+    base.matrix=includeNames.checked?[['Норматив','Срок','Ученик','Статус','Попыток'],...chosen.flatMap(({a,v})=>v.rows.map(r=>[a.name,a.from+' — '+a.to,r.student.fullName,checklistLabels[r.status],r.attempts]))]:[['Норматив','Срок','Выполнено','Нет / ниже цели','Проверить'],...chosen.map(({a,v})=>[a.name,a.from+' — '+a.to,v.done,v.pending,v.review])];
+   }else if(k==='matchDebrief'){
+    const m=coach.coachMatches.find(m=>m.id===match.value&&m.teamId===team.value&&m.detail);if(!m)throw Error('Выберите подробный матч');Object.assign(base,matchDebriefInput(m));
    }else if(k==='tournament'){
     const t=tournaments.find(t=>t.id===tournament.value);if(!t)throw Error('Выберите соревнование');
     const label=id=>t.teams.find(x=>x.id===id)?.name||'Участник определится';
@@ -86,4 +99,9 @@ export async function openDocuments(defaultType='lesson'){
   const form=stack([el('h2',{text:'Генератор документов'}),p('Локальные Word, Excel и печать. Измените заголовок, реквизиты и выводы. Сведения об ограничениях и личные заметки автоматически не включаются.'),field('Шаблон',type),field('Заголовок',title),field('Организация',organization),field('Ответственный',author),field('Дата',date),field('Место',venue),field('Группа / участники',audience),specific,field('Выводы / примечания',conclusion),field('Добавить поля подписей',signature),field('Название поля подписи',signatureLabel),p('Шаблоны сохраняют только заголовок, организацию, место и настройки подписи на этом устройстве. Не указывайте персональные данные в этих полях.'),btn('Сохранить реквизиты шаблона',async()=>{try{if(!await confirmDialog({title:'Сохранить шаблон на устройстве?',text:'Будут сохранены только общие реквизиты, не списки участников и не результаты.',ok:'Сохранить'}))return;savePreset(type.value,{title:title.value,organization:organization.value,venue:venue.value,signatures:signature.checked,signatureLabel:signatureLabel.value});toast('Шаблон сохранён');}catch(e){toast(e.message);}}),btn('Сбросить реквизиты шаблона',()=>{try{removePreset(type.value);applyPreset();toast('Реквизиты сброшены');}catch(e){toast(e.message);}}),btn('Предпросмотр',()=>{try{openDocumentPreview(build(),()=>openSheet(form));}catch(e){toast(e.message);}},'primary'),btn('Закрыть',closeSheet)]);
   openSheet(form);
  }catch(e){toast(e.message);}
+}
+
+export function matchDebriefInput(m){
+ const d=matchDebrief(m.detail),a=matchTactics(m.detail),pct=(n,k)=>n===null?'—':Math.round(n*10)/10+'% ('+k+' роз.)';
+ return {teamName:m.detail.teamName,opponent:m.opponent,period:M.fmtFull(m.date),summary:['Зафиксировано розыгрышей: '+d.rallies,'Причина указана: '+d.detailed+'/'+d.rallies],matrix:[['Партия','Счёт','На подаче','На приёме'],...a.sets.map(s=>[s.set,s.score.at(-1).ours+':'+s.score.at(-1).theirs,pct(s.serveRate,s.serve),pct(s.receiveRate,s.receive)])],notes:d.notes.map(n=>n.title+': '+n.text)};
 }

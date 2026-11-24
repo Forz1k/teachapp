@@ -1,5 +1,7 @@
 import {matchTactics,teamTactics,opponentHistory,matchDebrief} from '../match-tactics.js';
 import {fmtFull} from '../model.js';
+import {buildDocument} from '../documents.js';
+import {openDocumentPreview,matchDebriefInput} from './documents.js';
 import {metric} from '../dashboard.js';
 import {el,openSheet,closeSheet} from '../ui.js';
 const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{class:'btn wide '+kind,type:'button',text,onclick});
@@ -56,5 +58,5 @@ export function debriefCard(detail){
 }
 export function openMatchDebrief(match,back=closeSheet){
  if(!match.detail)return;
- openSheet(stack([el('h2',{text:'Итоги и план работы · '+match.opponent}),p(fmtFull(match.date)),debriefCard(match.detail),btn('Подробный тактический разбор',()=>openMatchTactics(match,()=>openMatchDebrief(match,back)),'primary'),btn('Закрыть',back)]));
+ openSheet(stack([el('h2',{text:'Итоги и план работы · '+match.opponent}),p(fmtFull(match.date)),debriefCard(match.detail),btn('Отчёт Word / Excel / PDF',()=>openDocumentPreview(buildDocument('matchDebrief',matchDebriefInput(match)),()=>openMatchDebrief(match,back))),btn('Подробный тактический разбор',()=>openMatchTactics(match,()=>openMatchDebrief(match,back)),'primary'),btn('Закрыть',back)]));
 }
