@@ -15,6 +15,7 @@ import {openTournaments} from './tournaments.js';
 import {openWorkCalendar} from './work-calendar.js';
 import {openArchive} from './school-archive.js';
 import {openLibrary} from './library.js';
+import {accents,readAccent,applyAccent,initializeDesign} from '../design.js';
 const { el, icon } = ui;
 
 export function renderSettings(root, ctx = {}) {
@@ -329,7 +330,10 @@ export function renderSettings(root, ctx = {}) {
         ctx.onChanged?.();
       },
     })));
-  themeBlock.append(themeSeg);
+  const accentSelect=el('select',{'aria-label':'Цвет оформления'},Object.entries(accents).map(([value,text])=>el('option',{value,text})));
+  accentSelect.value=readAccent(window.localStorage);
+  accentSelect.onchange=()=>applyAccent(accentSelect.value,document.documentElement,window.localStorage);
+  themeBlock.append(themeSeg,el('label',{class:'field',style:'margin:12px 16px'},[el('span',{text:'Акцент'}),accentSelect]));
   body.append(themeBlock);
 
   const aboutBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'О приложении' })]);
@@ -347,6 +351,7 @@ export function renderSettings(root, ctx = {}) {
 /** Применяет тему к документу. */
 export function applyTheme(theme) {
   const root = document.documentElement;
+  initializeDesign(root,window.localStorage);
   if (theme === 'auto') {
     root.removeAttribute('data-theme');
     const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -358,7 +363,7 @@ export function applyTheme(theme) {
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) {
     const dark = root.getAttribute('data-theme') === 'dark';
-    meta.setAttribute('content', dark ? '#0B0B0E' : '#F5F5F7');
+    meta.setAttribute('content', dark ? '#0D1422' : '#F4F6FA');
   }
 }
 

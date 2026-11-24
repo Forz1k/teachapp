@@ -1,0 +1,58 @@
+/* TeachApp Design System — layer after legacy layout. Local assets only. */
+:root {
+  color-scheme: light;
+  --bg:#F4F6FA; --card:#FFFFFF; --card-2:#F8FAFC;
+  --text:#111827; --text-2:#475569; --text-3:#64748B;
+  --sep:#DFE5ED; --sep-strong:#CBD5E1;
+  --accent:#315BD4; --accent-deep:#2448B3; --accent-soft:#E8EEFF; --accent-ink:#2448B3;
+  --radius-lg:22px; --radius:18px; --radius-sm:12px;
+  --shadow-1:0 1px 2px #18294a0a,0 4px 16px #18294a08;
+  --shadow-2:0 12px 36px #18294a24;
+  --shadow-sheet:0 -12px 48px #18294a26;
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;
+}
+[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0D1422;--card:#172132;--card-2:#1D293B;
+  --text:#F1F5F9;--text-2:#C0CCDC;--text-3:#9DAFC5;
+  --sep:#2C3A50;--sep-strong:#43546B;
+  --accent:#4066D6;--accent-deep:#A5BCFF;--accent-soft:#24365F;--accent-ink:#A5BCFF;
+  --shadow-1:0 1px 2px #0003;--shadow-2:0 12px 40px #0006;--shadow-sheet:0 -12px 48px #0007;
+}
+[data-workspace="coach"]:not([data-accent="orange"]){--accent:#6941C6;--accent-deep:#5730AA;--accent-soft:#F0EAFE;--accent-ink:#5730AA;}
+[data-theme="dark"][data-workspace="coach"]:not([data-accent="orange"]){--accent:#7148D0;--accent-deep:#D5C2FF;--accent-soft:#362655;--accent-ink:#D5C2FF;}
+[data-accent="orange"]{--accent:#B54A08;--accent-deep:#973A05;--accent-soft:#FFF0E3;--accent-ink:#973A05;}
+[data-theme="dark"][data-accent="orange"]{--accent:#AC4C0D;--accent-deep:#FFC08B;--accent-soft:#462D1C;--accent-ink:#FFC08B;}
+html,body{line-height:1.45}
+.topbar{background:var(--bg);border-bottom:1px solid var(--sep);padding:12px 16px;}
+.topbar h1{font-weight:750;letter-spacing:-.035em;}
+.topbar .subtitle{margin-top:3px;font-size:13px;line-height:1.45}
+.card-block,.class-card{border:1px solid var(--sep);box-shadow:var(--shadow-1);}
+.card-block .head{font-size:14px;letter-spacing:0;text-transform:none;color:var(--text);font-weight:700;}
+.btn{min-height:48px;min-width:0;padding:10px 16px;border:1px solid var(--sep);border-radius:13px;box-shadow:none;white-space:normal;overflow-wrap:anywhere;line-height:1.3;}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:none;}
+.btn.small,.icon-btn{min-height:44px;min-width:44px}
+.icon-btn{border:1px solid var(--sep);box-shadow:none;border-radius:12px;}
+.icon-btn.plain{border-color:transparent;}
+.btn.danger{color:var(--mark-2);border-color:var(--mark-2-bg);}
+.btn:active,.class-card:active{transform:scale(.985);}
+.chip{min-height:44px;display:inline-flex;align-items:center;border:1px solid var(--sep);box-shadow:none;}
+.chip.active{box-shadow:none;border-color:var(--accent);}
+.segmented{background:var(--card-2);border:1px solid var(--sep);padding:3px;border-radius:13px;}
+.segmented button{min-height:40px;white-space:normal;overflow-wrap:anywhere;}
+.segmented button.active{color:var(--accent-ink);box-shadow:0 1px 3px #0001;}
+.tab.active{color:var(--accent-ink);}
+.tab{color:var(--text-2);}
+input:not([type=checkbox]):not([type=radio]):not([type=file]),select,textarea{min-width:0;max-width:100%;font-size:16px;}
+input[type=time],input[type=password]{font:inherit;font-size:16px;background:var(--card-2);color:var(--text);border:1px solid var(--sep-strong);border-radius:12px;padding:10px;width:100%;min-height:44px;}
+input[type=checkbox],input[type=radio]{accent-color:var(--accent);}
+label.field>span{font-size:13px;color:var(--text-2);font-weight:650}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--accent-ink);outline-offset:3px;}
+.sheet{max-height:88vh;max-height:88dvh;border:1px solid var(--sep);border-bottom:0;border-radius:24px 24px 0 0;overscroll-behavior:contain;}
+.sheet h2{font-size:22px;letter-spacing:-.025em;line-height:1.25;}
+.sheet-backdrop{background:#08122280;}
+.coach-card,.analytics-card{min-width:0;}
+.coach-card p,.coach-form p,.analytics-card p{overflow-wrap:anywhere;}
+.privacy-bar .btn{min-height:44px;}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important;}}
+@media print{#teachapp-print-report{color:#111;background:#fff;}}
