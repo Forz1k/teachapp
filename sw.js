@@ -68,7 +68,7 @@ const PRECACHE = [
   './js/screens/match-protocol.js',
   './js/screens/lineup-picker.js',
   './js/screens/volleyball.js',
-  './js/privacy.js',
+  './js/privacy.js','./js/privacy-shield.js',
   './js/retention.js',
   './js/analytics.js',
   './js/screens/analytics.js',
