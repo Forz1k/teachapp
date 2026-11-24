@@ -89,7 +89,10 @@ export function openSheet(content, opts = {}) {
   ensureSheet();
   const revision = ++sheetRevision;
   onCloseCb = opts.onClose || null;
+  sheetEl.classList.toggle('sheet-full',opts.fullHeight===true);
+  sheetEl.classList.toggle('sheet-match',opts.match===true);
   sheetEl.innerHTML = '';
+  sheetEl.scrollTop=0;
   sheetEl.append(el('div', { class: 'grabber' }));
   if (typeof content === 'string') sheetEl.append(el('div', { html: content }));
   else sheetEl.append(content);
