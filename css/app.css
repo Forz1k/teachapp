@@ -995,3 +995,9 @@ body.privacy-covered {overflow:hidden;}
 .lesson-session .btn {min-height:44px;white-space:normal;}
 .lesson-session-row {display:grid;gap:8px;padding:12px;min-width:0;}
 .lesson-session input[type=checkbox] {min-width:24px;min-height:24px;}
+
+.team-generator,.team-gen-list,.team-gen-output,.team-gen-row {display:grid;gap:10px;min-width:0;}
+.team-gen-row {padding:12px;}
+.team-gen-row p,.team-gen-row h3 {margin:0;overflow-wrap:anywhere;}
+.team-generator .btn {min-height:44px;white-space:normal;}
+.team-generator input[type=checkbox] {min-width:24px;min-height:24px;}

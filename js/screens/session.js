@@ -6,6 +6,7 @@ import * as ui from '../ui.js';
 import {openParticipation} from './participation.js';
 import {editTags} from './health.js';
 import {batchTable} from './norm-batch.js';
+import {openSchoolTeams} from './team-generator.js';
 const {el,toast,openSheet}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
 const p=text=>el('p',{text});
@@ -61,6 +62,7 @@ export function showLessonSession(lessonId){
       needsReview?p('Содержание нагрузки требует проверки. Отсутствие совпадений не является допуском.'):p('Проверка по внесённым сведениям, не медицинский допуск.'));
     nav.replaceChildren(...Object.entries({attendance:'Явка',grades:'Оценки',participation:'Нагрузка',norms:'Нормативы',details:'Тема и завершение'}).map(([id,text])=>btn(text,()=>{mode=id;selected.clear();action=id==='grades'?'grade':'normal';draw();},mode===id?'primary':'')));
     body.replaceChildren();
+    if(mode==='attendance')body.append(btn('Генератор команд',()=>openSchoolTeams(lessonId,reopen),'wide'));
     if(mode==='details'){
       const topics=S.topicsForClass(lesson.classId),options=[['','Без темы'],...topics.map(t=>[t.id,t.name])];
       if(topic&&!topics.some(t=>t.id===topic.id))options.push([topic.id,topic.name+' (другой план)']);
