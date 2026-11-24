@@ -11,7 +11,7 @@ export function matchTactics(d,windowSize=5){
  if(!Number.isInteger(windowSize)||windowSize<1||windowSize>10)throw Error('Проверьте окно анализа');
  const s=replayDetailed(d),bySet=new Map(),rotations=Array.from({length:6},(_,i)=>({...blank(),position:i+1})),pairs=new Map(),six=new Map(),all=blank(),timeouts=[];
  for(const e of s.timeline){
-  if(!bySet.has(e.set))bySet.set(e.set,{set:e.set,events:[],rallies:[],score:[{rally:0,ours:0,theirs:0}],...blank(),maxLead:0,maxDeficit:0,maxRun:0,run:0});
+  if(!bySet.has(e.set))bySet.set(e.set,{set:e.set,events:[],rallyEvents:[],score:[{rally:0,ours:0,theirs:0}],...blank(),maxLead:0,maxDeficit:0,maxRun:0,run:0});
   const set=bySet.get(e.set);set.events.push(e);
   if(e.type!=='rally')continue;
   record(all,e);record(set,e);record(rotations[e.rotation.ours],e);
@@ -23,7 +23,7 @@ export function matchTactics(d,windowSize=5){
    }
   }
   const prev=set.score.at(-1),ours=prev.ours+Number(e.side==='ours'),theirs=prev.theirs+Number(e.side==='theirs');
-  set.rallies.push(e);set.score.push({rally:set.rallies.length,ours,theirs});
+  set.rallyEvents.push(e);set.score.push({rally:set.rallyEvents.length,ours,theirs});
   set.maxLead=Math.max(set.maxLead,ours-theirs);set.maxDeficit=Math.max(set.maxDeficit,theirs-ours);set.run=e.side==='ours'?set.run+1:0;set.maxRun=Math.max(set.maxRun,set.run);
  }
  const sets=[...bySet.values()].map(set=>{
@@ -31,12 +31,12 @@ export function matchTactics(d,windowSize=5){
   for(const e of set.events){
    if(e.type==='rally'){index++;continue;}
    if(e.type!=='timeout')continue;
-   const before=set.rallies.slice(Math.max(0,index-windowSize),index),after=set.rallies.slice(index,index+windowSize);
+   const before=set.rallyEvents.slice(Math.max(0,index-windowSize),index),after=set.rallyEvents.slice(index,index+windowSize);
    const result=a=>({won:a.filter(x=>x.side==='ours').length,total:a.length,rate:pct(a.filter(x=>x.side==='ours').length,a.length)});
    const a=result(before),b=result(after);
    timeouts.push({set:set.set,side:e.side,score:e.score,before:a,after:b,delta:a.total===windowSize&&b.total===windowSize?b.rate-a.rate:null});
   }
-  const {events,rallies,run,...summary}=set;
+  const {events,rallyEvents,run,...summary}=set;
   return finish(summary);
  });
  return {sets,overall:finish(all),rotations:rotations.map(finish),pairs:sortedRows(pairs,30),six:sortedRows(six,30),timeouts};
