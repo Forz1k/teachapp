@@ -1,3 +1,4 @@
+import {validateVideoReview} from './video-review.js';
 import {validateBriefing,validateGymBoard} from './methodical.js';
 import * as db from './db.js';
 import {uid,exemptionCovers} from './model.js';
@@ -30,6 +31,7 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='videoReview'){validateVideoReview(r);return;}
  if(r.kind==='briefing'){validateBriefing(r);return;}
  if(r.kind==='gymBoard'){validateGymBoard(r);return;}
  if(r.kind==='gradeHistory'){validateGradeHistory(r);return;}
@@ -56,7 +58,7 @@ export function validateWorkRecord(r){
 }
 export async function listWork(kind){return db.transaction(['workRecords'],'readonly',s=>s.workRecords.index('kind').getAll(kind));}
 export async function saveWork(input){
- require(['exercise','plan','event','rubric','normAssignment'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
+ require(['exercise','plan','event','rubric','normAssignment','videoReview'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
  const r=structuredClone({...input,id:input.id||uid(input.kind)});validateWorkRecord(r);
  return db.transaction(['workRecords'],'readwrite',async s=>{
   const old=await s.workRecords.get(r.id);require(!old||old.kind===r.kind,'Нельзя изменить тип записи');if(input.id)require(old,'Запись уже удалена');
