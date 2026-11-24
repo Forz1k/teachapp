@@ -32,7 +32,7 @@ export function makeScopedBackup(source,scope){
   for(const n of ['exemptions','activityRestrictions','monthly','finalGrades'])out[n]=data[n].filter(r=>pupils.has(r.studentId));
   out.studentHealthProfiles=data.studentHealthProfiles.filter(r=>pupils.has(r.id));
   out.activityCategories=data.activityCategories;
-  const norms=new Set(out.normResults.map(r=>r.normId));
+  const norms=new Set([...out.normResults.map(r=>r.normId),...data.workRecords.filter(r=>r.kind==='normAssignment'&&r.classId===id&&r.yearFrom===year.from&&r.yearTo===year.to).map(r=>r.normId)]);
   out.norms=data.norms.filter(n=>norms.has(n.id)||n.scales?.some(s=>s.classId===id)).map(n=>n.scales?{...n,scales:n.scales.filter(s=>s.classId==null||s.classId===id)}:n);
   out.schedule=data.schedule.filter(r=>r.classId===id);const rules=new Set(out.schedule.map(r=>r.id));
   out.scheduleOverrides=data.scheduleOverrides.filter(r=>{
@@ -40,7 +40,7 @@ export function makeScopedBackup(source,scope){
    const supported=r.action==='add'?r.classId===id:rules.has(r.ruleId)&&(!r.classId||r.classId===id||r.classId==='window');
    if(!supported)omitted++;return supported;
   });
-  out.workRecords=data.workRecords.filter(r=>r.kind==='gradeHistory'&&pupils.has(r.studentId)&&(r.scope==='final'||lessons.has(r.lessonId))||r.kind==='achievement'&&inYear(r.date,year)&&(r.subjectType==='class'&&r.subjectId===id||r.subjectType==='student'&&lineages.has(r.subjectId)));
+  out.workRecords=data.workRecords.filter(r=>r.kind==='normAssignment'&&r.classId===id&&r.yearFrom===year.from&&r.yearTo===year.to||r.kind==='gradeHistory'&&pupils.has(r.studentId)&&(r.scope==='final'||lessons.has(r.lessonId))||r.kind==='achievement'&&inYear(r.date,year)&&(r.subjectType==='class'&&r.subjectId===id||r.subjectType==='student'&&lineages.has(r.subjectId)));
  }else if(scope.kind==='team'){
   const team=data.coachTeams.find(t=>t.id===id);check(team,'Команда отсутствует в копии');out.coachTeams=[team];
   for(const n of ['coachPlayers','coachTrainings','coachMatches','coachLineups','coachLive','coachTests'])out[n]=data[n].filter(r=>r.teamId===id);
@@ -49,7 +49,7 @@ export function makeScopedBackup(source,scope){
  }else{
   const a=data.workRecords.find(r=>r.kind==='archive'&&r.id===id);check(a,'Архив отсутствует в копии');
   const pupils=new Set(a.snapshot.students.map(p=>p.id)),lineages=new Set(a.snapshot.students.map(lineageOf)),classes=new Set(a.snapshot.classes.map(c=>c.id)),lessons=new Set(a.snapshot.lessons.map(l=>l.id));
-  out.workRecords=[a,...data.workRecords.filter(r=>r.kind==='gradeHistory'&&pupils.has(r.studentId)&&(r.scope==='final'||lessons.has(r.lessonId))||r.kind==='achievement'&&inYear(r.date,a.year)&&(r.subjectType==='class'&&classes.has(r.subjectId)||r.subjectType==='student'&&lineages.has(r.subjectId)))];
+  out.workRecords=[a,...data.workRecords.filter(r=>r.kind==='normAssignment'&&classes.has(r.classId)&&r.yearFrom===a.year.from&&r.yearTo===a.year.to||r.kind==='gradeHistory'&&pupils.has(r.studentId)&&(r.scope==='final'||lessons.has(r.lessonId))||r.kind==='achievement'&&inYear(r.date,a.year)&&(r.subjectType==='class'&&classes.has(r.subjectId)||r.subjectType==='student'&&lineages.has(r.subjectId)))];
  }
  omitted+=source.scope?.omitted||0;
  const result={...payload(out),scope:{kind:scope.kind,id,omitted},createdAt:new Date().toISOString()};

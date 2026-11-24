@@ -56,3 +56,18 @@ export function scoreRubric(r,scores){
  const grade=String(r.thresholds.findLastIndex(v=>percent>=v)+1);
  return {sum,max,percent,grade};
 }
+
+/** Explicit teacher-defined assignment, independent of grades and medical clearance. */
+export function validateNormAssignment(r){
+ if(!exact(r,['id','kind','name','classId','normId','yearFrom','yearTo','from','to','targetGrade'])||r.kind!=='normAssignment'||![r.id,r.name,r.classId,r.normId].every(x=>text(x))||!H.validPeriod(r.yearFrom,r.yearTo)||!r.yearTo||!H.validPeriod(r.from,r.to)||!r.to||r.from<r.yearFrom||r.to>r.yearTo||r.targetGrade!==null&&![1,2,3,4,5].includes(r.targetGrade))throw Error('Проверьте назначение, учебный год, период и цель');
+ return r;
+}
+export function assignmentOverview(s,assignment,today=M.todayIso()){
+ const a=validateNormAssignment(assignment),year=s.settings.year;
+ if(a.yearFrom!==year.from||a.yearTo!==year.to)return {state:'archive',rows:[],pending:0,review:0,done:0};
+ if(!s.classes.some(c=>c.id===a.classId)||!s.norms.some(n=>n.id===a.normId))return {state:'unavailable',rows:[],pending:0,review:0,done:0};
+ const rows=normChecklist(s,{classId:a.classId,normId:a.normId,from:a.from,to:a.to,targetGrade:a.targetGrade,today});
+ const state=today<a.from?'upcoming':today>a.to?'closed':'active';
+ const pending=rows.filter(r=>['missing','retake'].includes(r.status)).length,review=rows.filter(r=>['review','noScale'].includes(r.status)).length,done=rows.filter(r=>r.status==='done').length;
+ return {state,rows,pending,review,done,overdue:state==='closed'?pending:0};
+}
