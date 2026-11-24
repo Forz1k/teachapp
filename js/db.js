@@ -4,7 +4,7 @@
    Индексы: по classId, studentId, lessonId, date — чтобы выборки были без полного скана. */
 
 const DB_NAME = 'teachapp';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 /** Список хранилищ и их индексы. Единственное место, где описана схема. */
 const STORES = {
@@ -41,6 +41,10 @@ const STORES = {
                  ['studentId', 'studentId'],
                  ['dateFrom', 'dateFrom'],
                ] },
+  participation: { keyPath: 'id', indexes: [
+    ['studentLesson', ['studentId', 'lessonId'], { unique: true }],
+    ['studentId', 'studentId'], ['lessonId', 'lessonId'], ['date', 'date'],
+  ] },
   monthly:   { keyPath: 'id', indexes: [
                  ['studentId', 'studentId'],
                  ['studentId_period', ['studentId', 'year', 'month'], { unique: true }],
@@ -67,6 +71,7 @@ function ensureSchema(db, transaction, schema) {
 // Следующие миграции выполняются внутри той же versionchange-транзакции.
 const migrations = {
   1() {}, // чистая установка продолжится миграцией 2
+  3(db, transaction) { ensureSchema(db, transaction, { participation: STORES.participation }); },
   2(db, transaction) { ensureSchema(db, transaction, STORES); },
 };
 
@@ -106,6 +111,10 @@ async function tx(storeNames, mode, fn) {
     let result;
     try {
       result = fn(stores, t);
+      if (result?.catch) result.catch(error => {
+        try { t.abort(); } catch { /* транзакция уже завершена */ }
+        reject(error);
+      });
     } catch (err) {
       t.abort();
       reject(err);

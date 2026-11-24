@@ -20,6 +20,7 @@ export const state = {
   marks: [],      // все отметки
   exemptions: [],
   monthly: [],
+  participation: [],
   // выбор пользователя
   currentClassId: null,
   currentTrimesterId: 't1',
@@ -56,7 +57,7 @@ export function notify() {
 
 /** Первичная загрузка всей базы в кэш. */
 export async function load() {
-  const [settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides, marks, exemptions, monthly] = await Promise.all([
+  const [settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides, marks, exemptions, monthly, participation] = await Promise.all([
     db.getAll('meta'),
     db.getAll('classes'),
     db.getAll('students'),
@@ -67,7 +68,7 @@ export async function load() {
     db.getAll('scheduleOverrides'),
     db.getAll('marks'),
     db.getAll('exemptions'),
-    db.getAll('monthly'),
+    db.getAll('monthly'), db.getAll('participation'),
   ]);
 
   state.settings = { ...M.defaultSettings(), ...(settingsArr.find((s) => s.id === 'settings') || {}) };
@@ -86,6 +87,7 @@ export async function load() {
   state.marks = marks;
   state.exemptions = exemptions;
   state.monthly = monthly;
+  state.participation = participation;
   state.lastBackupAt = state.settings.lastBackupAt || null;
 
   if (!state.currentClassId && state.classes.length) {
@@ -212,7 +214,9 @@ export async function deleteClass(id) {
   const exemptions = state.exemptions.filter((e) => studentIds.has(e.studentId));
   const monthly = state.monthly.filter((m) => studentIds.has(m.studentId));
 
-  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly'], 'readwrite', (s) => {
+  const records = state.participation.filter(p => studentIds.has(p.studentId) || lessonIds.has(p.lessonId));
+  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly', 'participation'], 'readwrite', (s) => {
+    for (const p of records) s.participation.delete(p.id);
     for (const m of marks) s.marks.delete(m.id);
     for (const l of lessons) s.lessons.delete(l.id);
     for (const st of students) s.students.delete(st.id);
@@ -232,6 +236,7 @@ export async function deleteClass(id) {
   state.monthly = state.monthly.filter((m) => !mmIds.has(m.id));
 
   if (state.currentClassId === id) state.currentClassId = state.classes[0]?.id || null;
+  state.participation = state.participation.filter(p => !records.includes(p));
   notify();
 }
 
@@ -263,7 +268,9 @@ export async function deleteStudent(id) {
   const marks = state.marks.filter((m) => m.studentId === id);
   const exemptions = state.exemptions.filter((e) => e.studentId === id);
   const monthly = state.monthly.filter((m) => m.studentId === id);
-  await db.transaction(['students', 'marks', 'exemptions', 'monthly'], 'readwrite', (s) => {
+  const records = state.participation.filter(p => p.studentId === id);
+  await db.transaction(['students', 'marks', 'exemptions', 'monthly', 'participation'], 'readwrite', (s) => {
+    for (const p of records) s.participation.delete(p.id);
     for (const m of marks) s.marks.delete(m.id);
     for (const e of exemptions) s.exemptions.delete(e.id);
     for (const mm of monthly) s.monthly.delete(mm.id);
@@ -274,6 +281,7 @@ export async function deleteStudent(id) {
   state.marks = state.marks.filter((m) => !ms.has(m.id));
   state.exemptions = state.exemptions.filter((e) => !exemptions.some((x) => x.id === e.id));
   state.monthly = state.monthly.filter((m) => !monthly.some((x) => x.id === m.id));
+  state.participation = state.participation.filter(p => !records.includes(p));
   notify();
 }
 
@@ -294,8 +302,14 @@ export async function addLesson(classId, dateIso, topicId = null, note = '') {
 export async function updateLesson(id, patch) {
   const lesson = state.lessons.find((l) => l.id === id);
   if (!lesson) return;
-  Object.assign(lesson, patch);
-  await db.put('lessons', lesson);
+  const next = { ...lesson, ...patch };
+  const records = state.participation.filter(p => p.lessonId === id && p.date !== next.date);
+  await db.transaction(['lessons', 'participation'], 'readwrite', async s => {
+    await s.lessons.put(next);
+    for (const p of records) await s.participation.put({ ...p, date: next.date });
+  });
+  Object.assign(lesson, next);
+  for (const p of records) p.date = next.date;
   state.lessons = M.sortLessons(state.lessons);
   notify();
 }
@@ -303,13 +317,16 @@ export async function updateLesson(id, patch) {
 /** Удаление урока вместе с его отметками. Требует подтверждения в UI. */
 export async function deleteLesson(id) {
   const marks = state.marks.filter((m) => m.lessonId === id);
-  await db.transaction(['lessons', 'marks'], 'readwrite', (s) => {
+  const records = state.participation.filter(p => p.lessonId === id);
+  await db.transaction(['lessons', 'marks', 'participation'], 'readwrite', (s) => {
+    for (const p of records) s.participation.delete(p.id);
     for (const m of marks) s.marks.delete(m.id);
     s.lessons.delete(id);
   });
   state.lessons = state.lessons.filter((l) => l.id !== id);
   const ids = new Set(marks.map((m) => m.id));
   state.marks = state.marks.filter((m) => !ids.has(m.id));
+  state.participation = state.participation.filter(p => !records.includes(p));
   notify();
 }
 
@@ -928,3 +945,61 @@ export async function clearDemo() {
 }
 
 export const hasDemo = () => state.classes.some((c) => c.isDemo);
+
+export const participationModes = {
+  normal: 'Обычная нагрузка',
+  adapted: 'Облегчённая нагрузка',
+  paused: 'Временно не выполняет упражнения',
+};
+
+/** Режим и основание относятся только к выбранной паре ученик/урок. */
+export async function saveParticipation(studentId, lessonId, input, expectedRevision) {
+  if (input && (!Object.hasOwn(participationModes, input.mode)
+      || !['none', 'parent', 'document'].includes(input.basis)
+      || (input.full && (input.basis !== 'document' || input.mode !== 'paused')))) {
+    throw new Error('Проверьте режим участия и основание освобождения');
+  }
+  const result = await db.transaction(['students','lessons','participation','marks','exemptions'], 'readwrite', async s => {
+    const [student, lesson, previous, mark, exemptions] = await Promise.all([
+      s.students.get(studentId), s.lessons.get(lessonId),
+      s.participation.index('studentLesson').get([studentId, lessonId]),
+      s.marks.index('lessonId_studentId').get([lessonId, studentId]),
+      s.exemptions.index('studentId').getAll(studentId),
+    ]);
+    if (!student || !lesson || student.classId !== lesson.classId) throw new Error('Ученик или урок недоступен');
+    if (expectedRevision !== undefined && (previous?.revision ?? null) !== expectedRevision) {
+      throw new Error('Запись изменилась. Откройте её повторно');
+    }
+    const id = previous?.id || M.uid('part');
+    let nextMark = mark;
+    const record = input ? { id, studentId, lessonId, date: lesson.date, mode: input.mode,
+      basis: input.basis, full: Boolean(input.full), revision: M.uid('rev') } : null;
+    if (record?.full) {
+      if (mark?.flag !== 'ОСВ' || mark.source === 'auto-osv') {
+        nextMark = { ...mark, id: mark?.id || M.uid('mk'), studentId, lessonId,
+          value: mark?.value ?? null, flag: 'ОСВ', source: 'participation', participationId: id,
+          previousFlag: mark?.flag ?? null, previousSource: mark?.source ?? null };
+      }
+      record.markId = nextMark.id;
+    } else if (mark?.source === 'participation' && mark.participationId === id) {
+      const { participationId, previousFlag, previousSource, ...rest } = mark;
+      const covered = exemptions.some(ex => M.exemptionCovers(ex, lesson.date));
+      if (covered) nextMark = { ...rest, source: rest.value ? 'manual' : 'auto-osv' };
+      else if (previousSource && previousSource !== 'auto-osv') {
+        nextMark = { ...rest, flag: previousFlag, source: previousSource };
+      } else nextMark = rest.value ? { ...rest, flag: null, source: 'manual' } : null;
+    }
+    if (nextMark !== mark) {
+      if (nextMark) await s.marks.put(nextMark);
+      else await s.marks.delete(mark.id);
+    }
+    if (record) await s.participation.put(record);
+    else if (previous) await s.participation.delete(previous.id);
+    return { previous, record, nextMark };
+  });
+  const other = row => row.studentId !== studentId || row.lessonId !== lessonId;
+  state.participation = state.participation.filter(other).concat(result.record || []);
+  state.marks = state.marks.filter(other).concat(result.nextMark || []);
+  notify();
+  return () => saveParticipation(studentId, lessonId, result.previous, result.record?.revision ?? null);
+}

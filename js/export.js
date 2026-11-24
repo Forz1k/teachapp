@@ -66,7 +66,7 @@ export function buildMonthlyBlock({ classId, settings }) {
 }
 
 /** Плоская таблица для «Моей школы»: одна запись на строку. */
-export function buildFlat({ classId, from, to }) {
+export function buildFlat({ classId, from, to, includeMonthly = true }) {
   const cls = store.state.classes.find((c) => c.id === classId);
   const className = cls ? cls.name : '';
   const students = store.studentsOfClass(classId);
@@ -89,6 +89,7 @@ export function buildFlat({ classId, from, to }) {
     }
   }
 
+  if (!includeMonthly) return rows;
   // Месячные — отдельными строками, дата = 1-е число месяца.
   for (const st of students) {
     for (const mm of store.state.monthly.filter((x) => x.studentId === st.id)) {
@@ -183,8 +184,7 @@ export function exportXlsxSummary({ classId, from, to, includeMonthly = true }) 
   const topics = buildTopicsSheet({ classId, from, to });
   XLSX.utils.book_append_sheet(wb, sheetFromMatrix(XLSX, topics), 'Темы уроков');
 
-  const monthly = buildMonthlyMatrix(classId);
-  XLSX.utils.book_append_sheet(wb, sheetFromMatrix(XLSX, monthly), 'Месячные');
+  if (includeMonthly) XLSX.utils.book_append_sheet(wb, sheetFromMatrix(XLSX, buildMonthlyMatrix(classId)), 'Месячные');
 
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const name = `Журнал_${cls ? cls.name : 'класс'}_${from}_${to}.xlsx`;
@@ -193,11 +193,11 @@ export function exportXlsxSummary({ classId, from, to, includeMonthly = true }) 
 }
 
 /** Плоская выгрузка для «Моей школы» — одна запись на строку, без объединений. */
-export function exportXlsxFlat({ classId, from, to }) {
+export function exportXlsxFlat({ classId, from, to, includeMonthly = true }) {
   if (!hasXlsx()) throw new Error('Модуль XLSX не загружен');
   const XLSX = window.XLSX;
   const wb = XLSX.utils.book_new();
-  const rows = buildFlat({ classId, from, to });
+  const rows = buildFlat({ classId, from, to, includeMonthly });
   const ws = sheetFromMatrix(XLSX, rows);
   XLSX.utils.book_append_sheet(wb, ws, 'Моя школа');
   const cls = store.state.classes.find((c) => c.id === classId);

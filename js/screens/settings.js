@@ -46,43 +46,6 @@ export function renderSettings(root, ctx = {}) {
   }
   body.append(trBlock);
 
-  /* ---------- правила М ---------- */
-  const rules = settings.rules;
-  const rulesBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Правила месячной отметки (М)' })]);
-
-  const modeSeg = el('div', { class: 'segmented', style: 'margin:12px 16px' },
-    [
-      { id: 'A', label: 'Округление' },
-      { id: 'B', label: 'Вес 2' },
-      { id: 'C', label: 'Банк' },
-    ].map((m) => el('button', {
-      type: 'button', class: rules.mode === m.id ? 'active' : '', text: m.label,
-      onclick: () => store.setRules({ mode: m.id }),
-    })));
-
-  const modeHelp = {
-    A: 'Обычное школьное округление: 4,5 → 5; 3,5 → 4.',
-    B: 'Средневзвешенное: оценка с пометкой «вес 2» (контрольный норматив) считается дважды.',
-    C: 'Строгое среднее с банком: округление к ближайшему целому, ровно ,5 — в пользу ученика.',
-  }[rules.mode] || '';
-
-  rulesBlock.append(
-    el('div', { style: 'padding:0 16px 4px;font-size:13px;color:var(--text-2)', text: 'Режим подсчёта' }),
-    modeSeg,
-    el('div', { style: 'padding:0 16px 12px;font-size:13px;color:var(--text-3);line-height:1.45', text: modeHelp }),
-  );
-
-  const capSwitch = el('button', {
-    type: 'button', class: `switch ${rules.capAt3OnBad ? 'on' : ''}`, role: 'switch',
-    'aria-checked': String(rules.capAt3OnBad),
-    onclick: () => store.setRules({ capAt3OnBad: !rules.capAt3OnBad }),
-  });
-  rulesBlock.append(el('div', { class: 'row-item' }, [
-    el('div', { class: 'label', text: 'Не выводить М выше 3, если в месяце есть 1 или 2' }),
-    capSwitch,
-  ]));
-  body.append(rulesBlock);
-
   /* ---------- классы ---------- */
   const clsBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Классы' })]);
   for (const cls of store.state.classes) {
@@ -523,7 +486,7 @@ export function openExportSheet(presetClassId = null) {
   ]);
 
   const actions = el('div', { class: 'actions' });
-  const params = () => ({ classId: classSelect.value, from: fromInput.value, to: toInput.value });
+  const params = () => ({ includeMonthly: false, classId: classSelect.value, from: fromInput.value, to: toInput.value });
 
   actions.append(el('button', {
     class: 'btn primary wide', type: 'button', text: 'Скопировать как TSV (для Google Таблиц)',

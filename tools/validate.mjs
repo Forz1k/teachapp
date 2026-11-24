@@ -45,7 +45,7 @@ console.log('\nСинтаксис модулей:');
 const modules = [
   'js/app.js', 'js/db.js', 'js/model.js', 'js/store.js', 'js/ui.js', 'js/export.js', 'js/demo.js',
   'js/screens/classes.js', 'js/screens/journal.js', 'js/screens/monthly.js',
-  'js/screens/exemptions.js', 'js/screens/lesson.js', 'js/screens/settings.js',
+  'js/screens/participation.js', 'js/screens/exemptions.js', 'js/screens/lesson.js', 'js/screens/settings.js',
   'js/screens/schedule.js', 'js/screens/ktp.js', 'js/version.js', 'sw.js',
 ];
 for (const m of modules) {

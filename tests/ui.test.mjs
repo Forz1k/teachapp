@@ -154,7 +154,7 @@ test('тап по ячейке открывает шторку с кнопкам
   const buttons = [...sheet.querySelectorAll('.sheet-buttons button')];
   // 5 оценок + ОСВ + Н + М + очистка = 9 кнопок
   assert.equal(buttons.length, 9, '9 кнопок в шторке');
-  assert.deepEqual(buttons.map((b) => b.textContent), ['5', '4', '3', '2', '1', 'ОСВ', 'Н', 'М', '✕']);
+  assert.deepEqual(buttons.map((b) => b.textContent), ['5', '4', '3', '2', '1', 'ОСВ', 'Н', 'Нагрузка', '✕']);
 
   const five = buttons.find((b) => b.textContent === '5');
   five.click();
@@ -241,7 +241,7 @@ test('настройки показывают все разделы', async () =
   renderSettings(screen, {});
 
   const text = screen.textContent;
-  for (const label of ['Учебный год', 'Триместры', 'Правила месячной отметки', 'Классы', 'Импорт', 'Экспорт', 'Резервная копия', 'Демонстрационные данные']) {
+  for (const label of ['Учебный год', 'Триместры', 'Классы', 'Импорт', 'Экспорт', 'Резервная копия', 'Демонстрационные данные']) {
     assert.ok(text.includes(label), `раздел «${label}» есть`);
   }
 });
@@ -324,4 +324,30 @@ test('импорт: дубликаты ФИО обнаруживаются', () 
 /* Закрываем окружение */
 test.after(() => {
   dom.window.close();
+});
+
+test('Участие: история по ученику и сохранение записки из формы урока', async () => {
+  const { cls, a, l1, l2 } = await seed();
+  const { renderParticipation, openParticipation } = await import('../js/screens/participation.js');
+  await store.updateLesson(l1.id, { date: '2020-11-10' });
+  await store.updateLesson(l2.id, { date: '2020-11-12' });
+  openParticipation(a.id, l1.id);
+  const sheet = doc.querySelector('#sheet') || doc.querySelector('.sheet');
+  const [mode, basis] = sheet.querySelectorAll('select');
+  mode.value = 'adapted';
+  basis.value = 'parent';
+  basis.dispatchEvent(new window.Event('change'));
+  assert.equal(sheet.querySelector('input[type=checkbox]').closest('label').hidden, true);
+  [...sheet.querySelectorAll('button')].find(b => b.textContent === 'Сохранить').click();
+  await tick();
+  assert.equal(store.state.participation[0].basis, 'parent');
+  assert.equal(store.state.marks.find(m => m.studentId === a.id).flag, null);
+  const screen = doc.createElement('div');
+  renderParticipation(screen, cls.id);
+  const dates = screen.querySelectorAll('input[type=date]');
+  dates[0].value = '2020-11-01';
+  dates[1].value = '2020-11-30';
+  dates[1].dispatchEvent(new window.Event('change'));
+  assert.match(screen.textContent, /Родительские записки: 1/);
+  assert.match(screen.textContent, /Не отмечено: 1/);
 });

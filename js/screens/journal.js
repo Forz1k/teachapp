@@ -227,10 +227,10 @@ export function openMarkSheet(studentId, lessonId, classId) {
       onclick: () => handleAbsent(student, lesson, exemption, existing),
     }),
     el('button', {
-      type: 'button', class: 'm small-label', text: 'М',
+      type: 'button', class: 'm small-label', text: 'Нагрузка',
       onclick: () => {
         ui.closeSheet();
-        import('./monthly.js').then((m) => m.openMonthlySheet(studentId, M.yearOf(lesson.date), M.monthOf(lesson.date), classId));
+        import('./participation.js').then(m => m.openParticipation(studentId, lesson.id));
       },
     }),
     el('button', {
@@ -653,10 +653,13 @@ export function openQuickEntrySheet(classId, initialDate) {
         onclick: () => set(null, 'ОСВ'),
       }));
       btns.append(el('button', {
-        type: 'button', class: 'm small-label', text: 'М',
-        onclick: () => {
-          ui.closeSheet();
-          import('./monthly.js').then((m) => m.openMonthlySheet(st.id, M.yearOf(currentDate), M.monthOf(currentDate), classId));
+        type: 'button', class: 'm small-label', text: 'Нагрузка',
+        onclick: async () => {
+          try {
+            if (!lesson) lesson = await ensureLesson();
+            const m = await import('./participation.js');
+            m.openParticipation(st.id, lesson.id);
+          } catch { ui.toast('Не удалось открыть урок'); }
         },
       }));
       btns.append(el('button', {

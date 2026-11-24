@@ -4,7 +4,7 @@ import * as store from './store.js';
 import * as ui from './ui.js';
 import { renderClasses } from './screens/classes.js';
 import { renderJournal } from './screens/journal.js';
-import { renderMonthly } from './screens/monthly.js';
+import { renderParticipation } from './screens/participation.js';
 import { renderExemptionsInto } from './screens/exemptions.js';
 import { renderSchedule } from './screens/schedule.js';
 import { renderSettings, applyTheme, openExportSheet } from './screens/settings.js';
@@ -66,8 +66,8 @@ function renderJournalScreen(screen) {
       onOpenExemptions: (id) => { store.state.classSubtab = 'exemptions'; render(); },
       onOpenLessonPlanner: (id) => import('./screens/lesson.js').then((m) => m.openLessonPlanner(id)),
     });
-  } else if (subtab === 'monthly') {
-    renderMonthly(screen, classId, {
+  } else if (subtab === 'participation') {
+    renderParticipation(screen, classId, {
       onBack: () => { store.state.classSubtab = 'journal'; render(); },
       onChanged: render,
     });
@@ -91,7 +91,7 @@ function renderJournalScreen(screen) {
     style: 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--tabbar) + var(--safe-b) + 12px);z-index:35;display:flex;gap:4px;padding:4px;border-radius:999px;background:color-mix(in srgb, var(--card) 94%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-2)',
   }, [
     ['journal', 'Журнал'],
-    ['monthly', 'Месячные'],
+    ['participation', 'Участие'],
     ['exemptions', 'Освобождения'],
   ].map(([id, label]) => el('button', {
     type: 'button',
