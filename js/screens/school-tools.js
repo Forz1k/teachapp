@@ -2,7 +2,7 @@ import {saveStudentGoal} from '../student-goals.js';
 import * as S from '../store.js';
 import * as W from '../workbench.js';
 import * as M from '../model.js';
-import {physicalPassport,normChecklist,checklistLabels,scoreRubric,assignmentOverview} from '../school-tools.js';
+import {physicalPassport,normChecklist,checklistLabels,scoreRubric,assignmentOverview,lineageOf,schoolDebtRows} from '../school-tools.js';
 import {trendChart,metric} from '../dashboard.js';
 import {el,openSheet,closeSheet,toast,confirmDialog} from '../ui.js';
 const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
@@ -77,13 +77,29 @@ export async function openStudentPortfolio(id,back=closeSheet){
  try{
   const pupil=S.state.students.find(s=>s.id===id);if(!pupil)return toast('Ученик недоступен');
   const [goals,achievements,archives]=await Promise.all(['studentGoal','achievement','archive'].map(W.listWork));const passport=physicalPassport(S.state,archives,id);
-  const own=goals.filter(g=>g.studentId===id).sort((a,b)=>b.from.localeCompare(a.from)),awards=achievements.filter(a=>a.subjectType==='student'&&a.subjectId===id);
+  const own=goals.filter(g=>g.studentId===lineageOf(pupil)).sort((a,b)=>b.from.localeCompare(a.from)),awards=achievements.filter(a=>a.subjectType==='student'&&a.subjectId===lineageOf(pupil));
   const reload=()=>openStudentPortfolio(id,back);
   const form=g=>{
    const title=input(g?.name||''),from=input(g?.from||M.todayIso(),'date'),to=input(g?.to||M.todayIso(),'date'),target=input(g?.target||''),status=select(Object.entries(goalLabels),g?.status||'planned'),note=el('textarea',{rows:3,maxlength:2000},[g?.note||'']);
-   openSheet(stack([el('h2',{text:g?'Изменить индивидуальную цель':'Новая индивидуальная цель'}),p('Цель не назначает нагрузку и не изменяет оценки. Проверьте ограничения и возможность участия.'),field('Цель',title),field('Начало',from),field('Срок',to),field('Критерий достижения',target),field('Подтверждённый статус',status),field('Заметка учителя',note),btn('Сохранить',async()=>{try{await saveStudentGoal({...(g?{id:g.id}:{}),studentId:id,name:title.value.trim(),from:from.value,to:to.value,target:target.value.trim(),status:status.value,note:note.value});reload();}catch(e){toast(e.message);}},'primary'),btn('Назад',reload)]));
+   openSheet(stack([el('h2',{text:g?'Изменить индивидуальную цель':'Новая индивидуальная цель'}),p('Цель не назначает нагрузку и не изменяет оценки. Проверьте ограничения и возможность участия.'),field('Цель',title),field('Начало',from),field('Срок',to),field('Критерий достижения',target),field('Подтверждённый статус',status),field('Заметка учителя',note),btn('Сохранить',async()=>{try{await saveStudentGoal({...(g?{id:g.id}:{}),studentId:lineageOf(pupil),name:title.value.trim(),from:from.value,to:to.value,target:target.value.trim(),status:status.value,note:note.value});reload();}catch(e){toast(e.message);}},'primary'),btn('Назад',reload)]));
   };
   const body=stack([el('h2',{text:'Портфолио · '+pupil.fullName}),p('Приватная сводка: подтверждённые записи, без публичной публикации.'),btn('+ Индивидуальная цель',()=>form(null),'primary'),...own.map(g=>card(g.name,[p(g.from+' — '+g.to+' · '+goalLabels[g.status]),p(g.target),g.note?p(g.note):null,btn('Изменить',()=>form(g)),btn('Удалить',async()=>{if(!await confirmDialog({title:'Удалить цель?',text:'Результаты, оценки и достижения не изменятся.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(g.id,'studentGoal');reload();}catch(e){toast(e.message);}})])),card('Достижения',awards.length?awards.map(a=>p(a.date+' · '+a.title)): [p('Нет записей о достижениях')]),card('Физическая подготовка',passport?.groups?.length?passport.groups.map(g=>p(g.name+' · лучший '+(g.best??'—')+' '+g.unit+' · последний '+(g.last??'—')+' '+g.unit)):[p('Нет результатов')]),btn('Открыть историю подготовки',()=>openPassport(id,back)),btn('Назад',back)]);
   openSheet(body);
+ }catch(e){toast(e.message);}
+}
+
+export async function openDebtCenter(back=closeSheet){
+ try{
+  const rows=schoolDebtRows(S.state,await W.listWork('normAssignment'));
+  const cls=select([['','Все классы'],...S.state.classes.map(c=>[c.id,c.name])],'');
+  const norm=select([['','Все нормативы'],...S.state.norms.map(n=>[n.id,n.name])],'');
+  const status=select([['','Все причины'],['overdue','Просроченные (без медицинского заключения)'],...Object.entries(checklistLabels).filter(([k])=>k!=='done')],'');
+  const period=select([['','Весь год'],...S.state.settings.trimesters.map(t=>[t.id,t.name||t.kind])],'');
+  const result=el('div'),summary=p('');
+  const visible=()=>rows.filter(r=>(!cls.value||r.classId===cls.value)&&(!norm.value||r.normId===norm.value)&&(!status.value||(status.value==='overdue'?r.overdue:r.status===status.value))&&(!period.value||S.state.settings.trimesters.some(t=>t.id===period.value&&r.from<=t.to&&r.to>=t.from)));
+  const refresh=()=>{const list=visible();summary.textContent='Назначений × учеников: '+list.length+'; просрочено: '+list.filter(r=>r.overdue).length+'; требуют проверки: '+list.filter(r=>r.review||r.status==='noScale').length;result.replaceChildren(...list.slice(0,300).map(r=>card(r.studentName+' · '+r.className,[p(r.normName+' · '+r.from+' — '+r.to),p(checklistLabels[r.status]+(r.overdue?' · срок прошёл':'')),p('Попыток с результатом: '+r.attempts),r.review?p('Есть основание для проверки допустимости нагрузки.'):null])),list.length>300?p('Показаны первые 300 записей. Уточните фильтр или сформируйте полный документ.'):null,list.length?null:p('Нет записей по этим фильтрам.'));};
+  for(const n of [cls,norm,status,period])n.onchange=refresh;
+  const report=async()=>{const {openDocumentPreview}=await import('./documents.js');openDocumentPreview({title:'Контроль выполнения назначенных нормативов',personal:true,sections:[{heading:'Записи для проверки',paragraphs:['Нет результата не означает автоматически задолженность по медицинским основаниям. Решение о допуске принимает учитель.'],matrix:[['Класс','Ученик','Норматив','Срок','Статус','Попыток'],...visible().map(r=>[r.className,r.studentName,r.normName,r.to,checklistLabels[r.status]+(r.overdue?' · срок прошёл':''),r.attempts])]}]},()=>openDebtCenter(back));};
+  openSheet(stack([el('h2',{text:'Центр задолженностей'}),p('Только назначенные нормативы текущего учебного года. Ограничения и отсутствующие шкалы вынесены в отдельные причины; оценка и допуск автоматически не меняются.'),field('Класс',cls),field('Норматив',norm),field('Причина',status),field('Период',period),summary,btn('Предпросмотр ведомости',report,'primary'),result,btn('Назад',back)]),{fullHeight:true});refresh();
  }catch(e){toast(e.message);}
 }

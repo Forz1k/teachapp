@@ -71,3 +71,15 @@ export function assignmentOverview(s,assignment,today=M.todayIso()){
  const pending=rows.filter(r=>['missing','retake'].includes(r.status)).length,review=rows.filter(r=>['review','noScale'].includes(r.status)).length,done=rows.filter(r=>r.status==='done').length;
  return {state,rows,pending,review,done,overdue:state==='closed'?pending:0};
 }
+
+// Each row is a student × assignment, not a unique student or a medical diagnosis.
+export function schoolDebtRows(s,assignments,today=M.todayIso()){
+ const out=[];
+ for(const a of assignments){
+  const o=assignmentOverview(s,a,today);
+  if(!['active','closed'].includes(o.state))continue;
+  const cls=s.classes.find(c=>c.id===a.classId),norm=s.norms.find(n=>n.id===a.normId);
+  for(const r of o.rows)if(r.status!=='done')out.push({assignmentId:a.id,classId:a.classId,className:cls.name,normId:a.normId,normName:norm.name,studentId:r.student.id,studentName:r.student.fullName,from:a.from,to:a.to,status:r.status,review:r.review,attempts:r.attempts,overdue:o.state==='closed'&&['missing','retake'].includes(r.status)});
+ }
+ return out.sort((a,b)=>Number(b.overdue)-Number(a.overdue)||a.to.localeCompare(b.to)||a.className.localeCompare(b.className,'ru')||a.studentName.localeCompare(b.studentName,'ru'));
+}
