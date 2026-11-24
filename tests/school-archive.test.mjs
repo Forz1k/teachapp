@@ -1,0 +1,25 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as S from '../js/store.js';
+import * as db from '../js/db.js';
+import * as C from '../js/coach.js';
+import * as A from '../js/school-archive.js';
+import * as W from '../js/workbench.js';
+test('Архив: атомарный перевод, старые оценки и отдельный режим тренера',async()=>{
+ await db.clearAll();await S.load();
+ await S.setYear('2024-09-01','2025-05-31');
+ const cls=await S.addClass('7А'),p=await S.addStudent(cls.id,'Тест',1,'girls'),graduate=await S.addClass('11Б');await S.addStudent(graduate.id,'Выпускник',1);
+ const l=await S.addLesson(cls.id,'2025-01-01');await S.setMark(p.id,l.id,{value:'5'});
+ await C.saveTeam({name:'Команда'});
+ const data=await A.readSchool(),preview=A.archivePreview(data),transfers=[{id:cls.id,name:'8А',gradeLevel:8},{id:graduate.id,name:'',gradeLevel:null}],year={from:'2025-09-01',to:'2026-05-31'};
+ assert.equal(A.suggestClassName(cls),'8А');
+ await assert.rejects(A.rollSchoolYear({year,transfers,kind:'quarter',expected:'stale',confirmed:true}),/изменились/);
+ assert.equal((await W.listWork('archive')).length,0);
+ const result=await A.rollSchoolYear({year,transfers,kind:'quarter',expected:preview.token,confirmed:true});
+ assert.equal(result.students,1);assert.equal(S.state.classes[0].name,'8А');assert.equal(S.state.marks.length,0);assert.notEqual(S.state.students[0].id,p.id);assert.equal(S.state.students[0].normGroup,'girls');
+ assert.equal(A.archiveClass(result.record,cls.id).students[0].marks[0].value,'5');
+ assert.equal((await C.loadCoach()).coachTeams.length,1);
+ const backup=await S.makeBackup();await S.restoreBackup(backup);assert.equal((await W.listWork('archive')).length,1);
+ const broken=structuredClone(backup);broken.data.workRecords.find(x=>x.kind==='archive').snapshot.marks[0].lessonId='missing';await assert.rejects(S.restoreBackup(broken));assert.equal(S.state.classes[0].name,'8А');
+});

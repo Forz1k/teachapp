@@ -11,6 +11,7 @@ import * as ui from '../ui.js';
 import * as exporter from '../export.js';
 import { seedDemo } from '../demo.js';
 
+import {openArchive} from './school-archive.js';
 import {openLibrary} from './library.js';
 const { el, icon } = ui;
 
@@ -37,6 +38,7 @@ export function renderSettings(root, ctx = {}) {
     el('label', { class: 'field' }, [el('span', { text: 'Начало' }), yearFrom]),
     el('label', { class: 'field', style: 'margin-bottom:0' }, [el('span', { text: 'Окончание' }), yearTo]),
   ]));
+  yearBlock.append(el('button',{type:'button',class:'btn wide',text:'Архив и перевод классов',onclick:()=>openArchive(ctx.onChanged)}));
   body.append(yearBlock);
 
   const trBlock=el('div',{class:'card-block'},[el('div',{class:'head',text:'Учебные периоды · Триместры / Четверти / Полугодия'})]);
