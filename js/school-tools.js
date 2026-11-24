@@ -1,0 +1,58 @@
+import * as M from './model.js';
+import * as H from './health.js';
+import {selectNormScale} from './assessment.js';
+const text=(s,max=200)=>typeof s==='string'&&s.trim().length>0&&s.length<=max;
+const exact=(o,keys)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).every(k=>keys.includes(k));
+export function lineageOf(student){return student.lineageId||student.id;}
+export function normSeriesKey(r){const d=r.definition;return JSON.stringify([r.normId,d.activityId,d.unit,d.direction]);}
+export function physicalPassport(current,archives,studentId){
+ const pupil=current.students.find(s=>s.id===studentId);if(!pupil)return null;
+ const identity=lineageOf(pupil),years=[],series=new Map();
+ const add=(data,year,archived)=>{
+  const candidates=data.students.filter(s=>lineageOf(s)===identity);
+  if(candidates.length!==1)return;
+  const s=candidates[0],cls=data.classes.find(c=>c.id===s.classId),results=data.normResults.filter(r=>r.studentId===s.id&&r.status==='done');
+  years.push({year,archived,className:cls?.name||'',count:results.length});
+  for(const r of results){
+   const key=normSeriesKey(r);if(!series.has(key))series.set(key,{key,name:r.definition.name,unit:r.definition.unit,direction:r.definition.direction,history:[]});
+   series.get(key).history.push({id:r.id,date:r.date,value:r.value,grade:r.grade,scope:r.definition.scaleScope?.label||'',className:cls?.name||'',year,archived,basisRecorded:!!r.basis});
+  }
+ };
+ for(const a of archives||[])add(a.snapshot,a.year,true);
+ add(current,current.settings.year,false);
+ years.sort((a,b)=>a.year.from.localeCompare(b.year.from));
+ const groups=[...series.values()].map(g=>{
+  g.history.sort((a,b)=>a.date.localeCompare(b.date)||a.id.localeCompare(b.id));
+  // Adapted/basis-recorded results are visible but do not enter records/trends.
+  const comparable=g.history.filter(r=>!r.basisRecorded),values=comparable.map(r=>r.value);
+  return {...g,first:values[0]??null,last:values.at(-1)??null,best:values.length?(g.direction==='min'?Math.min(...values):Math.max(...values)):null,comparable};
+ });
+ return {pupil,years,groups};
+}
+export function normChecklist(s,{classId,normId,from,to,targetGrade=null,today=M.todayIso()}){
+ const cls=s.classes.find(c=>c.id===classId),norm=s.norms.find(n=>n.id===normId);
+ if(!cls||!norm||!H.validPeriod(from,to)||!to||targetGrade!==null&&![1,2,3,4,5].includes(targetGrade))throw Error('Выберите класс, норматив и период');
+ const pupils=s.students.filter(p=>p.classId===classId),byId=new Map(pupils.map(p=>[p.id,[]]));
+ for(const r of s.normResults)if(r.normId===normId&&byId.has(r.studentId)&&M.inRange(r.date,from,to)&&r.date<=today)byId.get(r.studentId).push(r);
+ const activities=[...H.catalog,...s.activityCategories],matches=H.checkLessonRestrictions({lesson:{classId,date:today,activityIds:[norm.activityId,'test'],activitiesConfirmed:true},activities,students:pupils,restrictions:s.activityRestrictions}).matches;
+ return pupils.map(student=>{
+  const history=byId.get(student.id),results=history.filter(r=>r.status==='done'),scale=selectNormScale(norm,cls,student);
+  const meets=results.some(r=>targetGrade===null||r.grade!=null&&Number(r.grade)>=targetGrade);
+  const active=s.exemptions.some(e=>e.studentId===student.id&&M.exemptionCovers(e,today))||matches.some(m=>m.studentId===student.id);
+  const restricted=history.some(r=>r.status==='restricted');
+  const status=meets?'done':active?'review':restricted&&!results.length?'review':!scale&&targetGrade!==null?'noScale':results.length?'retake':'missing';
+  return {student,status,attempts:results.length,last:results.slice().sort((a,b)=>b.date.localeCompare(a.date))[0]||null,review:active||restricted};
+ });
+}
+export const checklistLabels={done:'Выполнен',review:'Проверить ограничения / основание',noScale:'Нет подходящей шкалы',retake:'Результат ниже выбранной цели',missing:'Нет результата за период'};
+export function validateRubric(r){
+ if(!exact(r,['id','kind','name','criteria','thresholds'])||r.kind!=='rubric'||!text(r.id)||!text(r.name)||!Array.isArray(r.criteria)||!r.criteria.length||r.criteria.length>12||r.criteria.some(c=>!exact(c,['name','max','description'])||!text(c.name)||!Number.isInteger(c.max)||c.max<1||c.max>100||typeof c.description!=='string'||c.description.length>1000)||new Set(r.criteria.map(c=>c.name.trim().toLowerCase())).size!==r.criteria.length||!Array.isArray(r.thresholds)||r.thresholds.length!==5||r.thresholds.some((v,i)=>!Number.isFinite(v)||v<0||v>100||i>0&&v<=r.thresholds[i-1])||r.thresholds[0]!==0)throw Error('Проверьте критерии и пять возрастающих порогов (первый — 0%)');
+ return r;
+}
+export function scoreRubric(r,scores){
+ validateRubric(r);
+ if(!Array.isArray(scores)||scores.length!==r.criteria.length||scores.some((n,i)=>!Number.isInteger(n)||n<0||n>r.criteria[i].max))throw Error('Заполните баллы по каждому критерию');
+ const sum=scores.reduce((a,b)=>a+b,0),max=r.criteria.reduce((a,c)=>a+c.max,0),percent=sum/max*100;
+ const grade=String(r.thresholds.findLastIndex(v=>percent>=v)+1);
+ return {sum,max,percent,grade};
+}

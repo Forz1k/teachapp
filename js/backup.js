@@ -5,7 +5,7 @@ import {validateArchive} from './school-archive.js';
 import {validateWorkRecord} from './workbench.js';
 import { SCHEMA } from './db.js';
 
-export const BACKUP_VERSION = 14;
+export const BACKUP_VERSION = 15;
 const legacyCore = ['meta','classes','students','lessons','topics','marks','exemptions','monthly'];
 const text = s => typeof s === 'string' && s.trim().length > 0;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -13,7 +13,7 @@ const date = s => validPeriod(s, null);
 
 export function validateBackup(payload) {
   if (payload?.app !== 'teachapp' || !object(payload.data)) throw new Error('Файл не похож на резервную копию TeachApp');
-  if (![1,2,3,4,5,6,7,8,9,10,11,12,13,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
+  if (![1,2,3,4,5,6,7,8,9,10,11,12,13,14,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
   const data = payload.data;
   const names = Object.keys(SCHEMA);
   if (Object.keys(data).some(n => !names.includes(n))) throw new Error('В копии есть неизвестный раздел');
@@ -64,7 +64,8 @@ export function validateBackup(payload) {
   const period = r => validPeriod(r.dateFrom,r.dateTo);
   const classRef = id => id === 'window' || index.classes.has(id);
   check('classes', r => text(r.name)&&validGradeLevel(r.gradeLevel));
-  check('students', r => text(r.fullName) && index.classes.has(r.classId)&&validNormGroup(r.normGroup));
+  check('students', r => text(r.fullName) && index.classes.has(r.classId)&&validNormGroup(r.normGroup)&&(r.lineageId===undefined||text(r.lineageId)));
+  if(new Set(tables.students.map(s=>s.lineageId||s.id)).size!==tables.students.length)throw Error('Повтор связи истории ученика');
   check('ktp', r => text(r.name) && Array.isArray(r.classIds) && r.classIds.every(id => index.classes.has(id)));
   check('topics', r => text(r.name) && (!r.ktpId || index.ktp.has(r.ktpId)) && tags(r.activityIds));
   check('lessons', r => index.classes.has(r.classId) && date(r.date) && (!r.topicId || index.topics.has(r.topicId)) && tags(r.activityIds));
