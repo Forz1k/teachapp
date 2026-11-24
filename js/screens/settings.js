@@ -1,3 +1,5 @@
+import {isEncryptedBackup,decryptBackup} from '../privacy.js';
+import {retentionPreview,purgeExpired} from '../retention.js';
 import { validateBackup } from '../backup.js';
 /* screens/settings.js — настройки, импорт, экспорт, резервные копии, управление классами. */
 
@@ -20,6 +22,7 @@ export function renderSettings(root, ctx = {}) {
 
   const body = el('div', { class: 'list', style: 'gap:0' });
   root.append(body);
+  if(ctx.onAnalytics)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Аналитика и итоговые оценки'}),el('button',{class:'btn wide',type:'button',text:'Открыть аналитику',onclick:ctx.onAnalytics})]));
   if(ctx.onCoach)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Режим тренера'}),el('button',{class:'btn wide',type:'button',text:'Волейбол · команды и тренировки',onclick:ctx.onCoach})]));
 
   /* ---------- учебный год ---------- */
@@ -196,13 +199,27 @@ export function renderSettings(root, ctx = {}) {
     ]),
   );
 
+  backupBlock.append(el('div',{class:'row-item'},[el('div',{class:'label',text:'Защищённая копия (рекомендуется)'}),el('button',{class:'btn small',type:'button',text:'Шифровать',onclick:async()=>{
+    let password=await ui.promptDialog({title:'Пароль для копии',text:'Не менее 12 символов. Пароль не сохраняется. Без него открыть копию нельзя.',password:true,ok:'Далее'});
+    if(password===null)return;
+    if(password.length<12){ui.toast('Не менее 12 символов');return;}
+    let repeat=await ui.promptDialog({title:'Повторите пароль',password:true,ok:'Шифровать'});
+    if(repeat===null)return;
+    if(password!==repeat){ui.toast('Пароли не совпадают');return;}
+    try{await exporter.exportBackup(password);}catch(e){ui.toast(e.message);}finally{password=repeat=null;}
+  }})]));
   const restoreInput = el('input', { type: 'file', accept: '.json', style: 'display:none' });
   restoreInput.addEventListener('change', async () => {
     const file = restoreInput.files?.[0];
     if (!file) return;
     restoreInput.value = '';
     try {
-      const payload = await exporter.readBackupFile(file);
+      let payload = await exporter.readBackupFile(file);
+      if(isEncryptedBackup(payload)){
+        let password=await ui.promptDialog({title:'Пароль защищённой копии',password:true,ok:'Открыть'});
+        if(password===null)return;
+        try{payload=await decryptBackup(payload,password);}finally{password=null;}
+      }
       const data = validateBackup(payload);
       const ok = await ui.confirmDialog({
         title: 'Заменить все данные TeachApp из копии?',
@@ -224,6 +241,22 @@ export function renderSettings(root, ctx = {}) {
     el('button', { class: 'btn small', type: 'button', text: 'Выбрать файл', onclick: () => restoreInput.click() }),
   ]));
   body.append(backupBlock);
+  const retention=el('input',{type:'number',min:0,max:3650,step:1,value:settings.retentionDays??0});
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Конфиденциальность и сроки хранения'}),
+    el('p',{text:'Экранная ширма не заменяет пароль устройства. Данные IndexedDB не шифруются. Срок действует только для истёкших сведений об ограничениях и группах; 0 — срок не задан. Автоматического удаления нет.'}),
+    el('label',{class:'field'},['Хранить после окончания действия, дней',retention]),
+    el('button',{class:'btn wide',type:'button',text:'Сохранить срок',onclick:async()=>{
+      const days=Number(retention.value);if(retention.value===''||!Number.isInteger(days)||days<0||days>3650)return ui.toast('Введите 0–3650 дней');
+      try{await store.saveSettings({retentionDays:days});ui.toast('Срок сохранён');}catch{ui.toast('Не удалось сохранить срок');}
+    }}),
+    el('button',{class:'btn wide danger',type:'button',text:'Проверить и удалить истёкшие сведения',onclick:async()=>{
+      try{
+        const days=store.state.settings.retentionDays||0,plan=await retentionPreview(days);
+        const message='До '+plan.cutoff+': групп '+plan.profiles+', школьных ограничений '+plan.restrictions+', тренерских ограничений '+plan.coach+'. Оценки, отметки участия, справки ОСВ и результаты сохраняются. Сделайте защищённую резервную копию заранее.';
+        if(!plan.profiles&&!plan.restrictions&&!plan.coach){ui.toast('Истёкших сведений для удаления нет');return;}
+        if(await ui.confirmDialog({title:'Удалить истёкшие сведения?',text:message,ok:'Удалить',danger:true})){await purgeExpired(days,true,plan);ui.toast('Истёкшие сведения удалены');}
+      }catch(e){ui.toast(e.message);}
+    }})]));
 
   /* ---------- демо-данные ---------- */
   const demoBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Демонстрационные данные' })]);
@@ -499,7 +532,9 @@ export function openExportSheet(presetClassId = null) {
   ]);
 
   const actions = el('div', { class: 'actions' });
-  const params = () => ({ includeMonthly: false, classId: classSelect.value, from: fromInput.value, to: toInput.value });
+  const includeExemptions=el('input',{type:'checkbox'});
+  sheet.append(el('label',{class:'field'},['Включить отметки ОСВ (только при необходимости)',includeExemptions]));
+  const params = () => ({ includeMonthly: false,includeExemptions:includeExemptions.checked, classId: classSelect.value, from: fromInput.value, to: toInput.value });
 
   actions.append(el('button', {
     class: 'btn primary wide', type: 'button', text: 'Скопировать как TSV (для Google Таблиц)',

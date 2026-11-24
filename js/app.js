@@ -2,6 +2,7 @@
 
 import * as store from './store.js';
 import * as ui from './ui.js';
+import { renderAnalytics } from './screens/analytics.js';
 import { renderCoach } from './screens/coach.js';
 import { renderNorms } from './screens/norms.js';
 import { renderToday } from './screens/today.js';
@@ -44,12 +45,13 @@ function render() {
   journalUpdate = null;
   appRoot.replaceChildren();
   const screen = el('div', { class: 'screen' });
-  appRoot.append(screen);
+  appRoot.append(el('div',{class:'privacy-bar'},[el('button',{class:'btn small',type:'button',text:'Скрыть данные',onclick:()=>ui.coverPrivacy()})]),screen);
 
   const tab = store.state.currentTab;
 
   if (tab === 'today') {
     renderToday(screen, { onSchedule: () => setTab('schedule'),onCoach:()=>setTab('coach') });
+    screen.append(el('div',{class:'analytics-shortcut'},[el('button',{class:'btn wide',type:'button',text:'Аналитика и отчёты',onclick:()=>setTab('analytics')})]));
   } else if (tab === 'classes') {
     renderClasses(screen, {
       onOpenJournal: () => { setTab('journal'); },
@@ -62,10 +64,12 @@ function render() {
     renderSchedule(screen, { onChanged: render });
   } else if (tab === 'norms') {
     renderNorms(screen);
+  } else if (tab === 'analytics') {
+    renderAnalytics(screen,{onBack:()=>setTab('settings')});
   } else if (tab === 'coach') {
     renderCoach(screen,{onBack:()=>setTab('today')});
   } else if (tab === 'settings') {
-    renderSettings(screen, { onChanged: render,onCoach:()=>setTab('coach') });
+    renderSettings(screen, { onChanged: render,onCoach:()=>setTab('coach'),onAnalytics:()=>setTab('analytics') });
   }
 
   if (scrollPos) {
@@ -191,10 +195,11 @@ async function boot() {
   }
 
   window.addEventListener('unhandledrejection', event => {
+    event.preventDefault();
     if (event.reason?.name === 'QuotaExceededError') {
       event.preventDefault();
       ui.toast('Недостаточно места. Запись прервана. Освободите место и повторите операцию.', null, 8000);
-    }
+    } else {ui.toast('Операция не завершена. Повторите действие.');}
   });
   await store.load();
   applyTheme(store.state.settings.theme || 'auto');
@@ -212,6 +217,8 @@ async function boot() {
 
   // Горячие клавиши для отладки на десктопе: 1-5 — табы
   window.addEventListener('keydown', (e) => {
+    if(e.altKey && e.code==='KeyH'){e.preventDefault();ui.coverPrivacy();return;}
+    if(document.body.classList.contains('privacy-covered'))return;
     if (e.target.matches('input, textarea, select')) return;
     if (e.key === 'Escape') { ui.closeSheet(); return; }
     const idx = Number(e.key);
@@ -259,9 +266,6 @@ function registerServiceWorker() {
 }
 
 boot().catch((err) => {
-  console.error(err);
-  appRoot.innerHTML = `<div class="empty" style="padding-top:60px">
-    <div style="font-weight:700;margin-bottom:8px">Не удалось запустить приложение</div>
-    <div style="font-size:14px">${err.message}</div>
-  </div>`;
+  console.error('[teachapp] ошибка запуска');
+  appRoot.replaceChildren(el('div',{class:'empty'},['Не удалось запустить приложение. Попробуйте перезагрузить страницу. Не очищайте данные браузера без резервной копии.']));
 });

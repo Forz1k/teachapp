@@ -1,6 +1,7 @@
 /* export.js — выгрузка в XLSX (сводная и плоская), CSV, TSV в буфер; резервная копия JSON.
    SheetJS подключается как глобальный XLSX из vendor/xlsx.full.min.js — локально, для офлайна. */
 
+import {encryptBackup} from './privacy.js';
 import * as store from './store.js';
 import * as M from './model.js';
 import { el, openSheet, closeSheet, toast, downloadBlob, copyText } from './ui.js';
@@ -14,7 +15,7 @@ export const hasXlsx = () => typeof window.XLSX !== 'undefined';
  * Готовит матрицу сводной ведомости за диапазон.
  * @returns {{lessons: Array, rows: Array<Array>, header: Array<string>, monthlyFrom: number}}
  */
-export function buildSummary({ classId, from, to, settings }) {
+export function buildSummary({ classId, from, to, settings, includeExemptions=true }) {
   const cls = store.state.classes.find((c) => c.id === classId);
   const students = store.studentsOfClass(classId);
   const lessons = store.lessonsInRange(classId, from, to);
@@ -31,7 +32,8 @@ export function buildSummary({ classId, from, to, settings }) {
       const m = markMap.get(`${lesson.id}|${st.id}`);
       if (!m) { cells.push(''); continue; }
       if (m.flag === 'Н') absent += 1;
-      if (m.flag === 'Н' && M.hasOsv(m)) cells.push('ОСВ + Н');
+      if (!includeExemptions && M.hasOsv(m)) cells.push(m.flag==='Н'?'Н':m.value||'');
+      else if (m.flag === 'Н' && M.hasOsv(m)) cells.push('ОСВ + Н');
       else if (m.value && m.flag === 'ОСВ') cells.push(`${m.value}+ОСВ`);
       else if (m.value) cells.push(m.value);
       else if (m.flag) cells.push(m.flag);
@@ -67,7 +69,7 @@ export function buildMonthlyBlock({ classId, settings }) {
 }
 
 /** Плоская таблица для «Моей школы»: одна запись на строку. */
-export function buildFlat({ classId, from, to, includeMonthly = true }) {
+export function buildFlat({ classId, from, to, includeMonthly = true,includeExemptions=true }) {
   const cls = store.state.classes.find((c) => c.id === classId);
   const className = cls ? cls.name : '';
   const students = store.studentsOfClass(classId);
@@ -80,12 +82,13 @@ export function buildFlat({ classId, from, to, includeMonthly = true }) {
       const m = markMap.get(`${lesson.id}|${st.id}`);
       if (!m) continue;
       if (!m.value && !m.flag) continue;
+      if(!includeExemptions&&M.hasOsv(m)&&!m.value&&m.flag!=='Н')continue;
       rows.push([
         className,
         st.fullName,
         M.fmtFull(lesson.date),
         m.value || '',
-        m.flag === 'Н' && M.hasOsv(m) ? 'ОСВ + Н' : m.flag || '',
+        !includeExemptions&&M.hasOsv(m)?(m.flag==='Н'?'Н':''):m.flag === 'Н' && M.hasOsv(m) ? 'ОСВ + Н' : m.flag || '',
       ]);
     }
   }
@@ -111,12 +114,12 @@ export function buildFlat({ classId, from, to, includeMonthly = true }) {
 }
 
 /** Лист «Темы уроков». */
-export function buildTopicsSheet({ classId, from, to }) {
+export function buildTopicsSheet({ classId, from, to,includeNotes=false }) {
   const lessons = store.lessonsInRange(classId, from, to);
-  const rows = [['Дата', 'Тема', 'Примечание']];
+  const rows = [['Дата', 'Тема', ...(includeNotes?['Примечание']:[])]];
   for (const l of lessons) {
     const topic = store.state.topics.find((t) => t.id === l.topicId);
-    rows.push([M.fmtFull(l.date), topic ? topic.name : '', l.note || '']);
+    rows.push([M.fmtFull(l.date), topic ? topic.name : '', ...(includeNotes?[l.note||'']:[])]);
   }
   return rows;
 }
@@ -163,11 +166,11 @@ function sheetFromMatrix(XLSX, matrix, widths) {
 /**
  * Сводная ведомость в XLSX: лист «Журнал», лист «Темы уроков», лист «Месячные».
  */
-export function exportXlsxSummary({ classId, from, to, includeMonthly = true }) {
+export function exportXlsxSummary({ classId, from, to, includeMonthly = false,includeExemptions=false }) {
   if (!hasXlsx()) throw new Error('Модуль XLSX не загружен');
   const XLSX = window.XLSX;
   const wb = XLSX.utils.book_new();
-  const { cls, header, rows } = buildSummary({ classId, from, to });
+  const { cls, header, rows } = buildSummary({ classId, from, to,includeExemptions });
   const title = [
     [`Журнал ${cls ? cls.name : ''} — ${M.fmtFull(from)} – ${M.fmtFull(to)}`],
     [],
@@ -194,11 +197,11 @@ export function exportXlsxSummary({ classId, from, to, includeMonthly = true }) 
 }
 
 /** Плоская выгрузка для «Моей школы» — одна запись на строку, без объединений. */
-export function exportXlsxFlat({ classId, from, to, includeMonthly = true }) {
+export function exportXlsxFlat({ classId, from, to, includeMonthly = false,includeExemptions=false }) {
   if (!hasXlsx()) throw new Error('Модуль XLSX не загружен');
   const XLSX = window.XLSX;
   const wb = XLSX.utils.book_new();
-  const rows = buildFlat({ classId, from, to, includeMonthly });
+  const rows = buildFlat({ classId, from, to, includeMonthly,includeExemptions });
   const ws = sheetFromMatrix(XLSX, rows);
   XLSX.utils.book_append_sheet(wb, ws, 'Моя школа');
   const cls = store.state.classes.find((c) => c.id === classId);
@@ -226,8 +229,8 @@ export function matrixToDelimited(matrix, delim = '\t', bom = false) {
 }
 
 /** CSV для скачивания (разделитель ';' — так Excel в русской локали открывает правильно). */
-export function exportCsvSummary({ classId, from, to }) {
-  const { cls, header, rows } = buildSummary({ classId, from, to });
+export function exportCsvSummary({ classId, from, to,includeExemptions=false }) {
+  const { cls, header, rows } = buildSummary({ classId, from, to,includeExemptions });
   const matrix = [header, ...rows];
   const text = matrixToDelimited(matrix, ';', true);
   const name = `Журнал_${cls ? cls.name : 'класс'}_${from}_${to}.csv`;
@@ -236,8 +239,8 @@ export function exportCsvSummary({ classId, from, to }) {
 }
 
 /** TSV в буфер — основной мобильный сценарий для Google Таблиц. */
-export async function copyTsvSummary({ classId, from, to }) {
-  const { header, rows } = buildSummary({ classId, from, to });
+export async function copyTsvSummary({ classId, from, to,includeExemptions=false }) {
+  const { header, rows } = buildSummary({ classId, from, to,includeExemptions });
   const text = matrixToDelimited([header, ...rows], '\t');
   const ok = await copyText(text);
   return { ok, text };
@@ -467,13 +470,14 @@ export async function applyKtpTopics(ktpId, items, { append = false } = {}) {
 
 /* ---------- бэкап ---------- */
 
-export async function exportBackup() {
+export async function exportBackup(password=null) {
   const payload = await store.makeBackup();
-  const name = `teachapp-backup-${payload.createdAt.slice(0, 10)}.json`;
-  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+  const name = `teachapp-backup-${payload.createdAt.slice(0, 10)}${password?'-encrypted':''}.json`;
+  const fileData=password?await encryptBackup(payload,password):payload;
+  const blob = new Blob([JSON.stringify(fileData)], { type: 'application/json' });
   const file = typeof File === 'function' ? new File([blob],name,{type:blob.type}) : null;
   const sheet = el('div',{},[el('h2',{text:'Резервная копия'}),
-    el('p',{text:'Сохраните файл в выбранном месте. Копия содержит журнал и внесённые сведения об ограничениях.'})]);
+    el('p',{text:password?'Копия зашифрована. Для восстановления потребуется пароль. Храните пароль отдельно; восстановить его невозможно.':'Внимание: копия НЕ зашифрована и содержит школьные и тренерские данные, включая ограничения. Храните в защищённом месте.'})]);
   const confirmed = el('button',{type:'button',class:'btn wide',text:'Подтверждаю, что файл сохранён',onclick:async () => {
     try {
       await store.saveSettings({lastBackupAt:payload.createdAt,backupReminderAfter:null});

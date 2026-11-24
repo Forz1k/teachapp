@@ -203,7 +203,7 @@ export function confirmDialog(opts) {
 }
 
 /** Диалог с одним текстовым полем. Возвращает Promise<string|null>. */
-export function promptDialog({ title, text, label, value = '', placeholder = '', ok = 'Сохранить', multiline = false }) {
+export function promptDialog({ title, text, label, value = '', placeholder = '', ok = 'Сохранить', multiline = false, password = false }) {
   return new Promise((resolve) => {
     const backdrop = el('div', { class: 'dialog-backdrop' });
     let done = false;
@@ -217,7 +217,7 @@ export function promptDialog({ title, text, label, value = '', placeholder = '',
 
     const input = multiline
       ? el('textarea', { placeholder, value })
-      : el('input', { type: 'text', placeholder, value });
+      : el('input', { type: password?'password':'text', placeholder, value, autocomplete:password?'off':null });
     if (!multiline) input.value = value;
     else input.textContent = value;
 
@@ -227,7 +227,7 @@ export function promptDialog({ title, text, label, value = '', placeholder = '',
       label ? el('label', { class: 'field' }, [el('span', { text: label }), input]) : input,
       el('div', { class: 'btns' }, [
         el('button', { class: 'btn', type: 'button', text: 'Отмена', onclick: () => finish(null) }),
-        el('button', { class: 'btn primary', type: 'button', text: ok, onclick: () => finish(input.value) }),
+        el('button', { class: 'btn primary', type: 'button', text: ok, onclick: () => {const result=input.value;if(password)input.value='';finish(result);} }),
       ]),
     ]);
 
@@ -302,4 +302,25 @@ export function relativeDate(isoStr, today) {
   if (diff === 2) return '2 дня назад';
   if (diff > 0 && diff < 7) return `${diff} дн. назад`;
   return `${isoStr.slice(8, 10)}.${isoStr.slice(5, 7)}`;
+}
+
+/* Экранная ширма, не блокировка устройства и не шифрование. */
+export function coverPrivacy(){
+  if(document.body.classList.contains('privacy-covered'))return;
+  const before=document.activeElement;
+  before?.blur?.();
+  const cover=el('div',{class:'privacy-cover',role:'dialog','aria-modal':'true','aria-label':'Данные скрыты'},[
+    el('h1',{text:'TeachApp'}),el('p',{text:'Персональные данные скрыты'}),el('p',{text:'Это экранная ширма, не парольная блокировка.'})
+  ]);
+  const saved=new Map();
+  const hide=node=>{if(node===cover||saved.has(node)||node.tagName==='SCRIPT')return;saved.set(node,node.inert);node.inert=true;};
+  for(const child of document.body.children)hide(child);
+  const observer=new MutationObserver(()=>{for(const child of document.body.children)hide(child);});
+  document.body.append(cover);document.body.classList.add('privacy-covered');
+  observer.observe(document.body,{childList:true});
+  const reveal=el('button',{type:'button',class:'btn primary wide',text:'Показать данные',onclick:()=>{
+    observer.disconnect();for(const [node,inert] of saved)node.inert=inert;
+    document.body.classList.remove('privacy-covered');cover.remove();before?.focus?.();
+  }});
+  cover.append(reveal);reveal.focus();
 }

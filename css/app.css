@@ -952,3 +952,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .coach-roster-row input[type=checkbox],.coach-form input[type=checkbox],.coach-body input[type=checkbox] {width:24px;height:24px;}
 .coach-body .btn,.coach-form .btn,.coach-form summary {min-height:44px;white-space:normal;}
 .coach-form summary {padding:12px 0;cursor:pointer;}
+
+/* Аналитика и быстрый экран приватности. */
+.privacy-bar {display:flex;justify-content:flex-end;padding:6px 12px;background:var(--bg);}
+.privacy-bar .btn {min-height:36px;}
+.privacy-cover {position:fixed;inset:0;z-index:2147483647;background:var(--bg);color:var(--text);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;gap:12px;}
+body.privacy-covered > :not(.privacy-cover) {visibility:hidden!important;pointer-events:none!important;}
+body.privacy-covered {overflow:hidden;}
+.analytics-shortcut {padding:12px 16px;}
+.analytics-body,.analytics-content {display:grid;gap:12px;min-width:0;}
+.analytics-body {padding:12px 16px 24px;}
+.analytics-card {display:grid;gap:10px;padding:12px;min-width:0;}
+.analytics-card h2,.analytics-card p {margin:0;overflow-wrap:anywhere;}
+.analytics-card + .analytics-card {margin-top:0;}
+.analytics-nav {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+.analytics-nav .btn,.analytics-card .btn {min-height:44px;white-space:normal;}
+.analytics-student {display:grid;gap:8px;border-top:1px solid var(--sep);padding-top:8px;}
+.analytics-table {overflow:auto;max-width:100%;}
+.analytics-table table {border-collapse:collapse;width:100%;font-size:13px;}
+.analytics-table th,.analytics-table td {padding:8px;border:1px solid var(--sep);text-align:left;vertical-align:top;}
+#teachapp-print-report {display:none;}
+@media print {body:not(.privacy-covered)>:not(#teachapp-print-report) {display:none!important;}body:not(.privacy-covered)>#teachapp-print-report {display:block;color:#000;background:#fff;}#teachapp-print-report .analytics-table {overflow:visible;}#teachapp-print-report table {width:100%;font-size:9pt;}#teachapp-print-report th,#teachapp-print-report td {border:1px solid #999;padding:4pt;}#teachapp-print-report tr {break-inside:avoid;}body.privacy-covered>* {display:none!important;}}

@@ -451,3 +451,21 @@ test('Волейбол: отдельный экран, создание кома
  assert.equal(store.state.classes.length,1);
  ui.closeSheet();
 });
+
+test('Аналитика отображает отчёты и не меняет школьные отметки',async()=>{
+ await seed();
+ const {renderAnalytics}=await import('../js/screens/analytics.js');
+ root().replaceChildren();const screen=doc.createElement('div');root().append(screen);
+ const before=JSON.stringify(store.state.marks);
+ renderAnalytics(screen);
+ assert.match(screen.textContent,/Аналитика/);assert.match(screen.textContent,/Итоговые оценки/);
+ [...screen.querySelectorAll('button')].find(b=>b.textContent==='Отчёты').click();
+ assert.match(screen.textContent,/Печать/);assert.equal(JSON.stringify(store.state.marks),before);
+});
+test('Обычная выгрузка не включает ОСВ и примечания без выбора',async()=>{
+ const {cls,a,l1}=await seed();
+ await store.setMark(a.id,l1.id,{value:'5',flag:'ОСВ'});
+ const b=exporter.buildSummary({classId:cls.id,from:'2026-11-01',to:'2026-11-30',includeExemptions:false});
+ assert.ok(!JSON.stringify(b.rows).includes('ОСВ'));
+ assert.ok(!exporter.buildTopicsSheet({classId:cls.id,from:'2026-11-01',to:'2026-11-30'})[0].includes('Примечание'));
+});

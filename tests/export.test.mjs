@@ -29,7 +29,7 @@ test('Повторное чтение файлов сводной и плоск�
   t.mock.method(URL, 'createObjectURL', value => { blob = value; return 'blob:test'; });
   t.mock.method(window.HTMLAnchorElement.prototype, 'click', () => {});
   const readBook = async () => XLSX.read(await blob.arrayBuffer(), { type: 'array' });
-  exp.exportXlsxSummary(range);
+  exp.exportXlsxSummary({...range,includeMonthly:true,includeExemptions:true});
   const { Sheets } = await readBook();
   const journal = Sheets['Журнал'];
   assert.equal(journal.B3.v, 'ФИО');
@@ -39,11 +39,22 @@ test('Повторное чтение файлов сводной и плоск�
     ['А','5+ОСВ','100%','4','Б','Н','0%']);
   assert.equal(Sheets['Темы уроков'].B2.v, '=Тема');
   assert.equal(Sheets['Темы уроков'].B2.f, undefined);
-  exp.exportXlsxFlat(range);
+  exp.exportXlsxFlat({...range,includeMonthly:true,includeExemptions:true});
   const flat = (await readBook()).Sheets['Моя школа'];
   assert.equal(flat['!ref'], 'A1:E4');
   assert.deepEqual(['C4','D4','E4'].map(k => flat[k].v), ['01.11.2026','4','М']);
   assert.equal(exp.buildFlat({ ...range, from: '2026-11-02' }).length, 1);
+  // Обычный экспорт должен скрывать ОСВ и архив месячных отметок по умолчанию.
+  exp.exportXlsxSummary(range);
+  const safe=(await readBook()).Sheets;
+  assert.equal(safe['Журнал'].C4.v,'5');
+  assert.equal(safe['Месячные'],undefined);
+  assert.equal(safe['Темы уроков'].C1,undefined);
+  exp.exportXlsxFlat(range);
+  const safeFlat=(await readBook()).Sheets['Моя школа'];
+  assert.equal(safeFlat['!ref'],'A1:E3');
+  assert.notEqual(safeFlat.E2?.v,'ОСВ');
+
 });
 
 test('XLSX, CSV и TSV повторно импортируются без дублирования', async () => {
