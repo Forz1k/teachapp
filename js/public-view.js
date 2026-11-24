@@ -6,7 +6,7 @@ const p=(t,c='muted')=>el('p',c,t),card=(...children)=>el('section','card',null,
 const date=t=>new Intl.DateTimeFormat('ru-RU',{dateStyle:'long',timeStyle:'short'}).format(t)+' · местное время';
 let data=null,connected=false,received=false,problem='',lastMode='',lastStale=false;
 function teams(team,opponent,match){
- const item=(name,side)=>{const icon=el('div','team-icon',name.slice(0,1).toUpperCase());if(match)icon.style.background=boardPalette[match.colors[side]].end;return el('div','team',null,icon,el('span','',name),match?el('strong','team-score',match.status==='finished'?match.setsWon[side]:match.score[side]):null,match&&match.status==='live'?p(match.serve===side?'● Подача':'Приём'):null);};
+ const item=(name,side)=>{const icon=el('div','team-icon',name.slice(0,1).toUpperCase());if(match?.logos?.[side]){const image=el('img');image.src=match.logos[side];image.alt='';icon.replaceChildren(image);}if(match)icon.style.background=boardPalette[match.colors[side]].end;return el('div','team',null,icon,el('span','',name),match?el('strong','team-score',match.status==='finished'?match.setsWon[side]:match.score[side]):null,match&&match.status==='live'?p(match.serve===side?'● Подача':'Приём'):null);};
  return el('div','teams',null,item(team,'ours'),el('span','vs',match?':':'VS'),item(opponent,'theirs'));
 }
 function sets(m){return el('div','sets',null,...m.sets.map((x,i)=>el('span','',(i+1)+' · '+x.ours+':'+x.theirs)),m.status==='live'?el('span','',m.set+' · '+m.score.ours+':'+m.score.theirs):null);}
@@ -31,12 +31,29 @@ try{
  const q=new URLSearchParams(location.search),url=portalAddress(q.get('db'),q.get('owner'),q.get('team'));
  const stream=new EventSource(url);
  stream.onopen=()=>{connected=true;problem='';draw();};
- stream.addEventListener('put',e=>{try{const payload=JSON.parse(e.data);if(payload.path!=='/')throw Error('partial');data=readPortal(payload.data);received=true;connected=true;draw();}catch{void reload(url);}});
- stream.addEventListener('patch',()=>void reload(url));
+ let current=null;
+ function receive(event){
+  const {path,data:value}=JSON.parse(event.data);
+  if(path==='/'&&event.type==='put')current=value;
+  else{
+   current??=Object.create(null);
+   const assign=(key,v)=>{
+    const parts=key.split('/').filter(Boolean);
+    if(!parts.length||parts.some(k=>['__proto__','constructor','prototype'].includes(k)))return;
+    let parent=current;
+    for(const k of parts.slice(0,-1)){if(!parent[k]||typeof parent[k]!=='object')parent[k]=Object.create(null);parent=parent[k];}
+    if(v===null)delete parent[parts.at(-1)];else parent[parts.at(-1)]=v;
+   };
+   if(event.type==='put')assign(path,value);
+   else for(const [key,v] of Object.entries(value||{}))assign(path+'/'+key,v);
+  }
+  data=readPortal(current);received=true;connected=true;draw();
+ }
+ stream.addEventListener('put',receive);
+ stream.addEventListener('patch',receive);
  stream.onerror=()=>{connected=false;problem='Не удалось подключиться. Проверьте ссылку или интернет.';draw();};
  stream.addEventListener('cancel',()=>{stream.close();connected=false;data=null;received=true;problem='Страница недоступна';draw();});
  stream.addEventListener('auth_revoked',()=>{stream.close();connected=false;data=null;received=true;problem='Доступ отозван';draw();});
- let fetching=false;async function reload(url){if(fetching)return;fetching=true;try{const r=await fetch(url,{cache:'no-store',referrerPolicy:'no-referrer'});if(!r.ok)throw Error();data=readPortal(await r.json());received=true;draw();}catch{}finally{fetching=false;}}
  window.addEventListener('pagehide',()=>{stream.close();clearInterval(clock);},{once:true});window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
  const clock=setInterval(()=>{if(!data)return;const state=portalState(data),stale=['live','break'].includes(state.mode)&&Date.now()-data.updatedAt>90000;if(state.mode!==lastMode||stale!==lastStale){draw();return;}if(state.mode==='upcoming')root.querySelectorAll('.clock strong').forEach((n,i)=>n.textContent=String(countdown(state.remaining)[i]).padStart(2,'0'));},1000);
 }catch{received=true;problem='Откройте постоянную ссылку, которую отправил тренер.';draw();}

@@ -36,7 +36,8 @@
               "$other": {
                 ".validate": false
               }
-            }
+            },
+            ".validate": "newData.hasChildren()"
           },
           "match": {
             ".validate": "newData.hasChildren([\"id\",\"opponent\",\"startedAt\",\"status\",\"set\",\"score\",\"setsWon\",\"serve\",\"colors\"])",
@@ -73,7 +74,8 @@
                 "$other": {
                   ".validate": false
                 }
-              }
+              },
+              ".validate": "newData.hasChildren()"
             },
             "status": {
               ".validate": "newData.val() === 'live' || newData.val() === 'break' || newData.val() === 'finished'"
@@ -135,7 +137,8 @@
                 "$other": {
                   ".validate": false
                 }
-              }
+              },
+              ".validate": "newData.hasChildren()"
             },
             "stats": {
               "$i": {
@@ -164,7 +167,8 @@
                 "$other": {
                   ".validate": false
                 }
-              }
+              },
+              ".validate": "newData.hasChildren()"
             },
             "$other": {
               ".validate": false
@@ -206,15 +210,23 @@
                   "$other": {
                     ".validate": false
                   }
-                }
+                },
+                ".validate": "newData.hasChildren()"
               },
               "$other": {
                 ".validate": false
               }
-            }
+            },
+            ".validate": "newData.hasChildren()"
           },
           "$other": {
             ".validate": false
+          },
+          "logos": {
+            ".validate": "newData.hasChildren()",
+            "$side": {
+              ".validate": "($side === 'ours' || $side === 'theirs') && newData.isString() && newData.val().length <= 120000 && newData.val().matches(/^data:image\\/png;base64,iVBORw0KGgo[A-Za-z0-9+\\/]*={0,2}$/)"
+            }
           }
         }
       }

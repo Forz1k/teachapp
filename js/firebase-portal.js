@@ -23,5 +23,22 @@ export async function firebaseSignIn(apiKey,email,password,fetcher=globalThis.fe
 }
 export function firebasePublisher(origin,slug,session,fetcher=globalThis.fetch){
  const url=portalAddress(firebaseOrigin(origin),session.uid,slug);
- return {async read(){return request(fetcher,url);},async write(data){const token=await session.getToken();return request(fetcher,url+'?auth='+encodeURIComponent(token)+'&print=silent',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,updatedAt:{'.sv':'timestamp'}})});},async remove(){const token=await session.getToken();return request(fetcher,url+'?auth='+encodeURIComponent(token),{method:'DELETE'});}};
+ let previous=null;
+ async function send(method,body){
+  const token=await session.getToken();
+  return request(fetcher,url+'?auth='+encodeURIComponent(token)+'&print=silent',{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+ }
+ return {
+  read(){return request(fetcher,url);},
+  async write(data){
+   const update={updatedAt:{'.sv':'timestamp'}};
+   const fields=new Set([...Object.keys(previous||{}),...Object.keys(data)]);
+   for(const field of fields){
+    if(field!=='updatedAt'&&JSON.stringify(previous?.[field])!==JSON.stringify(data[field]))update[field]=data[field]??null;
+   }
+   try{await send(previous?'PATCH':'PUT',update);previous=structuredClone(data);}
+   catch(error){previous=null;throw error;}
+  },
+  async remove(){previous=null;await send('DELETE');}
+ };
 }

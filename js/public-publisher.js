@@ -9,6 +9,9 @@ function save(e){try{localStorage.setItem(key(e.id),JSON.stringify(e.data));retu
 function entry(id){
  if(states.has(id))return states.get(id);
  let data=initial();try{const raw=JSON.parse(localStorage.getItem(key(id))||'null');if(raw&&typeof raw==='object')data={...data,...raw,settings:{...data.settings,...raw.settings}};}catch{}
+ // Migrate previously cached public snapshots before the next upload.
+ if(data.match)data.match.id='match_'+data.match.startedAt;
+ data.archive=data.archive.map(row=>({...row,id:'match_'+row.startedAt}));
  const e={id,data,session:null,publisher:null,status:data.enabled?'Войдите для синхронизации':'Не опубликовано',dirty:false,running:false,timer:null,epoch:0,listeners:new Set()};
  states.set(id,e);return e;
 }
@@ -70,7 +73,8 @@ export function removeFixture(id,fixtureId){const e=entry(id);if(e.data.match?.s
 export function syncPortalMatch(match,{start=false,finish=false,discard=false}={}){
  if(match?.mode!=='dual')return false;const e=entry(match.teamId),d=e.data;if(!d.enabled)return false;
  const scheduled=matchingSchedule(d.schedule,match);
- if(d.activeId!==match.id){
+ const continuing=d.activeId===match.id;
+ if(!continuing){
   if(discard||finish)return false;
   if(d.activeId&&d.match){if(start)throw Error('Сначала завершите или отключите текущую трансляцию');return false;}
   if(!start&&(!d.settings.auto||!scheduled))return false;
@@ -78,9 +82,9 @@ export function syncPortalMatch(match,{start=false,finish=false,discard=false}={
  }
  if(discard){d.match=null;d.activeId=null;}
  else {
-  const scheduledId=d.match?.id===match.id?d.match.scheduledId:scheduled?.id;
+  const scheduledId=continuing&&d.match?d.match.scheduledId:scheduled?.id;
   d.match=projectMatch(match,{...d.settings,scheduledId});
-  if(finish){if(d.match.status!=='finished')throw Error('Матч ещё не завершён');d.archive=[archiveMatch(d.match),...d.archive.filter(x=>x.id!==match.id)].slice(0,20);d.schedule=d.schedule.filter(x=>x.id!==scheduledId);d.activeId=null;}
+  if(finish){if(d.match.status!=='finished')throw Error('Матч ещё не завершён');d.archive=[archiveMatch(d.match),...d.archive.filter(x=>x.id!==d.match.id)].slice(0,20);d.schedule=d.schedule.filter(x=>x.id!==scheduledId);d.activeId=null;}
  }
  save(e);enqueue(e);return true;
 }
