@@ -13,6 +13,7 @@ import { seedDemo } from '../demo.js';
 
 import {openTournaments} from './tournaments.js';
 import {openWorkCalendar} from './work-calendar.js';
+import {openSelectiveBackup} from './selective-backup.js';
 import {openInventory,openAchievements} from './resources.js';
 import {openDocuments} from './documents.js';
 import {openRubrics} from './school-tools.js';
@@ -237,6 +238,7 @@ export function renderSettings(root, ctx = {}) {
         if(password===null)return;
         try{payload=await decryptBackup(payload,password);}finally{password=null;}
       }
+      if(payload.scope)throw Error('Это выборочная копия. Откройте «Выборочная копия / восстановление»');
       const data = validateBackup(payload);
       const ok = await ui.confirmDialog({
         title: 'Заменить все данные TeachApp из копии?',
@@ -261,6 +263,7 @@ export function renderSettings(root, ctx = {}) {
     el('div', { class: 'label', text: 'Восстановить из копии' }),
     el('button', { class: 'btn small', type: 'button', text: 'Выбрать файл', onclick: () => restoreInput.click() }),
   ]));
+  backupBlock.append(el('button',{class:'btn wide',type:'button',text:'Выборочная копия / восстановление',onclick:openSelectiveBackup}));
   body.append(backupBlock);
   const diagnostics=el('p',{role:'status',text:'Проверка не меняет данные и ничего не отправляет.'});
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Диагностика базы'}),diagnostics,el('button',{class:'btn wide',type:'button',text:'Проверить целостность и хранилище',onclick:async e=>{

@@ -1,0 +1,30 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as S from '../js/store.js';
+import * as db from '../js/db.js';
+import * as W from '../js/workbench.js';
+import {lessonHistoryKey,finalHistoryKey} from '../js/grade-history.js';
+test('История: атомарные оценки, вес, защита от устаревшей отмены и удаление',async()=>{
+ await db.clearAll();await S.load();
+ const c=await S.addClass('7А'),p=await S.addStudent(c.id,'Ученик',1),l=await S.addLesson(c.id,'2026-01-01');
+ await S.setMark(p.id,l.id,{value:'3'});const first=(await db.get('workRecords',lessonHistoryKey(p.id,l.id))).events[0];
+ await S.setMark(p.id,l.id,{value:'5'});await S.setMarkWeight(p.id,l.id,2);
+ const hist=await db.get('workRecords',lessonHistoryKey(p.id,l.id));assert.deepEqual(hist.events.map(e=>e.after),[{value:'3',weight:1},{value:'5',weight:1},{value:'5',weight:2}]);
+ await assert.rejects(S.undoGradeHistory(p.id,l.id,first.id,true),/изменена/);
+ await S.undoGradeHistory(p.id,l.id,hist.events.at(-1).id,true);assert.equal(S.state.marks[0].weight,undefined);
+ const newer=await db.get('workRecords',hist.id);assert.equal(newer.events.at(-1).source,'undo');assert.equal(newer.events.at(-1).undoOf,hist.events.at(-1).id);
+ await S.setMark(p.id,l.id,{flag:'Н'});
+ const absent=await db.get('workRecords',hist.id);await assert.rejects(S.undoGradeHistory(p.id,l.id,absent.events.at(-1).id,true),/участия/);
+ const backup=await S.makeBackup();await S.restoreBackup(backup);
+ await S.deleteStudent(p.id);assert.equal((await W.listWork('gradeHistory')).length,0);
+});
+test('История итоговых оценок: отдельная операция и отмена',async()=>{
+ await db.clearAll();await S.load();const c=await S.addClass('7А'),p=await S.addStudent(c.id,'Ученик',1);
+ const period={id:'t1',kind:'custom',name:'Период',from:'2025-09-01',to:'2025-12-31'};await S.saveSettings({trimesters:[period]});
+ await S.saveFinalGrade(p.id,period.id,'4',true);await S.saveFinalGrade(p.id,period.id,'5',true);
+ const hist=await db.get('workRecords',finalHistoryKey(p.id,period.from,period.to));assert.equal(hist.events.length,2);
+ await S.undoFinalHistory(p.id,period.from,period.to,hist.events.at(-1).id,true);
+ assert.equal(S.state.finalGrades[0].value,'4');
+ assert.equal(S.state.marks.length,0);
+});

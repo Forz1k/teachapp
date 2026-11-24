@@ -7,6 +7,7 @@ import { BACKUP_VERSION, validateBackup } from './backup.js';
 import * as db from './db.js';
 import * as H from './health.js';
 import * as M from './model.js';
+import {appendGradeHistory,gradeState,finalState,lessonHistoryKey,finalHistoryKey,checkUndo} from './grade-history.js';
 import * as A from './assessment.js';
 import {planNormImport} from './norm-import.js';
 
@@ -249,7 +250,8 @@ export async function deleteClass(id) {
   const scheduleIds = new Set(schedules.map(r => r.id));
   const overrides = state.scheduleOverrides.filter(r => r.classId === id || scheduleIds.has(r.ruleId));
   const plans = state.ktp.filter(p => p.classIds.includes(id)).map(p => ({...p,classIds:p.classIds.filter(c => c !== id)}));
-  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','schedule','scheduleOverrides','ktp','normResults','finalGrades'], 'readwrite', (s) => {
+  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','schedule','scheduleOverrides','ktp','normResults','finalGrades','workRecords'], 'readwrite', async (s) => {
+    const history=await s.workRecords.index('kind').getAll('gradeHistory');for(const r of history)if(studentIds.has(r.studentId)||lessonIds.has(r.lessonId))await s.workRecords.delete(r.id);
     for (const r of schedules) s.schedule.delete(r.id);
     for (const r of overrides) s.scheduleOverrides.delete(r.id);
     for (const p of plans) s.ktp.put(p);
@@ -341,7 +343,8 @@ export async function deleteStudent(id) {
   const finals=state.finalGrades.filter(r=>r.studentId===id);
   const removedStudents = new Set([id]);
   const restricted = state.activityRestrictions.filter(r => removedStudents.has(r.studentId));
-  await db.transaction(['students', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','normResults','finalGrades'], 'readwrite', (s) => {
+  await db.transaction(['students', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','normResults','finalGrades','workRecords'], 'readwrite', async (s) => {
+    const history=await s.workRecords.index('kind').getAll('gradeHistory');for(const r of history)if(r.studentId===id)await s.workRecords.delete(r.id);
     for (const key of removedStudents) s.studentHealthProfiles.delete(key);
     for (const r of restricted) s.activityRestrictions.delete(r.id);
     for (const p of records) s.participation.delete(p.id);
@@ -431,7 +434,8 @@ export async function deleteLesson(id) {
   const marks = state.marks.filter((m) => m.lessonId === id);
   const records = state.participation.filter(p => p.lessonId === id);
   const results=state.normResults.filter(r=>r.lessonId===id);
-  await db.transaction(['lessons', 'marks', 'participation','normResults'], 'readwrite', (s) => {
+  await db.transaction(['lessons', 'marks', 'participation','normResults','workRecords'], 'readwrite', async (s) => {
+    const history=await s.workRecords.index('kind').getAll('gradeHistory');for(const r of history)if(r.lessonId===id)await s.workRecords.delete(r.id);
     for (const p of records) s.participation.delete(p.id);
     for (const r of results) s.normResults.delete(r.id);
     for (const m of marks) s.marks.delete(m.id);
@@ -486,26 +490,47 @@ async function writeMark(s, previous, next) {
   else if (previous) await s.marks.delete(previous.id);
 }
 
-async function editMark(studentId, lessonId, edit) {
-  const result = await db.transaction(['lessons','marks','participation','exemptions'], 'readwrite', async s => {
-    const [lesson, previous, part, exemptions] = await Promise.all([s.lessons.get(lessonId),
+async function editMark(studentId, lessonId, edit,source='manual',undoEventId=null) {
+  const result = await db.transaction(['students','lessons','marks','participation','exemptions','workRecords','topics','activityRestrictions','activityCategories'], 'readwrite', async s => {
+    const [student,lesson, previous, part, exemptions] = await Promise.all([s.students.get(studentId),s.lessons.get(lessonId),
       s.marks.index('lessonId_studentId').get([lessonId,studentId]),
       s.participation.index('studentLesson').get([studentId,lessonId]), s.exemptions.index('studentId').getAll(studentId)]);
-    if (!lesson) throw new Error('Урок не найден');
+    if (!student||!lesson||student.classId!==lesson.classId) throw new Error('Ученик или урок не найден');
     const priorBase = baseMark(previous);
+    const hist=undoEventId?await s.workRecords.get(lessonHistoryKey(studentId,lessonId)):null;
+    if(undoEventId)checkUndo(hist,undoEventId,gradeState(priorBase));
     const base = edit(priorBase, previous);
+    if(source==='undo'&&undoEventId&&base?.value){
+      const [restrictions,custom,topic]=await Promise.all([s.activityRestrictions.index('studentId').getAll(studentId),s.activityCategories.getAll(),lesson.topicId?s.topics.get(lesson.topicId):Promise.resolve(null)]);
+      const matches=H.checkLessonRestrictions({lesson:{...lesson,activityIds:lesson.activityIds??topic?.activityIds},students:[student],activities:[...H.catalog,...custom],restrictions}).matches;
+      if(M.hasOsv(previous)||previous?.flag==='Н'||part?.mode==='paused'||part?.full||exemptions.some(e=>M.exemptionCovers(e,lesson.date))||matches.length)throw Error('Проверьте участие и ограничения в обычном журнале');
+    }
     const next = withCoverage(base,previous,lesson,studentId,exemptions,part);
     await writeMark(s,previous,next);
-    return { previous, priorBase, base, next };
+    const audit=await appendGradeHistory(s.workRecords,{scope:'lesson',studentId,lessonId},gradeState(priorBase),gradeState(base),source,undoEventId||undefined);
+    return { previous, priorBase, base, next,audit };
   });
   cacheMarks([{id:result.previous?.id || result.next?.id,next:result.next}]);
   notify(studentId);
   return { mark:result.next, undo:() => editMark(studentId,lessonId,current => {
     if (JSON.stringify(current) !== JSON.stringify(result.base)) throw new Error('Оценка уже изменена');
     return result.priorBase;
-  }) };
+  },'undo',result.audit?.id||null) };
 }
-
+export async function undoGradeHistory(studentId,lessonId,eventId,confirmed=false){
+  if(!confirmed)throw Error('Подтвердите отмену изменения');
+  const hist=await db.get('workRecords',lessonHistoryKey(studentId,lessonId));
+  const event=hist?.events.at(-1);
+  if(!event||event.id!==eventId)throw Error('Оценка уже изменена');
+  return editMark(studentId,lessonId,(base,previous)=>{
+    if(base?.flag||previous?.flag||previous?.osv)throw Error('Состояние участия изменено. Используйте обычный журнал');
+    const v=event.before;
+    if(v.value===null)return null;
+    const next={...base,id:previous?.id||M.uid('mk'),studentId,lessonId,value:v.value,flag:null,source:'manual'};
+    if(v.weight===2)next.weight=2;else delete next.weight;
+    return next;
+  },'undo',eventId);
+}
 export function setMark(studentId,lessonId,{value = null,flag = null,weight,osv = false} = {}) {
   return editMark(studentId,lessonId,(base,previous) => {
     if (flag === 'ОСВ' && !value) value = base?.value ?? null;
@@ -527,7 +552,7 @@ export function setMarkWeight(studentId,lessonId,weight) {
     const next = {...base};
     if (weight === 2) next.weight = 2; else delete next.weight;
     return next;
-  });
+  },'weight');
 }
 
 async function changeExemption(id,studentId,edit) {
@@ -966,6 +991,7 @@ export async function makeBackup() {
 }
 
 export async function restoreBackup(payload) {
+  if(payload?.scope)throw Error('Это выборочная копия. Используйте выборочное восстановление; полная замена запрещена');
   const copy = typeof structuredClone === 'function' ? structuredClone(payload) : JSON.parse(JSON.stringify(payload));
   const snapshot = validateBackup(copy);
   await db.replaceAll(snapshot);
@@ -1164,7 +1190,7 @@ export async function transferNormGrade(id,confirmed=false){
   return editMark(r.studentId,r.lessonId,(base,previous)=>{
     if(previous)throw Error('В журнале уже есть отметка; автоматическая замена запрещена');
     return {id:M.uid('mk'),studentId:r.studentId,lessonId:r.lessonId,value:r.grade,flag:null,source:'manual'};
-  });
+  },'norm');
 }
 
 /* Итоговая оценка сохраняется отдельно. Границы периода — исторический снимок. */
@@ -1172,15 +1198,30 @@ export async function saveFinalGrade(studentId,periodId,value,confirmed=false){
   if(!confirmed)throw Error('Подтвердите изменение итоговой отметки');
   const p=state.settings.trimesters.find(t=>t.id===periodId);
   if(!p||!H.validPeriod(p.from,p.to)||!p.to||p.to>M.todayIso()||!(value===null||['1','2','3','4','5'].includes(value)))throw Error('Выберите завершённый период и отметку 1–5');
-  const result=await db.transaction(['students','finalGrades'],'readwrite',async s=>{
+  const result=await db.transaction(['students','finalGrades','workRecords'],'readwrite',async s=>{
     if(!await s.students.get(studentId))throw Error('Ученик недоступен');
     const previous=await s.finalGrades.index('studentPeriod').get([studentId,p.from,p.to]);
     const next=value===null?null:{id:previous?.id||M.uid('final'),studentId,from:p.from,to:p.to,periodName:A.periodName(p),value,updatedAt:new Date().toISOString()};
     if(next)await s.finalGrades.put(next);else if(previous)await s.finalGrades.delete(previous.id);
+    await appendGradeHistory(s.workRecords,{scope:'final',studentId,from:p.from,to:p.to,periodName:A.periodName(p)},finalState(previous),finalState(next),'final');
     return {previous,next};
   });
   state.finalGrades=state.finalGrades.filter(r=>r.id!==result.previous?.id).concat(result.next||[]);
   notify();return result.next;
+}
+
+export async function undoFinalHistory(studentId,from,to,eventId,confirmed=false){
+ if(!confirmed)throw Error('Подтвердите отмену итоговой оценки');
+ const result=await db.transaction(['students','finalGrades','workRecords'],'readwrite',async s=>{
+  if(!await s.students.get(studentId)||!H.validPeriod(from,to)||!to||to>M.todayIso())throw Error('Ученик или период недоступен');
+  const [hist,previous]=await Promise.all([s.workRecords.get(finalHistoryKey(studentId,from,to)),s.finalGrades.index('studentPeriod').get([studentId,from,to])]);
+  const event=checkUndo(hist,eventId,finalState(previous));
+  const next=event.before.value===null?null:{id:previous?.id||M.uid('final'),studentId,from,to,periodName:hist.periodName,value:event.before.value,updatedAt:new Date().toISOString()};
+  if(next)await s.finalGrades.put(next);else if(previous)await s.finalGrades.delete(previous.id);
+  await appendGradeHistory(s.workRecords,{scope:'final',studentId,from,to,periodName:hist.periodName},finalState(previous),finalState(next),'undo',eventId);
+  return {previous,next};
+ });
+ state.finalGrades=state.finalGrades.filter(r=>r.id!==result.previous?.id).concat(result.next||[]);notify();return result.next;
 }
 
 /* Массовые действия урока: только явно выбранные ученики, без перезаписи.
@@ -1197,7 +1238,7 @@ export async function applyLessonBatch(lessonId,studentIds,action,value=null,con
   if(!confirmed)throw Error('Подтвердите массовое действие');
   if(!Array.isArray(studentIds)||!studentIds.length||studentIds.length>500||new Set(studentIds).size!==studentIds.length||
     !['grade','normal','absent'].includes(action)||(action==='grade'&&!['1','2','3','4','5'].includes(value)))throw Error('Проверьте выбранных учеников и действие');
-  const result=await db.transaction(['students','lessons','topics','marks','participation','exemptions','activityRestrictions','activityCategories'],'readwrite',async s=>{
+  const result=await db.transaction(['students','lessons','topics','marks','participation','exemptions','activityRestrictions','activityCategories','workRecords'],'readwrite',async s=>{
     const lesson=await s.lessons.get(lessonId);
     if(!lesson||lesson.date>M.todayIso())throw Error('Урок недоступен или ещё не состоялся');
     const [students,marks,parts,exemptions,restrictions,custom,topic]=await Promise.all([
@@ -1219,7 +1260,7 @@ export async function applyLessonBatch(lessonId,studentIds,action,value=null,con
         nextMarks.push(withCoverage(mark,null,lesson,id,exemptions,null));
       }
     }
-    for(const m of nextMarks)await s.marks.add(m);
+    for(const m of nextMarks){await s.marks.add(m);await appendGradeHistory(s.workRecords,{scope:'lesson',studentId:m.studentId,lessonId},gradeState(null),gradeState(baseMark(m)),'batch');}
     for(const p of nextParts)await s.participation.add(p);
     return {nextMarks,nextParts};
   });
