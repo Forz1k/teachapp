@@ -142,3 +142,11 @@ test('Разведка не приписывает ошибку игроку п�
  const s=replayDetailed(d),a=scoutSummary(s.timeline,'theirs',{active:[]});
  assert.equal(a.total,1);assert.equal(a.knownPlayers,0);assert.equal(a.knownZones,1);assert.equal(a.ranked.length,0);
 });
+
+test('Разведка использует реальные позиции после перехода и не переносит ошибки на сменившего игрока',()=>{
+ let d=detailEvent(base,{type:'rally',side:'theirs',kind:'ace',player:'b0',secondary:{kind:'receiveError',player:'a3'},placement:4});
+ d=detailEvent(d,{type:'rally',side:'ours',kind:'point'});
+ let s=replayDetailed(d),a=scoutSummary(s.timeline,'ours',{active:s.lineup,kind:'serve'});
+ assert.equal(a.rows.find(x=>x.id==='a3').zone,3);assert.equal(a.rows.find(x=>x.id==='a3').misses,1);
+ assert.equal(a.zones[3],1);assert.equal(a.zones[2],0);
+});
