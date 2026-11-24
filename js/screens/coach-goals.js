@@ -1,7 +1,7 @@
 import * as W from '../workbench.js';
 import * as C from '../coach.js';
 import {testPresets,definitionKey} from '../coach-tests.js';
-import {goalMetrics,goalStatuses,saveGoal,goalProgress} from '../coach-goals.js';
+import {goalMetrics,goalStatuses,saveGoal,goalProgress,teamGoalOverview} from '../coach-goals.js';
 import {todayIso,addDays,fmtFull} from '../model.js';
 import {trendChart} from '../dashboard.js';
 import {el,openSheet,closeSheet,toast,confirmDialog} from '../ui.js';
@@ -43,4 +43,19 @@ export async function openPlayerGoals(team,player,back=closeSheet){
   body.append(btn('Назад',back));openSheet(body);
  }catch(e){toast(e.message);}}
  await draw();
+}
+
+export async function openTeamGoals(team,back=closeSheet){
+ try{
+  const [data,goals]=await Promise.all([C.loadCoach(),W.listWork('coachGoal')]),v=teamGoalOverview(goals,data.coachTests,data.coachPlayers,team.id);
+  const reopen=()=>openTeamGoals(team,back),filter=select([['all','Все активные цели'],['overdue','Просроченные'],['review','Порог достигнут'],['sample','Недостаточно данных'],['active','В работе'],['none','Без активных целей']]),rows=el('div',{class:'coach-stack'});
+  function draw(){
+   if(filter.value==='none'){rows.replaceChildren(...v.withoutGoals.map(player=>card(player.name,[btn('Открыть план',()=>openPlayerGoals(team,player,reopen))])));if(!v.withoutGoals.length)rows.append(p('У всех действующих игроков есть активная цель.'));return;}
+   const chosen=v.rows.filter(r=>filter.value==='all'||r.state===filter.value||filter.value==='overdue'&&r.progress.overdue);
+   rows.replaceChildren(...chosen.map(r=>card(r.player.name+' · '+r.goal.name,[p('До '+fmtFull(r.goal.to)+(r.progress.overdue?' · срок истёк':'')),p('Факт: '+fmt(r.progress.current,r.progress.unit)+' · цель: '+fmt(r.goal.target,r.progress.unit)),p(r.progress.met?'Порог достигнут — подтвердите вручную':r.progress.enough?'Есть сопоставимые данные':'Недостаточно сопоставимых данных'),r.progress.attempts===null?null:p('Попыток '+r.progress.attempts+' · тестов '+r.progress.recorded),btn('Открыть план',()=>openPlayerGoals(team,r.player,reopen))])));
+   if(!chosen.length)rows.append(p('Нет целей по выбранному фильтру.'));
+  }
+  filter.onchange=draw;draw();
+  openSheet(stack([el('h2',{text:'Развитие команды · '+team.name}),p('Активных целей: '+v.rows.length+' · просрочено: '+v.overdue+' · на проверку: '+v.review+' · без цели: '+v.withoutGoals.length),p('Порог по данным не означает автоматическое выполнение. Адаптированные результаты не входят в сопоставление.'),field('Показать',filter),rows,btn('Назад',back)]));
+ }catch(e){toast(e.message);}
 }

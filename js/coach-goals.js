@@ -47,3 +47,16 @@ export function goalProgress(g,sessions,today=todayIso()){
  const progress=current===null||g.baseline===null||g.baseline===g.target?null:100*(current-g.baseline)/(g.target-g.baseline);
  return {current,attempts,recorded,enough,met,progress,rows,overdue:g.status==='active'&&today>g.to,unit:g.metric==='measure'?g.definition.unit:'%'};
 }
+
+/** Group goals for a coach's review queue. Never automatically confirm a goal. */
+export function teamGoalOverview(goals,sessions,players,teamId,today=todayIso()){
+ const byId=new Map(players.filter(p=>p.teamId===teamId&&!p.archived).map(p=>[p.id,p]));
+ const rows=[];
+ for(const g of goals.filter(g=>g.teamId===teamId&&g.status==='active'&&byId.has(g.playerId))){
+  const v=goalProgress(g,sessions,today),state=v.met?'review':v.overdue?'overdue':!v.enough?'sample':'active';
+  rows.push({goal:g,player:byId.get(g.playerId),progress:v,state});
+ }
+ const order={overdue:0,review:1,sample:2,active:3};
+ rows.sort((a,b)=>order[a.state]-order[b.state]||a.goal.to.localeCompare(b.goal.to)||a.player.name.localeCompare(b.player.name,'ru'));
+ return {rows,overdue:rows.filter(r=>r.progress.overdue).length,review:rows.filter(r=>r.state==='review').length,sample:rows.filter(r=>r.state==='sample').length,withoutGoals:[...byId.values()].filter(p=>!rows.some(r=>r.player.id===p.id))};
+}
