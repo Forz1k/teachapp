@@ -15,7 +15,7 @@ export function validateBackup(payload) {
   const data = payload.data;
   const names = Object.keys(SCHEMA);
   if (Object.keys(data).some(n => !names.includes(n))) throw new Error('В копии есть неизвестный раздел');
-  const required = payload.version === 1 ? [...legacyCore] : payload.version === 2 ? names.filter(n=>!['norms','normResults','finalGrades',...coachStores].includes(n)) : payload.version === 3 ? names.filter(n=>!['finalGrades',...coachStores].includes(n)) : payload.version === 4 ? names.filter(n=>!['finalGrades','coachLive','coachLineups'].includes(n)) : payload.version < 7 ? names.filter(n=>!['coachLive','coachLineups'].includes(n)) : names;
+  const required = payload.version === 1 ? [...legacyCore] : payload.version === 2 ? names.filter(n=>!['norms','normResults','finalGrades',...coachStores].includes(n)) : payload.version === 3 ? names.filter(n=>!['finalGrades',...coachStores].includes(n)) : payload.version === 4 ? names.filter(n=>!['finalGrades','coachLive','coachLineups'].includes(n)) : payload.version < 7 ? names.filter(n=>!['coachLive','coachLineups'].includes(n)) : [...names];
   if(payload.version<10){const i=required.indexOf('coachTests');if(i>=0)required.splice(i,1);}
   if (payload.version === 1) {
     for (const group of [['ktp','schedule','scheduleOverrides'],['studentHealthProfiles','activityRestrictions','activityCategories']]) {
