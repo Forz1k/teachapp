@@ -42,10 +42,13 @@ export function checkLessonRestrictions({ lesson, activities, students, restrict
   const ids = new Set(students.filter(s => s.classId === lesson.classId).map(s => s.id));
   const tags = lesson.activitiesConfirmed === false ? [] : lesson.activityIds || [];
   let needsReview = !tags.length;
+  const reviewReasons=[];
+  if(lesson.activitiesConfirmed===false)reviewReasons.push('Виды нагрузки ещё не подтверждены');
+  else if(!tags.length)reviewReasons.push('Не указаны виды нагрузки урока или темы КТП');
   const matches = [];
   for (const tag of new Set(tags)) {
     const {ancestors,unknown} = ancestorIds(tag,byId);
-    if (unknown) needsReview = true;
+    if (unknown) {needsReview = true;reviewReasons.push('Неизвестный или недоступный вид нагрузки: '+String(tag));}
     for (const restriction of restrictions) {
       if (ids.has(restriction.studentId) && active(restriction,date) && byId.has(restriction.activityId)
           && ancestors.has(restriction.activityId) && (restriction.type !== 'no_test' || ancestors.has('test') || tags.includes('test'))) {
@@ -53,7 +56,7 @@ export function checkLessonRestrictions({ lesson, activities, students, restrict
       }
     }
   }
-  return { matches, needsReview };
+  return { matches, needsReview, reviewReasons:[...new Set(reviewReasons)] };
 }
 
 

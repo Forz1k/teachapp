@@ -16,6 +16,7 @@ import {openDocuments} from './documents.js';
 import {openTournaments} from './tournaments.js';
 import {calendarShortcut} from './work-calendar.js';
 import {openLibrary} from './library.js';
+import {openSchoolWorkload,openPeriodReview} from './school-review.js';
 import {metric,actionTile,dashboardHeading,personalizedActions,dayReview,dayDataIndex,focusHero,animateDashboard} from '../dashboard.js';
 const {el} = ui;
 
@@ -113,7 +114,7 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
     ctx.onJournal?actionTile('Журнал','journal',ctx.onJournal):null,
     ctx.onNorms?actionTile('Нормативы','quick',ctx.onNorms):null,
     actionTile('Конспекты','classes',()=>openLibrary('school')),actionTile('Документы','journal',()=>openDocuments()),actionTile('Инвентарь','classes',openInventory),actionTile('Достижения','trophy',()=>openAchievements({area:'school'})),
-    actionTile('Соревнования','trophy',openTournaments),
+    actionTile('Соревнования','trophy',openTournaments),actionTile('Педагогическая нагрузка','calendar',openSchoolWorkload),actionTile('Закрытие периода','journal',()=>openPeriodReview()),
     ctx.onAnalytics?actionTile('Аналитика','chart',ctx.onAnalytics):null
   ]));
   calendarShortcut(body);

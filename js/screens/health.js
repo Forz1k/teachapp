@@ -132,20 +132,20 @@ export function editTags(entity, isTopic, done) {
 }
 
 export function warning(lesson,studentId,onBack) {
-  const {matches,needsReview} = S.lessonCheck(lesson);
+  const {matches,needsReview,reviewReasons} = S.lessonCheck(lesson);
   const rows = matches.filter(m => !studentId || m.studentId === studentId);
   const node = el('div');
-  if (needsReview) node.append(el('p',{text:'Содержание нагрузки требует проверки'}));
+  if (needsReview) node.append(el('p',{text:'Содержание нагрузки требует проверки: '+reviewReasons.join('. ')+'. Уточните нагрузку перед занятием.'}));
   if (rows.length) node.append(el('p',{role:'status',text:'Ограничение нагрузки · учеников: ' + new Set(rows.map(m => m.studentId)).size}));
   node.append(btn('Проверить ограничения',()=>openLessonRestrictions(lesson,studentId,onBack)));
   return node;
 }
 export function openLessonRestrictions(lesson,studentId,onBack){
-  const {matches,needsReview}=S.lessonCheck(lesson);
+  const {matches,needsReview,reviewReasons}=S.lessonCheck(lesson);
   const rows=matches.filter(m=>!studentId||m.studentId===studentId);
   const topic=S.state.topics.find(t=>t.id===lesson.topicId);
   const panel=el('div',{},[el('h2',{text:'Проверка ограничений'}),el('p',{text:M.fmtFull(lesson.date)+' · '+(topic?.name||'Тема не указана')})]);
-  if(needsReview)panel.append(el('p',{text:'Содержание нагрузки требует проверки. Отсутствие совпадений не означает допуск.'}));
+  if(needsReview)panel.append(el('p',{text:reviewReasons.join('. ')+'. Отсутствие совпадений не означает допуск.'}));
   if(!needsReview&&!rows.length)panel.append(el('p',{text:'По внесённым данным действующих совпадений не найдено'}));
   const full=S.studentsOfClass(lesson.classId).filter(s=>(!studentId||s.id===studentId)&&S.activeExemption(s.id,lesson.date));
   if(full.length)panel.append(el('p',{text:'Действующее освобождение: '+full.map(s=>s.fullName).join(', ')}));
