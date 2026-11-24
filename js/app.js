@@ -213,7 +213,8 @@ async function boot() {
     const db = await import('./db.js');
     const meta = await db.get('meta', 'settings');
     applyTheme(meta?.theme || 'auto');
-  } catch {
+  } catch (error) {
+    if (error?.name === 'DatabaseBlockedError') throw error;
     applyTheme('auto');
   }
 
@@ -222,6 +223,8 @@ async function boot() {
     if (event.reason?.name === 'QuotaExceededError') {
       event.preventDefault();
       ui.toast('Недостаточно места. Запись прервана. Освободите место и повторите операцию.', null, 8000);
+    } else if (event.reason?.name === 'DatabaseBlockedError') {
+      ui.toast('Закройте другие вкладки TeachApp и повторите действие.', null, 8000);
     } else {ui.toast('Операция не завершена. Повторите действие.');}
   });
   await store.load();
@@ -295,5 +298,8 @@ function registerServiceWorker() {
 
 boot().catch((err) => {
   console.error('[teachapp] ошибка запуска');
-  appRoot.replaceChildren(el('div',{class:'empty'},['Не удалось запустить приложение. Попробуйте перезагрузить страницу. Не очищайте данные браузера без резервной копии.']));
+  const message = err?.name === 'DatabaseBlockedError'
+    ? 'Обновление локальной базы заблокировано. Закройте другие вкладки и окна TeachApp, затем перезагрузите страницу. Не очищайте данные браузера.'
+    : 'Не удалось запустить приложение. Попробуйте перезагрузить страницу. Не очищайте данные браузера без резервной копии.';
+  appRoot.replaceChildren(el('div',{class:'empty',role:'alert'},[el('p',{text:message}),el('button',{class:'btn',type:'button',text:'Перезагрузить',onclick:()=>location.reload()})]));
 });
