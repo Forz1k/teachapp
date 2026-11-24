@@ -5,7 +5,7 @@ import * as db from '../js/db.js';
 import {defaultSettings} from '../js/model.js';
 import {prepareSync,executeSync,syncPersonalArea} from '../js/sync.js';
 import {createPersonalCode} from '../js/personal-sync.js';
-import {runPersonalSync,openSyncSession} from '../js/auto-sync.js';
+import {runPersonalSync,openSyncSession,autoSyncStatus} from '../js/auto-sync.js';
 const endpoint='https://sync.example.test',area='school',password='synthetic-only-long-passphrase';
 const empty=()=>Object.fromEntries(Object.keys(db.SCHEMA).map(n=>[n,[]]));
 test('auto never initializes, avoids redundant PUT, pulls without revision churn and blocks deletion',async()=>{
@@ -38,4 +38,42 @@ test('runner stays local when disconnected and treats areas independently',async
  assert.deepEqual(result.areas.map(x=>x.status),['error','synced']);
  assert.deepEqual(seen,['school','coach']);
  assert.equal(await openSyncSession(null),null);
+});
+
+test('offline and disconnected states replace stale successful status',async()=>{
+ const code=createPersonalCode(endpoint);
+ const opts={getCode:()=>code,online:()=>true,clientFactory:()=>({}),runArea:async({area})=>({area,status:'synced'})};
+ const result=await runPersonalSync(opts);
+ assert.equal(result.phase,'finished');
+ assert.ok(result.areas.every(x=>Number.isFinite(Date.parse(x.successfulAt))));
+ await runPersonalSync({...opts,online:()=>false});
+ assert.deepEqual(autoSyncStatus(),{phase:'offline',areas:[],at:null});
+ await runPersonalSync({...opts,getCode:()=>null});
+ assert.deepEqual(autoSyncStatus(),{phase:'off',areas:[],at:null});
+});
+test('network loss between areas is not reported as a complete exchange',async()=>{
+ const code=createPersonalCode(endpoint),seen=[];
+ let online=true;
+ const report=await runPersonalSync({getCode:()=>code,online:()=>online,clientFactory:()=>({}),runArea:async({area})=>{
+  seen.push(area);online=false;return {area,status:'synced'};
+ }});
+ assert.equal(report.phase,'interrupted');
+ assert.deepEqual(seen,['school']);
+ assert.deepEqual(report.areas.map(x=>x.status),['synced','paused']);
+ assert.ok(report.areas[0].successfulAt);
+ assert.equal(report.areas[1].successfulAt,undefined);
+});
+test('concurrent offline request cannot reset active exchange',async()=>{
+ const code=createPersonalCode(endpoint);
+ let release,entered;
+ const started=new Promise(resolve=>{entered=resolve;});
+ const wait=new Promise(resolve=>{release=resolve;});
+ const opts={getCode:()=>code,online:()=>true,clientFactory:()=>({}),runArea:async({area})=>{entered();await wait;return {area,status:'synced'};}};
+ const active=runPersonalSync(opts);
+ await started;
+ try{
+  assert.equal((await runPersonalSync({...opts,online:()=>false})).phase,'running');
+  assert.equal(autoSyncStatus().phase,'running');
+ }finally{release();await active;}
+ assert.equal(autoSyncStatus().phase,'finished');
 });
