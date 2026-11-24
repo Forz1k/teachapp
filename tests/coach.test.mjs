@@ -1,0 +1,49 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as C from '../js/coach.js';
+import * as S from '../js/store.js';
+import * as db from '../js/db.js';
+async function seed(){
+ await db.clearAll();await S.load();
+ const team=await C.saveTeam({name:'Гимназия'}),p=await C.savePlayer({teamId:team.id,name:'Игрок',number:5,position:'setter',restrictions:[{activityId:'jump',dateFrom:'2025-01-01',type:'avoid'}]});
+ return {team,p};
+}
+test('Тренерские данные независимы от школьного журнала и номера уникальны',async()=>{
+ const {team,p}=await seed();
+ const c=await S.addClass('9А'),s=await S.addStudent(c.id,p.name,1);
+ await assert.rejects(C.savePlayer({teamId:team.id,name:'Другая',number:5,position:'libero'}),/уникальны/);
+ await S.deleteStudent(s.id);await S.deleteClass(c.id);
+ assert.equal((await C.loadCoach()).coachPlayers.length,1);
+ await C.savePlayer({...p,archived:true});
+ await C.savePlayer({teamId:team.id,name:'Другая',number:5,position:'libero'});
+});
+test('Тренировки: ограничения, проведённые занятия и неизвестная посещаемость',async()=>{
+ const {team,p}=await seed();
+ const base={teamId:team.id,date:'2025-09-01',time:'16:00',title:'Тренировка',minutes:60,exercises:[{name:'Прыжки',activityId:'broad',minutes:20}],roster:[p.id]};
+ const held=await C.saveTraining({...base,held:true,attendance:{[p.id]:'limited'}});
+ const empty=await C.saveTraining({...base,held:true,attendance:{}});
+ const future=await C.saveTraining({...base,date:'2099-01-01',held:false,attendance:{}});
+ assert.equal(C.trainingWarnings(held,[p]).length,1);
+ assert.deepEqual(C.playerAttendance(p.id,[held,empty,future],'2026-01-01'),{present:0,limited:1,absent:0,unknown:1,planned:1,pct:100});
+ await assert.rejects(C.saveTraining({...future,held:true}),/Будущая/);
+ await assert.rejects(C.saveTraining({...base,minutes:10}),/Проверьте/);
+});
+test('Матчи: партии, частичная статистика, экспорт и защита связей',async()=>{
+ const {team,p}=await seed();
+ const m=await C.saveMatch({teamId:team.id,date:'2025-09-01',opponent:'=Соперник',competition:'Кубок',sets:[{ours:25,theirs:21},{ours:23,theirs:25},{ours:15,theirs:10}],roster:[p.id],stats:{[p.id]:{serves:10,aces:2,serveErrors:1,points:5}}});
+ assert.deepEqual(C.matchScore(m),{ours:2,theirs:1});
+ const s=C.summarizeStats([m]);assert.equal(s.sums.aces,2);assert.equal(s.sums.attacks,null);
+ assert.match(C.coachCsv(C.teamView(await C.loadCoach(),team.id)),/'=Соперник/);
+ await assert.rejects(C.saveMatch({...m,stats:{[p.id]:{serves:1,aces:2}}}),/превышать/);
+ await assert.rejects(C.saveMatch({...m,roster:['missing'],stats:{}}),/состав/);
+});
+test('Резервная копия 4 хранит тренерские данные; формат 3 совместим',async()=>{
+ const {team,p}=await seed();
+ const backup=await S.makeBackup();assert.equal(backup.version,4);
+ await S.restoreBackup(backup);assert.equal((await C.loadCoach()).coachPlayers[0].id,p.id);
+ const broken=structuredClone(backup);broken.data.coachPlayers[0].teamId='missing';
+ await assert.rejects(S.restoreBackup(broken));assert.equal((await C.loadCoach()).coachTeams[0].id,team.id);
+ const old=structuredClone(backup);old.version=3;for(const n of C.coachStores)delete old.data[n];
+ await S.restoreBackup(old);assert.deepEqual((await C.loadCoach()).coachTeams,[]);
+});

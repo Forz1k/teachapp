@@ -2,6 +2,7 @@
 
 import * as store from './store.js';
 import * as ui from './ui.js';
+import { renderCoach } from './screens/coach.js';
 import { renderNorms } from './screens/norms.js';
 import { renderToday } from './screens/today.js';
 import { renderClasses } from './screens/classes.js';
@@ -48,7 +49,7 @@ function render() {
   const tab = store.state.currentTab;
 
   if (tab === 'today') {
-    renderToday(screen, { onSchedule: () => setTab('schedule') });
+    renderToday(screen, { onSchedule: () => setTab('schedule'),onCoach:()=>setTab('coach') });
   } else if (tab === 'classes') {
     renderClasses(screen, {
       onOpenJournal: () => { setTab('journal'); },
@@ -61,8 +62,10 @@ function render() {
     renderSchedule(screen, { onChanged: render });
   } else if (tab === 'norms') {
     renderNorms(screen);
+  } else if (tab === 'coach') {
+    renderCoach(screen,{onBack:()=>setTab('today')});
   } else if (tab === 'settings') {
-    renderSettings(screen, { onChanged: render });
+    renderSettings(screen, { onChanged: render,onCoach:()=>setTab('coach') });
   }
 
   if (scrollPos) {
@@ -128,13 +131,14 @@ function renderJournalScreen(screen) {
 function renderTabbar() {
   if (tabbarEl) tabbarEl.remove();
   tabbarEl = el('nav', { class: 'tabbar' },
-    TABS.map((t) => el('button', {
+    (store.state.currentTab==='coach'?[{id:'today',label:'Школа',icon:'back'},{id:'coach',label:'Волейбол',icon:'quick'}]:TABS).map((t) => el('button', {
       type: 'button',
       class: `tab ${store.state.currentTab === t.id ? 'active' : ''}`,
       'aria-label': t.label,
       'aria-current': store.state.currentTab === t.id ? 'page' : null,
       onclick: () => { setTab(t.id); ui.haptic(6); },
     }, [icon(t.icon), el('span', { text: t.label })])));
+  if(store.state.currentTab==='coach')tabbarEl.style.gridTemplateColumns='repeat(2,minmax(0,1fr))';
   document.body.append(tabbarEl);
 }
 

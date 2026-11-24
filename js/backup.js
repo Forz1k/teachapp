@@ -1,8 +1,9 @@
 import { catalog, types, validPeriod } from './health.js';
 import { validateNorm, gradeNorm } from './assessment.js';
+import { validateCoachData, coachStores } from './coach.js';
 import { SCHEMA } from './db.js';
 
-export const BACKUP_VERSION = 3;
+export const BACKUP_VERSION = 4;
 const legacyCore = ['meta','classes','students','lessons','topics','marks','exemptions','monthly'];
 const text = s => typeof s === 'string' && s.trim().length > 0;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -10,11 +11,11 @@ const date = s => validPeriod(s, null);
 
 export function validateBackup(payload) {
   if (payload?.app !== 'teachapp' || !object(payload.data)) throw new Error('Файл не похож на резервную копию TeachApp');
-  if (![1,2,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
+  if (![1,2,3,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
   const data = payload.data;
   const names = Object.keys(SCHEMA);
   if (Object.keys(data).some(n => !names.includes(n))) throw new Error('В копии есть неизвестный раздел');
-  const required = payload.version === 1 ? [...legacyCore] : payload.version === 2 ? names.filter(n=>!['norms','normResults'].includes(n)) : names;
+  const required = payload.version === 1 ? [...legacyCore] : payload.version === 2 ? names.filter(n=>!['norms','normResults',...coachStores].includes(n)) : payload.version === 3 ? names.filter(n=>!coachStores.includes(n)) : names;
   if (payload.version === 1) {
     for (const group of [['ktp','schedule','scheduleOverrides'],['studentHealthProfiles','activityRestrictions','activityCategories']]) {
       if (group.some(key => Object.hasOwn(data,key))) required.push(...group);
@@ -86,5 +87,6 @@ export function validateBackup(payload) {
     && (r.holidays === undefined || (Array.isArray(r.holidays) && r.holidays.every(h => h && date(h.to) && validPeriod(h.from,h.to))))
     && (!r.healthGroups || (Array.isArray(r.healthGroups) && r.healthGroups.every(text)))
     && (!r.lastBackupAt || typeof r.lastBackupAt === 'string')));
+  validateCoachData(tables);
   return tables;
 }

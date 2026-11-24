@@ -435,3 +435,19 @@ test('Ручная отметка обновляет строку журнала
     assert.equal(table.querySelector('[data-student="'+b.id+'"][data-lesson="'+l2.id+'"]').firstChild.firstChild,other);
   } finally {unsub();}
 });
+
+test('Волейбол: отдельный экран, создание команды и состав',async()=>{
+ await seed();
+ const C=await import('../js/coach.js');
+ const {renderCoach}=await import('../js/screens/coach.js');
+ root().replaceChildren();const screen=doc.createElement('div');root().append(screen);
+ await renderCoach(screen);
+ assert.match(screen.textContent,/Волейбол/);assert.match(screen.textContent,/Добавьте первую/);
+ const add=[...screen.querySelectorAll('button')].find(b=>b.textContent==='+ Команда');add.click();await tick();
+ const sheet=doc.querySelector('.sheet');sheet.querySelector('input').value='Команда А';
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Сохранить').click();await tick(100);
+ assert.equal((await C.loadCoach()).coachTeams[0].name,'Команда А');
+ assert.match(screen.textContent,/Состав/);
+ assert.equal(store.state.classes.length,1);
+ ui.closeSheet();
+});

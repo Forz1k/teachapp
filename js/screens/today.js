@@ -26,7 +26,7 @@ export function todayEntries(date = M.todayIso()) {
 
 export function renderToday(root,ctx = {},date = M.todayIso()) {
   root.append(el('div',{class:'topbar'},[
-    el('div',{class:'topbar-row'},[el('h1',{text:'Сегодня'})]),
+    el('div',{class:'topbar-row'},[el('h1',{text:'Сегодня'}),ctx.onCoach?el('button',{class:'btn small',type:'button',text:'Волейбол',onclick:ctx.onCoach}):null]),
     el('div',{class:'subtitle',text:M.weekdayFull(M.weekdayOf(date))+' · '+M.fmtFull(date)})
   ]));
   const rows = todayEntries(date);

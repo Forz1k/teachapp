@@ -20,6 +20,7 @@ export function renderSettings(root, ctx = {}) {
 
   const body = el('div', { class: 'list', style: 'gap:0' });
   root.append(body);
+  if(ctx.onCoach)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Режим тренера'}),el('button',{class:'btn wide',type:'button',text:'Волейбол · команды и тренировки',onclick:ctx.onCoach})]));
 
   /* ---------- учебный год ---------- */
   const yearBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Учебный год' })]);
@@ -204,10 +205,10 @@ export function renderSettings(root, ctx = {}) {
       const payload = await exporter.readBackupFile(file);
       const data = validateBackup(payload);
       const ok = await ui.confirmDialog({
-        title: 'Заменить журнал данными из копии?',
+        title: 'Заменить все данные TeachApp из копии?',
         text: 'В файле классов: ' + data.classes.length + ', учеников: ' + data.students.length + ', уроков: ' + data.lessons.length
-          + '. Все текущие записи будут заменены, включая сведения об участии и ограничениях.',
-        ok: 'Заменить журнал', danger: true,
+          + ', команд: '+data.coachTeams.length+'. Все текущие школьные и тренерские записи будут заменены. Копия прежнего формата не содержит новых разделов.',
+        ok: 'Заменить данные', danger: true,
       });
       if (!ok) return;
       await store.restoreBackup(payload);
