@@ -10,6 +10,7 @@ import {attentionPanel} from './attention.js';
 import {listWork} from '../workbench.js';
 import {openWorkCalendar} from './work-calendar.js';
 import {showLessonSession} from './session.js';
+import {openInventory,openAchievements} from './resources.js';
 import {openDocuments} from './documents.js';
 import {openTournaments} from './tournaments.js';
 import {calendarShortcut} from './work-calendar.js';
@@ -90,7 +91,7 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
     ctx.onSchedule?actionTile('Расписание','calendar',ctx.onSchedule):null,
     ctx.onJournal?actionTile('Журнал','journal',ctx.onJournal):null,
     ctx.onNorms?actionTile('Нормативы','quick',ctx.onNorms):null,
-    actionTile('Конспекты','classes',()=>openLibrary('school')),actionTile('Документы','journal',()=>openDocuments()),
+    actionTile('Конспекты','classes',()=>openLibrary('school')),actionTile('Документы','journal',()=>openDocuments()),actionTile('Инвентарь','classes',openInventory),actionTile('Достижения','trophy',()=>openAchievements({area:'school'})),
     actionTile('Соревнования','trophy',openTournaments),
     ctx.onAnalytics?actionTile('Аналитика','chart',ctx.onAnalytics):null
   ]));

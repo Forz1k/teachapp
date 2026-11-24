@@ -1,6 +1,7 @@
 import * as W from '../workbench.js';
 import {catalog} from '../health.js';
 import {el,openSheet,closeSheet,toast,confirmDialog,downloadBlob} from '../ui.js';
+import {equipmentCard} from './resources.js';
 import {openBoardView} from './tactics.js';
 import {dashboardHeading} from '../dashboard.js';
 const p=text=>el('p',{text});
@@ -18,11 +19,14 @@ function exerciseForm(existing,back){
  openSheet(stack([el('h2',{text:'Упражнение'}),field('Название',name),field('Категория',category),field('Вид нагрузки',activity),field('Минуты',minutes),field('Описание и методика',description),field('Инвентарь',equipment),field('Подготовленность',level),save,btn('Назад',back)]));
 }
 function exportPlan(plan){
- const text=[plan.name,W.contexts[plan.context]+' · '+plan.minutes+' мин', 'Группа: '+plan.audience,'Цель: '+plan.goal,'Инвентарь: '+plan.equipment,'',...plan.items.flatMap(i=>[W.phases[i.phase]+' · '+i.minutes+' мин · '+i.exercise.name,i.exercise.description,'Инвентарь: '+i.exercise.equipment,'Методические указания: '+i.notes,'']),...(plan.tactics||[]).map(b=>'Тактическая схема: '+b.name+' · '+b.note),'Всего: '+plan.items.reduce((n,i)=>n+i.minutes,0)+' мин.'].join('\n');
+ const text=[plan.name,W.contexts[plan.context]+' · '+plan.minutes+' мин', 'Группа: '+plan.audience,'Цель: '+plan.goal,'Инвентарь: '+plan.equipment,'',...plan.items.flatMap(i=>[W.phases[i.phase]+' · '+i.minutes+' мин · '+i.exercise.name,i.exercise.description,'Инвентарь: '+i.exercise.equipment,'Методические указания: '+i.notes,'']),...(plan.resources||[]).map(r=>'Инвентарь: '+r.name+' · '+r.qty+' '+r.unit),...(plan.tactics||[]).map(b=>'Тактическая схема: '+b.name+' · '+b.note),'Всего: '+plan.items.reduce((n,i)=>n+i.minutes,0)+' мин.'].join('\n');
  downloadBlob(new Blob(['\uFEFF'+text],{type:'text/plain;charset=utf-8'}),'plan.txt');
 }
 async function planForm(existing,back,context){
  const e=existing||{},exercises=[...W.builtinExercises,...await W.listWork('exercise')],name=inp(e.name||''),mode=select(Object.entries(W.contexts),e.context||context||'school'),minutes=inp(e.minutes||45,'number',{min:1,max:600}),goal=area(e.goal||''),equipment=inp(e.equipment||''),audience=inp(e.audience||''),items=structuredClone(e.items||[]);
+ const resources=structuredClone(e.resources||[]),stock=await W.listWork('inventory'),stockPick=select([['','Выберите инвентарь'],...stock.filter(r=>!r.archived).map(r=>[r.id,r.name])]),resourceQty=inp(1,'number',{min:1,step:1}),resourceList=el('div',{class:'coach-stack'});
+ function drawResources(){resourceList.replaceChildren(equipmentCard(resources,stock),...resources.map((r,i)=>btn('Убрать '+r.name,()=>{resources.splice(i,1);drawResources();})));}drawResources();
+ const resourceBox=card('Потребность в инвентаре',[field('Инвентарь',stockPick),field('Количество',resourceQty),btn('+ Добавить потребность',()=>{const r=stock.find(x=>x.id===stockPick.value),q=num(resourceQty);if(!r||!Number.isInteger(q)||q<1||q>1000000)return toast('Выберите инвентарь и количество');const old=resources.find(x=>x.itemId===r.id);if(old){old.qty=q;old.name=r.name;old.unit=r.unit;}else if(resources.length<50)resources.push({itemId:r.id,name:r.name,unit:r.unit,qty:q});drawResources();}),resourceList,p('Проверка не резервирует и не списывает инвентарь.')]);
  const tactics=structuredClone(e.tactics||[]),boards=await W.listWork('tacticBoard'),boardPick=select([['','Выберите схему'],...boards.map(b=>[b.id,b.name])]),boardList=el('div',{class:'coach-stack'});
  const boardBox=card('Тактические схемы',[field('Схема',boardPick),btn('+ Прикрепить снимок',()=>{const b=boards.find(b=>b.id===boardPick.value);if(b&&tactics.length<10){tactics.push(structuredClone(b));drawBoards();}}),boardList]);
  function drawBoards(){boardBox.hidden=mode.value!=='coach';boardList.replaceChildren(...tactics.map((b,i)=>el('div',{class:'profile-result'},[el('strong',{text:b.name}),btn('Убрать',()=>{tactics.splice(i,1);drawBoards();})])));}mode.onchange=drawBoards;drawBoards();
@@ -34,8 +38,8 @@ async function planForm(existing,back,context){
  total.replaceChildren(el('strong',{text:'Запланировано '+sum+' / '+limit+' мин'}),el('progress',{max:Math.max(1,limit,sum),value:sum,'aria-label':'Запланированные минуты'}),el('div',{class:'phase-summary'},Object.entries(W.phases).map(([id,label])=>el('div',{},[el('small',{text:label}),el('strong',{text:items.filter(i=>i.phase===id).reduce((n,i)=>n+(Number(i.minutes)||0),0)+' мин'})]))));
 }
  minutes.oninput=update;draw();
- const save=btn('Сохранить конспект',async()=>{save.disabled=true;try{await W.saveWork({id:e.id,kind:'plan',name:name.value.trim(),context:mode.value,minutes:num(minutes),goal:goal.value.trim(),equipment:equipment.value.trim(),audience:audience.value.trim(),items,...(mode.value==='coach'?{tactics}:{})});await back();}catch(err){toast(err.message);}finally{save.disabled=false;}},'primary');
- openSheet(stack([el('h2',{text:'Конспект занятия'}),field('Название',name),field('Тип',mode),field('Класс / группа (без ФИО)',audience),field('Длительность',minutes),field('Цель и задачи',goal),field('Инвентарь',equipment),field('Этап',phase),field('Упражнение',pick),btn('+ Добавить упражнение',()=>{const ex=exercises.find(x=>x.id===pick.value);if(!ex)return;items.push({phase:phase.value,exercise:structuredClone(ex),minutes:ex.minutes,notes:''});items.sort((a,b)=>Object.keys(W.phases).indexOf(a.phase)-Object.keys(W.phases).indexOf(b.phase));draw();}),total,list,boardBox,save,btn('Назад',back)]));
+ const save=btn('Сохранить конспект',async()=>{save.disabled=true;try{await W.saveWork({id:e.id,kind:'plan',name:name.value.trim(),context:mode.value,minutes:num(minutes),goal:goal.value.trim(),equipment:equipment.value.trim(),audience:audience.value.trim(),items,resources,...(mode.value==='coach'?{tactics}:{})});await back();}catch(err){toast(err.message);}finally{save.disabled=false;}},'primary');
+ openSheet(stack([el('h2',{text:'Конспект занятия'}),field('Название',name),field('Тип',mode),field('Класс / группа (без ФИО)',audience),field('Длительность',minutes),field('Цель и задачи',goal),field('Инвентарь',equipment),field('Этап',phase),field('Упражнение',pick),btn('+ Добавить упражнение',()=>{const ex=exercises.find(x=>x.id===pick.value);if(!ex)return;items.push({phase:phase.value,exercise:structuredClone(ex),minutes:ex.minutes,notes:''});items.sort((a,b)=>Object.keys(W.phases).indexOf(a.phase)-Object.keys(W.phases).indexOf(b.phase));draw();}),total,list,resourceBox,boardBox,save,btn('Назад',back)]));
 }
 export async function openLibrary(context='school'){
  let mode='exercise',query='',category='';
