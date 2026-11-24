@@ -14,7 +14,7 @@ import {openInventory,openAchievements} from './resources.js';
 import {openDocuments} from './documents.js';
 import {openTacticBoards,openLineupAssistant} from './tactics.js';
 import {openPlayerGoals} from './coach-goals.js';
-import {openMatchTactics,openTeamTactics} from './match-tactics.js';
+import {openMatchTactics,openTeamTactics,openMatchDebrief} from './match-tactics.js';
 import {openSeasonAnalytics,playerInsightCard} from './coach-season.js';
 import {openSeasonPlans} from './season-plan.js';
 import {openTournaments} from './tournaments.js';
@@ -284,7 +284,7 @@ export async function renderCoach(root,ctx={}){
         for(const m of view.matches){
           const s=C.matchScore(m);
           body.append(card(m.opponent+' · '+s.ours+':'+s.theirs,[p(fmtFull(m.date)+(m.competition?' · '+m.competition:'')),p(m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),p('Игроков в составе: '+m.roster.length),
-            m.imported?btn('Импортированный протокол VolleyPoint',()=>openImportedReport(m,view),'primary wide'):m.detail?btn('Протокол матча · PDF / печать',()=>openMatchReport(m,ui.closeSheet),'primary wide'):btn('Состав, партии и статистика',()=>matchForm(team,view,m,refresh),'wide'),m.detail?btn('Тактический разбор',()=>openMatchTactics(m),'wide'):null,m.detail?btn('Видеоразбор',()=>openVideoReview(m),'wide'):null,btn('Удалить матч',()=>confirm('Удалить матч?','Результат и статистика будут удалены.',()=>C.removeEvent('coachMatches',m.id),refresh),'wide')]));
+            m.imported?btn('Импортированный протокол VolleyPoint',()=>openImportedReport(m,view),'primary wide'):m.detail?btn('Протокол матча · PDF / печать',()=>openMatchReport(m,ui.closeSheet),'primary wide'):btn('Состав, партии и статистика',()=>matchForm(team,view,m,refresh),'wide'),m.detail?btn('Выводы и план работы',()=>openMatchDebrief(m),'wide'):null,m.detail?btn('Тактический разбор',()=>openMatchTactics(m),'wide'):null,m.detail?btn('Видеоразбор',()=>openVideoReview(m),'wide'):null,btn('Удалить матч',()=>confirm('Удалить матч?','Результат и статистика будут удалены.',()=>C.removeEvent('coachMatches',m.id),refresh),'wide')]));
         }
         if(!view.matches.length)body.append(p('Нет результатов матчей'));
       }else{
