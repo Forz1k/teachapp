@@ -1,3 +1,4 @@
+import {animateOnce,scoreChanges,recentRallies,rallyStreak,capturePositions,animatePositions} from '../motion.js';
 import * as C from '../coach.js';
 import * as V from '../match-protocol.js';
 import {matchTactics} from '../match-tactics.js';
@@ -158,10 +159,14 @@ export function openDetailedMatch(initial,back,refresh){
   try{d=await C.changeLiveMatch(d.id,d.revision,event);publish();after?.();draw();}
   catch(e){toast(e.message);}finally{busy=false;buttons.forEach(x=>x.disabled=false);}
  };
+ let previousBoard=null,previousOverlay='';
  function draw(){
-  const s=V.replayDetailed(d),last=s.timeline.at(-1),won=s.sets.filter(x=>x.ours>x.theirs).length;
+  const oldPositions=capturePositions(body),s=V.replayDetailed(d),last=s.timeline.at(-1),won=s.sets.filter(x=>x.ours>x.theirs).length;
   spectatorUpdate(s);
   const set=s.setEnded?s.sets.length:s.sets.length+1;
+  const snapshot={id:d.id,set,score:{...s.score},ended:s.setEnded,finished:s.finished,order:swapped,section};
+  const changes=scoreChanges(previousBoard,snapshot),newSetEnd=previousBoard&&(!previousBoard.ended&&s.setEnded||!previousBoard.finished&&s.finished),rotation=previousBoard&&previousBoard.set===set&&previousBoard.order===swapped&&previousBoard.section==='match'&&section==='match'&&Object.keys(changes).length>0;
+  previousBoard=snapshot;
   const pre=pointDraft?.editing&&last?.before;
   const begin=(side,editing=false)=>{pointDraft={side,editing,kind:null};selected=null;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;};
   const cancel=()=>{pointDraft=null;selected=null;scoutOpen=false;draw();};
@@ -178,11 +183,11 @@ export function openDetailedMatch(initial,back,refresh){
    const zones=index===0?[5,4,6,3,1,2]:[2,1,3,6,4,5];
    const mini=active?el('div',{class:'vp-court vp-mini-court','aria-label':'Расстановка '+sideName(d,side)},zones.map(z=>{
     const id=ids[z-1],pl=roster(d,side).find(p=>p.id===id);
-    return el('button',{type:'button',class:'vp-mini-player'+(z===1&&serving?' serving':'')+(side==='ours'&&id===d.libero?' libero':''),disabled:!pl||!!pointDraft,onclick:()=>choose(side,id),'aria-label':sideName(d,side)+', зона '+z+', '+(pl?playerLabel(pl):'нет игрока')},[
+    return el('button',{type:'button',class:'vp-mini-player'+(z===1&&serving?' serving':'')+(side==='ours'&&id===d.libero?' libero':''),'data-motion-player':pl?side+':'+pl.id:null,disabled:!pl||!!pointDraft,onclick:()=>choose(side,id),'aria-label':sideName(d,side)+', зона '+z+', '+(pl?playerLabel(pl):'нет игрока')},[
      el('span',{class:'vp-mini-number',text:pl?.number??(pl?'•':'—')}),el('small',{text:'P'+z})]);
    })):null;
    return el('div',{class:'vp-score-side '+side+(serving?' score-serving':'')},[
-    teamEmblem(d,side),el('span',{text:sideName(d,side)}),el('strong',{class:'vp-score-number',text:String(s.score[side])}),
+    teamEmblem(d,side),el('span',{text:sideName(d,side)}),el('strong',{class:'vp-score-number','data-score-side':side,text:String(s.score[side])}),
     el('small',{text:'Партии '+(side==='ours'?won:s.sets.length-won)}),mini,
     active?el('div',{class:'vp-board-indicators'},[
      el('div',{class:'vp-pips','aria-label':'Замены '+s.subCounts[side]+' из 6'},[el('span',{text:'Замены'}),...Array.from({length:6},(_,i)=>el('i',{class:i<s.subCounts[side]?'used':''}))]),
@@ -191,6 +196,11 @@ export function openDetailedMatch(initial,back,refresh){
   }));
   body.replaceChildren(el('div',{class:'vp-match-head'},[el('div',{class:'vp-match-title'},[el('span',{class:'match-live-label',text:s.finished?'ЗАВЕРШЁН':s.setEnded?'ПЕРЕРЫВ':'● LIVE'}),el('strong',{text:'Партия '+set})]),displayScore,el('div',{class:'match-sets'},s.sets.length?s.sets.map((x,i)=>el('span',{class:'match-set',text:(i+1)+' · '+score(x)})):[el('span',{text:'Первая партия'})])]),
    el('div',{class:'vp-tabs',role:'group','aria-label':'Раздел матча'},[['match','Матч'],['stats','Статистика'],['events','События']].map(([id,t])=>btn(t,()=>{section=id;historyEdit=null;draw();},section===id?'primary':''))));
+  for(const [side,kind] of Object.entries(changes)){const n=displayScore.querySelector('[data-score-side="'+side+'"]');if(n){animateOnce(n,kind,{duration:280});if(kind==='score')animateOnce(n.parentElement,'pulse',{duration:210});}}
+  if(rotation&&!pointDraft&&!scoutOpen)animatePositions(displayScore,oldPositions);
+  if(newSetEnd)animateOnce(body.querySelector('.vp-match-title'),'enter',{duration:360});
+  if(!pointDraft&&!scoutOpen)previousOverlay='';
+  if(active&&!pointDraft&&!scoutOpen){const rows=recentRallies(s.timeline,set),streak=rallyStreak(rows);if(rows.length){const meter=el('div',{class:'vp-rally-meter'},[el('div',{class:'vp-rally-meter-head'},[el('small',{text:'Последние '+rows.length+' розыгрышей'}),el('strong',{text:streak.count>=2?'Серия '+sideName(d,streak.side)+' · '+streak.count:'Последнее очко · '+sideName(d,streak.side)})]),el('div',{class:'vp-rally-strip','aria-label':rows.map(x=>x.score+' '+sideName(d,x.side)).join(', ')},rows.map(x=>el('span',{class:x.side,title:x.score}))) ]);body.insertBefore(meter,body.children[1]);if(Object.keys(changes).length)animateOnce(meter.querySelector('.vp-rally-strip span:last-child'),'enter',{duration:180});}}
   if(section==='stats'){body.append(momentumBlock(d,s),liveAnalysis(d,s));}
   else if(section==='events'){
    const rawRallies=d.events.flatMap((e,i)=>e.type==='rally'?[i]:[]);let ri=0;
@@ -209,6 +219,7 @@ export function openDetailedMatch(initial,back,refresh){
     for(const child of [...body.children]){child.inert=true;child.setAttribute('inert','');}
     const overlay=el('div',{class:'vp-rally-overlay',onkeydown:e=>{if(e.key==='Escape'&&!busy){e.stopPropagation();cancel();}}},[area]);
     body.append(overlay);
+    const key=scoutOpen?'scout':pointDraft?'point:'+String(pointDraft.kind)+':'+String(!!pointDraft.extra):'player';if(previousOverlay!==key){animateOnce(area,'enter',{duration:180});previousOverlay=key;}
     area.setAttribute('tabindex','-1');area.setAttribute('role','dialog');area.setAttribute('aria-modal','true');area.focus({preventScroll:true});
    };
    if(scoutOpen){
@@ -367,15 +378,16 @@ function scoutPanel(d,s,options,change,close){
  const ranked=top&&top.misses>=2?el('div',{class:'vp-scout-tip'},[el('strong',{text:hint+': '+name(d,side,top.id)+' · P'+top.zone}),p('Отмечено '+top.misses+' ошибок выбранного типа за период. Это наблюдение, не вероятность ошибки. '+(a.ranked.filter(x=>x.misses===top.misses).length>1?'Есть другие игроки с таким же количеством.':''))]):p('Пока нет повторяющихся персональных ошибок выбранного типа.');
  const zoneTip=zone&&zone.count>=2?el('div',{class:'vp-scout-tip'},[el('strong',{text:(side==='theirs'?'Проверить зону соперника P':'Прикрыть нашу зону P')+zone.zone}),p('Зафиксировано завершений: '+zone.count+'. '+(a.topZones.filter(x=>x.count===zone.count).length>1?'Есть зоны с таким же количеством.':''))]):p('Пока нет повторяющихся завершений в известной зоне.');
  const byZone=new Map(a.rows.map(x=>[x.zone,x])),maxPlayer=Math.max(1,...a.rows.map(x=>x.misses)),maxZone=Math.max(1,...a.zones);
- const grid=(isPlayer)=>el('div',{class:'vp-heat-grid'},[4,3,2,5,6,1].map(z=>{
+ const detail=el('p',{class:'vp-zone-detail','aria-live':'polite',text:'Нажмите на зону, чтобы увидеть её показатели.'});
+ const grid=(isPlayer)=>el('div',{class:'vp-heat-grid vp-radar-grid'},[4,3,2,5,6,1].map(z=>{
   const r=byZone.get(z),pl=roster(d,side).find(p=>p.id===r?.id),count=isPlayer?r?.misses||0:a.zones[z-1];
-  return el('div',{class:'vp-heat-cell vp-scout-cell',style:'--heat:'+count/(isPlayer?maxPlayer:maxZone)},[el('small',{text:'P'+z}),el('strong',{text:isPlayer?(pl?.number!=null?'№'+pl.number:pl?'•':'—'):String(count)}),el('small',{text:isPlayer?(pl?pl.name+' · '+count+' ошибок':'Нет состава'):'завершений'})]);
+  return el('button',{type:'button',class:'vp-heat-cell vp-scout-cell',style:'--heat:'+count/(isPlayer?maxPlayer:maxZone),'aria-pressed':'false',onclick:e=>{const n=e.currentTarget;for(const x of n.closest('.vp-scout-panel').querySelectorAll('.vp-scout-cell'))x.setAttribute('aria-pressed','false');n.setAttribute('aria-pressed','true');detail.textContent=isPlayer?'P'+z+' · '+(pl?pl.name+' · '+count+' отмеченных ошибок · '+(r?.onCourt||0)+' розыгрышей на площадке':'нет игрока'):'P'+z+' · '+count+' завершений · зон известно '+a.knownZones+' из '+a.total;animateOnce(n,'pulse',{duration:180});}},[el('small',{text:'P'+z}),el('strong',{text:isPlayer?(pl?.number!=null?'№'+pl.number:pl?'•':'—'):String(count)}),el('small',{text:isPlayer?(pl?pl.name+' · '+count+' ошибок':'Нет состава'):'завершений'})]);
  }));
  return el('section',{class:'vp-attribution vp-scout-panel','aria-label':'Тактическая разведка'},[
   el('h3',{text:'Тактическая разведка'}),el('div',{class:'vp-tabs'},[['theirs','Соперник'],['ours','Наша команда']].map(([id,label])=>btn(label,()=>change({side:id}),side===id?'primary':''))),field('Период',period),field('Тип действия',types),
   p('Розыгрышей: '+a.rallies+' · пропущенных завершений выбранного типа: '+a.total),p('С автором ошибки: '+a.knownPlayers+' из '+a.total+' · с зоной: '+a.knownZones+' из '+a.total),
   ranked,observed?el('div',{class:'vp-scout-tip'},[el('strong',{text:'По записанным попыткам: '+name(d,side,observed.id)}),p(Math.round(observed.errorRate*100)+'% ошибок · '+observed.misses+' из '+observed.attempts+' отмеченных действий. Выборка может быть неполной.')]):null,zoneTip,el('strong',{text:'Игроки в текущей расстановке'}),el('div',{class:'vp-heat-net',text:'СЕТКА'}),grid(true),p('P1–P6 — текущие позиции по расстановке, не фактическое место игрока в розыгрыше. Цвет показывает число отмеченных ошибок, а не качество игры.'),
-  el('strong',{text:'Карта пропущенных завершений'}),el('div',{class:'vp-heat-net',text:'СЕТКА'}),grid(false),
+  el('strong',{text:'Карта пропущенных завершений'}),el('div',{class:'vp-heat-net',text:'СЕТКА'}),grid(false),detail,
   table(['Игрок на площадке','Розыгрыши¹','Ошибки','Успешно','Попытки','Доля²','Приём','Атака','Скидка'],[...a.rows].sort((x,y)=>y.misses-x.misses||x.zone-y.zone).map(r=>[name(d,side,r.id),r.onCourt,r.misses,r.success,r.attempts,r.attempts>=5&&r.success>0?Math.round(r.errorRate*100)+'%':'—',r.serve,r.attack,r.tip])),
   a.former.length?el('details',{},[el('summary',{text:'Игроки вне площадки · '+a.former.length}),...a.former.map(r=>p(name(d,side,r.id)+' · '+r.misses+' отмеченных ошибок'))]):null,
   p('¹ Розыгрыши с игроком на площадке. ² Доля ошибок среди записанных попыток (не менее пяти и хотя бы одно успешное действие). Не все мячи обязательно отмечены. Ноль ошибок не доказывает безошибочную игру.'),

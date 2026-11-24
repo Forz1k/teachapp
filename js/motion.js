@@ -14,3 +14,10 @@ export function animateOnce(node,kind,options={}){if(!node||!motionAllowed(node.
 export function scoreChanges(before,after){if(!before||!after||before.id!==after.id||before.set!==after.set||!before.score||!after.score)return {};
  return Object.fromEntries(['ours','theirs'].filter(s=>Number.isFinite(before.score[s])&&Number.isFinite(after.score[s])&&before.score[s]!==after.score[s]).map(s=>[s,after.score[s]>before.score[s]?'score':'correction']));}
 export function enterGroup(nodes){Array.from(nodes).slice(0,6).forEach((n,i)=>animateOnce(n,'enter',{duration:240,delay:i*24}));}
+
+export function recentRallies(timeline,set,limit=12){return timeline.filter(e=>e.type==='rally'&&e.set===set&&['ours','theirs'].includes(e.side)).slice(-limit);}
+export function rallyStreak(rows){const side=rows.at(-1)?.side;if(!side)return null;let count=0;for(let i=rows.length-1;i>=0&&rows[i].side===side;i--)count++;return {side,count};}
+export function capturePositions(root){return new Map([...root.querySelectorAll('[data-motion-player]')].map(n=>[n.dataset.motionPlayer,n.getBoundingClientRect()]));}
+export function animatePositions(root,previous){if(!motionAllowed(root.ownerDocument.documentElement)||root.ownerDocument.documentElement.dataset.motion==='subtle')return;
+ for(const n of root.querySelectorAll('[data-motion-player]')){const a=previous.get(n.dataset.motionPlayer);if(!a||typeof n.animate!=='function')continue;const b=n.getBoundingClientRect(),x=a.left-b.left,y=a.top-b.top;if(Math.abs(x)+Math.abs(y)<3||Math.abs(x)+Math.abs(y)>600)continue;try{n.animate([{transform:'translate('+x+'px,'+y+'px)',zIndex:2},{transform:'none',zIndex:2}],{duration:240,easing:'cubic-bezier(.2,.75,.25,1)'});}catch{}}
+}
