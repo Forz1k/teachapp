@@ -21,3 +21,13 @@ test('Тактика: тайм-ауты и матчи без полной ист
  const summary=teamTactics(matches,{opponent:'гости',min:15});
  assert.equal(summary.total,2);assert.equal(summary.detailed,1);assert.equal(summary.overall.rallies,10);assert.ok(summary.six.every(r=>!r.eligible));assert.equal(summary.opponents[0].matches,2);
 });
+
+test('Сочетания фильтруются по партии и минимальной выборке',()=>{
+ let d=base;for(let i=0;i<15;i++)d=append(d,'ours');
+ d=detailEvent(d,{type:'next',lineup:['a6',...base.lineup.slice(1)],awayLineup:[],serve:'ours'});
+ d=append(d,'theirs');d=append(d,'ours');
+ const a=matchTactics(d,5,{set:2,min:2});
+ assert.equal(a.overall.rallies,2);assert.equal(a.sets.length,1);assert.equal(a.sets[0].set,2);
+ assert.equal(a.six.length,1);assert.equal(a.six[0].eligible,true);assert.equal(a.six[0].players.includes('a6'),true);assert.equal(a.six[0].plusMinus,0);
+ assert.equal(matchTactics(d,5,{set:2,min:3}).six[0].eligible,false);
+});
