@@ -1,7 +1,8 @@
 import { catalog, types, validPeriod } from './health.js';
+import { validateNorm, gradeNorm } from './assessment.js';
 import { SCHEMA } from './db.js';
 
-export const BACKUP_VERSION = 2;
+export const BACKUP_VERSION = 3;
 const legacyCore = ['meta','classes','students','lessons','topics','marks','exemptions','monthly'];
 const text = s => typeof s === 'string' && s.trim().length > 0;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -9,11 +10,11 @@ const date = s => validPeriod(s, null);
 
 export function validateBackup(payload) {
   if (payload?.app !== 'teachapp' || !object(payload.data)) throw new Error('Файл не похож на резервную копию TeachApp');
-  if (![1,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
+  if (![1,2,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
   const data = payload.data;
   const names = Object.keys(SCHEMA);
   if (Object.keys(data).some(n => !names.includes(n))) throw new Error('В копии есть неизвестный раздел');
-  const required = payload.version === 1 ? [...legacyCore] : names;
+  const required = payload.version === 1 ? [...legacyCore] : payload.version === 2 ? names.filter(n=>!['norms','normResults'].includes(n)) : names;
   if (payload.version === 1) {
     for (const group of [['ktp','schedule','scheduleOverrides'],['studentHealthProfiles','activityRestrictions','activityCategories']]) {
       if (group.some(key => Object.hasOwn(data,key))) required.push(...group);
@@ -77,6 +78,9 @@ export function validateBackup(payload) {
     && ['none','parent','document'].includes(r.basis) && (!r.activityId || activities.has(r.activityId))
     && (!r.full || (r.mode === 'paused' && r.basis === 'document' && index.marks.get(r.markId)?.studentId === r.studentId
       && index.marks.get(r.markId)?.lessonId === r.lessonId)));
+  const validNorm = n => {try {validateNorm(n,activities);return true;} catch {return false;}};
+  check('norms',validNorm);
+  check('normResults',r=>pair(r) && date(r.date) && index.norms.has(r.normId) && validNorm(r.definition) && r.definition.id===r.normId && (r.status==='restricted' ? r.value===null && r.grade===null : r.status==='done' && typeof r.value==='number' && Number.isFinite(r.value) && r.value>=0 && r.grade===gradeNorm(r.definition,r.value)));
   check('meta', r => r.id !== 'settings' || ((!r.year || (date(r.year.to) && validPeriod(r.year.from,r.year.to)))
     && (r.trimesters === undefined || (Array.isArray(r.trimesters) && r.trimesters.length && r.trimesters.every(t => t && text(t.id) && date(t.to) && validPeriod(t.from,t.to))))
     && (r.holidays === undefined || (Array.isArray(r.holidays) && r.holidays.every(h => h && date(h.to) && validPeriod(h.from,h.to))))
