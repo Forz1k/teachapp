@@ -1,7 +1,7 @@
 import * as S from '../store.js';
 import * as db from '../db.js';
 import {ktpLinkIssues} from '../backup.js';
-import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,disconnectSync} from '../sync.js';
+import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,localSyncState,disconnectSync} from '../sync.js';
 import {createDeviceInvite,redeemDeviceInvite,parseInvite} from '../device-invite.js';
 import {autoSyncStatus,withSyncSession,runPersonalSync} from '../auto-sync.js';
 import {parsePersonalCode,personalCredentials,readPersonalCode,savePersonalCode,forgetPersonalCode} from '../personal-sync.js';
@@ -73,6 +73,17 @@ export function openSync(){
    personalForget.hidden=!saved;inviteCreate.hidden=!saved;both.hidden=!saved;inviteImport.hidden=Boolean(saved);
    status.textContent=cp?'Последняя подтверждённая ревизия: '+cp.revision:'Контур пока не подключён.';
    detach.hidden=!cp;detach.style.display=cp?'':'none';
+   localStatus.hidden=!saved;
+   if(saved){
+    localStatus.textContent='Сравнение локальных записей с последней принятой ревизией…';
+    try{
+     const data=await db.dumpAll();
+     const local=await Promise.all(Object.keys(syncAreas).map(async scope=>localSyncState({...await personalCredentials(saved,scope),data})));
+     if(n!==seq||closed||readPersonalCode()!==saved)return;
+     const labels={setup:'не подключён',clean:'локальных изменений нет',pending:'есть изменения, ещё не подтверждённые облаком',review:'нужна проверка подключения или данных'};
+     localStatus.textContent=local.map(x=>syncAreas[x.area]+': '+labels[x.status]+(x.successfulAt?' · последняя успешная проверка '+new Date(x.successfulAt).toLocaleString('ru-RU'):'')).join('\n');
+    }catch{if(n===seq&&!closed)localStatus.textContent='Не удалось сравнить локальные записи.';}
+   }else localStatus.textContent='';
   }catch{if(n===seq)status.textContent='Не удалось прочитать состояние.';}
  }
  async function drawSummary(){
@@ -182,6 +193,7 @@ export function openSync(){
   }catch(e){toast(e.message,null,8000);}finally{busy=false;controls(false);}
  },'primary');
  const personalStatus=el('p',{class:'profile-note','aria-live':'polite'});
+ const localStatus=el('p',{class:'profile-note','aria-live':'polite',style:'white-space:pre-line',hidden:true});
  const personalConnect=btn('Ввести личный код',async()=>{
   if(busy)return;
   busy=true;controls(true);apply.disabled=true;
@@ -247,7 +259,7 @@ export function openSync(){
  });
  area.onchange=()=>{clear();refresh();};
  for(const input of [endpoint,token,password])input.oninput=()=>{if(plan){plan=null;client=null;secret=null;choices={};results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}};
- const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
+ const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,localStatus,personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
  openSheet(root,{fullHeight:true,onClose:()=>{closed=true;clear();}});
  refresh();
 }
