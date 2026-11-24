@@ -4,6 +4,7 @@ import {catalog} from '../health.js';
 import {todayIso,fmtFull} from '../model.js';
 import * as ui from '../ui.js';
 import {openMatchCenter} from './volleyball.js';
+import {competitionCard} from './competition-center.js';
 import {openVideoReview} from './video-review.js';
 import {openMatchReport} from './match-protocol.js';
 import {openVolleyImport,openImportedReport} from './volleypoint-import.js';
@@ -242,8 +243,9 @@ export async function renderCoach(root,ctx={}){
         const upcoming=view.trainings.filter(t=>!t.held&&t.date>=todayIso()).sort(dateSort),next=upcoming[0];
         const go=id=>{selectedSection=id;ctx.onSection?.(id);refresh();};
         body.append(dashboardHeading(team.name,'Рабочая панель команды'),el('div',{class:'dashboard-metrics'},[metric('Игроков',active.length,'classes'),metric('Матчей',view.matches.length,'trophy'),metric('Побед',wins,'check'),metric('Тренировки впереди',upcoming.length,'calendar')]));
+        if(!team.archived)body.append(competitionCard(team,data,refresh));
         const taskHolder=el('div',{class:'attention-holder'}),tasks=coachTasks(data,team.id);
-        const onTask=task=>{if(task.kind==='match')openMatchCenter(team,refresh);else if(task.kind==='goal'){const player=view.players.find(p=>p.id===task.target.playerId);if(player)openPlayerGoals(team,player,closeSheet);}else if(task.kind==='training'){const t=view.trainings.find(t=>t.id===task.target.trainingId);if(t)trainingForm(team,view,t,refresh);}else if(task.kind==='backup'){closeSheet();ctx.onSettings?.();}else openWorkCalendar({date:task.target.date,source:'custom',span:'1'});};
+        const onTask=task=>{if(task.kind==='match')openMatchCenter(team,refresh,{draftId:task.target.draftId});else if(task.kind==='goal'){const player=view.players.find(p=>p.id===task.target.playerId);if(player)openPlayerGoals(team,player,closeSheet);}else if(task.kind==='training'){const t=view.trainings.find(t=>t.id===task.target.trainingId);if(t)trainingForm(team,view,t,refresh);}else if(task.kind==='backup'){closeSheet();ctx.onSettings?.();}else openWorkCalendar({date:task.target.date,source:'custom',span:'1'});};
         taskHolder.append(attentionPanel(tasks.concat(commonTasks(School.state.settings,[])),onTask));body.append(taskHolder);
         Promise.all([listWork('event'),listWork('coachGoal')]).then(([events,goals])=>{if(seq===sequence&&taskHolder.isConnected)taskHolder.replaceChildren(attentionPanel(tasks.concat(commonTasks(School.state.settings,events),goalTasks(goals,team.id)),onTask));}).catch(()=>{});
         body.append(el('article',{class:'card-block today-card lesson-card lesson-card-next'},[el('div',{class:'today-meta',text:'Ближайшая тренировка'}),el('h2',{text:next?next.title:'Нет запланированных тренировок'}),next?p(fmtFull(next.date)+' · '+next.time+' · '+next.minutes+' мин'):null,team.archived?null:btn(next?'Открыть тренировку':'Запланировать',()=>trainingForm(team,view,next||null,refresh),'primary wide')]));
@@ -277,6 +279,7 @@ export async function renderCoach(root,ctx={}){
           body.append(card(title,[...nodes,!list.length?p('Нет записей'):null]));
         }
       }else if(selectedSection==='matches'){
+        if(!team.archived)body.append(competitionCard(team,data,refresh));
         body.append(card('Матчи и соревнования',[team.archived?null:btn('Площадка и live-матч',()=>openMatchCenter(team,refresh),'primary wide'),team.archived?null:btn('+ Результат матча',()=>matchForm(team,view,null,refresh),'wide'),team.archived?null:btn('Импорт PDF VolleyPoint',()=>openVolleyImport(team,view,refresh),'wide')]));
         for(const m of view.matches){
           const s=C.matchScore(m);

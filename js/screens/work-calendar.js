@@ -3,6 +3,7 @@ import * as C from '../coach.js';
 import * as M from '../model.js';
 import * as W from '../workbench.js';
 import {calendarEntries,dueReminders,timeConflicts,calendarIcs,eventTypes} from '../work-calendar.js';
+import {portalInfo} from '../public-publisher.js';
 import {el,openSheet,closeSheet,toast,confirmDialog,downloadBlob} from '../ui.js';
 import {calendarMonth,dashboardHeading} from '../dashboard.js';
 const p=text=>el('p',{text});
@@ -12,7 +13,7 @@ const inp=(value='',type='text',props={})=>el('input',{type,value,...props});
 const select=(opts,value)=>{const n=el('select',{},opts.map(([v,text])=>el('option',{value:v,text})));n.value=value??opts[0]?.[0]??'';return n;};
 const card=(title,children)=>el('section',{class:'card-block coach-card'},[el('h3',{text:title}),...children]);
 const stack=children=>el('div',{class:'coach-form'},children);
-async function entries(from,to){const [coach,events,tournaments]=await Promise.all([C.loadCoach(),W.listWork('event'),W.listWork('tournament')]);return calendarEntries(S.state,coach,events,from,to,tournaments);}
+async function entries(from,to){const [coach,events,tournaments]=await Promise.all([C.loadCoach(),W.listWork('event'),W.listWork('tournament')]);return calendarEntries(S.state,coach,events,from,to,tournaments,Object.fromEntries(coach.coachTeams.filter(t=>!t.archived).map(t=>[t.id,portalInfo(t.id).data])));}
 function form(existing,date,back){
  const e=existing||{},name=inp(e.name||''),day=inp(e.date||date,'date'),time=inp(e.time||'','time'),duration=inp(e.minutes??0,'number',{min:0,max:600}),type=select(Object.entries(eventTypes),e.eventType||'task'),note=el('textarea',{maxlength:2000,rows:3},[e.note||'']),remind=select([['','Без напоминания'],['0','В момент события'],['15','За 15 минут'],['30','За 30 минут'],['60','За час'],['120','За 2 часа'],['1440','За день']],e.remind==null?'':String(e.remind)),done=el('input',{type:'checkbox'});done.checked=!!e.done;
  const save=btn('Сохранить',async()=>{save.disabled=true;try{await W.saveWork({id:e.id,kind:'event',name:name.value.trim(),date:day.value,time:time.value,minutes:Number(duration.value),eventType:type.value,note:note.value,remind:remind.value===''?null:Number(remind.value),done:done.checked});await back();}catch(err){toast(err.message);}finally{save.disabled=false;}},'primary');
