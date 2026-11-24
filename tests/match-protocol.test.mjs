@@ -2,7 +2,7 @@ import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates} from '../js/match-protocol.js';
+import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates,setMomentum} from '../js/match-protocol.js';
 import * as C from '../js/coach.js';
 import * as S from '../js/store.js';
 import * as db from '../js/db.js';
@@ -76,4 +76,21 @@ test('Причины и авторы фильтруются по подаче, �
  assert.deepEqual(rallyCandidates(base,lineups,'theirs','ours','block').map(p=>p.id),['a1','a2','a3']);
  assert.deepEqual(rallyCandidates(base,lineups,'theirs','ours','defenseError').map(p=>p.id),base.awayLineup);
  assert.deepEqual(rallyCandidates({...base,awayPlayers:[]},{...lineups,theirs:[]},'theirs','ours','serveError'),[]);
+});
+
+test('Дополнительная ошибка защиты не меняет счёт, основную причину и сумму очков на ошибках',()=>{
+ let d=detailEvent(base,{type:'rally',side:'ours',kind:'tip',player:'a2'});
+ d=detailEvent(d,{type:'secondary',player:'b3'});
+ let s=replayDetailed(d);
+ assert.equal(s.ours,1);assert.equal(d.events.length,1);assert.equal(s.stats.a2.attackKills,1);
+ assert.equal(s.sides.theirs.stats.b3.defenseErrors,1);assert.equal(s.sides.ours.opponentErrors,0);
+ assert.throws(()=>detailEvent(d,{type:'secondary',player:'a1'}),/до розыгрыша/);
+ d=detailEvent(d,{type:'secondary',player:null});assert.equal(replayDetailed(d).sides.theirs.stats.b3,undefined);
+ d=detailEvent(d,{type:'secondary',player:'b3'});d=detailEvent(d,{type:'attribute',kind:'point'});assert.equal(d.events[0].secondary,undefined);
+});
+test('Ход партии учитывает только розыгрыши выбранного сета, серии и смену лидера',()=>{
+ let d=base;for(const side of ['ours','ours','theirs','theirs','theirs','ours','ours'])d=detailEvent(d,{type:'rally',side,kind:'point'});
+ d=detailEvent(d,{type:'timeout',side:'theirs'});const a=setMomentum(replayDetailed(d).timeline,1);
+ assert.deepEqual(a.points.at(-1),{ours:4,theirs:3});assert.deepEqual(a.maxRun,{ours:2,theirs:3});assert.deepEqual(a.maxLead,{ours:2,theirs:1});assert.equal(a.ties,2);assert.equal(a.changes,2);
+ assert.equal(setMomentum(replayDetailed(d).timeline,2).points.length,1);
 });

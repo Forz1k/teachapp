@@ -10,6 +10,7 @@ const errors=['serveError','attackError','receiveError','defenseError','setError
 export const canPlace=kind=>['ace','kill','tip'].includes(kind);
 export const isError=k=>errors.includes(k);
 export const rallyActor=(winner,kind)=>isError(kind)?other(winner):winner;
+export const secondaryKind=kind=>kind==='ace'?'receiveError':['kill','tip'].includes(kind)?'defenseError':null;
 // Filter the choices for new entry; legacy receiveError events remain replayable.
 export function rallyReasonOptions(winner,serve){
  fail(sides.includes(winner)&&sides.includes(serve),'Выберите команду');
@@ -114,6 +115,10 @@ export function replayDetailed(d){
   if(['kill','tip'].includes(ev.kind)&&actor==='ours'&&player!==null)fail(player!==d.libero,'Проверьте действие либеро');
   const keys={ace:['serves','aces','points'],kill:['attacks','attackKills','points'],tip:['attacks','attackKills','tipKills','points'],block:['blocks','points'],serveError:['serves','serveErrors','errors'],attackError:['attacks','errors','attackErrors'],receiveError:['receptions','errors','receiveErrors'],defenseError:['errors','otherErrors','defenseErrors'],setError:['errors','otherErrors','setErrors'],netError:['errors','otherErrors','netErrors'],otherError:['errors','otherErrors']};
   if(keys[ev.kind])stat(actor,player,keys[ev.kind]);
+  if(ev.secondary!=null){
+   fail(ev.secondary&&typeof ev.secondary==='object'&&secondaryKind(ev.kind)!==null&&ev.secondary.kind===secondaryKind(ev.kind)&&typeof ev.secondary.player==='string','Дополнительная ошибка: приём для эйса, защита для атаки или скидки');
+   stat(other(winner),ev.secondary.player,keys[ev.secondary.kind]);
+  }
   if(ev.kind==='point')s.sides[winner].unknown++;
   if(isError(ev.kind))s.sides[winner].opponentErrors++;
   for(const side of sides){
@@ -155,7 +160,12 @@ export function detailEvent(d,event,now=new Date().toISOString()){
  if(event.type==='attribute'){
   const last=events.at(-1);fail(last?.type==='rally','Можно уточнить только последнее очко');
   events[events.length-1]={...last,kind:event.kind,player:event.player??null};
-  if(last.kind!==event.kind)delete events[events.length-1].placement;
+  if(last.kind!==event.kind){delete events[events.length-1].placement;delete events[events.length-1].secondary;}
+ }else if(event.type==='secondary'){
+  const last=events.at(-1);fail(last?.type==='rally'&&secondaryKind(last.kind),'Уточните последнее результативное действие');
+  events[events.length-1]={...last};
+  if(event.player===null)delete events[events.length-1].secondary;
+  else events[events.length-1].secondary={kind:secondaryKind(last.kind),player:event.player};
  }else if(event.type==='placement'){
   const last=events.at(-1);fail(last?.type==='rally'&&canPlace(last.kind),'Укажите направление последнего эйса или результативной атаки');
   fail(event.zone===null||integer(event.zone,1,6),'Выберите зону 1–6');
@@ -181,4 +191,23 @@ export function placementSummary(timeline,side,kind){
  const zones=Array(6).fill(0);let total=0,known=0;
  for(const e of timeline)if(e.type==='rally'&&e.side===side&&(e.kind===kind||kind==='kill'&&e.kind==='tip')){total++;if(integer(e.placement,1,6)){zones[e.placement-1]++;known++;}}
  return {zones,total,known,unknown:total-known};
+}
+
+/** Set-level progression, based exclusively on recorded rally winners. */
+export function setMomentum(timeline,set){
+ const points=[{ours:0,theirs:0}],maxRun={ours:0,theirs:0},maxLead={ours:0,theirs:0};
+ let runSide=null,run=0,changes=0,lastLeader=null,ties=0;
+ for(const e of timeline){
+  if(e.type!=='rally'||e.set!==set)continue;
+  const prev=points.at(-1),curr={...prev,[e.side]:prev[e.side]+1};points.push(curr);
+  if(runSide===e.side)run++;else{runSide=e.side;run=1;}
+  maxRun[e.side]=Math.max(maxRun[e.side],run);
+  const diff=curr.ours-curr.theirs;
+  maxLead.ours=Math.max(maxLead.ours,diff);maxLead.theirs=Math.max(maxLead.theirs,-diff);
+  if(!diff){ties++;continue;}
+  const leader=diff>0?'ours':'theirs';
+  if(lastLeader&&lastLeader!==leader)changes++;
+  lastLeader=leader;
+ }
+ return {points,maxRun,maxLead,changes,ties,runSide,run};
 }

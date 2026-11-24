@@ -127,7 +127,7 @@ export function openDetailedMatch(initial,back,refresh){
   }));
   body.replaceChildren(el('div',{class:'vp-match-head'},[el('div',{class:'vp-match-title'},[el('span',{class:'match-live-label',text:s.finished?'ЗАВЕРШЁН':s.setEnded?'ПЕРЕРЫВ':'● LIVE'}),el('strong',{text:'Партия '+set})]),displayScore,el('div',{class:'match-sets'},s.sets.length?s.sets.map((x,i)=>el('span',{class:'match-set',text:(i+1)+' · '+score(x)})):[el('span',{text:'Первая партия'})])]),
    el('div',{class:'vp-tabs',role:'group','aria-label':'Раздел матча'},[['match','Матч'],['stats','Статистика'],['events','События']].map(([id,t])=>btn(t,()=>{section=id;draw();},section===id?'primary':''))));
-  if(section==='stats'){body.append(...summaryBlocks(d,s));}
+  if(section==='stats'){body.append(momentumBlock(d,s),...summaryBlocks(d,s));}
   else if(section==='events'){
    body.append(p('Событий: '+d.events.length),...s.timeline.slice().reverse().slice(0,100).map(x=>p('Сет '+x.set+' · '+x.score+' · '+eventText(d,x))));
   }else{
@@ -184,6 +184,8 @@ export function openDetailedMatch(initial,back,refresh){
     const points=el('div',{class:'vp-actions vp-points vp-board-points'},[pointButton(order[0]),undo,pointButton(order[1])]);
     body.append(points);
     if(last)body.append(el('div',{class:'vp-last-event',role:'status',text:'Последнее: '+eventText(d,last)}));
+    const momentum=V.setMomentum(s.timeline,set);
+    if(momentum.run>=4&&momentum.runSide==='theirs')body.append(el('div',{class:'vp-run-note',role:'status',text:'Соперник выиграл '+momentum.run+' розыгрыша подряд. '+(s.timeouts.ours<2?'Можно рассмотреть тайм-аут.':'Лимит тайм-аутов исчерпан.')}));
     if(selected){
      const side=selected.side;
      const candidates=V.legalSubstitutions(d,s,side,selected.id);
@@ -200,6 +202,11 @@ export function openDetailedMatch(initial,back,refresh){
    }
    if(!pointDraft&&d.events.at(-1)?.type==='rally'){
     const details=el('details',{class:'vp-match-more'},[el('summary',{text:'Детали последнего очка'}),btn('Уточнить последнее очко',()=>begin(last.side,true),'wide')]);body.append(details);
+    if(last&&V.secondaryKind(last.kind)){
+     const losing=last.side==='ours'?'theirs':'ours',kind=V.secondaryKind(last.kind),players=roster(d,losing).filter(p=>last.before.lineups[losing].includes(p.id));
+     const extra=select([['','Не указана'],...players.map(p=>[p.id,playerLabel(p)])],last.secondary?.player||'');
+     details.append(field(V.reasons[kind]+' · '+sideName(d,losing),extra),btn('Сохранить дополнительную ошибку',()=>perform({type:'secondary',player:extra.value||null}),'wide'),p('Не меняет счёт и не дублирует причину очка. Указывайте только явно замеченную ошибку.'));
+    }
     if(last&&V.canPlace(last.kind)){
       const zone=select([['','Не указана'],...Array.from({length:6},(_,i)=>[String(i+1),'Зона '+(i+1)])],last.placement??'');
       details.append(field('Зона завершения на площадке принимающей команды',zone),btn('Сохранить направление последнего очка',()=>perform({type:'placement',zone:zone.value?Number(zone.value):null}),'wide'));
@@ -222,7 +229,7 @@ function table(headers,rows){
 }
 function section(title,...children){return el('section',{class:'vp-report-section'},[el('h3',{text:title}),...children]);}
 function eventText(d,x){
- if(x.type==='rally')return sideName(d,x.side)+' · '+V.reasons[x.kind]+' · '+name(d,x.actor,x.player)+(x.placement?' · зона '+x.placement:'');
+ if(x.type==='rally')return sideName(d,x.side)+' · '+V.reasons[x.kind]+' · '+name(d,x.actor,x.player)+(x.placement?' · зона '+x.placement:'')+(x.secondary?' · '+V.reasons[x.secondary.kind]+': '+name(d,x.side==='ours'?'theirs':'ours',x.secondary.player):'');
  if(x.type==='sub')return sideName(d,x.side)+' · замена '+name(d,x.side,x.out)+' → '+name(d,x.side,x.in)+' · P'+x.zone;
  if(x.type==='timeout')return sideName(d,x.side)+' · тайм-аут '+x.number;
  if(x.type==='libero')return d.teamName+' · '+(x.for?'Выход либеро вместо '+name(d,'ours',x.for):'Возвращение основного игрока');
@@ -233,6 +240,23 @@ function placementBlock(d,s,side,kind){
  return section(sideName(d,side)+' · '+(kind==='ace'?'Направления эйсов':'Направления результативных атак'),
    p('Зона на стороне принимающей команды. Указано '+a.known+' из '+a.total+' · без зоны '+a.unknown+'. Не включает подачи или атаки, продолжившие розыгрыш.'),
    el('div',{class:'tactical-grid'},[4,3,2,5,6,1].map(z=>el('div',{class:'tactical-cell'},[el('small',{text:'Зона '+z}),el('strong',{text:a.zones[z-1]}),el('progress',{max,value:a.zones[z-1],'aria-label':'Зона '+z+' · '+a.zones[z-1]})]))));
+}
+function momentumBlock(d,s){
+ const current=s.setEnded?s.sets.length:s.sets.length+1;
+ const picker=select(Array.from({length:current},(_,i)=>[i+1,'Партия '+(i+1)]),current);
+ const chart=el('div',{class:'vp-momentum-content'});
+ function draw(){
+  const a=V.setMomentum(s.timeline,Number(picker.value)),max=Math.max(1,...a.points.map(x=>Math.max(x.ours,x.theirs)));
+  const svg=(tag,attrs)=>{const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,String(v));return n;};
+  const plot=svg('svg',{viewBox:'0 0 320 150',role:'img','aria-label':'График набранных очков по розыгрышам',class:'vp-momentum-chart'});
+  for(let i=0;i<=4;i++){const y=10+i*30;plot.append(svg('line',{x1:22,y1:y,x2:308,y2:y,stroke:'currentColor','stroke-opacity':.15}));}
+  for(const side of sides){const coords=a.points.map((x,i)=>(22+286*i/Math.max(1,a.points.length-1))+','+(130-120*x[side]/max)).join(' ');plot.append(svg('polyline',{points:coords,fill:'none',stroke:side==='ours'?'#397CCB':'#C85066','stroke-width':3,'stroke-linejoin':'round','stroke-linecap':'round'}));}
+  const end=a.points.at(-1);
+  chart.replaceChildren(el('div',{class:'vp-momentum-legend'},[el('span',{class:'ours',text:d.teamName+' · '+end.ours}),el('span',{class:'theirs',text:d.opponent+' · '+end.theirs})]),plot,
+   p('Розыгрышей: '+(a.points.length-1)+' · смен лидера: '+a.changes+' · равный счёт: '+a.ties),
+   table(['Показатель',d.teamName,d.opponent],[['Макс. серия',a.maxRun.ours,a.maxRun.theirs],['Макс. преимущество',a.maxLead.ours,a.maxLead.theirs]]));
+ }
+ picker.addEventListener('change',draw);draw();return section('Ход партии',field('Партия',picker),chart);
 }
 function summaryBlocks(d,s){
  return sides.flatMap(side=>{
@@ -256,7 +280,7 @@ export function buildMatchReport(m){
   section('Замены и либеро',table(['Сет','Счёт','Действие'],s.timeline.filter(x=>x.type==='sub'||x.type==='libero').map(x=>[x.set,x.score,eventText(d,x)]))),
   section('Тайм-ауты',table(['Сет','Счёт','Команда','№'],s.timeline.filter(x=>x.type==='timeout').map(x=>[x.set,x.score,sideName(d,x.side),x.number]))),
   ...summaryBlocks(d,s),
-  section('Детали очка',table(['Сет','Счёт','Команда','Причина','Автор','Зона'],s.timeline.filter(x=>x.type==='rally').map(x=>[x.set,x.score,sideName(d,x.side),V.reasons[x.kind],name(d,x.actor,x.player),x.placement??'—']))),
+  section('Детали очка',table(['Сет','Счёт','Команда','Причина','Автор','Зона','Доп. ошибка'],s.timeline.filter(x=>x.type==='rally').map(x=>[x.set,x.score,sideName(d,x.side),V.reasons[x.kind],name(d,x.actor,x.player),x.placement??'—',x.secondary?V.reasons[x.secondary.kind]+' · '+name(d,x.side==='ours'?'theirs':'ours',x.secondary.player):'—']))),
   section('Подписи',p('Первый судья __________________________'),p('Капитан '+d.teamName+' __________________________'),p('Капитан '+d.opponent+' __________________________'))]);
 }
 import {openMatchTactics} from './match-tactics.js';

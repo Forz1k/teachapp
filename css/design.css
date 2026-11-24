@@ -397,3 +397,5 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .lineup-swap summary{cursor:pointer;min-height:32px;font-size:13px;font-weight:700}
 .lineup-swap-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:6px}
 .lineup-swap-list .btn{min-height:44px;white-space:normal;overflow-wrap:anywhere;font-size:12px}
+
+.vp-momentum-content{display:grid;gap:8px}.vp-momentum-chart{width:100%;height:auto;color:var(--text-2)}.vp-momentum-legend{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:700}.vp-momentum-legend .ours{color:#397CCB}.vp-momentum-legend .theirs{color:#C85066}.vp-run-note{border:1px solid var(--sep);background:var(--card);padding:8px;border-radius:10px;font-size:12px;color:var(--text)}
