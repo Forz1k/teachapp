@@ -34,6 +34,7 @@ export function openDetailedSetup(team,players,back,refresh,preset=null){
  const date=input(todayIso(),'date',{max:todayIso()}),opp=input('','text',{placeholder:'Название соперника'}),comp=input('','text',{placeholder:'Турнир'}),venue=input('','text',{placeholder:'Спортивный зал'});
  const best=select([[3,'До двух побед'],[5,'До трёх побед']],5),target=select([15,21,25].map(n=>[n,n]),25),decider=select([15,21,25].map(n=>[n,n]),15);
  const serve=select([['ours',team.name],['theirs','Соперник']],'ours'),scheme=select([['5-1','5–1'],['4-2','4–2'],['free','Свободная']],preset?.scheme||'5-1');
+ const substitutions=select([['simple','Упрощённые (до 6)'],['paired','Парные (возврат стартового игрока)']],'simple');
  const awayInput=el('textarea',{placeholder:'7 Иванова\n8 Петрова\n9\n10\n11\n12',rows:5});const awayArea=el('div',{class:'vp-stack'}),ownArea=el('div',{class:'vp-stack'});
  let awayPlayers=[],awayFields=six([]),parsedText='',ownFields,eligible=[],libero;
  const checked=new Set(players.map(p=>p.id));
@@ -68,11 +69,11 @@ export function openDetailedSetup(team,players,back,refresh,preset=null){
    if(!opp.value.trim())throw Error('Укажите соперника');
    if(!await ui.confirmDialog({title:'Начать матч?',text:'Подтвердите фактические составы и выбранный регламент.',ok:'Начать'}))return;
    const d=await C.startDetailedMatch({teamId:team.id,teamName:team.name,opponent:opp.value,date:date.value,competition:comp.value,venue:venue.value,
-     roster:eligible.map(p=>p.id),ourPlayers:eligible,awayPlayers,awayLineup:away,lineup:line,libero:libero.value||null,bestOf:Number(best.value),target:Number(target.value),decider:Number(decider.value),firstServe:serve.value,scheme:scheme.value});
+     roster:eligible.map(p=>p.id),ourPlayers:eligible,awayPlayers,awayLineup:away,lineup:line,libero:libero.value||null,bestOf:Number(best.value),target:Number(target.value),decider:Number(decider.value),firstServe:serve.value,scheme:scheme.value,substitutionMode:substitutions.value});
    openDetailedMatch(d,back,refresh);
   }catch(e){toast(e.message);}finally{save.disabled=false;}
  },'primary wide');
- openSheet(el('div',{class:'vp-stack vp-setup'},[el('h2',{text:'Новый подробный матч'}),field('Соперник',opp),field('Дата',date),field('Турнир',comp),field('Место',venue),field('Формат',best),field('Очков в партии',target),field('Решающая партия',decider),field('Первая подача',serve),field('Тактическая схема',scheme),
+ openSheet(el('div',{class:'vp-stack vp-setup'},[el('h2',{text:'Новый подробный матч'}),field('Соперник',opp),field('Дата',date),field('Турнир',comp),field('Место',venue),field('Формат',best),field('Очков в партии',target),field('Решающая партия',decider),field('Первая подача',serve),field('Тактическая схема',scheme),field('Правила замен',substitutions),p('Парные замены: один запасной на стартового игрока, один возврат за партию. Исключительные замены и все судейские правила не реализованы.'),
   el('h3',{text:team.name}),ownArea,el('h3',{text:'Состав соперника (необязательно)'}),p('Один игрок в строке: номер и имя. Если фамилии неизвестны, достаточно номера.'),awayInput,btn('Подготовить расстановку соперника',()=>{try{parse();}catch(e){toast(e.message);}},'wide'),awayArea,save,btn('Назад',back,'wide')]));
 }
 function court(d,lineups,serve,selected,choose){
@@ -139,15 +140,16 @@ export function openDetailedMatch(initial,back,refresh){
     body.insertBefore(points,body.querySelector('.vp-court'));
     body.append(el('div',{class:'vp-actions vp-secondary-actions'},sides.map(side=>btn('Тайм-аут '+sideName(d,side)+' '+s.timeouts[side]+'/2',()=>perform({type:'timeout',side})))));
     if(selected){
-     const side=selected.side,ids=side==='ours'?s.lineup:s.awayLineup;
-     const reserve=select([['','Запасной'],...roster(d,side).filter(p=>!ids.includes(p.id)&&(side!=='ours'||p.id!==d.libero)).map(p=>[p.id,playerLabel(p)])],'');
-     body.append(p('Выбран: '+name(d,side,selected.id)),field('Игрок на замену',reserve),btn('Замена · '+s.subCounts[side]+'/6',()=>perform({type:'sub',side,out:selected.id,in:reserve.value},()=>selected=null),'wide'));
+     const side=selected.side;
+     const candidates=V.legalSubstitutions(d,s,side,selected.id);
+     const reserve=select([['','Запасной'],...candidates.map(p=>[p.id,playerLabel(p)])],'');
+     body.append(p('Выбран: '+name(d,side,selected.id)),field('Игрок на замену',reserve),candidates.length?btn('Замена · '+s.subCounts[side]+'/6',()=>perform({type:'sub',side,out:selected.id,in:reserve.value},()=>selected=null),'wide'):p('Допустимых обычных замен нет.'));
      if(side==='ours'&&d.libero)body.append(btn(s.liberoFor?'Вернуть основного игрока':'Выход либеро',()=>perform({type:'libero',for:s.liberoFor?null:selected.id},()=>selected=null),'wide'));
     }
    }
    if(!attributing&&d.events.at(-1)?.type==='rally')body.append(btn('Уточнить последнее очко',()=>{attributing=true;selected=null;draw();},'wide'));
   }
-  body.append(p('Записано событий: '+d.events.length+' · локально'),btn('Отменить последнее событие',()=>{if(d.events.length)perform(null,()=>{selected=null;attributing=false;});},'wide'),
+  body.append(p('Замены: '+(d.substitutionMode==='paired'?'парные':'упрощённые')),p('Записано событий: '+d.events.length+' · локально'),btn('Отменить последнее событие',()=>{if(d.events.length)perform(null,()=>{selected=null;attributing=false;});},'wide'),
    btn('Выйти · черновик сохранён',()=>{if(!busy)back();},'wide'),
    btn('Удалить черновик',async()=>{if(busy||!await ui.confirmDialog({title:'Удалить черновик?',text:'Вся история этого матча будет удалена.',ok:'Удалить',danger:true}))return;busy=true;try{await C.discardLiveMatch(d.id,d.revision);back();}catch(e){toast(e.message);}finally{busy=false;}},'wide'));
  }
