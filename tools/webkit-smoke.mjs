@@ -108,17 +108,20 @@ try{
  },fixture);
  assert.equal(imported?.value,'5','encrypted sync between two WebKit contexts');
  await second.close();
- // A fake HTTPS origin is routed to the local relay. Only synthetic test data and keys.
+ // Only in this synthetic browser test: map the personal code's HTTPS endpoint to the real loopback relay.
+ // Use native browser fetch, including CORS/preflight, rather than WebKit's unreliable request interception.
  const personalMobile=await browser.newContext({...devices['iPhone 13'],locale:'ru-RU',serviceWorkers:'allow'});
  const personalDesktop=await browser.newContext({viewport:{width:1440,height:900},locale:'ru-RU',serviceWorkers:'allow'});
  async function routePersonal(ctx){
-  await ctx.route(personalEndpoint+'/**',async route=>{
-   const req=route.request(),method=req.method(),all=await req.allHeaders(),headers={};
-   for(const key of ['authorization','origin','content-type','access-control-request-method','access-control-request-headers'])if(all[key])headers[key]=all[key];
-   const response=await fetch(endpoint+new URL(req.url()).pathname,{method,headers,...(method==='PUT'?{body:req.postDataBuffer()}: {})});
-   const body=Buffer.from(await response.arrayBuffer());
-   await route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),body});
-  });
+  await ctx.addInitScript(({personalEndpoint,endpoint})=>{
+   const nativeFetch=window.fetch.bind(window);
+   window.fetch=(input,init)=>{
+    if(typeof input==='string'&&input.startsWith(personalEndpoint+'/v1/snapshot/')){
+     return nativeFetch(endpoint+input.slice(personalEndpoint.length),init);
+    }
+    return nativeFetch(input,init);
+   };
+  },{personalEndpoint,endpoint});
  }
  await routePersonal(personalMobile);await routePersonal(personalDesktop);
  const phone=await personalMobile.newPage(),pc=await personalDesktop.newPage();
@@ -163,6 +166,15 @@ try{
   assert.equal((await initial(phone)).revision,2);
   assert.equal((await initial(pc)).revision,2);
  }
+ // A desktop edit must also reach the phone.
+ await pc.evaluate(async()=>{await (await import('./js/db.js')).put('coachTeams',{id:'personal-team-3',name:'Synthetic desktop team',archived:false});});
+ if(await pc.evaluate(()=>Boolean(navigator.locks?.request))){
+  await pc.reload();await pc.locator('.workspace-nav').waitFor();
+ }else assert.equal((await initial(pc)).revision,3);
+ if(await phone.evaluate(()=>Boolean(navigator.locks?.request))){
+  await phone.reload();await phone.locator('.workspace-nav').waitFor();
+ }else assert.equal((await initial(phone)).revision,3);
+ assert.equal(await phone.evaluate(async()=> (await (await import('./js/db.js')).get('coachTeams','personal-team-3'))?.name),'Synthetic desktop team','phone must receive desktop edit');
  await personalMobile.close();await personalDesktop.close();
  console.log('WEBKIT PERSONAL PASS: saved code on mobile and desktop, offline edit, bidirectional sync and no duplicate revision');
  console.log('WEBKIT SYNC PASS: no implicit transfer, two independent browser contexts, Web Crypto, CORS and IndexedDB');
