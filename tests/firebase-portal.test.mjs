@@ -45,3 +45,18 @@ test('Правила закрывают корень и требуют разр�
  const {rules}=JSON.parse(readFileSync(new URL('../firebase-portal.rules.json',import.meta.url),'utf8'));
  const r=rules.publicTeams.$uid.$slug;assert.equal(rules['.read'],false);assert.equal(rules['.write'],false);assert.equal(r['.read'],true);assert.match(r['.write'],/auth.uid === \$uid/);assert.match(r['.write'],/publishers/);assert.equal(r.$other['.validate'],false);assert.equal(r.match.$other['.validate'],false);assert.equal(r.match.events.$i.$other['.validate'],false);
 });
+
+test('Ручная публикация результата: только счёт, обновление без дубля, расписание, отзыв',async()=>{
+ const map=new Map();globalThis.localStorage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};
+ const id='manual_team',m={id:'private-local-match',teamId:id,date:localDay(Date.now()),opponent:'Гости',sets:[{ours:25,theirs:17},{ours:25,theirs:19}],roster:['PRIVATE'],stats:{PRIVATE:{points:8}}};
+ server=null;await assert.rejects(P.publishSavedResult(id,m),/опубликуйте/);
+ await P.connectPortal(id,{origin,apiKey,email:'trainer@example.org',password:'privatePassword',slug:'manual',team:'Команда'},fake);
+ P.setPortalEnabled(id,true,'Команда');await wait(()=>server?.team==='Команда');
+ P.saveFixture(id,{id:'fixture2',opponent:m.opponent,startAt:Date.now()});await wait(()=>server?.schedule?.length===1);
+ const result=await P.publishSavedResult(id,m,{fixtureId:'fixture2'});await wait(()=>server?.archive?.length===1&&!server?.schedule?.length);
+ assert.deepEqual(result.setsWon,{ours:2,theirs:0});assert.equal(JSON.stringify(server).includes('private-local-match'),false);assert.equal(JSON.stringify(server).includes('PRIVATE'),false);
+ await assert.rejects(P.publishSavedResult(id,{...m,teamId:'another'}),/другой команде/);
+ P.disconnectPortal(id);const corrected=await P.publishSavedResult(id,{...m,sets:[{ours:25,theirs:18}]});assert.equal(P.portalInfo(id).dirty,true);assert.equal(server.archive[0].sets.length,2);await P.connectPortal(id,{origin,apiKey,email:'trainer@example.org',password:'privatePassword',slug:'manual',team:'Команда'},fake);assert.equal(corrected.id,result.id);await wait(()=>server?.archive?.[0]?.sets?.length===1);assert.equal(server.archive.length,1);
+ P.unpublishResult(id,result.id);await wait(()=>!server?.archive?.length);assert.equal(m.sets.length,2);
+ P.setPortalEnabled(id,false,'Команда');await wait(()=>server===null);P.disconnectPortal(id);
+});

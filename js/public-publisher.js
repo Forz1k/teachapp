@@ -1,5 +1,5 @@
 /* Team portal state is separate from school/coach records. Opt-in publishing only. */
-import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl} from './public-portal.js';
+import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures} from './public-portal.js';
 import {firebaseSignIn,firebasePublisher} from './firebase-portal.js';
 const PREFIX='teachapp:public-portal:',states=new Map();
 const initial=()=>({origin:'',apiKey:'',owner:'',slug:'',team:'',schedule:[],archive:[],match:null,activeId:null,enabled:false,pendingDelete:false,settings:{events:true,numbers:false,stats:true,auto:true}});
@@ -11,7 +11,7 @@ function entry(id){
  let data=initial();try{const raw=JSON.parse(localStorage.getItem(key(id))||'null');if(raw&&typeof raw==='object')data={...data,...raw,settings:{...data.settings,...raw.settings}};}catch{}
  // Migrate previously cached public snapshots before the next upload.
  if(data.match)data.match.id='match_'+data.match.startedAt;
- data.archive=data.archive.map(row=>({...row,id:'match_'+row.startedAt}));
+ data.archive=data.archive.map(row=>({...row,id:row.id?.startsWith('result_')?row.id:'match_'+row.startedAt}));
  const e={id,data,session:null,publisher:null,status:data.enabled?'Войдите для синхронизации':'Не опубликовано',dirty:false,running:false,timer:null,epoch:0,listeners:new Set()};
  states.set(id,e);return e;
 }
@@ -97,10 +97,32 @@ export function syncPortalMatch(match,{start=false,finish=false,discard=false}={
   const scheduledId=continuing&&d.match?d.match.scheduledId:scheduled?.id;
   d.match=projectMatch(match,{...d.settings,scheduledId});
   if(scheduled?.logos)d.match.logos={ours:d.match.logos?.ours||scheduled.logos.ours,theirs:d.match.logos?.theirs||scheduled.logos.theirs};
-  if(finish){if(d.match.status!=='finished')throw Error('Матч ещё не завершён');d.archive=[archiveMatch(d.match),...d.archive.filter(x=>x.id!==d.match.id)].slice(0,20);d.schedule=d.schedule.filter(x=>x.id!==scheduledId);d.activeId=null;}
+  if(finish){if(d.match.status!=='finished')throw Error('Матч ещё не завершён');d.archive=sortedArchive([archiveMatch(d.match),...d.archive.filter(x=>x.id!==d.match.id)]);d.schedule=d.schedule.filter(x=>x.id!==scheduledId);d.activeId=null;}
  }
  save(e);enqueue(e);return true;
 }
 export function heartbeatPortal(id,matchId){const e=entry(id);if(e.data.enabled&&e.data.activeId===matchId&&e.data.match&&['live','break'].includes(e.data.match.status))enqueue(e);}
 export function setPublicTeamName(id,team){const e=entry(id),name=String(team).trim().slice(0,100);if(!name)throw Error('Укажите публичное название');e.data.team=name;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
 export function stopPortalMatch(id){const e=entry(id);e.data.activeId=null;e.data.match=null;e.data.settings.auto=false;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
+
+export async function publishSavedResult(id,match,{fixtureId=null}={}){
+ const e=entry(id),d=e.data;if(!d.enabled)throw Error('Сначала опубликуйте страницу команды');
+ if(match.teamId!==id)throw Error('Матч относится к другой команде');
+ const result=await savedResult(match);
+ if(!d.enabled||d.pendingDelete)throw Error('Публикация выключена');
+ if(d.match?.id===result.id&&['live','break'].includes(d.match.status))throw Error('Сначала завершите текущую трансляцию');
+ if(fixtureId&&!resultFixtures(d.schedule,match,['live','break'].includes(d.match?.status)?d.match?.scheduledId:null).some(x=>x.id===fixtureId))throw Error('Выбранная встреча недоступна или уже идёт');
+ const next=sortedArchive([result,...d.archive.filter(x=>x.id!==result.id)]);
+ if(!next.some(x=>x.id===result.id))throw Error('В публичном архиве доступны только 20 последних матчей');
+ d.archive=next;if(fixtureId)d.schedule=d.schedule.filter(x=>x.id!==fixtureId);
+ save(e);enqueue(e);return result;
+}
+export function unpublishResult(id,resultId){
+ const e=entry(id),d=e.data;
+ if(!d.enabled)throw Error('Сначала включите публикацию страницы');
+ if(d.match?.id===resultId&&['live','break'].includes(d.match.status))throw Error('Нельзя убрать текущую трансляцию');
+ if(!d.archive.some(x=>x.id===resultId)&&d.match?.id!==resultId)throw Error('Результат уже отсутствует');
+ d.archive=d.archive.filter(x=>x.id!==resultId);
+ if(d.match?.id===resultId&&d.match.status==='finished')d.match=null;
+ save(e);enqueue(e);
+}
