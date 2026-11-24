@@ -103,7 +103,7 @@ function tagPicker(ids) {
     }
   }
   search.oninput = draw; draw();
-  return { node:el('div',{},[field('Поиск нагрузки',search),list]), selected };
+  return { node:el('div',{},[field('Поиск нагрузки',search),list]), selected, draw };
 }
 export function editTags(entity, isTopic, done) {
   const topic = S.state.topics.find(t => t.id === entity.topicId);
@@ -113,8 +113,13 @@ export function editTags(entity, isTopic, done) {
     else await S.updateLesson(entity.id,{activityIds:ids});
     done();
   };
-  const sheet = el('div',{},[el('h2',{text:'Виды физической нагрузки'}),picker.node,
-    btn('Подтвердить теги',() => save([...picker.selected]))]);
+  const suggested=H.suggestActivityIds(isTopic?entity.name:topic?.name);
+  const sheet=el('div',{},[el('h2',{text:'Виды физической нагрузки'}),
+    suggested.length?el('div',{class:'card-block'},[
+      el('strong',{text:'Предложения по названию темы'}),el('p',{text:suggested.map(nameOf).join(' · ')}),
+      el('p',{class:'sub',text:'Проверьте фактическую нагрузку и дополните категории. Предложения не являются допуском.'}),
+      btn('Выбрать предложенные категории',()=>{for(const id of suggested)picker.selected.add(id);picker.draw();})
+    ]):null,picker.node,btn('Подтвердить теги',()=>save([...picker.selected]))]);
   if (!isTopic) sheet.append(btn('Наследовать теги темы КТП',() => {
     if (entity.activityIds == null || window.confirm('Заменить индивидуальные теги урока тегами темы?')) return save(null);
   }));
@@ -132,20 +137,32 @@ export function warning(lesson,studentId,onBack) {
   const node = el('div');
   if (needsReview) node.append(el('p',{text:'Содержание нагрузки требует проверки'}));
   if (rows.length) node.append(el('p',{role:'status',text:'Ограничение нагрузки · учеников: ' + new Set(rows.map(m => m.studentId)).size}));
-  node.append(btn('Проверить ограничения',() => {
-    const panel = el('div',{},[el('h2',{text:'Проверка ограничений'}),el('p',{text:M.fmtFull(lesson.date)})]);
-    if (needsReview) panel.append(el('p',{text:'Содержание нагрузки требует проверки'}));
-    if (!needsReview && !rows.length) panel.append(el('p',{text:'По внесённым данным действующих совпадений не найдено'}));
-    for (const {studentId:id,activityId,restriction:r} of rows) {
-      const student = S.state.students.find(s => s.id === id);
-      panel.append(el('div',{class:'card-block'},[btn(student.fullName,() => openHealth(id)),
-        el('p',{text:[groupAt(id,lesson.date),nameOf(activityId),nameOf(r.activityId),H.types[r.type],r.instruction,dateLabel(r)].filter(Boolean).join(' · ')}),
-        ...(lesson.id ? [btn('Зафиксировать фактическое участие',() => openParticipation(id,lesson.id,activityId))] : [])]));
-    }
-    if (onBack) panel.append(btn('Вернуться к уроку',onBack));
-    openSheet(panel);
-  }));
+  node.append(btn('Проверить ограничения',()=>openLessonRestrictions(lesson,studentId,onBack)));
   return node;
+}
+export function openLessonRestrictions(lesson,studentId,onBack){
+  const {matches,needsReview}=S.lessonCheck(lesson);
+  const rows=matches.filter(m=>!studentId||m.studentId===studentId);
+  const topic=S.state.topics.find(t=>t.id===lesson.topicId);
+  const panel=el('div',{},[el('h2',{text:'Проверка ограничений'}),el('p',{text:M.fmtFull(lesson.date)+' · '+(topic?.name||'Тема не указана')})]);
+  if(needsReview)panel.append(el('p',{text:'Содержание нагрузки требует проверки. Отсутствие совпадений не означает допуск.'}));
+  if(!needsReview&&!rows.length)panel.append(el('p',{text:'По внесённым данным действующих совпадений не найдено'}));
+  const full=S.studentsOfClass(lesson.classId).filter(s=>(!studentId||s.id===studentId)&&S.activeExemption(s.id,lesson.date));
+  if(full.length)panel.append(el('p',{text:'Действующее освобождение: '+full.map(s=>s.fullName).join(', ')}));
+  const reopen=()=>openLessonRestrictions(S.state.lessons.find(l=>l.id===lesson.id)||lesson,studentId,onBack);
+  if(lesson.id&&S.state.lessons.some(l=>l.id===lesson.id)){
+    if(topic)panel.append(btn('Настроить нагрузки темы КТП',()=>editTags(topic,true,reopen)));
+    panel.append(btn('Настроить нагрузки этого урока',()=>editTags(lesson,false,reopen)));
+  }else if(!lesson.id)panel.append(el('p',{text:'Сначала создайте урок и назначьте тему в журнале.'}));
+  for(const {studentId:id,activityId,restriction:r} of rows){
+    const student=S.state.students.find(s=>s.id===id);
+    if(!student)continue;
+    panel.append(el('div',{class:'card-block'},[btn(student.fullName,()=>openHealth(id)),
+      el('p',{text:[groupAt(id,lesson.date),nameOf(activityId),nameOf(r.activityId),H.types[r.type],r.instruction,dateLabel(r)].filter(Boolean).join(' · ')}),
+      ...(lesson.id?[btn('Зафиксировать фактическое участие',()=>openParticipation(id,lesson.id,activityId))]:[])]));
+  }
+  if(onBack)panel.append(btn('Вернуться к уроку',onBack));
+  openSheet(panel);
 }
 export function checkGrade(lesson,id) {
   return !S.lessonCheck(lesson).matches.some(m => m.studentId === id)

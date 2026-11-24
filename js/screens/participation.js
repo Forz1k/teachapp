@@ -1,4 +1,5 @@
 import { alternatives } from '../health.js';
+import {periodName} from '../assessment.js';
 import * as store from '../store.js';
 import * as M from '../model.js';
 import { el, openSheet, closeSheet, toast, downloadBlob } from '../ui.js';
@@ -52,15 +53,17 @@ export function openParticipation(studentId, lessonId, activityId, onReturn) {
 let filters;
 export function renderParticipation(screen, classId) {
   const students = store.studentsOfClass(classId);
-  if (filters?.classId !== classId) filters = { classId, studentId: students[0]?.id,
-    from: store.state.settings.year.from, to: store.state.settings.year.to };
+  const period=store.currentTrimester(), key=period.id+'|'+period.from+'|'+period.to;
+  if(filters?.classId!==classId||filters?.periodKey!==key)filters={classId,periodKey:key,studentId:filters?.classId===classId?filters.studentId:students[0]?.id,from:period.from,to:period.to};
+  const periodSelect=select(Object.fromEntries(store.state.settings.trimesters.map(p=>[p.id,periodName(p)])),period.id);
+  periodSelect.setAttribute('aria-label','Учебный период участия');
   const student = select(Object.fromEntries(students.map(s => [s.id, s.fullName])), filters.studentId);
   if (!student.value) student.selectedIndex = 0;
   const from = el('input', { type: 'date', value: filters.from });
   const to = el('input', { type: 'date', value: filters.to });
   const content = el('div', { class: 'card-block' });
   const body = el('section', { style: 'padding:16px 16px 150px' }, [
-    el('h1', { text: 'Самочувствие и нагрузка' }), field('Ученик', student),
+    el('h1', { text: 'Самочувствие и нагрузка' }),field('Учебный период',periodSelect), field('Ученик', student),
     field('С даты', from), field('По дату', to), content]);
   screen.append(body);
   function draw() {
@@ -110,6 +113,13 @@ export function renderParticipation(screen, classId) {
       catch { toast('Не удалось выгрузить отчёт'); }
     }), history);
   }
+  periodSelect.onchange=()=>{
+    const selected=store.state.settings.trimesters.find(p=>p.id===periodSelect.value);
+    if(!selected)return;
+    store.selectSchoolPeriod(selected.id);
+    filters.periodKey=selected.id+'|'+selected.from+'|'+selected.to;
+    from.value=selected.from;to.value=selected.to;draw();
+  };
   student.onchange = from.onchange = to.onchange = draw;
   draw();
 }

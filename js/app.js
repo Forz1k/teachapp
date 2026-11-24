@@ -219,6 +219,7 @@ function setCoachSection(id){
  store.state.currentTab='coach';render();
 }
 function setTab(id){
+ store.refreshSchoolPeriod();
  if(id==='coach'){setCoachSection(navigation.coach);return;}
  if(!schoolRoutes.includes(id))return;
  navigation=saveNavigation({...navigation,workspace:'school',school:id});
@@ -295,8 +296,10 @@ async function boot() {
   render();
   window.addEventListener('online',()=>{autoAttempt=0;syncHint='';updateSyncIndicator();void maybeAutoSync();});
   window.addEventListener('offline',updateSyncIndicator);
-  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){autoAttempt=0;void maybeAutoSync();}});
-  setInterval(()=>void maybeAutoSync(),60000);
+  const refreshPeriod=()=>{if(store.refreshSchoolPeriod())store.notify();};
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){refreshPeriod();autoAttempt=0;void maybeAutoSync();}});
+  window.addEventListener('focus',refreshPeriod);
+  setInterval(()=>{refreshPeriod();void maybeAutoSync();},60000);
 
   // Следим за системной темой в режиме «как в системе»
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {

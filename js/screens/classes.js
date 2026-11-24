@@ -1,4 +1,4 @@
-import { openRoster, warning } from './health.js';
+import { openRoster, openLessonRestrictions } from './health.js';
 /* screens/classes.js — стартовый экран: 9 карточек классов. */
 
 import * as M from '../model.js';
@@ -28,6 +28,7 @@ export function renderClasses(root, ctx = {}) {
       }, [icon(store.state.settings.theme === 'dark' ? 'moon' : 'sun')]),
     ]),
     el('div', { class: 'subtitle', text: `${periodName(tr)} · ${M.fmtFull(tr.from)} – ${M.fmtFull(tr.to)}` }),
+    el('div',{class:'segmented class-period-switch',role:'group','aria-label':'Учебный период'},settings.trimesters.map(p=>el('button',{type:'button',class:p.id===tr.id?'active':'','aria-pressed':String(p.id===tr.id),text:periodName(p),onclick:()=>store.selectSchoolPeriod(p.id)}))),
   ]));
 
   // Баннер о резервной копии: показываем, если копии не было больше 7 дней
@@ -83,13 +84,27 @@ export function renderClasses(root, ctx = {}) {
 
   const todayClasses = new Set([...store.scheduleForDate(today).map(row => row.classId),
     ...store.state.lessons.filter(l => l.date === today).map(l => l.classId)]);
-  const todayList = el('section', {class:'card-block class-today'});
-  for (const cls of store.state.classes.filter(c => todayClasses.has(c.id))) {
-    const lesson = store.lessonsOfClass(cls.id).find(l => l.date === today);
-    todayList.append(el('h3',{text:M.displayClassName(cls.name)}),warning(lesson || {classId:cls.id,date:today}));
+  const todayList=el('section',{class:'card-block class-today'});
+  const holiday=M.isSchoolHoliday(today,settings.holidays||[]);
+  if(holiday)todayList.append(el('p',{class:'sub',text:'Каникулы · уроков по расписанию нет'}));
+  for(const cls of store.state.classes.filter(c=>todayClasses.has(c.id))){
+    const lesson=store.lessonsOfClass(cls.id).find(l=>l.date===today);
+    if(holiday&&(!lesson||!store.lessonHeld(lesson)))continue;
+    const current=lesson||{classId:cls.id,date:today};
+    const topic=store.state.topics.find(t=>t.id===current.topicId);
+    const {matches,needsReview}=store.lessonCheck(current);
+    const count=new Set(matches.map(m=>m.studentId)).size;
+    const full=store.studentsOfClass(cls.id).filter(s=>store.activeExemption(s.id,today)).length;
+    const status=count?'Ограничения: '+count+' уч.':!lesson?'Урок не создан':needsReview?'Нагрузки не указаны или не подтверждены':'Совпадений ограничений не найдено';
+    const note=(count&&needsReview?' · нужна проверка нагрузки':'')+(full?' · ОСВ: '+full:'');
+    todayList.append(el('button',{class:'class-today-row',type:'button','aria-label':M.displayClassName(cls.name)+' · '+status+note,onclick:()=>openLessonRestrictions(current)},[
+      el('span',{class:'class-name-pill',text:M.displayClassName(cls.name)}),
+      el('span',{class:'class-today-copy'},[el('strong',{text:topic?.name||(lesson?'Тема не указана':'Урок по расписанию')}),el('span',{class:'class-today-status '+(count||full?'has-restrictions':needsReview?'needs-review':'checked'),text:status+note})]),
+      el('span',{class:'class-today-arrow','aria-hidden':'true'},[icon('chevron')])
+    ]));
   }
-  if (todayList.childElementCount) {
-    todayList.prepend(el('h2',{text:'Сегодня'}));
+  if(todayList.childElementCount){
+    todayList.prepend(el('h2',{text:'Сегодня · '+M.fmtFull(today)}));
     list.append(todayList);
   }
   const directory=el('div',{class:'class-grid'}),search=el('input',{type:'search',placeholder:'Найти класс','aria-label':'Найти класс'}),empty=el('p',{class:'empty',text:'Классы не найдены',hidden:true});

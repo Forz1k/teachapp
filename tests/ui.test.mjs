@@ -680,3 +680,25 @@ test('каникулы можно добавить в общих настрой�
   await store.load();
   assert.deepEqual(store.state.settings.holidays,[{from:'2026-12-28',to:'2027-01-10'}]);
 });
+
+test('class overview displays one compact row and tags require explicit confirmation',async()=>{
+  const {cls}=await seed();
+  const M=await import('../js/model.js');
+  const health=await import('../js/screens/health.js');
+  const day=M.todayIso();
+  const topic=await store.addTopic('Бег на 60 м',1);
+  const l=await store.addLesson(cls.id,day,topic.id);
+  const screen=doc.createElement('div');renderClasses(screen,{});
+  const row=screen.querySelector('.class-today-row');
+  assert.ok(row);assert.match(row.textContent,/Бег на 60 м/);assert.match(row.textContent,/Нагрузки не указаны/);
+  row.click();const sheet=doc.querySelector('.sheet');
+  assert.match(sheet.textContent,/Отсутствие совпадений не означает допуск/);
+  [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Настроить нагрузки темы КТП').click();
+  const choose=[...sheet.querySelectorAll('button')].find(b=>b.textContent==='Выбрать предложенные категории');
+  assert.ok(choose);choose.click();
+  assert.equal(store.lessonCheck(l).needsReview,true);
+  [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Подтвердить теги').click();
+  await tick(80);
+  assert.equal(store.lessonCheck(l).needsReview,false);
+  ui.closeSheet();
+});

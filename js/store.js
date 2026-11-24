@@ -34,12 +34,13 @@ export const state = {
   finalGrades: [],
   // выбор пользователя
   currentClassId: null,
-  currentTrimesterId: 't1',
+  currentTrimesterId: null,
   currentTab: 'today',
   lastBackupAt: null,
 };
 
 const subs = new Set();
+let automaticPeriodId=null, manualPeriodId=null;
 
 /** Подписка на изменение состояния. Возвращает функцию отписки. */
 export function subscribe(fn) {
@@ -111,7 +112,7 @@ function applySnapshot({ meta: settingsArr, classes, students, lessons, topics, 
   if (state.classes.length && !state.classes.some((c) => c.id === state.currentClassId)) {
     state.currentClassId = state.classes[0].id;
   }
-  if(!state.settings.trimesters.some(t=>t.id===state.currentTrimesterId))state.currentTrimesterId=(state.settings.trimesters.find(t=>M.inRange(M.todayIso(),t.from,t.to))||state.settings.trimesters[0]).id;
+  refreshSchoolPeriod();
   state.ready = true;
   notify();
   return state;
@@ -140,6 +141,24 @@ export function lessonsInRange(classId, from, to) {
 export const trimester = (id) => state.settings.trimesters.find((t) => t.id === id) || state.settings.trimesters[0];
 
 export const currentTrimester = () => trimester(state.currentTrimesterId);
+export const actualSchoolPeriod = (date=M.todayIso()) => M.schoolPeriodForDate(state.settings.trimesters,date);
+export function refreshSchoolPeriod(date=M.todayIso()){
+  const actual=actualSchoolPeriod(date)?.id??null;
+  if(automaticPeriodId!==actual)manualPeriodId=null;
+  automaticPeriodId=actual;
+  if(!state.settings.trimesters.some(p=>p.id===manualPeriodId))manualPeriodId=null;
+  const next=manualPeriodId??actual;
+  const changed=state.currentTrimesterId!==next;
+  state.currentTrimesterId=next;
+  return changed;
+}
+export function selectSchoolPeriod(id){
+  if(!state.settings.trimesters.some(p=>p.id===id))return false;
+  automaticPeriodId=actualSchoolPeriod()?.id??null;
+  manualPeriodId=id===automaticPeriodId?null:id;
+  state.currentTrimesterId=id;
+  notify();return true;
+}
 
 /** Карта отметок по ключу lessonId|studentId — для быстрого рендера сетки. */
 export function markMap(classId) {
@@ -189,7 +208,7 @@ export async function saveSettings(patch) {
     return next;
   });
   state.settings = settings;
-  if(!settings.trimesters.some(t=>t.id===state.currentTrimesterId))state.currentTrimesterId=(settings.trimesters.find(t=>M.inRange(M.todayIso(),t.from,t.to))||settings.trimesters[0]).id;
+  refreshSchoolPeriod();
   state.lastBackupAt = settings.lastBackupAt || null;
   notify();
 }

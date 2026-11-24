@@ -619,3 +619,9 @@ export function validateSchoolHolidays(holidays){
   if(ordered.some((h,i)=>i>0&&h.from<=ordered[i-1].to))throw Error('Периоды каникул пересекаются');
   return ordered;
 }
+
+
+export function schoolPeriodForDate(periods,date=todayIso()){
+  const sorted=[...periods].sort((a,b)=>a.from.localeCompare(b.from));
+  return sorted.find(p=>inRange(date,p.from,p.to)) || [...sorted].reverse().find(p=>p.from<=date) || sorted[0] || null;
+}
