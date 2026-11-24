@@ -154,11 +154,12 @@ try{
  await personalMobile.setOffline(true);
  await phone.evaluate(async()=>{await (await import('./js/db.js')).put('coachTeams',{id:'personal-team-2',name:'Synthetic offline team',archived:false});});
  await personalMobile.setOffline(false);
- await phone.reload();await phone.locator('.workspace-nav').waitFor();
+ await phone.bringToFront();await phone.reload();await phone.locator('.workspace-nav').waitFor();
  if(await phone.evaluate(()=>Boolean(navigator.locks?.request))){
+  await phone.waitForFunction(async()=> (await (await import('./js/sync.js')).syncStatus('coach'))?.revision===2,undefined,{timeout:25000}).catch(async error=>{const info=await phone.evaluate(async()=>({visibility:document.visibilityState,online:navigator.onLine,report:(await import('./js/auto-sync.js')).autoSyncStatus(),lockState:await navigator.locks.query()}));throw Error('Phone foreground sync: '+JSON.stringify(info)+' '+error.message);});
   const phoneRevision=await phone.evaluate(async()=> (await (await import('./js/sync.js')).syncStatus('coach')).revision);
   assert.equal(phoneRevision,2,'foreground personal sync must push offline edit');
-  await pc.reload();await pc.locator('.workspace-nav').waitFor();
+  await pc.bringToFront();await pc.reload();await pc.locator('.workspace-nav').waitFor();
   const team=await pc.evaluate(async()=> (await import('./js/db.js')).get('coachTeams','personal-team-2'));
   assert.equal(team?.name,'Synthetic offline team','desktop must receive edit automatically');
   assert.equal(await pc.evaluate(async()=> (await (await import('./js/sync.js')).syncStatus('coach')).revision),2,'pull should not create a revision');
@@ -169,10 +170,10 @@ try{
  // A desktop edit must also reach the phone.
  await pc.evaluate(async()=>{await (await import('./js/db.js')).put('coachTeams',{id:'personal-team-3',name:'Synthetic desktop team',archived:false});});
  if(await pc.evaluate(()=>Boolean(navigator.locks?.request))){
-  await pc.reload();await pc.locator('.workspace-nav').waitFor();
+  await pc.bringToFront();await pc.reload();await pc.locator('.workspace-nav').waitFor();
  }else assert.equal((await initial(pc)).revision,3);
  if(await phone.evaluate(()=>Boolean(navigator.locks?.request))){
-  await phone.reload();await phone.locator('.workspace-nav').waitFor();
+  await phone.bringToFront();await phone.reload();await phone.locator('.workspace-nav').waitFor();
  }else assert.equal((await initial(phone)).revision,3);
  assert.equal(await phone.evaluate(async()=> (await (await import('./js/db.js')).get('coachTeams','personal-team-3'))?.name),'Synthetic desktop team','phone must receive desktop edit');
  await personalMobile.close();await personalDesktop.close();

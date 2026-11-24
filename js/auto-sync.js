@@ -28,9 +28,10 @@ export async function runPersonalSync({getCode=readPersonalCode,online=()=>globa
 // Browsers without Web Locks retain explicit manual synchronization.
 export async function openSyncSession(locks=globalThis.navigator?.locks,scope='teachapp-db-v1'){
  if(!locks?.request)return null;
- let release,working=false;
+ let release,held,working=false;
  const acquire=()=>new Promise((resolve,reject)=>{
-  locks.request(scope,{mode:'shared'},()=>new Promise(done=>{release=done;resolve();})).catch(reject);
+  held=locks.request(scope,{mode:'shared'},()=>new Promise(done=>{release=done;resolve();}));
+  held.catch(reject);
  });
  await acquire();
  const session={async exclusive(task){
@@ -38,6 +39,7 @@ export async function openSyncSession(locks=globalThis.navigator?.locks,scope='t
   working=true;
   try{
    release();
+   await held; // Wait until the browser has actually released this tab's shared lock.
    return await locks.request(scope,{mode:'exclusive',ifAvailable:true},lock=>lock?task():null);
   }finally{
    try{await acquire();}finally{working=false;}
