@@ -6,7 +6,8 @@ import {catalog,validPeriod,active,ancestorIds} from './health.js';
 import {replay,appendEvent,undoEvent,validateLiveData} from './volleyball.js';
 import {replayDetailed} from './match-protocol.js';
 import {validateVolleyImport,duplicateVolleyMatch} from './volleypoint-import.js';
-export const coachStores=['coachTeams','coachPlayers','coachTrainings','coachMatches','coachLive','coachLineups'];
+import {validateCoachTests,guardTestWrite} from './coach-tests.js';
+export const coachStores=['coachTeams','coachPlayers','coachTrainings','coachMatches','coachLive','coachLineups','coachTests'];
 export const positions={setter:'Связующая',outside:'Доигровщица',opposite:'Диагональная',middle:'Центральная блокирующая',libero:'Либеро',universal:'Универсальная'};
 export const attendanceLabels={present:'Присутствовала',absent:'Отсутствовала',limited:'Присутствовала, нагрузка ограничена'};
 export const metrics={serves:'Подачи (всего)',serveErrors:'Ошибки на подаче',aces:'Эйсы',receptions:'Приёмы (всего)',receptionGood:'Положительные приёмы',attacks:'Атаки (всего)',attackKills:'Результативные атаки',blocks:'Результативные блоки',points:'Очки (всего)'};
@@ -57,6 +58,7 @@ export function validateCoachData(data){
     }
   }
   validateLiveData(data);
+  validateCoachTests(data);
   return data;
 }
 export async function loadCoach(){
@@ -81,6 +83,11 @@ export async function savePlayer(input){
     restrictions:(input.restrictions||[]).map(x=>({activityId:x.activityId,dateFrom:x.dateFrom,dateTo:x.dateTo||null,type:x.type}))};
   return write('coachPlayers',r,(d,old)=>teamGuard(d,old,r));
 }
+export async function saveCoachTest(input){
+ const r={id:input.id||uid('coachtest'),teamId:input.teamId,date:input.date,definition:structuredClone(input.definition),results:structuredClone(input.results)};
+ return write('coachTests',r,(d,old)=>{if(input.id&&!old)throw Error('Тестирование уже удалено');guardTestWrite(d,old,r);});
+}
+export async function deleteCoachTest(id){await db.del('coachTests',id);}
 export async function saveTraining(input){
   const r={id:input.id||uid('training'),teamId:input.teamId,date:input.date,time:input.time,title:String(input.title||'').trim(),minutes:input.minutes,
     exercises:(input.exercises||[]).map(x=>({name:String(x.name||'').trim(),activityId:x.activityId,minutes:x.minutes})),roster:[...input.roster],held:input.held===true,attendance:{...input.attendance}};
@@ -176,7 +183,7 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
 }
 export function teamView(data,teamId){
   return {players:data.coachPlayers.filter(p=>p.teamId===teamId),trainings:data.coachTrainings.filter(t=>t.teamId===teamId).sort(dateOrder),
-    matches:data.coachMatches.filter(m=>m.teamId===teamId).sort(dateOrder)};
+    matches:data.coachMatches.filter(m=>m.teamId===teamId).sort(dateOrder),tests:(data.coachTests||[]).filter(s=>s.teamId===teamId).sort(dateOrder)};
 }
 function csvCell(value){
   let s=String(value??'');

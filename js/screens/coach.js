@@ -7,6 +7,7 @@ import {openMatchCenter} from './volleyball.js';
 import {openMatchReport} from './match-protocol.js';
 import {openVolleyImport,openImportedReport} from './volleypoint-import.js';
 import {openCoachTeams} from './team-generator.js';
+import {openTestForm,testList,playerTestCards} from './coach-tests.js';
 const {el,openSheet,closeSheet,toast}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
 const field=(text,input)=>el('label',{class:'field'},[el('span',{text}),input]);
@@ -77,6 +78,7 @@ function playerCard(team,player,view,refresh){
       card('Данные прежних и ручных матчей',[p('Доля успешных среди записанных действий (не гарантирует полноту):'),p('Подача '+ratio(s.rates.serve.success,s.rates.serve.total)),p('Приём '+ratio(s.rates.receive.success,s.rates.receive.total)),p('Атака '+ratio(s.rates.attack.success,s.rates.attack.total)),p('Событийные протоколы не содержат все попытки атаки и приёма; их проценты здесь не вычисляются.')]),
       ...(s.importedMatches?[card('VolleyPoint · импортированные матчи',[p('Протоколов: '+s.importedMatches+' · ошибок по итогам: '+s.importedErrors),p('Зафиксированные ошибки: подача '+s.importedBreakdown.serve+' · атака '+s.importedBreakdown.attack+' · приём '+s.importedBreakdown.receive+' · прочие '+s.importedBreakdown.other),p('Очки в записанных сериях подачи: '+s.importedServiceWins+' · максимальная записанная серия: '+s.importedLongestSeries),p('Полное число попыток и выходы на площадку неизвестны; проценты не вычисляются.')])]:[]),
       card('Тренировки · посещаемость',[p(format(a.pct)+(a.pct==null?'':'%')+' · посещено '+(a.present+a.limited)+' · пропущено '+a.absent+' · не отмечено '+a.unknown)]),
+      card('Тренировочные тесты и физподготовка',[...playerTestCards(view,player.id,range),!team.archived&&!player.archived?btn('+ Индивидуальный тест',()=>openTestForm(team,view,null,refresh,player.id),'wide'):null]),
       card('История матчей',s.chosen.length?s.chosen.map(m=>p(fmtFull(m.date)+' · '+m.opponent+' · личные очки: '+format(m.stats[player.id]?.points))):[p('Матчей за период нет')]));
   }
   from.onchange=draw;to.onchange=draw;draw();
@@ -205,6 +207,7 @@ export async function renderCoach(root,ctx={}){
           !active.length?p('Нет действующих игроков'):null,
           arch.length?el('details',{},[el('summary',{text:'Архив игроков ('+arch.length+')'}),...arch.map(player=>btn(label(player),()=>playerCard(team,player,view,refresh),'wide'))]):null]));
       }else if(selectedSection==='trainings'){
+        body.append(card('Тестирования',[testList(team,view,refresh)]));
         body.append(card('Тренировки',[team.archived?null:btn('+ Тренировка',()=>trainingForm(team,view,null,refresh),'primary wide')]));
         const upcoming=view.trainings.filter(t=>!t.held&&t.date>=todayIso()).sort(dateSort);
         const history=view.trainings.filter(t=>!upcoming.includes(t));
