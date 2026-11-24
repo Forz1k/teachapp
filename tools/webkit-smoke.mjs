@@ -5,6 +5,7 @@ import {readFile,mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createRelay} from '../server/sync-relay.mjs';
+import {createPersonalCode,personalCredentials} from '../js/personal-sync.js';
 import {resolve,sep,extname} from 'node:path';
 import {webkit,devices} from 'playwright';
 
@@ -85,7 +86,9 @@ try{
  assert.equal(relayRequests,0);
  relayDirectory=await mkdtemp(join(tmpdir(),'teachapp-webkit-relay-'));
  const tokenA='X'.repeat(43),tokenB='Y'.repeat(43),password='webkit-synthetic-test-password';
- relay=await createRelay({directory:relayDirectory,tokens:{school:[tokenA,tokenB]},allowedOrigin:origin});
+ const personalEndpoint='https://synthetic-sync.example',personalCode=createPersonalCode(personalEndpoint);
+ const personalCoach=await personalCredentials(personalCode,'coach');
+ relay=await createRelay({directory:relayDirectory,tokens:{school:[tokenA,tokenB],coach:[personalCoach.token]},allowedOrigin:origin});
  await new Promise(resolve=>relay.listen(0,'127.0.0.1',resolve));
  const endpoint='http://127.0.0.1:'+relay.address().port;
  const sync=async(p,token)=>p.evaluate(async({endpoint,token,password})=>{
@@ -105,6 +108,63 @@ try{
  },fixture);
  assert.equal(imported?.value,'5','encrypted sync between two WebKit contexts');
  await second.close();
+ // A fake HTTPS origin is routed to the local relay. Only synthetic test data and keys.
+ const personalMobile=await browser.newContext({...devices['iPhone 13'],locale:'ru-RU',serviceWorkers:'allow'});
+ const personalDesktop=await browser.newContext({viewport:{width:1440,height:900},locale:'ru-RU',serviceWorkers:'allow'});
+ async function routePersonal(ctx){
+  await ctx.route(personalEndpoint+'/**',async route=>{
+   const req=route.request(),method=req.method(),all=await req.allHeaders(),headers={};
+   for(const key of ['authorization','origin','content-type','access-control-request-method','access-control-request-headers'])if(all[key])headers[key]=all[key];
+   const response=await fetch(endpoint+new URL(req.url()).pathname,{method,headers,...(method==='PUT'?{body:req.postDataBuffer()}: {})});
+   const body=Buffer.from(await response.arrayBuffer());
+   await route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),body});
+  });
+ }
+ await routePersonal(personalMobile);await routePersonal(personalDesktop);
+ const phone=await personalMobile.newPage(),pc=await personalDesktop.newPage();
+ for(const p of [phone,pc])p.on('pageerror',error=>errors.push(error.message));
+ async function connect(p){
+  await p.goto(origin+'/index.html');await p.locator('.workspace-nav').waitFor();
+  await p.evaluate(async()=>{(await import('./js/screens/sync.js')).openSync();});
+  await p.getByRole('button',{name:'Ввести личный код',exact:true}).click();
+  await p.locator('.dialog input[type=password]').fill(personalCode);
+  await p.getByRole('button',{name:'Продолжить',exact:true}).click();
+  await p.getByRole('button',{name:'Сохранить',exact:true}).click();
+  await p.getByText('Личный код сохранён на этом устройстве.',{exact:true}).waitFor();
+  await p.locator('.sheet.show').getByRole('button',{name:'Закрыть',exact:true}).click();
+  await p.locator('.personal-sync-action').waitFor();
+  assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'personal sync header overflow');
+  assert.equal(await p.evaluate(async()=>Boolean((await import('./js/personal-sync.js')).readPersonalCode())),true);
+ }
+ await connect(phone);await connect(pc);
+ const initial=async p=>p.evaluate(async()=>{
+  const {readPersonalCode,personalCredentials}=await import('./js/personal-sync.js');
+  const {relayClient,prepareSync,executeSync}=await import('./js/sync.js');
+  const credentials=await personalCredentials(readPersonalCode(),'coach');
+  const client=relayClient(credentials.endpoint,credentials.area,credentials.token);
+  const plan=await prepareSync({...credentials,client});
+  return executeSync({plan,choices:{},password:credentials.password,client,confirmed:true,reuseRemote:true});
+ });
+ await phone.evaluate(async()=>{await (await import('./js/db.js')).put('coachTeams',{id:'personal-team-1',name:'Synthetic personal team',archived:false});});
+ assert.equal((await initial(phone)).revision,1);
+ assert.equal((await initial(pc)).revision,1);
+ await personalMobile.setOffline(true);
+ await phone.evaluate(async()=>{await (await import('./js/db.js')).put('coachTeams',{id:'personal-team-2',name:'Synthetic offline team',archived:false});});
+ await personalMobile.setOffline(false);
+ await phone.reload();await phone.locator('.workspace-nav').waitFor();
+ if(await phone.evaluate(()=>Boolean(navigator.locks?.request))){
+  const phoneRevision=await phone.evaluate(async()=> (await (await import('./js/sync.js')).syncStatus('coach')).revision);
+  assert.equal(phoneRevision,2,'foreground personal sync must push offline edit');
+  await pc.reload();await pc.locator('.workspace-nav').waitFor();
+  const team=await pc.evaluate(async()=> (await import('./js/db.js')).get('coachTeams','personal-team-2'));
+  assert.equal(team?.name,'Synthetic offline team','desktop must receive edit automatically');
+  assert.equal(await pc.evaluate(async()=> (await (await import('./js/sync.js')).syncStatus('coach')).revision),2,'pull should not create a revision');
+ }else{
+  assert.equal((await initial(phone)).revision,2);
+  assert.equal((await initial(pc)).revision,2);
+ }
+ await personalMobile.close();await personalDesktop.close();
+ console.log('WEBKIT PERSONAL PASS: saved code on mobile and desktop, offline edit, bidirectional sync and no duplicate revision');
  console.log('WEBKIT SYNC PASS: no implicit transfer, two independent browser contexts, Web Crypto, CORS and IndexedDB');
  assert.deepEqual(errors,[],'uncaught WebKit errors');
  console.log('WEBKIT PASS: mobile viewport, IndexedDB write, service worker and offline reload');
