@@ -25,9 +25,9 @@ const port=server.address().port;
 await new Promise(resolve=>server.close(resolve));
 const base='http://127.0.0.1:'+port;
 let processHandle=null,output='';
-async function start(list){
+async function start(list,adminHash=null){
  output='';
- processHandle=spawn('npx',['--yes','wrangler@4.161.0','dev','--local','--ip','127.0.0.1','--port',String(port),'--persist-to',state,'--var','TEACHAPP_SYNC_ORIGIN:'+origin,'--var','TEACHAPP_SYNC_TOKEN_HASHES:'+JSON.stringify(list)],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
+ processHandle=spawn('npx',['--yes','wrangler@4.161.0','dev','--local','--ip','127.0.0.1','--port',String(port),'--persist-to',state,'--var','TEACHAPP_SYNC_ORIGIN:'+origin,'--var','TEACHAPP_SYNC_TOKEN_HASHES:'+JSON.stringify(list),...(adminHash?['--var','TEACHAPP_SYNC_ADMIN_HASH:'+adminHash]:[])],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
  processHandle.stdout.on('data',d=>{output=(output+d).slice(-10000);});
  processHandle.stderr.on('data',d=>{output=(output+d).slice(-10000);});
  for(let n=0;n<150;n++){
@@ -48,6 +48,7 @@ try{
  await start(hashes);
  const school=relayClient(base,'school',A),other=relayClient(base,'school',B),coach=relayClient(base,'coach',C);
  assert.deepEqual(await school.get(),{revision:0,envelope:null});
+ assert.equal((await fetch(base+'/v2/devices/school')).status,404);
  assert.equal((await fetch(base+'/v1/snapshot/school')).status,401);
  assert.equal((await fetch(base+'/v1/snapshot/coach',{headers:{Authorization:'Bearer '+A}})).status,401);
  assert.equal((await fetch(base+'/v1/snapshot/school',{headers:{Origin:'https://wrong.example',Authorization:'Bearer '+A}})).status,403);
@@ -85,4 +86,45 @@ try{
  await assert.rejects(school.get(),/отказал в доступе/);
  assert.deepEqual(await other.get(),snapshot);
  console.log('CLOUDFLARE PASS: workerd SQLite persistence, real encryption, isolation, CORS, CAS race, oversized packets, restart and token revocation');
+ const admin='D'.repeat(43),device1='E'.repeat(43),device2='F'.repeat(43),coachDevice='G'.repeat(43);
+ const adminHash=await digestToken(admin),legacy={school:[hashes.school[1]],coach:hashes.coach};
+ await stop();await start(legacy,adminHash);
+ const call=(path,token,method='GET',body)=>fetch(base+path,{method,headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
+ const enroll=async(area,id,name,token)=>call('/v2/devices/'+area,admin,'POST',{id,name,tokenHash:await digestToken(token)});
+ const get=(area,token)=>call('/v2/snapshot/'+area,token);
+ const put=(area,token,expectedRevision)=>call('/v2/snapshot/'+area,token,'PUT',{expectedRevision,envelope});
+ const id1='device_synthetic_0001',id2='device_synthetic_0002',id3='device_synthetic_0003';
+ assert.equal((await call('/v2/devices/school',B)).status,401);
+ assert.equal((await enroll('school',id1,'Synthetic phone',B)).status,400);
+ assert.equal((await enroll('school',id1,'Synthetic phone',device1)).status,201);
+ assert.equal((await enroll('school',id2,'Synthetic desktop',device2)).status,201);
+ assert.equal((await enroll('coach',id3,'Synthetic coach',coachDevice)).status,201);
+ assert.equal((await enroll('school','device_synthetic_0004','Duplicate hash',device2)).status,409);
+ assert.equal((await get('school',admin)).status,401);
+ assert.equal((await get('school',B)).status,401);
+ assert.equal((await get('coach',device1)).status,401);
+ assert.equal((await get('school',coachDevice)).status,401);
+ assert.deepEqual(await (await get('school',device1)).json(),snapshot);
+ assert.deepEqual(await (await get('school',device2)).json(),snapshot);
+ assert.deepEqual(await (await get('coach',coachDevice)).json(),{revision:0,envelope:null});
+ const list=await (await call('/v2/devices/school',admin)).json();
+ assert.equal(list.devices.length,2);assert.ok(list.devices.every(x=>x.lastSeen>0));
+ assert.ok(list.devices.every(x=>!Object.hasOwn(x,'tokenHash')&&!Object.hasOwn(x,'token_hash')));
+ assert.equal((await call('/v2/devices/school/revoke',device2,'POST',{id:id1})).status,401);
+ const revoke=await call('/v2/devices/school/revoke',admin,'POST',{id:id1});
+ assert.equal(revoke.status,200);assert.ok((await revoke.json()).device.revokedAt>0);
+ assert.equal((await get('school',device1)).status,401);
+ assert.equal((await put('school',device1,2)).status,401);
+ assert.equal((await enroll('school','device_synthetic_0005','Revoked reuse',device1)).status,409);
+ const v2races=await Promise.all([put('school',device2,2),put('school',device2,2)]);
+ assert.deepEqual(v2races.map(x=>x.status).sort(),[200,409]);
+ const newSnapshot=await (await get('school',device2)).json();assert.equal(newSnapshot.revision,3);
+ await stop();await start({},adminHash);
+ assert.equal((await call('/v1/snapshot/school',B)).status,401);
+ assert.equal((await call('/v1/snapshot/school',personalSchool.token)).status,401);
+ assert.equal((await get('school',device1)).status,401);
+ assert.equal((await put('school',device1,3)).status,401);
+ assert.deepEqual(await (await get('school',device2)).json(),newSnapshot);
+ assert.equal((await get('coach',coachDevice)).status,200);
+ console.log('CLOUDFLARE V2 PASS: independent scoped device keys, real server revocation, legacy disable, persistent revisions, no exposed token hashes');
 }finally{await stop();await rm(state,{recursive:true,force:true});}
