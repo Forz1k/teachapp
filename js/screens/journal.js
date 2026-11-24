@@ -120,7 +120,7 @@ export function renderJournal(root, ctx) {
     return;
   }
 
-  const table = el('table', { class: 'journal' });
+  const table = el('table', { class: 'journal',style:'--journal-lessons:'+lessons.length });
   const thead = el('thead');
   const headRow = el('tr');
 
@@ -205,7 +205,21 @@ export function renderJournal(root, ctx) {
   const filterStatus=el('p',{class:'empty',text:'Ученики не найдены',hidden:true});
   search.oninput=()=>{const q=search.value.trim().toLocaleLowerCase('ru');let count=0;for(const row of tbody.rows){row.hidden=!row.dataset.name.includes(q);if(!row.hidden)count++;}filterStatus.hidden=count!==0;};
   wrap.append(table,filterStatus);
-  root.append(topbar, wrap);
+  // Horizontal navigation is visible even when native scrollbars are hidden by the OS.
+  const range=el('input',{type:'range',min:'0',max:'1000',step:'1',value:'0','aria-label':'Горизонтальная прокрутка журнала'});
+  const left=el('button',{class:'icon-btn plain journal-scroll-prev',type:'button',title:'Предыдущие даты','aria-label':'Предыдущие даты'},[icon('back')]);
+  const right=el('button',{class:'icon-btn plain journal-scroll-next',type:'button',title:'Следующие даты','aria-label':'Следующие даты'},[icon('chevron')]);
+  const end=el('button',{class:'btn small journal-scroll-end',type:'button',text:'Итоги',title:'Показать последние уроки и итоговые колонки'});
+  const maxScroll=()=>Math.max(0,wrap.scrollWidth-wrap.clientWidth);
+  const syncScroll=()=>{const max=maxScroll();range.value=max?String(Math.round(wrap.scrollLeft/max*1000)):'0';};
+  range.addEventListener('input',()=>{wrap.scrollLeft=maxScroll()*Number(range.value)/1000;});
+  left.onclick=()=>{wrap.scrollLeft-=Math.max(80,wrap.clientWidth*.65);syncScroll();};
+  right.onclick=()=>{wrap.scrollLeft+=Math.max(80,wrap.clientWidth*.65);syncScroll();};
+  end.onclick=()=>{wrap.scrollLeft=maxScroll();syncScroll();};
+  wrap.addEventListener('scroll',syncScroll,{passive:true});
+  const scrollControls=el('div',{class:'journal-scroll-controls',role:'group','aria-label':'Перемещение по датам'},[left,range,right,end]);
+  root.append(topbar,scrollControls,wrap);
+  syncScroll();
   // При ручной отметке сохраняем DOM таблицы, прокрутку и остальные строки.
   return changedStudents => {
     const latest = store.markMap(classId);

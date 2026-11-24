@@ -198,24 +198,11 @@ export function openLessonPlanner(classId) {
   fromInput.addEventListener('change', updatePreview);
   toInput.addEventListener('change', updatePreview);
 
-  const vacations = el('div',{class:'card-block'});
-  const holidayFrom = el('input',{type:'date'}), holidayTo = el('input',{type:'date'});
-  function showHolidays() {
-    vacations.replaceChildren(el('h3',{text:'Каникулы для всех классов'}));
-    for (const h of settings.holidays || []) vacations.append(el('button',{class:'btn',type:'button',
-      text:M.fmtFull(h.from) + ' — ' + M.fmtFull(h.to) + ' · удалить',onclick:() => saveHolidays(settings.holidays.filter(x => x !== h))}));
-    vacations.append(el('label',{class:'field'},['Начало каникул',holidayFrom]),el('label',{class:'field'},['Окончание каникул',holidayTo]),
-      el('button',{type:'button',class:'btn',text:'Добавить каникулы',onclick:() => {
-        const from = holidayFrom.value, to = holidayTo.value;
-        if (!from || !to || from > to) return ui.toast('Проверьте даты каникул');
-        saveHolidays([...(settings.holidays || []),{from,to}]);
-      }}));
-  }
-  async function saveHolidays(holidays) {
-    try { await store.saveSettings({holidays}); settings.holidays = holidays; showHolidays(); updatePreview(); }
-    catch (error) { ui.toast(error.message); }
-  }
-  showHolidays();
+  const vacations=el('div',{class:'card-block'},[
+    el('h3',{text:'Каникулы для всех классов'}),
+    el('p',{class:'sub',text:'Общие даты из Настроек → Учебный год и классы → Каникулы.'}),
+    ...((store.state.settings.holidays||[]).map(h=>el('div',{text:M.fmtFull(h.from)+' — '+M.fmtFull(h.to)}))),
+  ]);
   const sheet = el('div', {}, [
     el('h2', { text: 'Уроки по расписанию' }),
     el('div', { class: 'sub', text: cls ? cls.name : '' }),

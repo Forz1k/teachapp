@@ -133,6 +133,8 @@ test('журнал строит сетку: строки учеников, ко�
   assert.deepEqual([...table.querySelectorAll('.name-cell')].map(n=>n.textContent.trim()), ['Иванов Иван','Петрова Анна']);
   assert.equal(table.querySelectorAll('thead .journal-lesson-head').length,2);
   assert.equal(screen.querySelector('.journal-manage').textContent,'Уроки триместра');
+  assert.ok(screen.querySelector('.journal-scroll-controls input[type=range]'));
+  assert.ok(screen.querySelector('.journal-scroll-end'));
 
   // Оценка 5 и отметка Н отрисованы
   const html = table.innerHTML;
@@ -245,7 +247,7 @@ test('настройки показывают все разделы', async () =
   renderSettings(screen, {});
 
   const text = screen.textContent;
-  for (const label of ['Учебный год', 'Триместры', 'Классы', 'Импорт', 'Экспорт', 'Резервная копия', 'Демонстрационные данные']) {
+  for (const label of ['Учебный год', 'Триместры', 'Каникулы для всех классов', 'Классы', 'Импорт', 'Экспорт', 'Резервная копия', 'Демонстрационные данные']) {
     assert.ok(text.includes(label), `раздел «${label}» есть`);
   }
 });

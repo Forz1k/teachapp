@@ -578,7 +578,7 @@ export function planLessonDates({classId,from,to,rules,overrides,holidays,days})
   const dates = [];
   for (let d = parseIso(from), end = parseIso(to); d <= end; d.setDate(d.getDate()+1)) {
     const date = iso(d);
-    if (holidays.some(h => inRange(date,h.from,h.to))) continue;
+    if (isSchoolHoliday(date,holidays)) continue;
     const effective = scheduleForDate(rules,overrides,date);
     const scheduled = effective.some(r => r.classId === classId);
     const templateDay = rules.some(r => r.classId === classId && r.weekday === weekdayOf(date));
@@ -605,4 +605,17 @@ export function planLessonTopicRepair(lessons,topics,ids) {
   const used=new Set(lessons.filter(l=>!editable.has(l.id)).map(l=>l.topicId).filter(Boolean));
   const remaining=topics.filter(t=>!used.has(t.id));
   return sortLessons(lessons.filter(l=>editable.has(l.id))).map((l,i)=>({id:l.id,date:l.date,previous:l.topicId??null,topicId:remaining[i]?.id??null})).filter(c=>c.previous!==c.topicId);
+}
+
+
+/** Общие каникулы для всех классов, обе границы включительно. */
+export function isSchoolHoliday(date,holidays=[]){
+  return holidays.some(h=>inRange(date,h.from,h.to));
+}
+export function validateSchoolHolidays(holidays){
+  const valid=date=>typeof date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(date)&&!Number.isNaN(parseIso(date).getTime())&&iso(parseIso(date))===date;
+  if(!Array.isArray(holidays)||holidays.some(h=>!h||!valid(h.from)||!valid(h.to)||h.from>h.to))throw Error('Проверьте даты каникул');
+  const ordered=holidays.map(h=>({from:h.from,to:h.to})).sort((a,b)=>a.from.localeCompare(b.from));
+  if(ordered.some((h,i)=>i>0&&h.from<=ordered[i-1].to))throw Error('Периоды каникул пересекаются');
+  return ordered;
 }

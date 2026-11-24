@@ -458,3 +458,31 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 @media(min-width:1000px){.screen>.journal-topbar{max-width:none;width:auto;margin-inline:24px;padding-inline:0}.journal .col-lesson{width:105px;min-width:105px}.journal th.col-name,.journal td.col-name{width:248px;min-width:248px;max-width:248px}.journal thead th .topic{-webkit-line-clamp:3;min-height:39px}.journal-lesson-head{min-height:82px}.journal-grid{max-height:calc(100dvh - 285px)}}
 @media(max-width:420px){.journal th.col-name,.journal td.col-name{width:138px;min-width:138px;max-width:138px}.journal-manage.btn{font-size:12px}.trimester-lesson-row{gap:5px;padding-inline:5px}}
 
+
+
+/* Compact journal: keep the scroll container inside its actual parent, not the viewport. */
+.screen:has(>.journal-grid){min-width:0}
+.screen>.journal-grid{--journal-name-width:138px;--journal-date-width:64px;--journal-total-width:62px;width:calc(100% - 16px);max-width:none;min-width:0;align-self:center;margin:4px 8px 12px;overflow:auto;scrollbar-width:auto;scrollbar-gutter:stable}
+.journal-grid table.journal{width:max(100%,calc(32px + var(--journal-name-width) + var(--journal-lessons)*var(--journal-date-width) + 2*var(--journal-total-width)));min-width:100%;table-layout:fixed}
+.journal-grid .journal th.col-num,.journal-grid .journal td.col-num{width:32px;min-width:32px;max-width:32px}
+.journal-grid .journal th.col-name,.journal-grid .journal td.col-name{width:var(--journal-name-width);min-width:var(--journal-name-width);max-width:var(--journal-name-width)}
+.journal-grid .journal th.col-lesson{width:var(--journal-date-width);min-width:var(--journal-date-width);max-width:var(--journal-date-width)}
+.journal-grid .journal th.col-sum,.journal-grid .journal td.col-sum{width:var(--journal-total-width);min-width:var(--journal-total-width)}
+.journal-grid .journal thead th.col-num,.journal-grid .journal thead th.col-name,.journal-grid .journal thead th.col-sum{vertical-align:middle;font-size:12px;font-weight:750;padding-block:0;background:var(--card-2);color:var(--text)}
+.journal-grid .journal thead th.col-name{padding-inline:10px;text-align:left;white-space:normal;line-height:1.3}
+.journal-grid .journal thead th.col-lesson{vertical-align:top;height:70px;padding:3px 1px}
+.journal-grid .journal-lesson-head{min-height:62px;padding:4px 1px;gap:1px}
+.journal-grid .journal thead th .topic{font-size:10px;line-height:1.15;min-height:24px;max-height:35px;-webkit-line-clamp:3;overflow-wrap:anywhere}
+.journal-grid .journal .name-cell{font-size:13px}
+.journal-scroll-controls{display:flex;align-items:center;gap:7px;margin:2px 8px 0;min-width:0}
+.journal-scroll-controls .icon-btn{flex:0 0 32px;width:32px;height:32px}
+.journal-scroll-controls input[type="range"]{flex:1;min-width:0;width:0;height:24px;padding:0;border:0;background:transparent;accent-color:var(--accent);cursor:ew-resize}
+.journal-scroll-end.btn{min-height:32px;padding:4px 9px;font-size:12px;white-space:nowrap}
+@media(min-width:1000px){
+  .screen>.journal-grid{--journal-name-width:220px;--journal-date-width:64px;width:calc(100% - 48px);margin:4px 24px 12px;max-height:calc(100dvh - 310px)}
+  .journal-scroll-controls{margin-inline:24px}
+  .screen>.journal-topbar{width:calc(100% - 48px);max-width:1200px;margin-inline:auto;padding-inline:0}
+}
+@media(min-width:1700px){.screen>.journal-grid{--journal-date-width:68px}}
+@media(max-width:360px){.screen>.journal-grid{--journal-name-width:124px;--journal-date-width:62px}}
+
