@@ -135,7 +135,7 @@ export function warning(lesson,studentId,onBack) {
   const {matches,needsReview,reviewReasons} = S.lessonCheck(lesson);
   const rows = matches.filter(m => !studentId || m.studentId === studentId);
   const node = el('div');
-  if (needsReview) node.append(el('p',{text:reviewReasons.join('. ')+'. Уточните нагрузку перед занятием.'}));
+  if (needsReview) node.append(el('p',{text:'Содержание нагрузки требует проверки: '+reviewReasons.join('. ')+'. Уточните нагрузку перед занятием.'}));
   if (rows.length) node.append(el('p',{role:'status',text:'Ограничение нагрузки · учеников: ' + new Set(rows.map(m => m.studentId)).size}));
   node.append(btn('Проверить ограничения',()=>openLessonRestrictions(lesson,studentId,onBack)));
   return node;
