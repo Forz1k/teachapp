@@ -1,3 +1,4 @@
+import {openDocuments} from './documents.js';
 import * as S from '../store.js';
 import * as A from '../analytics.js';
 import * as M from '../model.js';
@@ -93,7 +94,7 @@ export function renderAnalytics(root,ctx={}){
     const action=fn=>{try{fn(matrix());}catch(e){ui.toast(e.message);}};
     content.append(card('Отчёты',[p('Обычные ведомости не содержат группы здоровья, ограничений, оснований освобождения или заметок. Перед передачей проверьте состав данных.'),
       field('Вид отчёта',kind),field('Включить агрегированные предупреждения в план уроков',warnings),preview,
-      btn('CSV',()=>action(m=>saveCsv(m,kind.value)),'wide'),btn('Печать',()=>action(m=>printMatrix(title+' · '+kinds[kind.value],m)),'primary wide')]));
+      btn('Генератор Word / Excel',()=>openDocuments(kind.value==='ktp'?'ktp':kind.value==='norms'?'norms':'classReport'),'wide'),btn('CSV',()=>action(m=>saveCsv(m,kind.value)),'wide'),btn('Печать',()=>action(m=>printMatrix(title+' · '+kinds[kind.value],m)),'primary wide')]));
   }
  }
  cls.onchange=()=>{pickedClass=cls.value;pickedStudent='';pupils();draw();};
