@@ -3,6 +3,7 @@ import * as C from '../coach.js';
 import {catalog} from '../health.js';
 import {todayIso,fmtFull} from '../model.js';
 import * as ui from '../ui.js';
+import {openMatchCenter} from './volleyball.js';
 import {openCoachTeams} from './team-generator.js';
 const {el,openSheet,closeSheet,toast}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
@@ -202,7 +203,7 @@ export async function renderCoach(root,ctx={}){
           body.append(card(title,[...nodes,!list.length?p('Нет записей'):null]));
         }
       }else if(selectedSection==='matches'){
-        body.append(card('Матчи и соревнования',[team.archived?null:btn('+ Результат матча',()=>matchForm(team,view,null,refresh),'primary wide')]));
+        body.append(card('Матчи и соревнования',[team.archived?null:btn('Площадка и live-матч',()=>openMatchCenter(team,refresh),'primary wide'),team.archived?null:btn('+ Результат матча',()=>matchForm(team,view,null,refresh),'wide')]));
         for(const m of view.matches){
           const s=C.matchScore(m);
           body.append(card(m.opponent+' · '+s.ours+':'+s.theirs,[p(fmtFull(m.date)+(m.competition?' · '+m.competition:'')),p(m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),p('Игроков в составе: '+m.roster.length),
