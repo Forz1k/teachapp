@@ -55,7 +55,8 @@ test('Ручная публикация результата: только сч�
  P.saveFixture(id,{id:'fixture2',opponent:m.opponent,startAt:Date.now()});await wait(()=>server?.schedule?.length===1);
  const result=await P.publishSavedResult(id,m,{fixtureId:'fixture2'});await wait(()=>server?.archive?.length===1&&!server?.schedule?.length);
  assert.deepEqual(result.setsWon,{ours:2,theirs:0});assert.equal(JSON.stringify(server).includes('private-local-match'),false);assert.equal(JSON.stringify(server).includes('PRIVATE'),false);
- const corrected=await P.publishSavedResult(id,{...m,sets:[{ours:25,theirs:18}]});assert.equal(corrected.id,result.id);await wait(()=>server?.archive?.[0]?.sets?.length===1);assert.equal(server.archive.length,1);
+ await assert.rejects(P.publishSavedResult(id,{...m,teamId:'another'}),/другой команде/);
+ P.disconnectPortal(id);const corrected=await P.publishSavedResult(id,{...m,sets:[{ours:25,theirs:18}]});assert.equal(P.portalInfo(id).dirty,true);assert.equal(server.archive[0].sets.length,2);await P.connectPortal(id,{origin,apiKey,email:'trainer@example.org',password:'privatePassword',slug:'manual',team:'Команда'},fake);assert.equal(corrected.id,result.id);await wait(()=>server?.archive?.[0]?.sets?.length===1);assert.equal(server.archive.length,1);
  P.unpublishResult(id,result.id);await wait(()=>!server?.archive?.length);assert.equal(m.sets.length,2);
  P.setPortalEnabled(id,false,'Команда');await wait(()=>server===null);P.disconnectPortal(id);
 });

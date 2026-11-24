@@ -111,7 +111,7 @@ export async function publishSavedResult(id,match,{fixtureId=null}={}){
  const result=await savedResult(match);
  if(!d.enabled||d.pendingDelete)throw Error('Публикация выключена');
  if(d.match?.id===result.id&&['live','break'].includes(d.match.status))throw Error('Сначала завершите текущую трансляцию');
- if(fixtureId&&!resultFixtures(d.schedule,match,d.activeId?d.match?.scheduledId:null).some(x=>x.id===fixtureId))throw Error('Выбранная встреча недоступна или уже идёт');
+ if(fixtureId&&!resultFixtures(d.schedule,match,['live','break'].includes(d.match?.status)?d.match?.scheduledId:null).some(x=>x.id===fixtureId))throw Error('Выбранная встреча недоступна или уже идёт');
  const next=sortedArchive([result,...d.archive.filter(x=>x.id!==result.id)]);
  if(!next.some(x=>x.id===result.id))throw Error('В публичном архиве доступны только 20 последних матчей');
  d.archive=next;if(fixtureId)d.schedule=d.schedule.filter(x=>x.id!==fixtureId);
