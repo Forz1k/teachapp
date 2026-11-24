@@ -15,6 +15,6 @@ test('Season plan checks non-overlap, actual session status and weekly boundarie
  const a=seasonPlanProgress(r,[{teamId:team.id,date:'2026-11-03',minutes:60,held:true},{teamId:team.id,date:'2026-11-09',minutes:90,held:false},{teamId:team.id,date:'2026-11-25',minutes:50,held:false},{teamId:'other',date:'2026-11-03',minutes:90,held:true}],[], '2026-11-24');
  assert.equal(a.total.held,1);assert.equal(a.total.recordedMinutes,60);assert.equal(a.total.future,1);assert.equal(a.phases[0].unconfirmed,1);assert.equal(a.weeks.length,5);
  const copy=await S.makeBackup();assert.ok(projectScope(copy.data,'coach').workRecords.some(x=>x.id===r.id));assert.ok(!projectScope(copy.data,'school').workRecords.some(x=>x.id===r.id));
- const scoped=makeScopedBackup(copy,{kind:'team',id:team.id});assert.ok(scoped.data.workRecords.some(x=>x.id===r.id));
+ const scoped=makeScopedBackup(copy,{kind:'team',id:team.id});assert.ok(scoped.payload.data.workRecords.some(x=>x.id===r.id));
  await S.restoreBackup(copy);const broken=structuredClone(copy);broken.data.workRecords.find(x=>x.id===r.id).teamId='missing';await assert.rejects(S.restoreBackup(broken),/связь плана сезона/);
 });
