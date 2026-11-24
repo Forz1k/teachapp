@@ -28,7 +28,7 @@ export async function saveBoard(input){
   const record=structuredClone({...input,id:input.id||uid('board'),kind:'tacticBoard',revision:old?old.revision+1:0});validateBoard(record);await s.workRecords.put(record);return record;
  });
 }
-export function lineupOptions(view,{scheme='5-1',date=todayIso(),methods={},from='',to='',selected=null,count=3}={}){
+export function lineupOptions(view,{scheme='5-1',date=todayIso(),methods={},from='',to='',opponent='',selected=null,count=3}={}){
  check(Object.hasOwn(lineupRoles,scheme)&&validPeriod(date,null)&&(!from||validPeriod(from,null))&&(!to||validPeriod(to,null))&&(!from||!to||from<=to)&&Number.isInteger(count)&&count>=1&&count<=5,'Проверьте параметры состава');
  const active=view.players.filter(p=>!p.archived&&(!selected||selected.includes(p.id))),excluded=new Set();
  for(const activity of ['volley','jump','run','competition','intense'])for(const p of coachCandidates(active,activity,date))if(p.reason)excluded.add(p.id);
@@ -37,7 +37,7 @@ export function lineupOptions(view,{scheme='5-1',date=todayIso(),methods={},from
   if(!methods[role])continue;
   for(const r of testComparison(view,methods[role],'success',{from,to,archived:false}))if(r.eligible)scores.set(role+'|'+r.player.id,r);
  }
- const tactics=teamTactics(view.matches,{from,to,min:30}),pairs=new Map(tactics.pairs.filter(r=>r.eligible&&r.matches>=2).map(r=>[r.key,r]));
+ const tactics=teamTactics(view.matches,{from,to,opponent,min:30}),pairs=new Map(tactics.pairs.filter(r=>r.eligible&&r.matches>=2).map(r=>[r.key,r]));
  const pairKey=(a,b)=>JSON.stringify([a,b].sort());
  const score=(ids,roles)=>{
   let exact=0,known=0,total=0,synergy=0,paired=0;
@@ -55,5 +55,5 @@ export function lineupOptions(view,{scheme='5-1',date=todayIso(),methods={},from
  }
  const seen=new Set(),options=[];
  for(const b of beam){const k=JSON.stringify([...b.ids].sort());if(seen.has(k))continue;seen.add(k);options.push({...b,roles:[...roles],evidence:b.ids.map((id,i)=>{const r=scores.get(roles[i]+'|'+id);return r?{value:r.value,attempts:r.attempts,recorded:r.recorded}:null;})});if(options.length>=count)break;}
- return {options,excluded:[...excluded],available:available.length,slots:slots.map(s=>s.length),liberos:active.filter(p=>p.position==='libero'&&!excluded.has(p.id)).map(p=>p.id)};
+ return {options,excluded:[...excluded],available:available.length,matchEvidence:{total:tactics.total,detailed:tactics.detailed},slots:slots.map(s=>s.length),liberos:active.filter(p=>p.position==='libero'&&!excluded.has(p.id)).map(p=>p.id)};
 }

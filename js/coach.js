@@ -40,11 +40,12 @@ export function validateCoachData(data){
   }
   const roster=(r,ids)=>Array.isArray(ids)&&uniq(ids)&&ids.every(id=>byPlayer.get(id)?.teamId===r.teamId);
   for(const t of trainings){
-    assert(only(t,['id','teamId','date','time','title','minutes','exercises','roster','attendance','held'])&&str(t.id)&&teamIds.has(t.teamId)&&date(t.date)&&
+    assert(only(t,['id','teamId','date','time','title','minutes','exercises','roster','attendance','held','effort'])&&str(t.id)&&teamIds.has(t.teamId)&&date(t.date)&&
       /^([01]\d|2[0-3]):[0-5]\d$/.test(t.time)&&str(t.title)&&Number.isInteger(t.minutes)&&t.minutes>=1&&t.minutes<=600&&typeof t.held==='boolean'&&
       Array.isArray(t.exercises)&&t.exercises.every(x=>only(x,['name','activityId','minutes'])&&str(x.name)&&activityMap.has(x.activityId)&&Number.isInteger(x.minutes)&&x.minutes>=1&&x.minutes<=600)&&
       t.exercises.reduce((sum,x)=>sum+x.minutes,0)<=t.minutes&&roster(t,t.roster)&&only(t.attendance,t.roster)&&Object.values(t.attendance).every(x=>Object.hasOwn(attendanceLabels,x))&&
       (t.held||!Object.keys(t.attendance).length),'Проверьте тренировку, план и посещаемость');
+    assert(t.effort===undefined||only(t.effort,t.roster)&&Object.entries(t.effort).every(([id,r])=>t.held&&['present','limited'].includes(t.attendance[id])&&only(r,['minutes','rpe'])&&Number.isInteger(r.minutes)&&r.minutes>=1&&r.minutes<=600&&Number.isInteger(r.rpe)&&r.rpe>=1&&r.rpe<=10),'Нагрузка: у присутствовавших укажите фактические минуты 1–600 и субъективную сложность 1–10');
   }
   for(const m of matches){
     assert(only(m,['id','teamId','date','opponent','competition','sets','roster','stats','detail','imported'])&&str(m.id)&&teamIds.has(m.teamId)&&date(m.date)&&str(m.opponent)&&typeof m.competition==='string'&&m.competition.length<=200&&
@@ -91,6 +92,7 @@ export async function deleteCoachTest(id){await db.del('coachTests',id);}
 export async function saveTraining(input){
   const r={id:input.id||uid('training'),teamId:input.teamId,date:input.date,time:input.time,title:String(input.title||'').trim(),minutes:input.minutes,
     exercises:(input.exercises||[]).map(x=>({name:String(x.name||'').trim(),activityId:x.activityId,minutes:x.minutes})),roster:[...input.roster],held:input.held===true,attendance:{...input.attendance}};
+  if(input.effort!==undefined){assert(input.effort&&typeof input.effort==='object'&&!Array.isArray(input.effort),'Проверьте нагрузку');r.effort=structuredClone(input.effort);}
   assert(!r.held||r.date<=todayIso(),'Будущая тренировка не может быть проведённой');
   return write('coachTrainings',r,(d,old)=>teamGuard(d,old,r));
 }
@@ -244,4 +246,17 @@ export async function finishLiveMatch(id,revision){
   data.coachMatches.push(m);data.coachLive=data.coachLive.filter(x=>x.id!==id);validateCoachData(data);
   await s.coachMatches.add(m);await s.coachLive.delete(id);return m;
  });
+}
+
+/** sRPE load = explicitly recorded actual minutes × perceived effort, not planned duration. */
+export function playerTrainingLoad(playerId,trainings,{from='',to='',today=todayIso()}={}){
+ const rows=[];let attended=0;
+ for(const t of trainings){
+  if(!t.held||t.date>today||from&&t.date<from||to&&t.date>to||!['present','limited'].includes(t.attendance[playerId]))continue;
+  attended++;const r=t.effort?.[playerId];
+  if(!r)continue;
+  rows.push({date:t.date,title:t.title,minutes:r.minutes,rpe:r.rpe,value:r.minutes*r.rpe});
+ }
+ rows.sort((a,b)=>a.date.localeCompare(b.date));
+ return {rows,attended,known:rows.length,unknown:attended-rows.length,total:rows.length?rows.reduce((n,r)=>n+r.value,0):null};
 }

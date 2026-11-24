@@ -83,6 +83,7 @@ function playerCard(team,player,view,refresh){
     if(from.value&&to.value&&from.value>to.value){content.replaceChildren(p('Начало периода позже окончания'));return;}
     const range={from:from.value,to:to.value};
     const a=C.playerAttendance(player.id,view.trainings.filter(t=>(!range.from||t.date>=range.from)&&(!range.to||t.date<=range.to)));
+    const load=C.playerTrainingLoad(player.id,view.trainings,range);
     const s=C.playerSeasonStats(view.matches,player.id,range);
     const n=s.errors;
     content.replaceChildren(
@@ -93,6 +94,7 @@ function playerCard(team,player,view,refresh){
       card('Данные прежних и ручных матчей',[p('Доля успешных среди записанных действий (не гарантирует полноту):'),p('Подача '+ratio(s.rates.serve.success,s.rates.serve.total)),p('Приём '+ratio(s.rates.receive.success,s.rates.receive.total)),p('Атака '+ratio(s.rates.attack.success,s.rates.attack.total)),p('Событийные протоколы не содержат все попытки атаки и приёма; их проценты здесь не вычисляются.')]),
       ...(s.importedMatches?[card('VolleyPoint · импортированные матчи',[p('Протоколов: '+s.importedMatches+' · ошибок по итогам: '+s.importedErrors),p('Зафиксированные ошибки: подача '+s.importedBreakdown.serve+' · атака '+s.importedBreakdown.attack+' · приём '+s.importedBreakdown.receive+' · прочие '+s.importedBreakdown.other),p('Очки в записанных сериях подачи: '+s.importedServiceWins+' · максимальная записанная серия: '+s.importedLongestSeries),p('Полное число попыток и выходы на площадку неизвестны; проценты не вычисляются.')])]:[]),
       card('Тренировки · посещаемость',[p(format(a.pct)+(a.pct==null?'':'%')+' · посещено '+(a.present+a.limited)+' · пропущено '+a.absent+' · не отмечено '+a.unknown)]),
+      card('Тренировочная нагрузка',[p('Заполнено '+load.known+' из '+load.attended+' посещённых тренировок · неизвестно '+load.unknown),p('Сумма по записанным занятиям: '+(load.total??'—')+' усл. ед.'),trendChart(load.rows.slice(-30),{unit:'усл. ед.',label:'Фактическая длительность × субъективная сложность'}),p('Фактические минуты × субъективная сложность 1–10. Не диагностика усталости или медицинский допуск.'),el('details',{},[el('summary',{text:'Записанные занятия · '+load.known}),...load.rows.map(r=>p(fmtFull(r.date)+' · '+r.title+' · '+r.minutes+' мин × '+r.rpe+' = '+r.value))])]),
       card('Тренировочные тесты и физподготовка',[...playerTestCards(view,player.id,range),!team.archived&&!player.archived?btn('+ Индивидуальный тест',()=>openTestForm(team,view,null,refresh,player.id),'wide'):null]),
       card('Индивидуальное развитие',[btn('Спортивные достижения',()=>openAchievements({area:'coach',subjectType:'player',subjectId:player.id},()=>playerCard(team,player,view,refresh)),'wide'),btn('Цели и план развития',()=>openPlayerGoals(team,player,()=>playerCard(team,player,view,refresh)),'primary wide')]),
       playerInsightCard(view,player.id,range),
@@ -111,7 +113,7 @@ function metricTable(summary){
 function trainingForm(team,view,t,refresh,template=null){
   const title=input(t?.title||template?.name||'Тренировка'),date=input(t?.date||todayIso(),'date'),time=input(t?.time||'16:00','time'),minutes=input(t?.minutes??template?.minutes??90,'number',{min:1,max:600,step:1});
   const players=view.players.filter(p=>!p.archived||t?.roster.includes(p.id));
-  const selected=new Set(t?.roster||players.filter(p=>!p.archived).map(p=>p.id)),attendance={...t?.attendance};
+  const selected=new Set(t?.roster||players.filter(p=>!p.archived).map(p=>p.id)),attendance={...t?.attendance},effort=structuredClone(t?.effort||{});
   let exercises=(t?.exercises||template?.exercises||[]).map(x=>({...x}));
   const held=el('input',{type:'checkbox'});held.checked=!!t?.held;
   const plan=el('div',{class:'coach-stack'}),roster=el('div',{class:'coach-stack'}),warnings=el('div',{role:'status',class:'coach-warning'});
@@ -134,12 +136,18 @@ function trainingForm(team,view,t,refresh,template=null){
     roster.replaceChildren();
     for(const player of players){
       const check=el('input',{type:'checkbox'});check.checked=selected.has(player.id);
-      check.onchange=()=>{if(check.checked)selected.add(player.id);else{selected.delete(player.id);delete attendance[player.id];}drawRoster();warn();};
+      check.onchange=()=>{if(check.checked)selected.add(player.id);else{selected.delete(player.id);delete attendance[player.id];delete effort[player.id];}drawRoster();warn();};
       const item=el('div',{class:'coach-roster-row'},[field(label(player),check)]);
       if(check.checked&&held.checked){
         const state=select([['','Не отмечено'],...entries(C.attendanceLabels)],attendance[player.id]||'');
-        state.onchange=()=>{if(state.value)attendance[player.id]=state.value;else delete attendance[player.id];};
+        state.onchange=()=>{if(state.value)attendance[player.id]=state.value;else delete attendance[player.id];if(!['present','limited'].includes(state.value))delete effort[player.id];drawRoster();};
         item.append(field('Посещаемость',state));
+        if(['present','limited'].includes(attendance[player.id])){
+          const actual=input(effort[player.id]?.minutes??'','number',{min:1,max:600,step:1}),rpe=input(effort[player.id]?.rpe??'','number',{min:1,max:10,step:1});
+          const update=()=>{if(actual.value===''&&rpe.value==='')delete effort[player.id];else effort[player.id]={minutes:actual.value===''?null:Number(actual.value),rpe:rpe.value===''?null:Number(rpe.value)};};
+          actual.oninput=rpe.oninput=update;
+          item.append(field('Фактические минуты (необязательно)',actual),field('Субъективная сложность 1–10 (необязательно)',rpe));
+        }
       }
       roster.append(item);
     }
@@ -148,7 +156,7 @@ function trainingForm(team,view,t,refresh,template=null){
   form(t?'Тренировка':'Запланировать тренировку',[field('Название',title),field('Дата',date),field('Время',time),field('Продолжительность, мин',minutes),
     el('h3',{text:'План занятия'}),plan,btn('+ Упражнение',()=>{exercises.push({name:'',activityId:'volley',minutes:10});drawPlan();}),
     el('h3',{text:'Состав'}),field('Тренировка проведена',held),roster,warnings],
-    ()=>C.saveTraining({...t,teamId:team.id,title:title.value,date:date.value,time:time.value,minutes:number(minutes),exercises,roster:[...selected],held:held.checked,attendance:held.checked?attendance:{}}),refresh);
+    ()=>C.saveTraining({...t,teamId:team.id,title:title.value,date:date.value,time:time.value,minutes:number(minutes),exercises,roster:[...selected],held:held.checked,attendance:held.checked?attendance:{},effort:held.checked?effort:{}}),refresh);
 }
 function matchForm(team,view,m,refresh){
   const date=input(m?.date||todayIso(),'date'),opponent=input(m?.opponent||''),competition=input(m?.competition||'');

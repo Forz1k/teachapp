@@ -5,7 +5,7 @@ import {validateArchive} from './school-archive.js';
 import {validateWorkRecord} from './workbench.js';
 import { SCHEMA } from './db.js';
 
-export const BACKUP_VERSION = 19;
+export const BACKUP_VERSION = 20;
 const legacyCore = ['meta','classes','students','lessons','topics','marks','exemptions','monthly'];
 const text = s => typeof s === 'string' && s.trim().length > 0;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -13,7 +13,7 @@ const date = s => validPeriod(s, null);
 
 export function validateBackup(payload) {
   if (payload?.app !== 'teachapp' || !object(payload.data)) throw new Error('Файл не похож на резервную копию TeachApp');
-  if (![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
+  if (![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
   if(payload.scope!==undefined&&(!object(payload.scope)||!['class','team','archive'].includes(payload.scope.kind)||!text(payload.scope.id)||!Number.isInteger(payload.scope.omitted)||payload.scope.omitted<0))throw Error('Повреждена область выборочной копии');
   const data = payload.data;
   const names = Object.keys(SCHEMA);

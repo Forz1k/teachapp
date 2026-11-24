@@ -178,7 +178,7 @@ const revision=n=>Number.isSafeInteger(n)&&n>=1;
 async function readPacket(envelope,password,area,rev){
  check(isEncryptedBackup(envelope),'Сервер не вернул зашифрованный пакет');
  const p=await decryptBackup(envelope,password);
- check(p?.app==='teachapp-sync'&&p.version===1&&p.backupVersion===BACKUP_VERSION&&p.area===area&&uuid.test(p.workspaceId)&&p.revision===rev,'Несовместимый пакет синхронизации или подмена ревизии');
+ check(p?.app==='teachapp-sync'&&p.version===1&&[19,BACKUP_VERSION].includes(p.backupVersion)&&p.area===area&&uuid.test(p.workspaceId)&&p.revision===rev,'Несовместимый пакет синхронизации или подмена ревизии');
  validateScope(p.snapshot,area);
  return p;
 }

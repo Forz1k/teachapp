@@ -1,6 +1,7 @@
 import * as C from '../coach.js';
 import * as W from '../workbench.js';
 import {testDefinitions} from '../coach-season.js';
+import {opponentHistory} from '../match-tactics.js';
 import {todayIso,uid} from '../model.js';
 import {initialMarkers,saveBoard,lineupOptions,lineupRoles,roleNames} from '../tactics.js';
 import {el,openSheet,closeSheet,toast,confirmDialog} from '../ui.js';
@@ -51,14 +52,16 @@ export async function openTacticBoards(team){
 const labelPlayer=p=>p?(p.number==null?'':'№'+p.number+' ')+p.name:'—';
 export function openLineupAssistant(team,view,back=closeSheet){
  const scheme=select([['5-1','5–1'],['4-2','4–2']],'5-1'),date=inp(todayIso(),'date'),from=inp('','date'),to=inp(todayIso(),'date'),defs=testDefinitions(view.tests).filter(([,d])=>d.kind==='skill'),methods=Object.fromEntries(['setter','outside','middle','opposite'].map(role=>[role,select([['','Только амплуа'],...defs.map(([k,d])=>[k,d.name+' · '+d.protocol])])])),body=el('div',{class:'coach-stack'}),players=view.players.filter(p=>!p.archived);
+ const opponent=select([['','Все соперники'],...opponentHistory(view.matches).map(o=>[o.key,o.name])]);
  const checks=players.map(player=>{const n=el('input',{type:'checkbox'});n.checked=true;return {player,n};}),picked=el('details',{},[el('summary',{text:'Участники (подтвердите вручную)'}),...checks.map(({player,n})=>field(labelPlayer(player),n))]);
  const clear=()=>body.replaceChildren(p('Нажмите «Предложить варианты» после изменения параметров.'));
- for(const n of [scheme,date,from,to,...Object.values(methods),...checks.map(x=>x.n)])n.onchange=clear;
+ for(const n of [scheme,date,from,to,opponent,...Object.values(methods),...checks.map(x=>x.n)])n.onchange=clear;
  const gen=async()=>{
   try{
-   const data=await C.loadCoach(),fresh=C.teamView(data,team.id),opts={scheme:scheme.value,date:date.value,from:from.value,to:to.value,methods:Object.fromEntries(Object.entries(methods).map(([k,n])=>[k,n.value])),selected:checks.filter(x=>x.n.checked).map(x=>x.player.id)};
+   const data=await C.loadCoach(),fresh=C.teamView(data,team.id),opts={scheme:scheme.value,date:date.value,from:from.value,to:to.value,opponent:opponent.value,methods:Object.fromEntries(Object.entries(methods).map(([k,n])=>[k,n.value])),selected:checks.filter(x=>x.n.checked).map(x=>x.player.id)};
    const a=lineupOptions(fresh,opts),byId=new Map(fresh.players.map(p=>[p.id,p]));
    body.replaceChildren(p('Доступны для рассмотрения: '+a.available+' · не предложены по внесённым ограничениям: '+a.excluded.length+'. Это не медицинский допуск.'));
+   body.append(p('Совместная игра: подробных матчей '+a.matchEvidence.detailed+' из '+a.matchEvidence.total+(opts.opponent?' против выбранного соперника':' по всем соперникам')+'. Тесты не фильтруются по сопернику.'));
    if(!a.options.length)body.append(p('Не найден состав из шести разных игроков с заданными амплуа. Измените выбор вручную.'));
    for(const [i,o] of a.options.entries()){
     const name=inp('Вариант '+(i+1)+' · '+scheme.value),libero=select([['','Без либеро'],...a.liberos.map(id=>[id,labelPlayer(byId.get(id))])]);
@@ -71,5 +74,5 @@ export function openLineupAssistant(team,view,back=closeSheet){
    }
   }catch(e){body.replaceChildren(p(e.message));}
  };
- clear();openSheet(stack([el('h2',{text:'Помощник стартового состава'}),p('Предложения эвристические: амплуа, достаточность выбранных сопоставимых тестов, наблюдаемая совместная игра. Универсальные игроки могут закрыть позицию. Не гарантирует оптимум и не заменяет решение тренера.'),field('Схема',scheme),field('Дата матча / проверки',date),el('div',{class:'coach-columns'},[field('Статистика с',from),field('По',to)]),...Object.entries(methods).map(([role,n])=>field('Методика · '+roleNames[role],n)),picked,btn('Предложить варианты',gen,'primary'),body,btn('Назад',back)]));
+ clear();openSheet(stack([el('h2',{text:'Помощник стартового состава'}),p('Предложения эвристические: амплуа, достаточность выбранных сопоставимых тестов, наблюдаемая совместная игра. Универсальные игроки могут закрыть позицию. Не гарантирует оптимум и не заменяет решение тренера.'),field('Схема',scheme),field('Дата матча / проверки',date),el('div',{class:'coach-columns'},[field('Статистика с',from),field('По',to)]),field('Соперник для истории сочетаний',opponent),...Object.entries(methods).map(([role,n])=>field('Методика · '+roleNames[role],n)),picked,btn('Предложить варианты',gen,'primary'),body,btn('Назад',back)]));
 }
