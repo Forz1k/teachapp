@@ -6,6 +6,7 @@ import * as W from '../workbench.js';
 import * as T from '../tournaments.js';
 import {testHistory,summarizeTests} from '../coach-tests.js';
 import {documentTypes,buildDocument,makeDocx,documentWorkbook,documentColumnWidths} from '../documents.js';
+import {readPresets,savePreset,removePreset,normalizePreset} from '../document-presets.js';
 import {el,openSheet,closeSheet,toast,confirmDialog,downloadBlob} from '../ui.js';
 const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
 const input=(value='',type='text',props={})=>el('input',{type,value,...props});
@@ -38,6 +39,9 @@ export async function openDocuments(defaultType='lesson'){
   if(!Object.hasOwn(documentTypes,defaultType))defaultType='lesson';
   const [plans,coach,tournaments]=await Promise.all([W.listWork('plan'),C.loadCoach(),W.listWork('tournament')]);
   const type=select(Object.entries(documentTypes),defaultType),title=input(documentTypes[defaultType]),organization=input(),author=input(),date=input(M.todayIso(),'date'),venue=input(),audience=input(),additional=area(),rules=area(),conclusion=area(),signature=el('input',{type:'checkbox'});signature.checked=true;
+  const signatureLabel=input('Ответственный','text',{maxlength:100});
+  function applyPreset(){const preset=normalizePreset(readPresets()[type.value]);title.value=preset.title||documentTypes[type.value];organization.value=preset.organization;venue.value=preset.venue;signature.checked=preset.signatures;signatureLabel.value=preset.signatureLabel;}
+  applyPreset();
   const cls=select(S.state.classes.map(c=>[c.id,c.name]),S.state.currentClassId),period=select(S.state.settings.trimesters.map(t=>[t.id,M.fmtFull(t.from)+' — '+M.fmtFull(t.to)]),S.currentTrimester()?.id),plan=select([]),team=select(coach.coachTeams.map(t=>[t.id,t.name])),player=select([]),tournament=select(tournaments.map(t=>[t.id,t.name])),from=input(S.state.settings.year.from,'date'),to=input(M.todayIso(),'date'),specific=el('div',{class:'coach-stack'}),roster=el('div',{class:'coach-stack'});
   let selectedPlayers=new Set();
   function updateRoster(){const players=coach.coachPlayers.filter(p=>p.teamId===team.value&&!p.archived);player.replaceChildren(...players.map(p=>el('option',{value:p.id,text:p.name})));selectedPlayers=new Set();roster.replaceChildren(...players.map(p=>{const n=el('input',{type:'checkbox'});n.onchange=()=>{if(n.checked)selectedPlayers.add(p.id);else selectedPlayers.delete(p.id);};return field(p.name,n);}));}
@@ -47,9 +51,9 @@ export async function openDocuments(defaultType='lesson'){
    else if(k==='tournament')specific.append(field('Соревнование',tournament));
    else{updateRoster();specific.append(field('Команда',team));if(k==='registration')specific.append(p('Отметьте только необходимых участников.'),roster,field('Дополнительные сведения',additional));else{if(k==='playerReport')specific.append(field('Игрок',player));specific.append(el('div',{class:'coach-columns'},[field('С',from),field('По',to)]));}}
   }
-  type.onchange=()=>{title.value=documentTypes[type.value];draw();};team.onchange=updateRoster;draw();
+  type.onchange=()=>{applyPreset();draw();};team.onchange=updateRoster;draw();
   function build(){
-   const k=type.value,base={title:title.value,organization:organization.value,author:author.value,date:date.value,venue:venue.value,audience:audience.value,additional:additional.value,rules:rules.value,conclusion:conclusion.value,signatures:signature.checked};
+   const k=type.value,base={title:title.value,organization:organization.value,author:author.value,date:date.value,venue:venue.value,audience:audience.value,additional:additional.value,rules:rules.value,conclusion:conclusion.value,signatures:signature.checked,signatureLabel:signatureLabel.value};
    if(['lesson','training','event'].includes(k))base.plan=plans.find(p=>p.id===plan.value);
    else if(['classReport','ktp','norms'].includes(k)){
     const t=S.state.settings.trimesters.find(t=>t.id===period.value),c=S.state.classes.find(c=>c.id===cls.value);if(!t||!c)throw Error('Выберите класс и период');
@@ -79,7 +83,7 @@ export async function openDocuments(defaultType='lesson'){
    }
    return buildDocument(k,base);
   }
-  const form=stack([el('h2',{text:'Генератор документов'}),p('Локальные Word, Excel и печать. Измените заголовок, реквизиты и выводы. Сведения об ограничениях и личные заметки автоматически не включаются.'),field('Шаблон',type),field('Заголовок',title),field('Организация',organization),field('Ответственный',author),field('Дата',date),field('Место',venue),field('Группа / участники',audience),specific,field('Выводы / примечания',conclusion),field('Добавить поля подписей',signature),btn('Предпросмотр',()=>{try{openDocumentPreview(build(),()=>openSheet(form));}catch(e){toast(e.message);}},'primary'),btn('Закрыть',closeSheet)]);
+  const form=stack([el('h2',{text:'Генератор документов'}),p('Локальные Word, Excel и печать. Измените заголовок, реквизиты и выводы. Сведения об ограничениях и личные заметки автоматически не включаются.'),field('Шаблон',type),field('Заголовок',title),field('Организация',organization),field('Ответственный',author),field('Дата',date),field('Место',venue),field('Группа / участники',audience),specific,field('Выводы / примечания',conclusion),field('Добавить поля подписей',signature),field('Название поля подписи',signatureLabel),p('Шаблоны сохраняют только заголовок, организацию, место и настройки подписи на этом устройстве. Не указывайте персональные данные в этих полях.'),btn('Сохранить реквизиты шаблона',async()=>{try{if(!await confirmDialog({title:'Сохранить шаблон на устройстве?',text:'Будут сохранены только общие реквизиты, не списки участников и не результаты.',ok:'Сохранить'}))return;savePreset(type.value,{title:title.value,organization:organization.value,venue:venue.value,signatures:signature.checked,signatureLabel:signatureLabel.value});toast('Шаблон сохранён');}catch(e){toast(e.message);}}),btn('Сбросить реквизиты шаблона',()=>{try{removePreset(type.value);applyPreset();toast('Реквизиты сброшены');}catch(e){toast(e.message);}}),btn('Предпросмотр',()=>{try{openDocumentPreview(build(),()=>openSheet(form));}catch(e){toast(e.message);}},'primary'),btn('Закрыть',closeSheet)]);
   openSheet(form);
  }catch(e){toast(e.message);}
 }

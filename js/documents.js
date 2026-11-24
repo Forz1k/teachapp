@@ -36,7 +36,7 @@ export function buildDocument(type,input={}){
   if(input.tests?.length)sections.push(section('Сопоставимые тренировочные тесты',['Результаты адаптированных попыток не включены в итоговые показатели.'],input.tests));
  }
  if(input.conclusion)sections.push(section('Выводы / примечания',[input.conclusion]));
- if(input.signatures!==false)sections.push(section('Подписи',['Ответственный ______________________','Дата ______________________']));
+ if(input.signatures!==false)sections.push(section('Подписи',[(String(input.signatureLabel||'Ответственный').trim().slice(0,100)||'Ответственный')+' ______________________','Дата ______________________']));
  const report={title,sections,personal};
  validateDocument(report);return report;
 }
