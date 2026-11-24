@@ -27,8 +27,37 @@ test('Нормативы: история, ограничения, перенос
  await assert.rejects(S.saveNormResult({normId:n.id,studentId:s.id,lessonId:l.id,status:'done',value:7}),/не разрешена/);
  const skipped=await S.saveNormResult({normId:n.id,studentId:s.id,lessonId:l.id,status:'restricted'});
  assert.equal(skipped.grade,null);assert.equal(S.state.marks[0].value,'4');
- const backup=await S.makeBackup();assert.equal(backup.version,5);await S.restoreBackup(backup);
+ const backup=await S.makeBackup();assert.equal(backup.version,6);await S.restoreBackup(backup);
  assert.equal(S.state.normResults.length,2);
  await S.deleteStudent(s.id);assert.equal(S.state.normResults.length,0);
  await S.restoreBackup(backup);await S.deleteClass(c.id);assert.equal(S.state.normResults.length,0);
+});
+
+test('Шкалы по параллелям, категориям и конкретным классам: приоритет и история',async()=>{
+ await db.clearAll();await S.load();
+ const c6=await S.addClass('6А'),c7=await S.addClass('7Б');
+ const b6=await S.addStudent(c6.id,'Первый',1,'boys'),g7=await S.addStudent(c7.id,'Вторая',1,'girls'),u=await S.addStudent(c7.id,'Без категории',2);
+ const l6=await S.addLesson(c6.id,'2026-01-01'),l7=await S.addLesson(c7.id,'2026-01-01');
+ const input={name:'Прыжок',activityId:'standing',unit:'см',direction:'max',scales:[
+ {gradeLevel:6,group:'boys',scale:[120,130,140,150,165]},
+ {gradeLevel:7,group:'boys',scale:[125,135,145,155,170]},
+ {gradeLevel:7,group:'girls',scale:[115,125,135,145,160]}]};
+ const n=await S.saveNorm(input);
+ assert.equal(A.selectNormScale(n,c6,b6).scale[4],165);
+ assert.equal(A.selectNormScale(n,c7,g7).scale[4],160);
+ assert.equal(A.selectNormScale(n,c7,u),null);
+ const r=await S.saveNormResult({normId:n.id,studentId:b6.id,lessonId:l6.id,status:'done',value:165});
+ assert.equal(r.grade,'5');assert.equal(r.definition.scaleScope.gradeLevel,6);
+ const noScale=await S.saveNormResult({normId:n.id,studentId:u.id,lessonId:l7.id,status:'done',value:170});
+ assert.equal(noScale.grade,null);assert.equal(noScale.definition.scale,null);
+ await S.saveNormGroups(c7.id,{[u.id]:'boys'});
+ const changed=await S.saveNorm({...input,id:n.id,scales:[...input.scales,{classId:c7.id,group:'boys',scale:[130,140,150,160,175]}]});
+ assert.equal(A.selectNormScale(changed,c7,S.state.students.find(s=>s.id===u.id)).scale[4],175);
+ assert.equal(A.selectNormScale(changed,c7,g7).scale[4],160);
+ await assert.rejects(S.saveNorm({...input,scales:[input.scales[0],input.scales[0]]}),/уже есть/);
+ await S.setClassNormLevel(c6.id,7);assert.equal(A.selectNormScale(changed,c6,b6).scale[4],170);
+ const backup=await S.makeBackup();await S.restoreBackup(backup);
+ assert.equal(S.state.normResults.find(x=>x.id===r.id).grade,'5');
+ assert.equal(S.state.normResults.find(x=>x.id===noScale.id).grade,null);
+ assert.equal(S.state.normResults.find(x=>x.id===r.id).definition.scale[4],165);
 });

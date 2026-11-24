@@ -1,9 +1,9 @@
 import { catalog, types, validPeriod } from './health.js';
-import { validateNorm, gradeNorm } from './assessment.js';
+import { validateNorm, validateNormSnapshot, validNormGroup, validGradeLevel, gradeNorm } from './assessment.js';
 import { validateCoachData, coachStores } from './coach.js';
 import { SCHEMA } from './db.js';
 
-export const BACKUP_VERSION = 5;
+export const BACKUP_VERSION = 6;
 const legacyCore = ['meta','classes','students','lessons','topics','marks','exemptions','monthly'];
 const text = s => typeof s === 'string' && s.trim().length > 0;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -11,7 +11,7 @@ const date = s => validPeriod(s, null);
 
 export function validateBackup(payload) {
   if (payload?.app !== 'teachapp' || !object(payload.data)) throw new Error('Файл не похож на резервную копию TeachApp');
-  if (![1,2,3,4,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
+  if (![1,2,3,4,5,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
   const data = payload.data;
   const names = Object.keys(SCHEMA);
   if (Object.keys(data).some(n => !names.includes(n))) throw new Error('В копии есть неизвестный раздел');
@@ -59,8 +59,8 @@ export function validateBackup(payload) {
   const pair = r => pupil(r) && index.lessons.has(r.lessonId) && index.students.get(r.studentId).classId === index.lessons.get(r.lessonId).classId;
   const period = r => validPeriod(r.dateFrom,r.dateTo);
   const classRef = id => id === 'window' || index.classes.has(id);
-  check('classes', r => text(r.name));
-  check('students', r => text(r.fullName) && index.classes.has(r.classId));
+  check('classes', r => text(r.name)&&validGradeLevel(r.gradeLevel));
+  check('students', r => text(r.fullName) && index.classes.has(r.classId)&&validNormGroup(r.normGroup));
   check('ktp', r => text(r.name) && Array.isArray(r.classIds) && r.classIds.every(id => index.classes.has(id)));
   check('topics', r => text(r.name) && (!r.ktpId || index.ktp.has(r.ktpId)) && tags(r.activityIds));
   check('lessons', r => index.classes.has(r.classId) && date(r.date) && (!r.topicId || index.topics.has(r.topicId)) && tags(r.activityIds));
@@ -81,7 +81,8 @@ export function validateBackup(payload) {
       && index.marks.get(r.markId)?.lessonId === r.lessonId)));
   const validNorm = n => {try {validateNorm(n,activities);return true;} catch {return false;}};
   check('norms',validNorm);
-  check('normResults',r=>pair(r) && date(r.date) && index.norms.has(r.normId) && validNorm(r.definition) && r.definition.id===r.normId && (r.status==='restricted' ? r.value===null && r.grade===null : r.status==='done' && typeof r.value==='number' && Number.isFinite(r.value) && r.value>=0 && r.grade===gradeNorm(r.definition,r.value)));
+  const validSnapshot=n=>{try{validateNormSnapshot(n,activities);return true;}catch{return false;}};
+  check('normResults',r=>pair(r) && date(r.date) && index.norms.has(r.normId) && validSnapshot(r.definition) && r.definition.id===r.normId && (r.status==='restricted' ? r.value===null && r.grade===null : r.status==='done' && typeof r.value==='number' && Number.isFinite(r.value) && r.value>=0 && r.grade===gradeNorm(r.definition,r.value)));
   check('finalGrades',r=>pupil(r)&&text(r.periodName)&&date(r.from)&&date(r.to)&&validPeriod(r.from,r.to)&&['1','2','3','4','5'].includes(r.value)&&text(r.updatedAt));
   check('meta', r => r.id !== 'settings' || ((!r.year || (date(r.year.to) && validPeriod(r.year.from,r.year.to)))
     && (r.trimesters === undefined || (Array.isArray(r.trimesters) && r.trimesters.length && r.trimesters.every(t => t && text(t.id) && date(t.to) && validPeriod(t.from,t.to))))

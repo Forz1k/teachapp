@@ -540,13 +540,14 @@ export async function parseRosterFile(file) {
       if (/фио|ф\.\s?и\.\s?о|ученик|обучающ/.test(joined)) { headerRow = i; break; }
     }
 
-    let colName = 1, colNum = 0, colClass = -1;
+    let colName = 1, colNum = 0, colClass = -1,colGroup=-1;
     if (headerRow >= 0) {
       const hdr = aoa[headerRow].map((c) => String(c).toLowerCase().trim());
       hdr.forEach((h, i) => {
         if (/фио|ф\.\s?и\.\s?о|ученик|обучающ|фамил/.test(h)) colName = i;
         else if (/^№|номер|num/.test(h)) colNum = i;
         else if (/класс|class/.test(h)) colClass = i;
+        else if (/^(пол|sex|gender|категория нормативов)$/.test(h))colGroup=i;
       });
     }
 
@@ -580,9 +581,12 @@ export async function parseRosterFile(file) {
 
       if (!byClass.has(className)) byClass.set(className, []);
       const numRaw = Number(String(row[colNum] ?? '').trim());
+      const rawGroup=colGroup>=0?String(row[colGroup]??'').trim().toLowerCase():'';
+      const normGroup=/^(м|муж|мужской|мальчик|мальчики|male|m|boys?)$/.test(rawGroup)?'boys':/^(ж|жен|женский|девочка|девочки|female|f|girls?)$/.test(rawGroup)?'girls':null;
       byClass.get(className).push({
         number: Number.isFinite(numRaw) && numRaw > 0 ? numRaw : byClass.get(className).length + 1,
         fullName: nameRaw.replace(/\s+/g, ' '),
+        ...(normGroup?{normGroup}:{}),
       });
     }
 
@@ -635,12 +639,12 @@ export async function applyRoster(parsed) {
       seen.add(key);
       const [found] = matches;
       if (found) {
-        if (found.number !== s.number || found.fullName !== s.fullName) {
-          await store.updateStudent(found.id, { number: s.number, fullName: s.fullName });
+        if (found.number !== s.number || found.fullName !== s.fullName || (s.normGroup&&found.normGroup!==s.normGroup)) {
+          await store.updateStudent(found.id, { number: s.number, fullName: s.fullName,...(s.normGroup?{normGroup:s.normGroup}:{}) });
           report.updated += 1;
         }
       } else {
-        await store.addStudent(cls.id, s.fullName, s.number);
+        await store.addStudent(cls.id, s.fullName, s.number,s.normGroup??null);
         report.added += 1;
       }
     }

@@ -469,3 +469,13 @@ test('Обычная выгрузка не включает ОСВ и приме
  assert.ok(!JSON.stringify(b.rows).includes('ОСВ'));
  assert.ok(!exporter.buildTopicsSheet({classId:cls.id,from:'2026-11-01',to:'2026-11-30'})[0].includes('Примечание'));
 });
+
+test('Нормативы с отдельными шкалами показывают области и позволяют редактировать',async()=>{
+ await seed();
+ const {renderNorms}=await import('../js/screens/norms.js');
+ await store.saveNorm({name:'Прыжок',activityId:'standing',unit:'см',direction:'max',scales:[{gradeLevel:7,group:'boys',scale:[120,130,140,150,170]},{gradeLevel:7,group:'girls',scale:[110,120,130,140,160]}]});
+ root().replaceChildren();const screen=doc.createElement('div');root().append(screen);renderNorms(screen);
+ assert.match(screen.textContent,/7 класс · Мальчики/);assert.match(screen.textContent,/7 класс · Девочки/);
+ [...screen.querySelectorAll('button')].find(b=>b.textContent==='Редактировать шкалу').click();await tick();
+ const sheet=doc.querySelector('.sheet');assert.match(sheet.textContent,/Добавить шкалу/);assert.equal(sheet.querySelectorAll('.norm-scale').length,2);ui.closeSheet();
+});

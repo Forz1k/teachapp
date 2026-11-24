@@ -5,7 +5,7 @@ import { validateBackup } from '../backup.js';
 
 import { APP_VERSION } from '../version.js';
 import * as M from '../model.js';
-import {periodName,periodKinds,periodDraft} from '../assessment.js';
+import {periodName,periodKinds,periodDraft,gradeLevelOf} from '../assessment.js';
 import * as store from '../store.js';
 import * as ui from '../ui.js';
 import * as exporter from '../export.js';
@@ -68,7 +68,7 @@ export function renderSettings(root, ctx = {}) {
     clsBlock.append(el('div', { class: 'row-item' }, [
       el('div', { class: 'label' }, [
         el('div', { text: cls.name + (cls.isDemo ? ' (демо)' : '') }),
-        el('div', { style: 'font-size:12px;color:var(--text-3)', text: `${n} учеников` }),
+        el('div', { style: 'font-size:12px;color:var(--text-3)', text: `${n} учеников · параллель: ${gradeLevelOf(cls)??'не указана'}` }),
       ]),
       el('button', {
         class: 'btn small', type: 'button', text: 'Состав',
@@ -365,8 +365,15 @@ function openClassStudents(classId) {
     el('div', { class: 'sub', text: `${students.length} учеников` }),
   ]);
 
-  const list = el('div', { class: 'preview-list' });
+  const level=el('select',{},[el('option',{value:'',text:'Автоматически из названия'}),...Array.from({length:11},(_,i)=>el('option',{value:String(i+1),text:(i+1)+' класс'}))]);
+  level.value=cls?.gradeLevel==null?'':String(cls.gradeLevel);
+  const groups={};
+  sheet.append(el('label',{class:'field'},['Параллель для нормативов',level]),el('p',{text:'Категории задаются вручную или из явного столбца «Пол» при импорте. По ФИО не определяются.'}));
+  const list = el('div', { class: 'preview-list norm-group-list' });
   for (const st of students) {
+    const group=el('select',{},[el('option',{value:'',text:'Не указана'}),el('option',{value:'boys',text:'Мальчик'}),el('option',{value:'girls',text:'Девочка'})]);
+    group.value=st.normGroup||'';group.setAttribute('aria-label','Категория нормативов: '+st.fullName);
+    group.onchange=()=>groups[st.id]=group.value||null;
     const row = el('div', { class: 'preview-item' }, [
       el('div', { class: 'txt', text: `${st.number ?? '—'}. ${st.fullName}` }),
       el('button', {
@@ -394,20 +401,23 @@ function openClassStudents(classId) {
         },
       }),
     ]);
-    list.append(row);
+    list.append(el('div',{class:'norm-group-row'},[row,group]));
   }
-  sheet.append(list);
+  sheet.append(list,el('button',{class:'btn primary wide',type:'button',text:'Сохранить параллель и категории',onclick:async()=>{
+    try{await store.setClassNormLevel(classId,level.value?Number(level.value):null);await store.saveNormGroups(classId,groups);ui.toast('Категории нормативов сохранены');ui.closeSheet();}catch(e){ui.toast(e.message);}
+  }}));
 
   const nameInput = el('input', { type: 'text', placeholder: 'Фамилия Имя Отчество' });
+  const newGroup=el('select',{},[el('option',{value:'',text:'Не указана'}),el('option',{value:'boys',text:'Мальчик'}),el('option',{value:'girls',text:'Девочка'})]);
   sheet.append(
-    el('label', { class: 'field', style: 'margin-top:8px' }, [el('span', { text: 'Добавить ученика' }), nameInput]),
+    el('label', { class: 'field', style: 'margin-top:8px' }, [el('span', { text: 'Добавить ученика' }), nameInput]),el('label',{class:'field'},['Категория нормативов',newGroup]),
     el('div', { class: 'actions' }, [
       el('button', {
         class: 'btn primary wide', type: 'button', text: 'Добавить',
         onclick: async () => {
           const v = nameInput.value.trim();
           if (!v) { ui.toast('Введите ФИО'); return; }
-          await store.addStudent(classId, v, students.length + 1);
+          await store.addStudent(classId, v, students.length + 1,newGroup.value||null);
           ui.closeSheet();
           ui.toast('Ученик добавлен');
         },
