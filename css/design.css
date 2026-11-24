@@ -271,3 +271,27 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .tournament-game-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .tournament-game-head strong{min-width:0;overflow-wrap:anywhere}
 .tournament-game p{margin:0;color:var(--text-2)}
+
+/* Settings, archive and backup */
+.settings-directory{max-width:960px;gap:14px}
+.settings-nav{display:flex;overflow-x:auto;gap:6px;scrollbar-width:thin;padding:3px}
+.settings-nav .chip{font-size:12px}
+.settings-group{display:grid;gap:10px;scroll-margin-top:80px;min-width:0}
+.settings-group>.card-block{margin:0}
+.settings-group>.card-block>.head{font-size:15px;padding:14px 16px;background:var(--card-2)}
+.settings-group>.card-block>.btn.wide{margin:8px 12px;width:calc(100% - 24px)}
+.settings-group>.card-block>p,.settings-group>.card-block>.field{margin:12px 16px}
+.settings-group>.card-block>.row-item{flex-wrap:wrap}
+.settings-group .row-item>.label{min-width:120px}
+.settings-group .card-block .card-block{margin:10px 12px;padding:12px}
+.settings-backup .backup-status{display:flex;align-items:flex-start;gap:12px;padding:14px;border-bottom:1px solid var(--sep)}
+.backup-status>div{flex:1;min-width:0}.backup-status p{font-size:13px;margin:4px 0;color:var(--text-2)}
+.backup-status .metric-icon{flex:none}
+.backup-recommended{background:var(--accent-soft)}
+.backup-recommended .btn{background:var(--accent);color:white;border-color:var(--accent)}
+.archive-student{border:1px solid var(--sep);border-radius:13px;background:var(--card);padding:10px}
+.archive-student summary{cursor:pointer;font-weight:650;padding:6px}
+.archive-student p{font-size:14px;color:var(--text-2);padding-inline:6px}
+.archive-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
+.archive-metrics .dashboard-metric{padding:9px}.archive-metrics .metric-value{font-size:23px}.archive-metrics .metric-icon{display:none}
+.archive-notice{background:var(--mark-3-bg);color:var(--text);border-left:3px solid var(--mark-3);border-radius:12px;padding:14px;font-size:14px;line-height:1.5}
