@@ -57,7 +57,7 @@ export function renderExemptionsInto(container, classId, opts = {}) {
       item.append(el('button', {
         class: 'btn small danger', type: 'button', text: 'Снять',
         onclick: async () => {
-          const n = store.state.marks.filter((m) => m.studentId === st.id && m.source === 'auto-osv').length;
+          const n = store.countOsvAffected(st.id,null,null,ex.id);
           const ok = await ui.confirmDialog({
             title: 'Снять освобождение?',
             text: n ? `Будет удалено ${n} автоматических отметок ОСВ. Оценки и ручные отметки сохранятся.` : 'Автоматических отметок ОСВ нет.',
@@ -65,7 +65,7 @@ export function renderExemptionsInto(container, classId, opts = {}) {
           });
           if (!ok) return;
           const res = await store.removeExemption(ex.id);
-          ui.toast(res?.deleted ? `Снято, удалено ${res.deleted} отметок` : 'Освобождение снято');
+          ui.toast(res?.deleted ? `Снято, удалено ${res.deleted} отметок` : 'Освобождение снято', ui.undoAction(res));
           opts.onChanged?.();
         },
       }));
@@ -141,19 +141,19 @@ function openNewExemption(studentId) {
         class: 'btn primary wide', type: 'button', text: 'Сохранить',
         onclick: async () => {
           if (dateInput.value < fromInput.value) { ui.toast('Дата окончания раньше начала'); return; }
-          const { changed } = await store.addExemption({
+          const result = await store.addExemption({
             studentId, dateFrom: fromInput.value, dateTo: dateInput.value, reason: reasonInput.value.trim(),
           });
           ui.closeSheet();
-          ui.toast(changed ? `Отмечено ${changed} уроков` : 'Сохранено');
+          ui.toast(result.changed ? `Отмечено ${result.changed} уроков` : 'Сохранено',ui.undoAction(result));
         },
       }),
       el('button', {
         class: 'btn wide', type: 'button', text: 'Бессрочно (до конца года)',
         onclick: async () => {
-          await store.addExemption({ studentId, dateFrom: fromInput.value, dateTo: null, reason: reasonInput.value.trim() });
+          const result = await store.addExemption({ studentId, dateFrom: fromInput.value, dateTo: null, reason: reasonInput.value.trim() });
           ui.closeSheet();
-          ui.toast('Освобождение до конца года');
+          ui.toast('Бессрочное освобождение сохранено',ui.undoAction(result));
         },
       }),
     ]),
@@ -182,7 +182,7 @@ function openEditExemption(exId, classId) {
         onclick: async () => {
           const to = toInput.value || null;
           if (to && to < fromInput.value) { ui.toast('Дата окончания раньше начала'); return; }
-          const affected = store.countOsvAffected(ex.studentId, fromInput.value, to);
+          const affected = store.countOsvAffected(ex.studentId, fromInput.value, to,exId);
           if (affected > 0) {
             const ok = await ui.confirmDialog({
               title: 'Изменить период?',
@@ -191,17 +191,17 @@ function openEditExemption(exId, classId) {
             });
             if (!ok) return;
           }
-          await store.updateExemption(exId, { dateFrom: fromInput.value, dateTo: to, reason: reasonInput.value.trim() });
+          const result = await store.updateExemption(exId, { dateFrom: fromInput.value, dateTo: to, reason: reasonInput.value.trim() });
           ui.closeSheet();
-          ui.toast('Обновлено');
+          ui.toast('Обновлено',ui.undoAction(result));
         },
       }),
       el('button', {
         class: 'btn wide', type: 'button', text: 'Сделать бессрочным',
         onclick: async () => {
-          await store.updateExemption(exId, { dateFrom: fromInput.value, dateTo: null, reason: reasonInput.value.trim() });
+          const result = await store.updateExemption(exId, { dateFrom: fromInput.value, dateTo: null, reason: reasonInput.value.trim() });
           ui.closeSheet();
-          ui.toast('Теперь бессрочно');
+          ui.toast('Теперь бессрочно',ui.undoAction(result));
         },
       }),
     ]),

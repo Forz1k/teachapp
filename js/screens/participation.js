@@ -74,7 +74,7 @@ export function renderParticipation(screen, classId) {
     const marks = store.markMap(classId);
     const counts = { normal: 0, adapted: 0, paused: 0, parent: 0, document: 0, full: 0, empty: 0 };
     const held = new Set(store.state.participation.map(p => p.lessonId));
-    for (const m of store.state.marks) if (m.source === 'manual') held.add(m.lessonId);
+    for (const m of store.state.marks) if ((m.source === 'manual' || m.baseMark?.source === 'manual')) held.add(m.lessonId);
     for (const l of lessons) if (l.held) held.add(l.id);
     const history = el('div');
     const matrix = [['Ученик','Дата','Участие','Основание','Полное освобождение по документу','ОСВ в журнале','Вариант участия','Упражнение']];
@@ -88,7 +88,7 @@ export function renderParticipation(screen, classId) {
         if (p.basis !== 'none') counts[p.basis]++;
         if (p.full) counts.full++;
       } else counts.empty++;
-      const osv = mark?.flag === 'ОСВ';
+      const osv = M.hasOsv(mark);
       matrix.push([student.selectedOptions[0].textContent, M.fmtFull(l.date), mode, basis, p?.full ? 'Да' : '', osv ? 'ОСВ' : '',p?.alternative || '',store.activities().find(a => a.id === p?.activityId)?.name || '']);
       history.append(button([M.fmtFull(l.date), mode, basis, p?.alternative, osv ? 'ОСВ в журнале' : ''].filter(Boolean).join(' · '),
         () => openParticipation(student.value, l.id)));

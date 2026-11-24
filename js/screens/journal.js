@@ -21,7 +21,8 @@ function badgeFor(mark) {
   } else if (mark.flag === 'ОСВ') {
     wrap.append(el('span', { class: 'badge osv', text: 'ОСВ' }));
   } else if (mark.flag === 'Н') {
-    wrap.append(el('span', { class: 'badge absent', text: '—' }));
+    wrap.append(el('span', { class: 'badge absent', text: M.hasOsv(mark) ? 'Н' : '—' }));
+    if (M.hasOsv(mark)) wrap.append(el('span',{class:'mini-osv',text:'ОСВ'}));
   } else {
     wrap.append(el('span', { class: 'cell-empty-dash', text: '·' }));
   }
@@ -220,11 +221,11 @@ export function openMarkSheet(studentId, lessonId, classId) {
       onclick: () => applyAndClose({ value: String(v), flag: null }),
     })),
     el('button', {
-      type: 'button', class: `osv ${existing?.flag === 'ОСВ' && !existing.value ? 'on' : ''}`, text: 'ОСВ',
+      type: 'button', class: `osv ${M.hasOsv(existing) && !existing?.value ? 'on' : ''}`, text: 'ОСВ',
       onclick: () => showOsvStep(sheet, student, lesson, existing, exemption),
     }),
     el('button', {
-      type: 'button', class: `absent ${existing?.flag === 'Н' ? '' : ''}`, text: 'Н',
+      type: 'button', class: `absent ${existing?.flag === 'Н' ? 'on' : ''}`, text: 'Н',
       onclick: () => handleAbsent(student, lesson, exemption, existing),
     }),
     el('button', {
@@ -274,29 +275,23 @@ export function openMarkSheet(studentId, lessonId, classId) {
     ui.closeSheet();
     ui.haptic(10);
     if (mark) {
-      ui.toast('Сохранено', { label: 'Отменить', onClick: () => undo() });
+      ui.toast('Сохранено', ui.undoAction({undo}));
     }
   }
 
   /** Обработка «Н» с учётом освобождения: требуется подтверждение. */
   async function handleAbsent(st, ls, ex, cur) {
-    if (ex && M.exemptionCovers(ex, ls.date)) {
+    if (M.hasOsv(cur) || M.exemptionCovers(ex, ls.date)) {
       const ok = await ui.confirmDialog({
         title: 'Ученик освобождён',
-        text: `Освобождение действует до ${ex.dateTo ? M.fmtFull(ex.dateTo) : 'конца года'}. Вы точно отмечаете отсутствие? Отметка станет «ОСВ + Н», и посещаемость учтёт его как отсутствующего.`,
+        text: 'Отметить отсутствие на этом уроке? В журнале сохранятся ОСВ и Н.',
         ok: 'Отметить Н',
         danger: true,
       });
       if (!ok) return;
-      const { mark, undo } = await store.setMark(studentId, lessonId, { value: null, flag: 'Н' });
-      // Сохраняем признак ОСВ вторым проходом, т.к. normalizeMark для Н убирает флаг.
-      if (mark && ex) {
-        mark.flag = 'Н';
-        mark.osv = true;
-        await store.setMark(studentId, lessonId, { value: null, flag: 'Н' });
-      }
+      const { undo } = await store.setMark(studentId, lessonId, { flag: 'Н' });
       ui.closeSheet();
-      ui.toast('Отмечено: ОСВ + Н', { label: 'Отменить', onClick: () => undo() });
+      ui.toast('Отмечено: ОСВ + Н', ui.undoAction({undo}));
       return;
     }
     await applyAndClose({ value: null, flag: 'Н' });
@@ -337,9 +332,8 @@ function showOsvStep(sheet, student, lesson, existing, activeEx) {
     class: 'btn wide', type: 'button', text: 'Только этот урок',
     onclick: async () => {
       const { mark, undo } = await store.setMark(student.id, lesson.id, { value: null, flag: 'ОСВ' });
-      if (mark) mark.source = 'manual';
       ui.closeSheet();
-      ui.toast('ОСВ на один урок', { label: 'Отменить', onClick: () => undo() });
+      ui.toast('ОСВ на один урок', ui.undoAction({undo}));
     },
   }));
 
@@ -410,7 +404,7 @@ function showOsvStep(sheet, student, lesson, existing, activeEx) {
   }
 
   async function applyExemption(from, to) {
-    const affected = store.countOsvAffected(student.id, from, to);
+    const affected = store.countOsvAffected(student.id, from, to, activeEx?.id);
     if (affected > 0 && activeEx) {
       const ok = await ui.confirmDialog({
         title: 'Сократить освобождение?',
@@ -421,14 +415,15 @@ function showOsvStep(sheet, student, lesson, existing, activeEx) {
     }
 
     try {
+      let result;
       if (activeEx) {
-        await store.updateExemption(activeEx.id, { dateFrom: from, dateTo: to });
+        result = await store.updateExemption(activeEx.id, { dateFrom: from, dateTo: to });
       } else {
-        await store.addExemption({ studentId: student.id, dateFrom: from, dateTo: to, reason: '' });
+        result = await store.addExemption({ studentId: student.id, dateFrom: from, dateTo: to, reason: '' });
       }
       ui.closeSheet();
       ui.haptic(12);
-      ui.toast(to === null ? 'Освобождение до конца года' : `Освобождение до ${M.fmtFull(to)}`);
+      ui.toast(to === null ? 'Освобождение до конца года' : `Освобождение до ${M.fmtFull(to)}`, ui.undoAction(result));
     } catch (err) {
       ui.toast('Не удалось сохранить: ' + err.message);
     }
@@ -467,16 +462,16 @@ async function openStudentSheet(studentId, classId) {
         el('button', {
           class: 'btn small danger', type: 'button', text: 'Снять',
           onclick: async () => {
-            const n = store.state.marks.filter((m) => m.studentId === studentId && m.source === 'auto-osv').length;
+            const n = store.countOsvAffected(studentId,null,null,ex.id);
             const ok = await ui.confirmDialog({
               title: 'Снять освобождение?',
               text: n ? `Будет удалено ${n} отметок ОСВ, проставленных автоматически. Оценки не пострадают.` : 'Автоматических отметок ОСВ нет.',
               ok: 'Снять', danger: true,
             });
             if (!ok) return;
-            await store.removeExemption(ex.id);
+            const result = await store.removeExemption(ex.id);
             ui.closeSheet();
-            ui.toast('Освобождение снято');
+            ui.toast('Освобождение снято', ui.undoAction(result));
           },
         }),
       ]));
@@ -639,6 +634,7 @@ export function openQuickEntrySheet(classId, initialDate) {
       const set = async (value, flag) => {
         if (!lesson) lesson = await ensureLesson();
         if (value && !checkGrade(lesson,st.id)) return;
+        if (flag === 'Н' && (M.hasOsv(mark) || ex) && !window.confirm('Отметить отсутствие вместе с ОСВ?')) return;
         await store.setMark(st.id, lesson.id, { value, flag });
         ui.haptic(8);
         draw();
@@ -653,7 +649,7 @@ export function openQuickEntrySheet(classId, initialDate) {
         }));
       });
       btns.append(el('button', {
-        type: 'button', class: `osv small-label ${mark?.flag === 'ОСВ' ? 'on' : ''}`, text: 'ОСВ',
+        type: 'button', class: `osv small-label ${M.hasOsv(mark) ? 'on' : ''}`, text: 'ОСВ',
         onclick: () => set(null, 'ОСВ'),
       }));
       btns.append(el('button', {

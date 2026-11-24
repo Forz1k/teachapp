@@ -31,7 +31,8 @@ export function buildSummary({ classId, from, to, settings }) {
       const m = markMap.get(`${lesson.id}|${st.id}`);
       if (!m) { cells.push(''); continue; }
       if (m.flag === 'Н') absent += 1;
-      if (m.value && m.flag === 'ОСВ') cells.push(`${m.value}+ОСВ`);
+      if (m.flag === 'Н' && M.hasOsv(m)) cells.push('ОСВ + Н');
+      else if (m.value && m.flag === 'ОСВ') cells.push(`${m.value}+ОСВ`);
       else if (m.value) cells.push(m.value);
       else if (m.flag) cells.push(m.flag);
       else cells.push('');
@@ -84,7 +85,7 @@ export function buildFlat({ classId, from, to, includeMonthly = true }) {
         st.fullName,
         M.fmtFull(lesson.date),
         m.value || '',
-        m.flag || '',
+        m.flag === 'Н' && M.hasOsv(m) ? 'ОСВ + Н' : m.flag || '',
       ]);
     }
   }

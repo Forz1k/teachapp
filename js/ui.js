@@ -149,6 +149,12 @@ export function toast(message, action = null, duration = 5000) {
   toastTimer = setTimeout(hideToast, duration);
 }
 
+export function undoAction(result) {
+  return result?.undo && {label:'Отменить',onClick:async () => {
+    try { await result.undo(); } catch (err) { toast(err.message); }
+  }};
+}
+
 export function hideToast() {
   if (!toastEl) return;
   toastEl.classList.remove('show');

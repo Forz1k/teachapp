@@ -310,29 +310,59 @@ export async function addLesson(classId, dateIso, topicId = null, note = '') {
   const existing = state.lessons.find((l) => l.classId === classId && l.date === dateIso);
   if (existing) return existing;
   const lesson = { id: M.uid('les'), classId, date: dateIso, topicId, note };
-  await db.put('lessons', lesson);
+  const changes = await db.transaction(['lessons','students','exemptions','marks'],'readwrite',async s => {
+    await s.lessons.put(lesson);
+    const students = await s.students.index('classId').getAll(classId);
+    const exemptions = await s.exemptions.getAll();
+    const changes = [];
+    for (const student of students) {
+      const mark = withCoverage(null,null,lesson,student.id,exemptions,null);
+      if (mark) { await s.marks.put(mark); changes.push({id:mark.id,next:mark}); }
+    }
+    return changes;
+  });
   state.lessons.push(lesson);
   state.lessons = M.sortLessons(state.lessons);
+  cacheMarks(changes);
   notify();
-  await applyExemptionsToLessons(classId, [lesson]);
   return lesson;
 }
 
 export async function updateLesson(id, patch) {
-  const lesson = state.lessons.find((l) => l.id === id);
-  if (!lesson) return;
-  const next = { ...lesson, ...patch };
-  const records = state.participation.filter(p => p.lessonId === id && p.date !== next.date);
-  await db.transaction(['lessons', 'participation'], 'readwrite', async s => {
-    await s.lessons.put(next);
-    for (const p of records) await s.participation.put({ ...p, date: next.date });
+  const result = await db.transaction(['lessons','students','participation','exemptions','marks'],'readwrite',async s => {
+    const previous = await s.lessons.get(id);
+    if (!previous) return null;
+    const lesson = {...previous,...patch};
+    await s.lessons.put(lesson);
+    const changes = [];
+    const records = [];
+    if (previous.date !== lesson.date) {
+      const [students,parts,marks,exemptions] = await Promise.all([s.students.index('classId').getAll(lesson.classId),
+        s.participation.index('lessonId').getAll(id),s.marks.index('lessonId').getAll(id),s.exemptions.getAll()]);
+      const byStudent = new Map(marks.map(m => [m.studentId,m]));
+      const participation = new Map(parts.map(p => [p.studentId,p]));
+      for (const p of parts) {
+        const record = {...p,date:lesson.date};
+        await s.participation.put(record);
+        records.push(record);
+      }
+      for (const student of students) {
+        const mark = byStudent.get(student.id);
+        const next = withCoverage(baseMark(mark),mark,lesson,student.id,exemptions,participation.get(student.id));
+        if (JSON.stringify(mark || null) === JSON.stringify(next)) continue;
+        await writeMark(s,mark,next);
+        changes.push({id:mark?.id || next.id,next});
+      }
+    }
+    return { lesson,changes,records };
   });
-  Object.assign(lesson, next);
-  for (const p of records) p.date = next.date;
+  if (!result) return;
+  Object.assign(state.lessons.find(l => l.id === id),result.lesson);
+  for (const record of result.records) Object.assign(state.participation.find(p => p.id === record.id) || {},record);
+  cacheMarks(result.changes);
   state.lessons = M.sortLessons(state.lessons);
   notify();
 }
-
 /** Удаление урока вместе с его отметками. Требует подтверждения в UI. */
 export async function deleteLesson(id) {
   const marks = state.marks.filter((m) => m.lessonId === id);
@@ -356,211 +386,146 @@ export async function deleteLesson(id) {
  * Возвращает { mark, undo } — undo-функция восстанавливает прежнее состояние
  * (для тоста «Отменить»).
  */
-export async function setMark(studentId, lessonId, { value = null, flag = null, weight = null } = {}) {
-  const key = `${lessonId}|${studentId}`;
-  const existing = state.marks.find((m) => m.lessonId === lessonId && m.studentId === studentId) || null;
-  const prev = existing ? { ...existing } : null;
+// Ручная запись до наложения автоматического ОСВ. Старые ручные ОСВ
+// без сведений об источнике сохраняются, пока учитель сам их не изменит.
+function baseMark(mark) {
+  if (!mark) return null;
+  if ('baseMark' in mark) return mark.baseMark;
+  if (mark.source !== 'auto-osv' && mark.source !== 'participation') return mark;
+  const { previousFlag, previousSource, participationId, ...rest } = mark;
+  const flag = previousFlag === 'ОСВ' && previousSource === 'auto-osv' ? null : previousFlag;
+  if (!mark.value && !flag && mark.flag !== 'Н') return null;
+  return { ...rest, flag: flag || (mark.flag === 'Н' ? 'Н' : null), source: previousSource === 'auto-osv' ? 'manual' : previousSource || 'manual' };
+}
 
-  const normalized = M.normalizeMark({ value, flag });
-  let next = null;
-  if (normalized) {
-    next = {
-      id: existing?.id || M.uid('mk'),
-      studentId,
-      lessonId,
-      value: normalized.value,
-      flag: normalized.flag,
-      // Ручная правка всегда делает отметку ручной
-      source: 'manual',
-    };
-    if (weight === 2) next.weight = 2;
-  }
+function withCoverage(base, mark, lesson, studentId, exemptions, participation) {
+  const covered = exemptions.some(e => e.studentId === studentId && M.exemptionCovers(e,lesson.date));
+  if (!covered && !participation?.full) return base;
+  const absent = base?.flag === 'Н';
+  const next = { ...base, id: base?.id || mark?.id || M.uid('mk'), studentId, lessonId: lesson.id,
+    value: base?.value ?? null, flag: absent ? 'Н' : 'ОСВ',
+    source: participation?.full ? 'participation' : 'auto-osv', baseMark: base };
+  if (absent) next.osv = true;
+  if (participation?.full) next.participationId = participation.id;
+  return next;
+}
 
-  if (next) {
-    await db.put('marks', next);
-    if (existing) Object.assign(existing, next);
-    else state.marks.push(next);
-  } else if (existing) {
-    await db.del('marks', existing.id);
-    state.marks = state.marks.filter((m) => m.id !== existing.id);
-  }
+function cacheMarks(changes) {
+  const ids = new Set(changes.map(c => c.id));
+  state.marks = state.marks.filter(m => !ids.has(m.id)).concat(changes.filter(c => c.next).map(c => c.next));
+}
+
+async function writeMark(s, previous, next) {
+  if (next) await s.marks.put(next);
+  else if (previous) await s.marks.delete(previous.id);
+}
+
+async function editMark(studentId, lessonId, edit) {
+  const result = await db.transaction(['lessons','marks','participation','exemptions'], 'readwrite', async s => {
+    const [lesson, previous, part, exemptions] = await Promise.all([s.lessons.get(lessonId),
+      s.marks.index('lessonId_studentId').get([lessonId,studentId]),
+      s.participation.index('studentLesson').get([studentId,lessonId]), s.exemptions.index('studentId').getAll(studentId)]);
+    if (!lesson) throw new Error('Урок не найден');
+    const priorBase = baseMark(previous);
+    const base = edit(priorBase, previous);
+    const next = withCoverage(base,previous,lesson,studentId,exemptions,part);
+    await writeMark(s,previous,next);
+    return { previous, priorBase, base, next };
+  });
+  cacheMarks([{id:result.previous?.id || result.next?.id,next:result.next}]);
   notify();
+  return { mark:result.next, undo:() => editMark(studentId,lessonId,current => {
+    if (JSON.stringify(current) !== JSON.stringify(result.base)) throw new Error('Оценка уже изменена');
+    return result.priorBase;
+  }) };
+}
 
-  const undo = async () => {
-    if (prev) {
-      await db.put('marks', prev);
-      const cur = state.marks.find((m) => m.id === prev.id);
-      if (cur) Object.assign(cur, prev);
-      else state.marks.push(prev);
-    } else if (next) {
-      await db.del('marks', next.id);
-      state.marks = state.marks.filter((m) => m.id !== next.id);
+export function setMark(studentId,lessonId,{value = null,flag = null,weight,osv = false} = {}) {
+  return editMark(studentId,lessonId,(base,previous) => {
+    if (flag === 'ОСВ' && !value) value = base?.value ?? null;
+    const normalized = M.normalizeMark({value,flag});
+    if (!normalized) return null;
+    const next = { ...base, id:previous?.id || M.uid('mk'), studentId,lessonId,...normalized,source:'manual' };
+    delete next.osv;
+    if (flag === 'Н' && (osv || M.hasOsv(base))) next.osv = true;
+    if (flag === 'ОСВ' && base?.flag === 'Н' && !next.value) { next.flag = 'Н'; next.osv = true; }
+    if (!next.value || weight === 1) delete next.weight;
+    if (next.value && weight === 2) next.weight = 2;
+    return next;
+  });
+}
+
+export function setMarkWeight(studentId,lessonId,weight) {
+  return editMark(studentId,lessonId,base => {
+    if (!base?.value) return base;
+    const next = {...base};
+    if (weight === 2) next.weight = 2; else delete next.weight;
+    return next;
+  });
+}
+
+async function changeExemption(id,studentId,edit) {
+  const result = await db.transaction(['students','lessons','marks','participation','exemptions'],'readwrite',async s => {
+    const prev = await s.exemptions.get(id);
+    const next = edit(prev);
+    if (!prev && !next) return null;
+    const owner = prev?.studentId || studentId;
+    const student = await s.students.get(owner);
+    if (!student) throw new Error('Ученик не найден');
+    if (next && !H.validPeriod(next.dateFrom,next.dateTo)) throw new Error('Проверьте период освобождения');
+    const [lessons,marks,parts,all] = await Promise.all([s.lessons.index('classId').getAll(student.classId),
+      s.marks.index('studentId').getAll(owner),s.participation.index('studentId').getAll(owner),s.exemptions.index('studentId').getAll(owner)]);
+    const remaining = all.filter(e => e.id !== id).concat(next || []);
+    const byLesson = new Map(marks.map(m => [m.lessonId,m]));
+    const participation = new Map(parts.map(p => [p.lessonId,p]));
+    const changes = [];
+    if (next) await s.exemptions.put(next); else await s.exemptions.delete(id);
+    for (const lesson of lessons) {
+      if (!M.exemptionCovers(prev,lesson.date) && !M.exemptionCovers(next,lesson.date)) continue;
+      const mark = byLesson.get(lesson.id);
+      const updated = withCoverage(baseMark(mark),mark,lesson,owner,remaining,participation.get(lesson.id));
+      if (JSON.stringify(mark || null) === JSON.stringify(updated)) continue;
+      await writeMark(s,mark,updated);
+      changes.push({id:mark?.id || updated.id,next:updated});
     }
-    notify();
-  };
-
-  return { mark: next, undo };
-}
-
-/** Изменить вес оценки (2 = контрольный норматив, учитывается дважды в режиме B). */
-export async function setMarkWeight(studentId, lessonId, weight) {
-  const m = state.marks.find((x) => x.lessonId === lessonId && x.studentId === studentId);
-  if (!m) return;
-  if (weight === 2) m.weight = 2; else delete m.weight;
-  await db.put('marks', m);
-  notify();
-}
-
-/* ---------- освобождения ---------- */
-
-/**
- * Создать освобождение и разложить auto-osv по урокам класса.
- * Транзакция атомарная: либо справка + отметки, либо ничего.
- */
-export async function addExemption({ studentId, dateFrom, dateTo, reason = '' }) {
-  const ex = {
-    id: M.uid('exm'),
-    studentId,
-    dateFrom,
-    dateTo: dateTo ?? null,
-    reason,
-    createdAt: new Date().toISOString(),
-  };
-  const student = state.students.find((s) => s.id === studentId);
-  if (!student) throw new Error('Ученик не найден');
-
-  const lessons = lessonsOfClass(student.classId);
-  const marks = state.marks.filter((m) => m.studentId === studentId);
-  const plan = M.planOsv({ lessons, marks, studentIds: [studentId], from: ex.dateFrom, to: ex.dateTo });
-
-  await db.transaction(['exemptions', 'marks'], 'readwrite', (s) => {
-    s.exemptions.put(ex);
-    for (const m of plan.toPut) s.marks.put(m);
-    for (const m of plan.toDelete) s.marks.delete(m.id);
+    return {prev,next,changes};
   });
-
-  state.exemptions.push(ex);
-  applyPlanToCache(plan);
+  if (!result) return null;
+  const {prev,next,changes} = result;
+  state.exemptions = state.exemptions.filter(e => e.id !== id).concat(next || []);
+  cacheMarks(changes);
   notify();
-  return { exemption: ex, changed: plan.toPut.length + plan.toDelete.length };
+  return { exemption:next || prev, prev, changed:changes.length, deleted:changes.filter(c => !c.next).length,
+    undo:() => changeExemption(id,studentId || prev?.studentId,current => {
+      if (JSON.stringify(current || null) !== JSON.stringify(next)) throw new Error('Освобождение уже изменено');
+      return prev || null;
+    }) };
 }
 
-function applyPlanToCache(plan) {
-  const deleteIds = new Set(plan.toDelete.map((m) => m.id));
-  state.marks = state.marks.filter((m) => !deleteIds.has(m.id));
-  for (const m of plan.toPut) {
-    const cur = state.marks.find((x) => x.id === m.id);
-    if (cur) Object.assign(cur, m);
-    else state.marks.push(m);
-  }
+export function addExemption({studentId,dateFrom,dateTo,reason = ''}) {
+  const id = M.uid('exm');
+  return changeExemption(id,studentId,() => ({id,studentId,dateFrom,dateTo:dateTo || null,reason,createdAt:new Date().toISOString()}));
 }
 
-/** Сколько auto-osv отметок будет удалено при снятии/сокращении — для диалога подтверждения. */
-export function countOsvAffected(studentId, from, to) {
-  const student = state.students.find((s) => s.id === studentId);
-  if (!student) return 0;
-  return M.countOsvToDelete({
-    lessons: lessonsOfClass(student.classId),
-    marks: state.marks.filter((m) => m.studentId === studentId),
-    studentId,
-    from,
-    to,
-  });
+export function updateExemption(id,patch) {
+  return changeExemption(id,null,prev => prev ? {...prev,...patch,id,studentId:prev.studentId} : null);
 }
 
-/**
- * Изменить существующее освобождение (сократить или продлить).
- * Автоматически пересобирает auto-osv отметки и возвращает план для undo.
- */
-export async function updateExemption(id, { dateFrom, dateTo, reason }) {
-  const ex = state.exemptions.find((e) => e.id === id);
-  if (!ex) return null;
-  const prev = { ...ex };
-  const student = state.students.find((s) => s.id === ex.studentId);
-  if (!student) return null;
-
-  const lessons = lessonsOfClass(student.classId);
-  const marks = state.marks.filter((m) => m.studentId === ex.studentId);
-  const plan = M.planOsv({ lessons, marks, studentIds: [ex.studentId], from: dateFrom, to: dateTo });
-
-  ex.dateFrom = dateFrom;
-  ex.dateTo = dateTo ?? null;
-  if (reason !== undefined) ex.reason = reason;
-
-  await db.transaction(['exemptions', 'marks'], 'readwrite', (s) => {
-    s.exemptions.put(ex);
-    for (const m of plan.toPut) s.marks.put(m);
-    for (const m of plan.toDelete) s.marks.delete(m.id);
-  });
-  applyPlanToCache(plan);
-  notify();
-  return { prev, plan };
+export function removeExemption(id) {
+  return changeExemption(id,null,() => null);
 }
 
-/** Снять освобождение целиком. Удаляет auto-osv отметки, ручные не трогает. */
-export async function removeExemption(id) {
-  const ex = state.exemptions.find((e) => e.id === id);
-  if (!ex) return null;
-  const student = state.students.find((s) => s.id === ex.studentId);
-  const lessons = student ? lessonsOfClass(student.classId) : [];
-  const marks = state.marks.filter((m) => m.studentId === ex.studentId);
-  // Снимаем всё: диапазон null → все auto-osv попадают в toDelete.
-  const toDelete = marks.filter((m) => m.source === 'auto-osv');
-
-  await db.transaction(['exemptions', 'marks'], 'readwrite', (s) => {
-    s.exemptions.delete(id);
-    for (const m of toDelete) s.marks.delete(m.id);
-  });
-
-  state.exemptions = state.exemptions.filter((e) => e.id !== id);
-  const delIds = new Set(toDelete.map((m) => m.id));
-  state.marks = state.marks.filter((m) => !delIds.has(m.id));
-  notify();
-  return { deleted: toDelete.length, exemption: ex, lessons };
-}
-
-/** При создании нового урока — проставить auto-osv всем, у кого справка покрывает дату. */
-export async function applyExemptionsToLessons(classId, lessons) {
-  const students = studentsOfClass(classId);
-  if (!students.length) return 0;
-  const toPut = [];
-
-  for (const lesson of lessons) {
-    for (const st of students) {
-      const ex = activeExemption(st.id, lesson.date);
-      if (!ex) continue;
-      const existing = state.marks.find((m) => m.lessonId === lesson.id && m.studentId === st.id);
-      if (existing?.source === 'manual' || existing?.source === 'auto-m') continue;
-      if (existing) {
-        if (existing.flag === 'ОСВ') continue;
-        if (existing.value) {
-          // Оценка — сохраняем, добавляем бейдж
-          toPut.push({ ...existing, flag: existing.flag === 'Н' ? 'ОСВ' : 'ОСВ' });
-        } else {
-          toPut.push({ ...existing, flag: 'ОСВ', source: 'auto-osv' });
-        }
-      } else {
-        toPut.push({
-          id: M.uid('mk'),
-          studentId: st.id,
-          lessonId: lesson.id,
-          value: null,
-          flag: 'ОСВ',
-          source: 'auto-osv',
-        });
-      }
-    }
-  }
-
-  if (!toPut.length) return 0;
-  await db.bulkPut('marks', toPut);
-  for (const m of toPut) {
-    const cur = state.marks.find((x) => x.id === m.id);
-    if (cur) Object.assign(cur, m);
-    else state.marks.push(m);
-  }
-  notify();
-  return toPut.length;
+export function countOsvAffected(studentId,from,to,id) {
+  const current = state.exemptions.find(e => e.id === id);
+  if (!current) return 0;
+  const other = state.exemptions.filter(e => e.studentId === studentId && e.id !== id);
+  const dates = new Map(state.lessons.map(l => [l.id,l.date]));
+  return state.marks.filter(m => {
+    const date = dates.get(m.lessonId);
+    return m.studentId === studentId && M.hasOsv(m) && !M.hasOsv(baseMark(m)) && M.exemptionCovers(current,date)
+      && !(from && M.inRange(date,from,to)) && !other.some(e => M.exemptionCovers(e,date))
+      && !state.participation.some(p => p.full && p.lessonId === m.lessonId && p.studentId === studentId);
+  }).length;
 }
 
 /* ---------- месячные отметки ---------- */
@@ -994,25 +959,9 @@ export async function saveParticipation(studentId, lessonId, input, expectedRevi
     const record = input ? { id, studentId, lessonId, date: lesson.date, mode: input.mode,
       activityId: activities().some(a => a.id === input.activityId) ? input.activityId : null,
       alternative: H.alternatives.includes(input.alternative) ? input.alternative : '', basis: input.basis, full: Boolean(input.full), revision: M.uid('rev') } : null;
-    if (record?.full) {
-      if (mark?.flag !== 'ОСВ' || mark.source === 'auto-osv') {
-        nextMark = { ...mark, id: mark?.id || M.uid('mk'), studentId, lessonId,
-          value: mark?.value ?? null, flag: 'ОСВ', source: 'participation', participationId: id,
-          previousFlag: mark?.flag ?? null, previousSource: mark?.source ?? null };
-      }
-      record.markId = nextMark.id;
-    } else if (mark?.source === 'participation' && mark.participationId === id) {
-      const { participationId, previousFlag, previousSource, ...rest } = mark;
-      const covered = exemptions.some(ex => M.exemptionCovers(ex, lesson.date));
-      if (covered) nextMark = { ...rest, source: rest.value ? 'manual' : 'auto-osv' };
-      else if (previousSource && previousSource !== 'auto-osv') {
-        nextMark = { ...rest, flag: previousFlag, source: previousSource };
-      } else nextMark = rest.value ? { ...rest, flag: null, source: 'manual' } : null;
-    }
-    if (nextMark !== mark) {
-      if (nextMark) await s.marks.put(nextMark);
-      else await s.marks.delete(mark.id);
-    }
+    nextMark = withCoverage(baseMark(mark),mark,lesson,studentId,exemptions,record);
+    if (record?.full) record.markId = nextMark.id;
+    await writeMark(s,mark,nextMark);
     if (record) await s.participation.put(record);
     else if (previous) await s.participation.delete(previous.id);
     return { previous, record, nextMark };

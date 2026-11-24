@@ -152,6 +152,8 @@ export const FLAGS = ['ОСВ', 'Н', 'М'];
  *  - ОСВ совместим с Н (освобождён, но отсутствовал).
  * Возвращает { value, flag } либо null, если ячейку надо очистить.
  */
+export const hasOsv = mark => mark?.flag === 'ОСВ' || (mark?.flag === 'Н' && mark.osv === true);
+
 export function normalizeMark({ value = null, flag = null } = {}) {
   if (value === '--') value = null;
   if (flag === 'М') { flag = null; } // защита от ошибочного вызова
@@ -395,7 +397,7 @@ export function computeMonthly({ lessons, marks, rules = {} }) {
     const m = byLesson.get(lesson.id);
     if (!m || (!m.value && !m.flag)) continue;
     filled += 1;
-    if (m.flag === 'ОСВ') withOsv += 1;
+    if (hasOsv(m)) withOsv += 1;
     if (m.flag === 'Н') withAbsent += 1;
     if (m.value) {
       const v = Number(m.value);
