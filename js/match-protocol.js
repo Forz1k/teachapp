@@ -277,3 +277,9 @@ export function scoutSummary(timeline,side,{kind='all',set=0,active=[]}={}){
  return {rallies,total,knownPlayers,knownZones,unknownPlayers:total-knownPlayers,unknownZones:total-knownZones,zones,rows,ranked,topZones,
   former:[...players.values()].filter(x=>!active.includes(x.id)&&(x.misses>0||x.success>0)).map(measured).sort(byCount)};
 }
+
+/** Public-facing score only; no roster, individual stats or event data. */
+export function spectatorSnapshot(d,s=replayDetailed(d)){
+ const won=s.sets.filter(x=>x.ours>x.theirs).length;
+ return {teamName:d.teamName,opponent:d.opponent,score:{...s.score},sets:s.sets.map(x=>({...x})),setsWon:{ours:won,theirs:s.sets.length-won},set:s.setEnded?s.sets.length:s.sets.length+1,serve:s.serve,status:s.finished?'finished':s.setEnded?'break':'live',colors:{...(d.boardColors||defaultBoardColors)}};
+}

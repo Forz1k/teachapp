@@ -118,11 +118,28 @@ function court(d,lineups,serve,selected,choose){
  return el('div',{class:'vp-court'},[half('theirs',[1,6,5,2,3,4]),el('div',{class:'vp-net',text:'СЕТКА'}),half('ours',[4,3,2,5,6,1])]);
 }
 function shown(d,s){return {ours:s.lineup.map(id=>s.liberoFor===id?d.libero:id),theirs:s.awayLineup};}
+// A local, read-only scoreboard in a separate same-device window. No network or player data.
+export function renderSpectatorBoard(doc,snapshot,connected=true){
+ const make=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=String(text);return n;};
+ if(!doc.head.querySelector('#teachapp-score-style')){
+  const style=make('style');style.id='teachapp-score-style';style.textContent='*{box-sizing:border-box}body{margin:0;background:#111827;color:white;font:600 clamp(14px,2vw,24px)/1.3 system-ui,sans-serif;min-height:100vh;display:grid;place-items:center;padding:3vw}main{width:100%;max-width:1600px;text-align:center}header{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:2vw}.boards{display:grid;grid-template-columns:1fr 1fr;gap:2vw}.side{border-radius:24px;padding:3vw 2vw;min-width:0;display:grid;gap:1vw}.team{font-size:clamp(20px,4vw,60px);overflow-wrap:anywhere}.score{font-size:clamp(68px,15vw,230px);line-height:1;font-variant-numeric:tabular-nums}.sets{font-size:clamp(18px,3vw,40px)}footer{padding:2vw;color:#cbd5e1}.set-list{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:2vw}.set-list span{background:#253248;padding:8px 14px;border-radius:10px}button{font:inherit;color:white;background:#374151;border:0;border-radius:10px;padding:10px 14px}';
+  doc.head.append(style);doc.title='TeachApp · Табло';const meta=make('meta');meta.name='viewport';meta.content='width=device-width,initial-scale=1';doc.head.append(meta);
+ }
+ const status=connected?(snapshot.status==='finished'?'МАТЧ ЗАВЕРШЁН':snapshot.status==='break'?'ПЕРЕРЫВ':'● LIVE'):'НЕТ СВЯЗИ С ТРЕНЕРОМ · последний счёт';
+ const main=make('main'),head=make('header');head.append(make('span','',status),make('span','','Партия '+snapshot.set));
+ const full=make('button','','На весь экран');full.type='button';full.onclick=()=>{try{const p=doc.documentElement.requestFullscreen?.();p?.catch?.(()=>{});}catch{}};head.append(full);main.append(head);
+ const boards=make('div','boards');
+ for(const side of sides){const n=make('div','side'),c=V.boardPalette[snapshot.colors[side]];n.style.background=c.end;n.append(make('div','team',side==='ours'?snapshot.teamName:snapshot.opponent),make('strong','score',snapshot.score[side]),make('span','sets','Партии: '+snapshot.setsWon[side]),make('span','',snapshot.status==='live'?(snapshot.serve===side?'● Подача':'Приём'):' '));boards.append(n);}
+ main.append(boards);const sets=make('div','set-list');snapshot.sets.forEach((s,i)=>sets.append(make('span','',(i+1)+' · '+s.ours+' : '+s.theirs)));main.append(sets,make('footer','','TeachApp · Зрительское табло'));doc.body.replaceChildren(main);
+}
+
 export function openDetailedMatch(initial,back,refresh){
  let d=initial,busy=false,selected=null,pointDraft=null,section='match',nextDraft=null,quick=false,swapped=false,scoutOpen=false,scoutSide='theirs',scoutKind='all',scoutSet=0,scoutEntry=false,historySet=0,historyEdit=null;
  const body=el('div',{class:'vp-stack vp-live'});
- const wake=matchWakeLock();let observer=null;
- const stop=()=>{wake.stop();observer?.disconnect();};
+ const wake=matchWakeLock();let observer=null,spectator=null;
+ const spectatorUpdate=(s,connected=true)=>{try{if(spectator&&!spectator.closed)renderSpectatorBoard(spectator.document,V.spectatorSnapshot(d,s),connected);else spectator=null;}catch{spectator=null;}};
+ const spectatorOpen=()=>{try{if(!spectator||spectator.closed)spectator=window.open('','teachapp-score-'+d.id,'popup,width=1000,height=600');if(!spectator)return toast('Разрешите открытие отдельного окна');spectatorUpdate(V.replayDetailed(d));spectator?.focus?.();}catch{toast('Отдельное окно недоступно');}};
+ const stop=()=>{spectatorUpdate(V.replayDetailed(d),false);spectator=null;wake.stop();observer?.disconnect();};
  const perform=async(event,after)=>{
   if(busy)return;busy=true;
   const buttons=[...body.querySelectorAll('button')].filter(x=>!x.disabled);buttons.forEach(x=>x.disabled=true);
@@ -131,6 +148,7 @@ export function openDetailedMatch(initial,back,refresh){
  };
  function draw(){
   const s=V.replayDetailed(d),last=s.timeline.at(-1),won=s.sets.filter(x=>x.ours>x.theirs).length;
+  spectatorUpdate(s);
   const set=s.setEnded?s.sets.length:s.sets.length+1;
   const pre=pointDraft?.editing&&last?.before;
   const begin=(side,editing=false)=>{pointDraft={side,editing,kind:null};selected=null;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;};
@@ -272,7 +290,7 @@ export function openDetailedMatch(initial,back,refresh){
   const saveColors=btn('Сохранить цвета',async()=>{if(busy)return;busy=true;saveColors.disabled=true;try{d=await C.changeLiveColors(d.id,d.revision,liveColors.get());draw();}catch(e){toast(e.message);}finally{busy=false;saveColors.disabled=false;}},'wide');
   const wakeBtn=btn(wake.enabled?'Экран: не выключать':'Экран: обычный режим',async()=>{if(busy)return;wakeBtn.disabled=true;const requested=!wake.enabled;const enabled=await wake.toggle();wakeBtn.textContent=enabled?'Экран: не выключать':'Экран: обычный режим';wakeBtn.setAttribute('aria-pressed',String(enabled));wakeBtn.disabled=false;if(requested&&!enabled)toast('Не удалось удерживать экран. Проверьте настройки браузера или энергосбережение.');},'wide');wakeBtn.setAttribute('aria-pressed',String(wake.enabled));
   const menu=el('details',{class:'vp-match-more'},[el('summary',{text:'Управление матчем · черновик сохранён'}),
-   wake.supported?wakeBtn:p('Удержание экрана недоступно в этом браузере.'),liveColors.node,saveColors,
+   wake.supported?wakeBtn:p('Удержание экрана недоступно в этом браузере.'),btn('Зрительское табло · отдельное окно',spectatorOpen,'wide'),p('Только счёт и команды. Откройте окно на том же устройстве; при выходе показывается последний счёт.'),liveColors.node,saveColors,
    p('Замены: '+(d.substitutionMode==='paired'?'парные':'упрощённые')+' · Событий: '+d.events.length),
    btn('Выйти · черновик сохранён',()=>{if(!busy){stop();back();}},'wide'),
    btn('Удалить черновик',async()=>{if(busy||!await ui.confirmDialog({title:'Удалить черновик?',text:'Вся история этого матча будет удалена.',ok:'Удалить',danger:true}))return;busy=true;try{await C.discardLiveMatch(d.id,d.revision);stop();back();}catch(e){toast(e.message);}finally{busy=false;}},'wide')]);

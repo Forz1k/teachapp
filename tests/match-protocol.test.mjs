@@ -2,7 +2,7 @@ import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates,setMomentum,validBoardColors,opponentHistory,rallySummary,scoutSummary} from '../js/match-protocol.js';
+import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates,setMomentum,validBoardColors,opponentHistory,rallySummary,scoutSummary,spectatorSnapshot} from '../js/match-protocol.js';
 import * as C from '../js/coach.js';
 import * as S from '../js/store.js';
 import * as db from '../js/db.js';
@@ -172,4 +172,11 @@ test('Редактирование старого розыгрыша сохра�
  assert.throws(()=>detailEvent(d,{type:'editRally',index:0,patch:{side:'theirs'}}),/не меняет/);
  assert.throws(()=>detailEvent(d,{type:'editRally',index:1,patch:{kind:'point'}}),/розыгрыш/);
  assert.throws(()=>detailEvent(d,{type:'editRally',index:0,patch:{kind:'ace',player:'a1'}}),/подающей/);
+});
+
+test('Зрительское табло публикует только счёт, цвета, партии и подачу; обновляется после отмены',()=>{
+ const d=detailEvent(base,{type:'rally',side:'ours',kind:'tip',player:'a2',secondary:{kind:'defenseError',player:'b2'}});
+ const a=spectatorSnapshot(d);assert.deepEqual(a.score,{ours:1,theirs:0});assert.equal(a.serve,'ours');assert.equal(a.status,'live');
+ assert.equal(JSON.stringify(a).includes('a2'),false);assert.equal(Object.hasOwn(a,'events'),false);assert.equal(Object.hasOwn(a,'ourPlayers'),false);
+ assert.equal(spectatorSnapshot(detailEvent(d,null)).score.ours,0);
 });

@@ -649,3 +649,11 @@ test('Подготовка матча: шаблон с другим либеро
  const opponent=selects.find(n=>[...n.options].some(o=>o.value==='m1'));opponent.value='m1';click('Загрузить состав соперника');
  assert.equal(sheet.querySelector('input[placeholder="Название соперника"]').value,'Гости');assert.equal(sheet.querySelector('.lineup-court.theirs .zone-1 strong').textContent,'11');ui.closeSheet();
 });
+
+test('Зрительское табло безопасно отображает названия и состояние отключения',async()=>{
+ const {renderSpectatorBoard}=await import('../js/screens/match-protocol.js');
+ const target=doc.implementation.createHTMLDocument('Табло');
+ const a={teamName:'<img src=x>',opponent:'Гости',score:{ours:7,theirs:5},sets:[],setsWon:{ours:0,theirs:0},set:1,serve:'ours',status:'live',colors:{ours:'blue',theirs:'red'}};
+ renderSpectatorBoard(target,a);assert.equal(target.querySelector('.team').textContent,'<img src=x>');assert.equal(target.querySelector('img'),null);assert.equal(target.querySelector('.score').textContent,'7');
+ renderSpectatorBoard(target,{...a,score:{ours:8,theirs:5}},false);assert.match(target.body.textContent,/НЕТ СВЯЗИ/);assert.equal(target.querySelector('.score').textContent,'8');assert.equal(target.querySelectorAll('#teachapp-score-style').length,1);
+});
