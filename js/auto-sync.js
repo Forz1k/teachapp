@@ -1,7 +1,8 @@
 /* Foreground sync; never runs from service worker or while another updated tab is active. */
 import {syncAreas,relayClient,syncPersonalArea} from './sync.js';
 import {readPersonalCode,personalCredentials} from './personal-sync.js';
-let last={phase:'idle',areas:[],at:null};
+let last={phase:'idle',areas:[],at:null},activeSession=null;
+export const withSyncSession=task=>activeSession?activeSession.exclusive(task):task();
 export const autoSyncStatus=()=>({...last,areas:last.areas.map(x=>({...x}))});
 export async function runPersonalSync({getCode=readPersonalCode,online=()=>globalThis.navigator?.onLine!==false,clientFactory=relayClient,runArea=syncPersonalArea}={}){
  const code=getCode();
@@ -32,7 +33,7 @@ export async function openSyncSession(locks=globalThis.navigator?.locks,scope='t
   locks.request(scope,{mode:'shared'},()=>new Promise(done=>{release=done;resolve();})).catch(reject);
  });
  await acquire();
- return {async exclusive(task){
+ const session={async exclusive(task){
   if(working)return null;
   working=true;
   try{
@@ -42,4 +43,5 @@ export async function openSyncSession(locks=globalThis.navigator?.locks,scope='t
    try{await acquire();}finally{working=false;}
   }
  }};
+ activeSession=session;return session;
 }

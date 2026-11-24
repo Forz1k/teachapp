@@ -20,7 +20,7 @@ import {openCoachSearchResult} from './screens/coach.js';
 import {readNavigation,saveNavigation,coachRoutes,schoolRoutes} from './design.js';
 import {animateOnce} from './motion.js';
 import {readPersonalCode} from './personal-sync.js';
-import {openSyncSession,runPersonalSync} from './auto-sync.js';
+import {openSyncSession,runPersonalSync,autoSyncStatus} from './auto-sync.js';
 const { el, icon } = ui;
 
 const TABS = [
@@ -35,21 +35,32 @@ const TABS = [
 const appRoot = document.getElementById('app');
 let tabbarEl = null;
 let syncSession=null,autoBusy=false,autoAttempt=0;
+let syncHint='';
+function updateSyncIndicator(){
+ const node=appRoot.querySelector('.personal-sync-action');if(!node)return;
+ const report=autoSyncStatus(),problem=report.areas.some(x=>!['synced','setup'].includes(x.status)),setup=report.areas.some(x=>x.status==='setup');
+ const label=syncHint||(navigator.onLine===false?'Нет сети · данные сохранены локально':problem?'Требуется проверка синхронизации':setup?'Нужно подтвердить первое подключение':report.at?'Последняя проверка: '+new Date(report.at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'Синхронизировать сейчас');
+ node.title=label;node.setAttribute('aria-label','Синхронизировать сейчас. '+label);node.dataset.status=navigator.onLine===false?'offline':problem?'review':report.at&&!setup?'ok':'idle';
+}
 function safeAutoRoute(){
  return store.state.currentTab==='today'||store.state.currentTab==='coach'&&navigation.coach==='home';
 }
-async function maybeAutoSync(initial=false){
- if(!syncSession||autoBusy||!readPersonalCode()||navigator.onLine===false||document.visibilityState==='hidden')return;
- if(!initial&&(!safeAutoRoute()||ui.isSheetOpen()||document.querySelector('.dialog-backdrop,.privacy-cover')||document.activeElement?.matches('input,textarea,select,[contenteditable=true]')||Date.now()-autoAttempt<55000))return;
- autoBusy=true;autoAttempt=Date.now();
+async function maybeAutoSync(initial=false,manual=false){
+ if(!readPersonalCode()||autoBusy)return;
+ if(!syncSession||navigator.onLine===false||document.visibilityState==='hidden'){
+  if(manual)ui.toast(navigator.onLine===false?'Нет интернета. Изменения сохранены на устройстве.':'Откройте синхронизацию в настройках для ручного обмена.');return;
+ }
+ if(!initial&&(ui.isSheetOpen()||document.querySelector('.dialog-backdrop,.privacy-cover')||document.activeElement?.matches('input,textarea,select,[contenteditable=true]')||!manual&&(!safeAutoRoute()||Date.now()-autoAttempt<55000)))return;
+ autoBusy=true;autoAttempt=Date.now();syncHint='Синхронизация…';updateSyncIndicator();
  const oldTabbar=tabbarEl;
  appRoot.inert=true;if(oldTabbar)oldTabbar.inert=true;
  try{
   const result=await syncSession.exclusive(()=>runPersonalSync());
   if(result?.areas.some(x=>x.changed))await store.load();
-  if(!initial&&result?.areas.some(x=>['conflict','review'].includes(x.status)))ui.toast('Синхронизация: проверьте спорные изменения в настройках.');
- }catch{/* The offline database remains usable. */}
- finally{appRoot.inert=false;if(oldTabbar)oldTabbar.inert=false;if(tabbarEl)tabbarEl.inert=false;autoBusy=false;}
+  syncHint=result?'':'Другая вкладка открыта · обмен отложен';
+  if(manual){const needsReview=result?.areas.some(x=>!['synced','setup'].includes(x.status)),hasSetup=result?.areas.some(x=>x.status==='setup');ui.toast(!result?'Закройте другие вкладки TeachApp.':needsReview?'Проверьте синхронизацию в настройках.':hasSetup?'Проверьте первичное подключение контуров в настройках.':'Синхронизация завершена.');}
+ }catch{syncHint='Обмен не завершён';if(manual)ui.toast(syncHint);}
+ finally{appRoot.inert=false;if(oldTabbar)oldTabbar.inert=false;if(tabbarEl)tabbarEl.inert=false;autoBusy=false;updateSyncIndicator();}
 }
 let journalUpdate = null;
 let renderedRoute = '';
@@ -77,8 +88,9 @@ function render() {
   const switcher=el('div',{class:'workspace-switch',role:'group','aria-label':'Рабочее пространство'},[
     ...[['school','Учитель'],['coach','Тренер']].map(([id,label])=>el('button',{type:'button',class:'workspace-option'+(workspace===id?' selected':''),'aria-pressed':String(workspace===id),text:label,onclick:()=>switchWorkspace(id)}))
   ]);
-  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('img',{class:'brand-mark',src:'./icons/brand.svg',alt:'',width:32,height:32}),el('span',{text:'TeachApp'})]),switcher,el('button',{class:'icon-btn plain search-action',type:'button','aria-label':'Поиск',title:'Поиск',onclick:()=>openSearch(workspace)},[icon('search')]),el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':'Скрыть данные',title:'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
+  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('img',{class:'brand-mark',src:'./icons/brand.svg',alt:'',width:32,height:32}),el('span',{text:'TeachApp'})]),switcher,readPersonalCode()?el('button',{class:'icon-btn plain personal-sync-action',type:'button','aria-label':'Синхронизировать сейчас',onclick:()=>void maybeAutoSync(false,true)},[icon('refresh')]):null,el('button',{class:'icon-btn plain search-action',type:'button','aria-label':'Поиск',title:'Поиск',onclick:()=>openSearch(workspace)},[icon('search')]),el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':'Скрыть данные',title:'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
 
+  updateSyncIndicator();
   const tab = store.state.currentTab;
 
   if (tab === 'today') {
@@ -281,7 +293,8 @@ async function boot() {
     else render();
   });
   render();
-  window.addEventListener('online',()=>{autoAttempt=0;void maybeAutoSync();});
+  window.addEventListener('online',()=>{autoAttempt=0;syncHint='';updateSyncIndicator();void maybeAutoSync();});
+  window.addEventListener('offline',updateSyncIndicator);
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){autoAttempt=0;void maybeAutoSync();}});
   setInterval(()=>void maybeAutoSync(),60000);
 

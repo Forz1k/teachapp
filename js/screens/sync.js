@@ -1,7 +1,7 @@
 import * as S from '../store.js';
 import * as db from '../db.js';
 import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,disconnectSync} from '../sync.js';
-import {autoSyncStatus} from '../auto-sync.js';
+import {autoSyncStatus,withSyncSession} from '../auto-sync.js';
 import {parsePersonalCode,personalCredentials,readPersonalCode,savePersonalCode,forgetPersonalCode} from '../personal-sync.js';
 import {createPairingCode,readPairingCode} from '../sync-pairing.js';
 import {el,openSheet,closeSheet,isSheetOpen,confirmDialog,promptDialog,toast} from '../ui.js';
@@ -70,7 +70,7 @@ export function openSync(){
    status.textContent='Ревизия на сервере: '+plan.revision+' · '+syncAreas[selected];
    if(plan.conflicts.length>100){choicesStatus.textContent='Слишком много конфликтов. Сначала согласуйте данные на устройствах; автоматическая перезапись запрещена.';return;}
    results.replaceChildren(p(plan.conflicts.length?'Конфликтов: '+plan.conflicts.length+'. Выберите версию каждой записи.':'Конкурирующих изменений не обнаружено.'),...plan.conflicts.map(c=>blockConflict(c,(key,value)=>{if(value)choices[key]=value;else delete choices[key];drawSummary();})));
-  }catch(e){clear();if(active())toast(e.message,null,8000);}
+  }catch(e){clear();if(active()){if(readPersonalCode())await refresh();toast(e.message,null,8000);}}
   finally{busy=false;controls(false);if(plan&&plan.conflicts.length<=100&&active())await drawSummary();}
  },'primary');
  const apply=btn('Синхронизировать и сохранить',async()=>{
@@ -83,10 +83,11 @@ export function openSync(){
     if(repeat!==pw){if(repeat!==null)toast('Пароли не совпадают');return;}
    }
    if(!await confirmDialog({title:'Передать зашифрованные данные и применить изменения?',text:'Контур: '+syncAreas[selected.area]+'. Будут переданы записи выбранной области, в том числе персональные сведения и история, в зашифрованном виде. Создайте защищённую резервную копию заранее. Удаления также распространяются. Не закрывайте приложение во время записи.',ok:'Синхронизировать',danger:true}))return;
-   const result=await executeSync({plan:selected,choices:{...choices},password:pw,client:selectedClient,confirmed:true});
+   const result=await withSyncSession(()=>executeSync({plan:selected,choices:{...choices},password:pw,client:selectedClient,confirmed:true}));
+   if(!result)throw Error('Закройте другие вкладки TeachApp перед синхронизацией.');
    await S.load();clear();if(active()){await refresh();status.textContent='Синхронизировано · ревизия '+result.revision;}
    toast('Синхронизация завершена · ревизия '+result.revision);
-  }catch(e){clear();toast(e.message,null,9000);}
+  }catch(e){clear();if(active()&&readPersonalCode())await refresh();toast(e.message,null,9000);}
   finally{busy=false;controls(false);if(plan&&active())await drawSummary();}
  },'primary');apply.disabled=true;
  const detach=btn('Забыть подключение на этом устройстве',async()=>{
@@ -109,7 +110,7 @@ export function openSync(){
    if(!active())return;
    if(!await confirmDialog({title:'Сохранить личный код?',text:'Сервер: '+parsed.endpoint+'. Код будет храниться в браузере этого устройства без дополнительного пароля. Любой, кто имеет доступ к профилю браузера, может получить код. Только на личном защищённом устройстве. Пока данные не отправляются.',ok:'Сохранить'}))return;
    if(!active())return;
-   savePersonalCode(parsed.code);clear();await refresh();
+   savePersonalCode(parsed.code);clear();await refresh();S.notify();
    toast('Код сохранён. Выполните первое сравнение для каждого нужного контура.');
   }catch(e){if(active())toast(e.message,null,8000);}
   finally{busy=false;controls(false);if(plan&&active())await drawSummary();}
@@ -117,7 +118,7 @@ export function openSync(){
  const personalForget=btn('Забыть личный код',async()=>{
   if(busy)return;
   if(!await confirmDialog({title:'Забыть личный код?',text:'Код удалится только из этого браузера. Локальные записи, ревизии и серверная копия останутся. Код на другом устройстве продолжит работать.',ok:'Забыть',danger:true}))return;
-  try{forgetPersonalCode();clear();await refresh();}catch(e){toast(e.message);}
+  try{forgetPersonalCode();clear();await refresh();S.notify();}catch(e){toast(e.message);}
  });
  const pairCreate=btn('Создать код для другого устройства',async()=>{
   if(busy)return;

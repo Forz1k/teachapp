@@ -1,7 +1,14 @@
 name: TeachApp Cloudflare
-# Temporarily manual-only until the Cloudflare account is connected.
+# PR verification uses only synthetic data; deployment remains explicitly authorized and manual.
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'server/**'
+      - 'tools/cloudflare-smoke.mjs'
+      - 'js/**sync*.js'
+      - 'wrangler.jsonc'
+      - '.github/workflows/cloudflare.yml'
 permissions:
   contents: read
 concurrency:
