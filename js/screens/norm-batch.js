@@ -69,7 +69,7 @@ export function openNormBatch(norm){
     if(!lesson.value)return toast('Выберите существующий урок');batchTable(norm,cls.value,lesson.value);
   },true)]));
 }
-function batchTable(norm,classId,lessonId){
+export function batchTable(norm,classId,lessonId,onReturn){
   const lesson=S.state.lessons.find(l=>l.id===lessonId),cls=S.state.classes.find(c=>c.id===classId);
   if(!lesson||!cls)return toast('Урок или класс недоступен');
   const students=S.studentsOfClass(classId),marks=S.markMap(classId),entries=new Map(),list=el('div',{class:'norm-scale-list'}),count=el('p',{role:'status'});
@@ -108,7 +108,7 @@ function batchTable(norm,classId,lessonId){
     const draft=[...entries.values()];
     if(!await ui.confirmDialog({title:'Сохранить результаты?',text:'Записей: '+draft.length+'. Пустые строки пропускаются. Отметки журнала не изменяются. Без подходящей шкалы — без оценки.',ok:'Сохранить'}))return;
     busy=true;save.disabled=true;
-    try{const records=await S.saveNormResultsBatch(norm.id,lessonId,draft,true);toast('Сохранено: '+records.length);batchTable(norm,classId,lessonId);}catch(e){toast(e.message);}finally{busy=false;save.disabled=false;}
+    try{const records=await S.saveNormResultsBatch(norm.id,lessonId,draft,true);toast('Сохранено: '+records.length);batchTable(norm,classId,lessonId,onReturn);}catch(e){toast(e.message);}finally{busy=false;save.disabled=false;}
   },true);
-  openSheet(el('div',{class:'norm-editor'},[el('h2',{text:norm.name+' · '+cls.name}),p(M.fmtFull(lesson.date)),p('Проверка ограничений по внесённым сведениям не является медицинским допуском. Уже внесённые результаты защищены от повторной записи.'),list,count,save,btn('Назад',()=>openNormBatch(norm))]));
+  openSheet(el('div',{class:'norm-editor'},[el('h2',{text:norm.name+' · '+cls.name}),p(M.fmtFull(lesson.date)),p('Проверка ограничений по внесённым сведениям не является медицинским допуском. Уже внесённые результаты защищены от повторной записи.'),list,count,save,btn(onReturn?'Вернуться к уроку':'Назад',onReturn||(()=>openNormBatch(norm)))]));
 }

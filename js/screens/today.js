@@ -2,7 +2,7 @@
 import * as M from '../model.js';
 import * as S from '../store.js';
 import * as ui from '../ui.js';
-import { openQuickEntrySheet } from './journal.js';
+import { openLessonSession } from './session.js';
 import { warning } from './health.js';
 
 const {el} = ui;
@@ -50,7 +50,7 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
       try {
         if (!todayEntries(date).some(r => r.id === row.id && r.classId === classId)) return ui.toast('Расписание изменилось. Проверьте урок.');
         S.state.currentClassId = classId;
-        await openQuickEntrySheet(classId,date);
+        await openLessonSession(classId,date);
       } finally { button.disabled = false; }
     }});
     body.append(el('article',{class:'card-block today-card'},[
