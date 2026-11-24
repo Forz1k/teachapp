@@ -11,6 +11,7 @@ import * as ui from '../ui.js';
 import * as exporter from '../export.js';
 import { seedDemo } from '../demo.js';
 
+import {openWorkCalendar} from './work-calendar.js';
 import {openArchive} from './school-archive.js';
 import {openLibrary} from './library.js';
 const { el, icon } = ui;
@@ -28,6 +29,7 @@ export function renderSettings(root, ctx = {}) {
   if(ctx.onCoach)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Режим тренера'}),el('button',{class:'btn wide',type:'button',text:'Волейбол · команды и тренировки',onclick:ctx.onCoach})]));
 
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Методические материалы'}),el('button',{class:'btn wide',type:'button',text:'Библиотека упражнений и конспекты',onclick:()=>openLibrary('school')})]));
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Рабочий календарь'}),el('button',{class:'btn wide',type:'button',text:'Календарь и напоминания',onclick:openWorkCalendar})]));
   /* ---------- учебный год ---------- */
   const yearBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Учебный год' })]);
   const yearFrom = el('input', { type: 'date', value: settings.year.from });

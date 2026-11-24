@@ -1,5 +1,6 @@
 import * as db from './db.js';
 import {uid} from './model.js';
+import {validateEvent} from './work-calendar.js';
 import {catalog} from './health.js';
 export const exerciseCategories={warmup:'Разминка',athletics:'Лёгкая атлетика',gymnastics:'Гимнастика',volleyball:'Волейбол',games:'Игры',fitness:'ОФП / СФП',cooldown:'Заминка',other:'Другое'};
 export const phases={intro:'Подготовительная',main:'Основная',end:'Заключительная'};
@@ -21,6 +22,7 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='event'){validateEvent(r);return;}
  if(r.kind==='exercise'){validateExercise(r);require(!r.id.startsWith('builtin-'),'Системное упражнение нельзя перезаписать');return;}
  if(r.kind==='plan'){
   require(only(r,['id','kind','name','context','minutes','goal','equipment','audience','items'])&&txt(r.name)&&Object.hasOwn(contexts,r.context)&&minutes(r.minutes)&&opt(r.goal,4000)&&opt(r.equipment,1000)&&opt(r.audience,200)&&Array.isArray(r.items)&&r.items.length>0&&r.items.length<=100,'Проверьте конспект');
