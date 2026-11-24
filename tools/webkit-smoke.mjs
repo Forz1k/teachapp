@@ -44,6 +44,19 @@ try{
   const overflow=await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth);
   assert.ok(overflow<=3,label+' viewport overflow: '+overflow);
  }
+ // Public viewer uses a synthetic stream; no production Firebase access.
+ const fan=await context.newPage();fan.on('pageerror',error=>errors.push(error.message));
+ await fan.addInitScript(()=>{window.EventSource=class{constructor(){this.handlers={};window.__fanPush=data=>this.handlers.put?.({type:'put',data:JSON.stringify({path:'/',data})});setTimeout(()=>this.onopen?.(),0);}addEventListener(k,f){this.handlers[k]=f;}close(){}};});
+ await fan.goto(origin+'/live/index.html');
+ await fan.waitForFunction(()=>typeof window.__fanPush==='function');
+ const future={schema:1,team:'Тестовая команда',updatedAt:Date.now(),schedule:[{id:'fixture1',opponent:'Гости',startAt:Date.now()+3600000}],archive:[]};
+ await fan.evaluate(x=>window.__fanPush(x),future);await fan.locator('.clock').waitFor();
+ assert.equal(await fan.locator('.credit a').getAttribute('href'),'https://github.com/Forz1k/teachapp');
+ await fan.locator('[data-tab="schedule"]').click();await fan.locator('.fixture').waitFor();
+ await fan.locator('[data-tab="overview"]').click();
+ await fan.locator('#theme').click();assert.equal(await fan.locator('html').getAttribute('data-theme'),'light');
+ assert.ok(await fan.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'public viewport overflow');
+ await fan.close();
  await context.setOffline(true);
  await page.reload();
  await page.locator('.workspace-nav').waitFor({timeout:45000});
