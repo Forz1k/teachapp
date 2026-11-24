@@ -37,6 +37,6 @@ try{
  stream.addEventListener('cancel',()=>{stream.close();connected=false;data=null;received=true;problem='Страница недоступна';draw();});
  stream.addEventListener('auth_revoked',()=>{stream.close();connected=false;data=null;received=true;problem='Доступ отозван';draw();});
  let fetching=false;async function reload(url){if(fetching)return;fetching=true;try{const r=await fetch(url,{cache:'no-store',referrerPolicy:'no-referrer'});if(!r.ok)throw Error();data=readPortal(await r.json());received=true;draw();}catch{}finally{fetching=false;}}
- window.addEventListener('pagehide',()=>stream.close(),{once:true});
+ window.addEventListener('pagehide',()=>stream.close(),{once:true});window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
  setInterval(()=>{if(!data)return;const state=portalState(data),stale=['live','break'].includes(state.mode)&&Date.now()-data.updatedAt>90000;if(state.mode!==lastMode||stale!==lastStale){draw();return;}if(state.mode==='upcoming')root.querySelectorAll('.clock strong').forEach((n,i)=>n.textContent=String(countdown(state.remaining)[i]).padStart(2,'0'));},1000);
 }catch{received=true;problem='Откройте постоянную ссылку, которую отправил тренер.';draw();}

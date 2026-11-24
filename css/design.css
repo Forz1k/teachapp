@@ -423,3 +423,5 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 
 .vp-scout-panel select,.vp-history-row .btn,.vp-observed-row .btn,.vp-match-more input[type=file]{min-height:44px}.vp-scout-panel .vp-table{overflow-x:auto}.vp-scout-panel .vp-heat-grid{min-width:0}.vp-scout-cell strong{font-size:clamp(16px,5vw,25px)}.vp-match-more input[type=file]{max-width:100%;width:100%}
 @media(max-width:380px){.vp-scout-cell{min-height:70px;padding:4px}.vp-scout-cell small{font-size:10px}.vp-team-emblem{width:30px;height:30px}}
+
+.vp-portal-check{display:flex;align-items:center;gap:12px;min-height:44px}.vp-portal-check input{width:20px;height:20px;flex-shrink:0}.vp-portal-fixture{padding:10px;border:1px solid var(--sep);border-radius:12px;display:grid;gap:6px}.vp-portal-fixture p{margin:0}.vp-portal-status,.vp-portal-live-status{font-size:13px;color:var(--text-2);overflow-wrap:anywhere}.vb-stack input[readonly]{text-overflow:ellipsis}

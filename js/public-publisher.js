@@ -48,7 +48,7 @@ export async function connectPortal(id,{origin,apiKey,email,password,slug='',tea
   if(!d.slug&&remote){d.team=remote.team;d.schedule=remote.schedule;d.archive=remote.archive;d.match=remote.match;d.enabled=true;d.activeId=null;}
   e.session?.close();e.epoch++;e.session=session;e.publisher=publisher;Object.assign(d,{origin,apiKey,owner:session.uid,slug:chosen,team:d.team||String(team).trim()});
   save(e);status(e,'Подключено · '+(d.enabled?'публикация включена':'публикация выключена'));
-  if(d.pendingDelete||d.enabled&&e.dirty)enqueue(e);
+  if(d.pendingDelete||d.enabled)enqueue(e);
   return portalInfo(id);
  }catch(err){session.close();throw err;}
 }
@@ -72,7 +72,7 @@ export function syncPortalMatch(match,{start=false,finish=false,discard=false}={
  const scheduled=matchingSchedule(d.schedule,match);
  if(d.activeId!==match.id){
   if(discard||finish)return false;
-  if(d.activeId&&d.match&&['live','break'].includes(d.match.status)){if(start)throw Error('Сначала завершите или отключите текущую трансляцию');return false;}
+  if(d.activeId&&d.match){if(start)throw Error('Сначала завершите или отключите текущую трансляцию');return false;}
   if(!start&&(!d.settings.auto||!scheduled))return false;
   d.activeId=match.id;
  }
@@ -85,4 +85,5 @@ export function syncPortalMatch(match,{start=false,finish=false,discard=false}={
  save(e);enqueue(e);return true;
 }
 export function heartbeatPortal(id,matchId){const e=entry(id);if(e.data.enabled&&e.data.activeId===matchId&&e.data.match&&['live','break'].includes(e.data.match.status))enqueue(e);}
+export function setPublicTeamName(id,team){const e=entry(id),name=String(team).trim().slice(0,100);if(!name)throw Error('Укажите публичное название');e.data.team=name;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
 export function stopPortalMatch(id){const e=entry(id);e.data.activeId=null;e.data.match=null;e.data.settings.auto=false;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
