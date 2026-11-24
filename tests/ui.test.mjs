@@ -485,7 +485,8 @@ test('Рабочий экран урока: явка, оценки, нормат
  const {showLessonSession}=await import('../js/screens/session.js');
  showLessonSession(l2.id);await tick();
  const sheet=doc.querySelector('.sheet');
- assert.match(sheet.textContent,/не отмечено: 2/);
+ const unknown=[...sheet.querySelectorAll('.dashboard-metric')].find(n=>n.querySelector('.metric-label')?.textContent==='Не отмечено');
+ assert.equal(unknown?.querySelector('.metric-value')?.textContent,'2');
  [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Оценки').click();
  assert.match(sheet.textContent,/Индивидуальная оценка/);
  [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Нормативы').click();
