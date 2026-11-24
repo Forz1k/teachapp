@@ -1,4 +1,4 @@
-const VERSION = 'v4.6.0';
+const VERSION = 'v4.7.0';
 const PREFIX = `teachapp:${self.registration.scope}:`;
 const CACHE = PREFIX + VERSION;
 
@@ -15,7 +15,7 @@ const PRECACHE = [
   './js/school-tools.js',
   './js/screens/school-tools.js',
   './js/screens/attention.js',
-  './js/app.js',
+  './js/app.js','./js/search.js','./js/screens/search.js',
   './js/version.js',
   './js/db.js',
   './js/backup.js',

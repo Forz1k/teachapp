@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {searchWorkspace} from '../js/search.js';
+test('workspace search isolates areas and excludes archived coach data',()=>{const d={classes:[{id:'c',name:'7А'}],students:[{id:'s',fullName:'Семён Иванов',classId:'c'}],coachTeams:[{id:'t',name:'7А'},{id:'x',name:'Архив',archived:true}],coachPlayers:[{id:'p',teamId:'t',name:'Семен Иванов'},{id:'a',teamId:'x',name:'Семен Иванов'}]};
+assert.deepEqual(searchWorkspace('school',d,'семен 7а').map(x=>x.id),['s']);assert.deepEqual(searchWorkspace('coach',d,'семён').map(x=>x.id),['p']);assert.deepEqual(searchWorkspace('coach',d,'архив'),[]);assert.deepEqual(searchWorkspace('school',d,'  '),[]);});
