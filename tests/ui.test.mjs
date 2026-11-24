@@ -568,3 +568,20 @@ test('Настройки: поиск сохраняет исходные пол�
  assert.ok(backup);search.value='Резервная копия';search.dispatchEvent(new window.Event('input'));assert.equal(backup.hidden,false);assert.ok(screen.querySelector('.settings-group[data-group=school]').hidden);
  search.value='';search.dispatchEvent(new window.Event('input'));assert.ok(!screen.querySelector('.settings-group[data-group=school]').hidden);assert.equal(backup.querySelectorAll('input[type=file]').length,1);
 });
+
+test('expiry warning opens a fresh record list instead of analytics',async()=>{
+ const {cls,a,b}=await seed();
+ const {openReviewTask}=await import('../js/screens/today.js');
+ const old=store.state.exemptions;
+ try{
+  store.state.exemptions=[{id:'test-a',studentId:a.id,dateFrom:'2026-11-01',dateTo:'2026-11-26'},{id:'test-b',studentId:b.id,dateFrom:'2026-11-01',dateTo:'2026-12-04'}];
+  openReviewTask({classId:cls.id,reviewType:'exemptions'},'2026-11-24');
+  const sheet=doc.querySelector('.sheet');
+  assert.match(sheet.textContent,/9А · Освобождения/);
+  assert.match(sheet.textContent,/Иванов Иван Иванович/);
+  assert.doesNotMatch(sheet.textContent,/Петрова Анна Сергеевна/);
+  store.state.exemptions=[];
+  openReviewTask({classId:cls.id,reviewType:'exemptions'},'2026-11-24');
+  assert.match(sheet.textContent,/Нет актуальных записей/);
+ }finally{store.state.exemptions=old;ui.closeSheet();}
+});
