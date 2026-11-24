@@ -5,3 +5,9 @@ export function metric(label,value,glyph,detail=''){
 export function actionTile(label,glyph,onclick){return el('button',{class:'dashboard-action',type:'button',onclick},[el('span',{class:'metric-icon','aria-hidden':'true'},[icon(glyph)]),el('span',{text:label}),icon('chevron')]);}
 export function dashboardHeading(title,description=''){return el('div',{class:'dashboard-heading'},[el('h2',{text:title}),description?el('p',{text:description}):null]);}
 export function lessonOverview(rows,held){return {total:rows.length,done:rows.filter(r=>r.lesson&&held(r.lesson)).length,next:rows.find(r=>!r.lesson||!held(r.lesson))||null};}
+
+export function curriculumProgress(topics,classes,lessons,held){
+ const ids=new Set(topics.map(t=>t.id)),classIds=new Set(classes),done=new Set();
+ for(const l of lessons)if(ids.has(l.topicId)&&classIds.has(l.classId)&&held(l))done.add(JSON.stringify([l.classId,l.topicId]));
+ return {done:done.size,total:ids.size*classIds.size};
+}
