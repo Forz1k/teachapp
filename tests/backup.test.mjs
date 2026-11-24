@@ -76,3 +76,22 @@ test('Полная копия демонстрационного журнала 
   await S.restoreBackup(backup);
   assert.deepEqual(await db.dumpAll(),backup.data);
 });
+
+
+test('КТП: диагностика и точечное исправление без удаления тем, уроков и оценок',async()=>{
+ await seed();const cls=S.state.classes[0],ktp=await S.addKtp({name:'Синтетический план',classIds:[cls.id]});
+ const topic=await S.addTopic('Синтетическая тема',1,ktp.id);
+ await db.put('ktp',{...ktp,classIds:[cls.id,'missing']});
+ const damaged=await db.dumpAll(),row=damaged.ktp[0];
+ const {ktpLinkIssues,validateBackup,BACKUP_VERSION}=await import('../js/backup.js');
+ assert.equal(ktpLinkIssues(damaged)[0].invalidCount,1);
+ assert.throws(()=>validateBackup({app:'teachapp',version:BACKUP_VERSION,data:damaged}),/разделе ktp/);
+ await assert.rejects(S.repairKtpPlan(row,ktp.name,[cls.id]),/Подтвердите/);
+ await assert.rejects(S.repairKtpPlan(row,ktp.name,['missing'],true),/существующие/);
+ assert.deepEqual(await db.dumpAll(),damaged);
+ await S.repairKtpPlan(row,ktp.name,[cls.id],true);
+ const repaired=await db.dumpAll();assert.equal(ktpLinkIssues(repaired).length,0);
+ assert.equal(repaired.topics[0].id,topic.id);assert.deepEqual(repaired.lessons,damaged.lessons);assert.deepEqual(repaired.marks,damaged.marks);
+ assert.doesNotThrow(()=>validateBackup({app:'teachapp',version:BACKUP_VERSION,data:repaired}));
+ await assert.rejects(S.repairKtpPlan(row,ktp.name,[cls.id],true),/изменилось/);
+});

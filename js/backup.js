@@ -11,6 +11,15 @@ const text = s => typeof s === 'string' && s.trim().length > 0;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const date = s => validPeriod(s, null);
 
+// Local diagnostics: no names or IDs are transmitted to the relay.
+export function ktpLinkIssues(data){
+ const classes=new Set(data.classes.map(c=>c.id));
+ return data.ktp.flatMap(k=>{
+  const missingName=!text(k.name),missingList=!Array.isArray(k.classIds);
+  const invalid=missingList?[]:k.classIds.filter(id=>!classes.has(id));
+  return missingName||missingList||invalid.length?[{id:k.id,name:typeof k.name==='string'?k.name:'',missingName,missingList,invalidCount:invalid.length}]:[];
+ });
+}
 export function validateBackup(payload) {
   if (payload?.app !== 'teachapp' || !object(payload.data)) throw new Error('Файл не похож на резервную копию TeachApp');
   if (![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
@@ -67,7 +76,7 @@ export function validateBackup(payload) {
   check('classes', r => text(r.name)&&validGradeLevel(r.gradeLevel));
   check('students', r => text(r.fullName) && index.classes.has(r.classId)&&validNormGroup(r.normGroup)&&(r.lineageId===undefined||text(r.lineageId)));
   if(new Set(tables.students.map(s=>s.lineageId||s.id)).size!==tables.students.length)throw Error('Повтор связи истории ученика');
-  check('ktp', r => text(r.name) && Array.isArray(r.classIds) && r.classIds.every(id => index.classes.has(id)));
+  if(ktpLinkIssues(tables).length)throw Error('Проверьте поля и связи в разделе ktp. Откройте диагностику КТП для подробностей.');
   check('topics', r => text(r.name) && (!r.ktpId || index.ktp.has(r.ktpId)) && tags(r.activityIds));
   check('lessons', r => index.classes.has(r.classId) && date(r.date) && (!r.topicId || index.topics.has(r.topicId)) && tags(r.activityIds));
   check('marks', r => pair(r) && (!r.participationId || index.participation.get(r.participationId)?.studentId === r.studentId

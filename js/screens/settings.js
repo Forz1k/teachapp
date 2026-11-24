@@ -14,7 +14,7 @@ import { seedDemo } from '../demo.js';
 import {openTournaments} from './tournaments.js';
 import {openWorkCalendar} from './work-calendar.js';
 import {openSelectiveBackup} from './selective-backup.js';
-import {openSync} from './sync.js';
+import {openSync,openKtpDiagnostics} from './sync.js';
 import {openInventory,openAchievements} from './resources.js';
 import {openDocuments} from './documents.js';
 import {openRubrics} from './school-tools.js';
@@ -275,7 +275,7 @@ export function renderSettings(root, ctx = {}) {
       let storage='';try{const estimate=await navigator.storage?.estimate?.();if(estimate&&Number.isFinite(estimate.usage)&&Number.isFinite(estimate.quota))storage=' · Хранилище: '+Math.round(estimate.usage/1048576)+' / '+Math.round(estimate.quota/1048576)+' МБ (оценка браузера)';}catch{}
       diagnostics.textContent='Структура и связи корректны · записей '+Object.values(payload.data).reduce((n,a)=>n+a.length,0)+storage;
     }catch{diagnostics.textContent='Проверка не пройдена. Не удаляйте приложение и не очищайте хранилище. Сохраните защищённую копию для диагностики.';}finally{button.disabled=false;}
-  }})]));
+  }}),el('button',{class:'btn wide',type:'button',text:'Проверить и исправить КТП',onclick:openKtpDiagnostics})]));
   const retention=el('input',{type:'number',min:0,max:3650,step:1,value:settings.retentionDays??0});
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Конфиденциальность и сроки хранения'}),
     el('p',{text:'Экранная ширма не заменяет пароль устройства. Данные IndexedDB не шифруются. Срок действует только для истёкших сведений об ограничениях и группах; 0 — срок не задан. Автоматического удаления нет.'}),

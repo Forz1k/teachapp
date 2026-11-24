@@ -1,5 +1,6 @@
 import * as S from '../store.js';
 import * as db from '../db.js';
+import {ktpLinkIssues} from '../backup.js';
 import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,disconnectSync} from '../sync.js';
 import {autoSyncStatus,withSyncSession} from '../auto-sync.js';
 import {parsePersonalCode,personalCredentials,readPersonalCode,savePersonalCode,forgetPersonalCode} from '../personal-sync.js';
@@ -18,6 +19,33 @@ function blockConflict(c,onChoice){
  select.onchange=()=>onChoice(c.key,select.value);
  return el('section',{class:'card-block coach-card'},[el('h3',{text:labels[c.store]||c.store}),p('ID: '+c.id),
   ...values.map(([name,value])=>el('details',{},[el('summary',{text:name}),tooLarge?p('Слишком большая запись для безопасного сравнения в интерфейсе. Разрешите конфликт штатными инструментами.'):el('pre',{text:explain(value),style:'white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:12px'})])),select]);
+}
+// Repair only after explicit selection and confirmation; no network requests.
+export async function openKtpDiagnostics(){
+ try{
+  const data=await db.dumpAll(),issues=ktpLinkIssues(data);
+  const root=el('div',{class:'coach-form'},[el('h2',{text:'Диагностика КТП'}),p('Только локальная проверка. Перед исправлением сохраните защищённую резервную копию. Темы, уроки, ученики и оценки не удаляются.')]);
+  if(!issues.length)root.append(p('Некорректных полей и связей КТП не обнаружено.'));
+  for(const issue of issues){
+   const row=data.ktp.find(k=>k.id===issue.id);
+   const name=el('input',{type:'text',value:issue.name,placeholder:'Название КТП'});
+   const checks=data.classes.map(c=>({id:c.id,node:el('input',{type:'checkbox',checked:Array.isArray(row.classIds)&&row.classIds.includes(c.id)})}));
+   const detail=el('div',{class:'card-block coach-card'},[el('h3',{text:issue.name||'КТП без названия'}),p([issue.missingName?'Не указано название':'',issue.missingList?'Нет корректного списка классов':'',issue.invalidCount?'Связей с отсутствующими классами: '+issue.invalidCount:''].filter(Boolean).join(' · ')),field('Название плана',name),p('Выберите классы, к которым относится этот план.'),...checks.map((c,i)=>el('label',{class:'row-item'},[c.node,el('span',{text:data.classes[i].name})]))]);
+   const save=btn('Исправить этот КТП',async()=>{
+    if(!name.value.trim()){toast('Укажите название плана');return;}
+    const ids=checks.filter(c=>c.node.checked).map(c=>c.id);
+    if(!await confirmDialog({title:'Сохранить исправление?',text:'Будет изменено только название и список привязанных классов этого КТП. Темы и уроки сохранятся. Резервная копия должна быть сохранена заранее.',ok:'Исправить'}))return;
+    save.disabled=true;
+    try{
+     const result=await withSyncSession(async()=>{await S.repairKtpPlan(row,name.value,ids,true);return true;});
+     if(!result)throw Error('Закройте другие вкладки TeachApp.');
+     toast('КТП исправлено');await openKtpDiagnostics();
+    }catch(e){toast(e.message);save.disabled=false;}
+   },'primary');
+   detail.append(save);root.append(detail);
+  }
+  root.append(btn('Закрыть',closeSheet));openSheet(root,{fullHeight:true});
+ }catch(e){toast('Не удалось проверить КТП: '+e.message);}
 }
 export function openSync(){
  const area=el('select',{'aria-label':'Контур синхронизации'},Object.entries(syncAreas).map(([value,text])=>el('option',{value,text})));
@@ -54,7 +82,7 @@ export function openSync(){
    if(next.conflicts.length){choicesStatus.textContent='Осталось разрешить: '+next.conflicts.length;return;}
    choicesStatus.textContent='На этом устройстве: новых '+next.counts.added+', изменённых '+next.counts.changed+', удалённых '+next.counts.deleted+'. Сервер получит итоговый зашифрованный снимок.';
    apply.disabled=busy;
-  }catch(e){if(n===seq)choicesStatus.textContent=e.message;}
+  }catch(e){if(n===seq){choicesStatus.textContent=e.message;if(e.message.includes('разделе ktp'))results.append(btn('Проверить и исправить КТП',openKtpDiagnostics));}}
  }
  const preview=btn('Получить и сравнить ревизии',async()=>{
   if(busy)return;
@@ -78,7 +106,9 @@ export function openSync(){
   const selected=plan,selectedClient=client,pw=secret;
   busy=true;controls(true);apply.disabled=true;
   try{
-   if(selected.revision===0){
+   const code=readPersonalCode();
+   const saved=code?await personalCredentials(code,selected.area):null;
+   if(selected.revision===0&&!(saved&&saved.endpoint===selected.endpoint&&saved.password===pw)){
     const repeat=await promptDialog({title:'Подтвердите пароль нового контура',text:'Один пароль шифрования для всех доверенных устройств этого контура; храните отдельно от ключей доступа.',password:true,ok:'Далее'});
     if(repeat!==pw){if(repeat!==null)toast('Пароли не совпадают');return;}
    }
