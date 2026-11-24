@@ -16,7 +16,7 @@ import {openDocuments} from './documents.js';
 import {openTournaments} from './tournaments.js';
 import {calendarShortcut} from './work-calendar.js';
 import {openLibrary} from './library.js';
-import {metric,actionTile,dashboardHeading,lessonOverview} from '../dashboard.js';
+import {metric,actionTile,dashboardHeading,lessonOverview,personalizedActions} from '../dashboard.js';
 const {el} = ui;
 
 export function todayEntries(date = M.todayIso()) {
@@ -107,7 +107,7 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
       button
     ]));
   }
-  body.append(dashboardHeading('Быстрые действия'),el('div',{class:'dashboard-actions'},[
+  body.append(dashboardHeading('Быстрые действия'),personalizedActions('school',[
     ctx.onSchedule?actionTile('Расписание','calendar',ctx.onSchedule):null,
     ctx.onJournal?actionTile('Журнал','journal',ctx.onJournal):null,
     ctx.onNorms?actionTile('Нормативы','quick',ctx.onNorms):null,

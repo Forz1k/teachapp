@@ -1,0 +1,3 @@
+const key='teachapp.dashboard.hidden.v1';
+export function readHidden(area,storage){if(!['school','coach'].includes(area))return [];try{const v=JSON.parse((storage??globalThis.localStorage).getItem(key)||'{}')[area];return Array.isArray(v)?[...new Set(v.filter(x=>typeof x==='string'&&x.length<=100))].slice(0,30):[];}catch{return [];}}
+export function saveHidden(area,hidden,storage){if(!['school','coach'].includes(area))throw Error('Неизвестное пространство');const s=storage??globalThis.localStorage,other=area==='school'?'coach':'school';s.setItem(key,JSON.stringify({[area]:[...new Set(hidden.filter(x=>typeof x==='string'&&x.length<=100))].slice(0,30),[other]:readHidden(other,s)}));}

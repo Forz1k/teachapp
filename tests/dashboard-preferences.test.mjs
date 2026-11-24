@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {readHidden,saveHidden} from '../js/dashboard-preferences.js';
+test('quick actions are local and scoped by workspace',()=>{const m=new Map(),s={getItem:k=>m.get(k),setItem:(k,v)=>m.set(k,v)};saveHidden('school',['Документы','Документы'],s);saveHidden('coach',['Матчи'],s);assert.deepEqual(readHidden('school',s),['Документы']);assert.deepEqual(readHidden('coach',s),['Матчи']);saveHidden('school',[],s);assert.deepEqual(readHidden('school',s),[]);assert.deepEqual(readHidden('coach',s),['Матчи']);});
