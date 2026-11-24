@@ -103,3 +103,22 @@ export function readPortal(raw){
  const schedule=[];for(const x of list(raw.schedule).slice(0,MAX_SCHEDULE)){try{schedule.push(scheduleItem(x));}catch{}}
  return {schema:PORTAL_SCHEMA,team:clean(raw.team),updatedAt:raw.updatedAt,schedule:sortedSchedule(schedule),match,archive:list(raw.archive).map(archived).filter(Boolean).slice(0,MAX_ARCHIVE)};
 }
+
+/** Results are derived solely from the published archive and completed current match. */
+export function fanResults(data){
+ const rows=new Map((data?.archive||[]).map(x=>[x.id,x]));
+ if(data?.match?.status==='finished')rows.set(data.match.id,archiveMatch(data.match));
+ return [...rows.values()].sort((a,b)=>b.startedAt-a.startedAt||a.id.localeCompare(b.id));
+}
+export function resultOutcome(x){return x.setsWon.ours>x.setsWon.theirs?'win':x.setsWon.ours<x.setsWon.theirs?'loss':'draw';}
+export function resultSummary(rows){
+ const counts={win:0,loss:0,draw:0};for(const x of rows)counts[resultOutcome(x)]++;
+ let streak=0;
+ // Same-day manual results have no actual time; do not infer their sequence if outcomes differ.
+ for(let i=0;i<rows.length;){
+  const day=localDay(rows[i].startedAt),group=[];do{group.push(rows[i++]);}while(i<rows.length&&localDay(rows[i].startedAt)===day);
+  if(group.every(x=>resultOutcome(x)==='win'))streak+=group.length;
+  else break;
+ }
+ return {...counts,total:rows.length,streak};
+}
