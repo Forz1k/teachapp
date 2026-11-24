@@ -521,3 +521,26 @@ test('Подробный матч: табло и две половины пло�
  openDetailedMatch(d,()=>{},()=>{});await tick();
  const sheet=doc.querySelector('.sheet');assert.equal(sheet.querySelectorAll('.vp-player').length,12);assert.match(sheet.textContent,/\+1 Наши/);assert.match(sheet.textContent,/Гости/);ui.closeSheet();
 });
+
+test('Расстановка по зонам: последовательный выбор, дубли, либеро, копирование',async()=>{
+ const {lineupPicker}=await import('../js/screens/lineup-picker.js');
+ const players=Array.from({length:8},(_,i)=>({id:'p'+i,number:i+1,name:'Игрок '+i}));
+ const prev=players.slice(0,6).map(p=>p.id);
+ const final=[...prev.slice(1),prev[0]];
+ const picker=lineupPicker(players,[],{excluded:['p7'],previous:prev,final});
+ const {node}=picker;
+ const choices=()=>[...node.querySelectorAll('.lineup-player-list button')];
+ const click=id=>choices().find(b=>b.textContent.includes('Игрок '+id)).click();
+ assert.match(node.querySelector('.lineup-status').textContent,/зону 1/);
+ assert.ok(!choices().some(b=>b.textContent.includes('Игрок 7')));
+ click(0);assert.equal(picker.get()[0],'p0');assert.match(node.querySelector('.lineup-status').textContent,/зону 2/);
+ assert.ok(!choices().some(b=>b.textContent.includes('Игрок 0')));
+ for(let i=1;i<6;i++)click(i);
+ assert.deepEqual(picker.get(),prev);assert.match(node.querySelector('.lineup-status').textContent,/готова/);
+ node.querySelector('.zone-3').click();click(6);
+ assert.equal(picker.get()[2],'p6');assert.equal(new Set(picker.get()).size,6);
+ [...node.querySelectorAll('button')].find(b=>b.textContent==='Взять состав на конец партии').click();assert.deepEqual(picker.get(),final);
+ [...node.querySelectorAll('button')].find(b=>b.textContent==='Копировать старт прошлой партии').click();assert.deepEqual(picker.get(),prev);
+ picker.setExcluded(['p0']);assert.equal(picker.get()[0],'');assert.ok(!choices().some(b=>b.textContent.includes('Игрок 0')));
+ [...node.querySelectorAll('button')].find(b=>b.textContent==='Очистить расстановку').click();assert.deepEqual(picker.get(),Array(6).fill(''));
+});
