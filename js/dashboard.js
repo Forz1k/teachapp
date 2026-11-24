@@ -50,3 +50,14 @@ export function personalizedActions(area,nodes){
  openSheet(el('div',{class:'coach-form'},[el('h2',{text:'Быстрые действия'}),el('p',{text:'Настройте ярлыки главной страницы. Скрытые действия остаются доступны здесь и в основных разделах.'}),...rows.map(r=>r.node),el('button',{type:'button',class:'btn primary wide',text:'Сохранить',onclick:()=>{try{saveHidden(area,rows.filter(r=>!r.c.checked).map(r=>r.name));draw();closeSheet();}catch(e){toast('Не удалось сохранить настройки');}}}),el('button',{type:'button',class:'btn wide',text:'Показать все',onclick:()=>{try{saveHidden(area,[]);draw();closeSheet();}catch(e){toast('Не удалось сохранить настройки');}}}),el('button',{type:'button',class:'btn wide',text:'Закрыть',onclick:closeSheet}),...actions.filter(n=>hidden.has(n.dataset.actionLabel)).map(n=>el('button',{type:'button',class:'btn wide',text:'Открыть: '+n.dataset.actionLabel,onclick:()=>{closeSheet();n.click();}}))]));};
  root.prepend(el('button',{type:'button',class:'btn small',text:'Настроить быстрые действия',onclick:edit}));draw();return root;
 }
+
+/** Explicit completion is distinct from attendance evidence. Never create records here. */
+export function lessonDayStatus(row,attendance){
+ if(!row.lesson)return 'planned';
+ if(row.lesson.held)return attendance.unknown?'review':'done';
+ return 'unfinished';
+}
+export function dayReview(rows,attendanceFor){
+ const items=rows.map(row=>{const attendance=row.lesson?attendanceFor(row):{unknown:0,present:0,absent:0,exempt:0};return {row,attendance,status:lessonDayStatus(row,attendance)};});
+ return {items,confirmed:items.filter(x=>['review','done'].includes(x.status)).length,review:items.filter(x=>x.status==='review').length,next:items.find(x=>['unfinished','planned'].includes(x.status))||null};
+}

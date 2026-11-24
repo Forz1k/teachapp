@@ -16,7 +16,7 @@ import {openDocuments} from './documents.js';
 import {openTournaments} from './tournaments.js';
 import {calendarShortcut} from './work-calendar.js';
 import {openLibrary} from './library.js';
-import {metric,actionTile,dashboardHeading,lessonOverview,personalizedActions} from '../dashboard.js';
+import {metric,actionTile,dashboardHeading,lessonOverview,personalizedActions,dayReview} from '../dashboard.js';
 const {el} = ui;
 
 export function todayEntries(date = M.todayIso()) {
@@ -62,8 +62,8 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
   ]));
   const rows = todayEntries(date);
   const body = el('div',{class:'today-list dashboard'});
-  const summary=lessonOverview(rows,S.lessonHeld);
-  body.append(el('div',{class:'dashboard-metrics'},[metric('Уроков в плане',summary.total,'calendar'),metric('Проведено',summary.done+' / '+summary.total,'check')]));
+  const summary=lessonOverview(rows,S.lessonHeld),review=dayReview(rows,row=>S.attendanceFor([row.lesson],S.studentsOfClass(row.classId),row.classId));
+  body.append(el('div',{class:'dashboard-metrics'},[metric('Уроков в плане',summary.total,'calendar'),metric('Подтверждено',review.confirmed+' / '+summary.total,'check'),metric('Проверить явку',review.review,'journal')]));
   const taskHolder=el('div',{class:'attention-holder'});
   const onTask=task=>{
     const t=task.target;
@@ -75,38 +75,44 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
   const tasks=schoolTasks(S.state,date);
   taskHolder.append(attentionPanel(tasks.concat(commonTasks(S.state.settings,[],date)),onTask));body.append(taskHolder);
   listWork('event').then(events=>{if(taskHolder.isConnected)taskHolder.replaceChildren(attentionPanel(tasks.concat(commonTasks(S.state.settings,events,date)),onTask));}).catch(()=>{});
-  body.append(dashboardHeading('Уроки дня',summary.next?'Первый незавершённый урок выделен':'Все уроки завершены или нет расписания'));
-  if (!rows.length) body.append(el('div',{class:'empty',text:'На сегодня нет запланированных уроков.'}));
+  const next=review.next?.row;
+  const openRow=async row=>{if(row.lesson)return showLessonSession(row.lesson.id);S.state.currentClassId=row.classId;await openLessonSession(row.classId,date);};
+  if(next)body.append(el('section',{class:'card-block day-next'},[el('small',{text:'Следующий урок к работе'}),el('h2',{text:next.cls.name+' · '+(next.time||'без времени')}),el('button',{type:'button',class:'btn primary wide',text:next.lesson?'Продолжить урок':'Открыть урок',onclick:()=>openRow(next)})]));
+  body.append(dashboardHeading('Уроки дня','Подтверждение проведения и фактические отметки учитываются отдельно'));
+  const filter=el('select',{'aria-label':'Статус уроков'},[['all','Все уроки'],['work','Не завершены'],['review','Проверить явку'],['done','Завершены']].map(([value,text])=>el('option',{value,text})));
+  const list=el('div',{class:'day-lesson-list'}),empty=el('p',{class:'profile-note',text:'Нет уроков по выбранному статусу.'});body.append(filter,list,empty);
+  filter.onchange=()=>{let count=0;for(const n of list.children){const status=n.dataset.dayStatus;n.hidden=filter.value!=='all'&&(filter.value==='work'?!['planned','unfinished'].includes(status):status!==filter.value);if(!n.hidden)count++;}empty.hidden=count>0;};
+  if (!rows.length) empty.textContent='На выбранный день нет запланированных уроков.';
   const topics = new Map(S.state.topics.map(t => [t.id,t]));
   const marks = new Map();
   for (const m of S.state.marks) {
     if (!marks.has(m.lessonId)) marks.set(m.lessonId,new Map());
     marks.get(m.lessonId).set(m.studentId,m);
   }
-  for (const row of rows) {
-    const {cls,lesson,classId} = row;
+  for (const item of review.items) {
+    const {row,status,attendance}=item,{cls,lesson,classId} = row;
     const students = S.studentsOfClass(classId);
     const byStudent = marks.get(lesson?.id) || new Map();
     const filled = students.filter(s => byStudent.has(s.id)).length;
     const exempt = students.filter(s => M.hasOsv(byStudent.get(s.id)) || S.activeExemption(s.id,date)).length;
     const planned = lesson || {classId,date};
-    const button = el('button',{type:'button',class:'btn primary wide',text:'Начать урок',onclick:async () => {
+    const button = el('button',{type:'button',class:'btn primary wide',text:lesson?(lesson.held?'Открыть урок':'Продолжить урок'):'Начать урок',onclick:async () => {
       button.disabled = true;
       try {
         if (!todayEntries(date).some(r => r.id === row.id && r.classId === classId)) return ui.toast('Расписание изменилось. Проверьте урок.');
-        S.state.currentClassId = classId;
-        await openLessonSession(classId,date);
+        await openRow(row);
       } finally { button.disabled = false; }
     }});
-    body.append(el('article',{class:'card-block today-card lesson-card'+(row===summary.next?' lesson-card-next':'')+(lesson&&S.lessonHeld(lesson)?' lesson-card-done':'')},[
-      el('div',{class:'lesson-card-meta'},[el('span',{text:row.slot?'Урок '+row.slot+' · '+(row.time||'без времени'):'Вне расписания'}),el('span',{class:'status-pill',text:lesson&&S.lessonHeld(lesson)?'Проведён':row===summary.next?'К работе':'Запланирован'})]),
+    list.append(el('article',{class:'card-block today-card lesson-card'+(row===next?' lesson-card-next':'')+(status==='done'?' lesson-card-done':''),'data-day-status':status},[
+      el('div',{class:'lesson-card-meta'},[el('span',{text:row.slot?'Урок '+row.slot+' · '+(row.time||'без времени'):'Вне расписания'}),el('span',{class:'status-pill',text:({planned:'Запланирован',unfinished:'Не подтверждён',review:'Проверить явку',done:'Проведён'})[status]})]),
       el('h2',{text:cls.name}),
       el('div',{text:topics.get(lesson?.topicId)?.name || 'Тема КТП не указана'}),
-      el('div',{class:'today-meta',text:'Отметки: '+filled+' из '+students.length+' · ОСВ: '+exempt}),
+      el('div',{class:'today-meta',text:'Отметки: '+filled+' из '+students.length+' · ОСВ: '+exempt+(lesson&&attendance.held?' · явка неизвестна: '+attendance.unknown:'')}),
       warning(planned),
       button
     ]));
   }
+  filter.onchange();
   body.append(dashboardHeading('Быстрые действия'),personalizedActions('school',[
     ctx.onSchedule?actionTile('Расписание','calendar',ctx.onSchedule):null,
     ctx.onJournal?actionTile('Журнал','journal',ctx.onJournal):null,
