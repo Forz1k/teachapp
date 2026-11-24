@@ -29,13 +29,14 @@ function lineupFields(players,initial=[],libero=null){
  return {node:el('div',{class:'vb-stack'},[picker.node,field('Либеро (не входит в стартовую шестёрку)',lib)]),values:()=>({lineup:picker.get(),libero:lib.value||null})};
 }
 import {openLineupAssistant,openTacticBoards} from './tactics.js';
-export async function openMatchCenter(team,refresh){
+export async function openMatchCenter(team,refresh,options={}){
  try{
  const data=await C.loadCoach(),players=data.coachPlayers.filter(p=>p.teamId===team.id),active=players.filter(p=>!p.archived);
  const body=el('div',{class:'vb-stack'},[el('h2',{text:'Площадка и матч · '+team.name}),p('Черновик матча сохраняется после каждого действия. Статистика отражает только отмеченные действия.')]);
  const back=()=>openMatchCenter(team,refresh);
+ if(options.draftId){const draft=data.coachLive.find(x=>x.teamId===team.id&&x.id===options.draftId);if(draft){if(draft.mode==='dual')openDetailedMatch(draft,back,refresh);else live(team,players,draft,refresh);return;}}
  const setupOptions={matches:data.coachMatches,presets:data.coachLineups};
- const fixtures=portalInfo(team.id).data.schedule.filter(x=>localDay(x.startAt)===todayIso());
+ const portal=portalInfo(team.id).data,fixtures=portal.schedule.filter(x=>localDay(x.startAt)===todayIso()&&x.id!==portal.match?.scheduledId&&!data.coachLive.some(d=>d.teamId===team.id&&d.date===todayIso()&&d.opponent.trim().toLocaleLowerCase('ru')===x.opponent.trim().toLocaleLowerCase('ru')));
  if(fixtures.length)body.append(el('section',{class:'card-block vb-stack'},[el('h3',{text:'Сегодня по расписанию'}),...fixtures.map(f=>el('div',{class:'vb-stack'},[p(new Intl.DateTimeFormat('ru-RU',{timeStyle:'short'}).format(f.startAt)+' · '+f.opponent),btn('Подготовить матч · '+f.opponent,()=>openDetailedSetup(team,active,back,refresh,null,{...setupOptions,fixture:f}),'primary wide')]))]));
  body.append(btn('+ Новый подробный матч',()=>openDetailedSetup(team,active,back,refresh,null,setupOptions),'primary wide'),btn('Прежний режим матча',()=>setup(team,active,null,refresh),'wide'),btn('+ Сохранить расстановку',()=>setup(team,active,{preset:true},refresh),'wide'),btn('Помощник состава',()=>openLineupAssistant(team,C.teamView(data,team.id),back),'wide'),btn('Тактическая доска',()=>openTacticBoards(team),'wide'),btn('Публичная страница команды',()=>openPublicPortal(team,back),'wide'));
  for(const x of data.coachLineups.filter(x=>x.teamId===team.id))body.append(el('div',{class:'card-block vb-stack'},[p(x.name+' · '+V.schemes[x.scheme]),court(players,x.lineup,x.libero,null,null,null),
