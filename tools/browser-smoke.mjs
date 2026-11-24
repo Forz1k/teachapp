@@ -99,7 +99,14 @@ try{
  await clickText('.workspace-option','Учитель');await nav('Главная');await ready('.dashboard');await capture('320-school-dark');
  await viewport(844,390);await capture('844-landscape-dark');
  await viewport(768,1024);await nav('Журнал');await ready('table.journal');await capture('768-journal-dark');
- await viewport(1280,900);await capture('1280-journal-dark');await nav('Главная');await capture('1280-school-dark');
+
+ await viewport(1280,900);
+ // Populate a full trimester and verify real scroll geometry, not only DOM presence.
+ await evalJs("(async()=>{const S=await import('./js/store.js'),M=await import('./js/model.js');const id=S.state.currentClassId,period=S.currentTrimester();for(let i=0;i<32;i++){const d=M.addDays(period.from,i);if(d<=period.to)await S.addLesson(id,d);}return true})()");
+ await ready('table.journal');
+ const geometry=await evalJs('(()=>{const g=document.querySelector(".journal-grid"),a=g.querySelector("th.col-num"),b=g.querySelector("th.col-name"),end=g.querySelector("th.col-sum:last-child");document.querySelector(".journal-scroll-end").click();const right=g.getBoundingClientRect().right;const reached=end.getBoundingClientRect().right<=right+2;const scrolled=g.scrollLeft>0;document.querySelector(".journal-scroll-controls input").value=0;document.querySelector(".journal-scroll-controls input").dispatchEvent(new Event("input"));return {scrolled,reached,aligned:getComputedStyle(a).verticalAlign==="middle"&&getComputedStyle(b).verticalAlign==="middle",back:g.scrollLeft===0}})()');
+ assert.deepEqual(geometry,{scrolled:true,reached:true,aligned:true,back:true});
+ await capture('1280-journal-dark');await nav('Главная');await capture('1280-school-dark');
  await theme('light');await capture('1280-school-light');
  await click('.privacy-action');await ready('.privacy-cover');assert.equal(await evalJs('document.querySelector("#app").inert'),true);await clickText('.privacy-cover button','Показать данные');assert.equal(await evalJs('document.querySelector("#app").inert'),false);
  await viewport(390,844);

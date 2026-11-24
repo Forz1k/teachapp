@@ -99,6 +99,11 @@ export function renderSchedule(root, opts = {}) {
 
     const wrap = el('div', { style: 'padding:0 16px' });
 
+    if(M.isSchoolHoliday(state.date,store.state.settings.holidays||[])){
+      wrap.append(el('div',{class:'empty'},[icon('calendar'),el('div',{text:'Каникулы · уроков по расписанию нет'}),el('p',{class:'sub',text:'Общие даты для всех классов можно изменить в настройках учебного года. Недельный шаблон и ранее созданные уроки сохранены.'})]));
+      body.append(wrap);return;
+    }
+
     if (changed) {
       wrap.append(el('div', { style: 'display:flex;gap:8px;margin-bottom:12px' }, [
         el('button', {

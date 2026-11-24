@@ -78,6 +78,7 @@ export function renderSettings(root, ctx = {}) {
     el('button',{class:'btn',type:'button',text:'Добавить свой период',onclick:()=>{draft.push({id:M.uid('period'),kind:'custom',name:'Новый период',from:'',to:''});draw();}}),
     el('button',{class:'btn primary wide',type:'button',text:'Сохранить периоды',onclick:async()=>{try{await store.savePeriods(draft);ui.toast('Периоды сохранены');}catch(err){ui.toast(err.message);}}}));
   body.append(trBlock);
+  body.append(schoolHolidaysCard());
 
   /* ---------- классы ---------- */
   const clsBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Классы' })]);
@@ -658,7 +659,7 @@ function showTsvHelp() {
 
 /** Keep original controls and handlers; group them without rebuilding inputs. */
 export function organizeSettings(body){
- const groups=[{name:'Рабочие инструменты',id:'tools',match:/Аналитика|Режим тренера|Методические|Рабочий календарь|Соревнования|Генератор документов|Спортивный инвентарь/},{name:'Учебный год и классы',id:'school',match:/Учебный год|Учебные периоды|^Классы$|КТП/},{name:'Данные и безопасность',id:'data',match:/^Импорт$|^Экспорт$|Резервная копия|Диагностика базы|Конфиденциальность|Демонстрационные/},{name:'Приложение',id:'app',match:/Оформление|О приложении/}];
+ const groups=[{name:'Рабочие инструменты',id:'tools',match:/Аналитика|Режим тренера|Методические|Рабочий календарь|Соревнования|Генератор документов|Спортивный инвентарь/},{name:'Учебный год и классы',id:'school',match:/Учебный год|Учебные периоды|Каникулы|^Классы$|КТП/},{name:'Данные и безопасность',id:'data',match:/^Импорт$|^Экспорт$|Резервная копия|Диагностика базы|Конфиденциальность|Демонстрационные/},{name:'Приложение',id:'app',match:/Оформление|О приложении/}];
  const cards=[...body.children],sections=[];
  for(const g of groups){const list=cards.filter(c=>g.match.test(c.querySelector('.head')?.textContent||''));if(!list.length)continue;const section=el('section',{class:'settings-group','data-group':g.id},[dashboardHeading(g.name),...list]);sections.push(section);}
  const extras=cards.filter(c=>!sections.some(s=>s.contains(c)));if(extras.length)sections.push(el('section',{class:'settings-group'},extras));
@@ -667,4 +668,41 @@ export function organizeSettings(body){
  function filter(){const q=search.value.trim().toLocaleLowerCase('ru');let n=0;for(const section of sections){let visible=0;for(const c of section.querySelectorAll(':scope > .card-block')){c.hidden=!!q&&!c.textContent.toLocaleLowerCase('ru').includes(q);if(!c.hidden){visible++;n++;}}section.hidden=!!q&&!visible;}empty.hidden=!q||n>0;}
  search.oninput=filter;
  body.replaceChildren(search,nav,...sections,empty);
+}
+
+
+/** A single calendar shared by all classes and devices. */
+export function schoolHolidaysCard(){
+  const card=el('div',{class:'card-block school-holidays'});
+  const draw=()=>{
+    const holidays=store.state.settings.holidays||[];
+    const from=el('input',{type:'date','aria-label':'Начало каникул'});
+    const to=el('input',{type:'date','aria-label':'Конец каникул'});
+    const list=el('div',{class:'holiday-list'});
+    const renderRange=h=>M.fmtFull(h.from)+' — '+M.fmtFull(h.to);
+    for(const h of holidays){
+      const existing=store.state.lessons.filter(l=>M.inRange(l.date,h.from,h.to)).length;
+      list.append(el('div',{class:'row-item'},[
+        el('div',{class:'label'},[el('strong',{text:renderRange(h)}),el('div',{class:'sub',text:existing?'Уже создано уроков: '+existing+' (сохранены)':'Для всех классов'})]),
+        el('button',{class:'btn small danger',type:'button',text:'Удалить','aria-label':'Удалить каникулы '+renderRange(h),onclick:async()=>{
+          if(!await ui.confirmDialog({title:'Удалить период каникул?',text:'Расписание на эти даты снова станет доступно. Уже созданные уроки не изменятся.',ok:'Удалить',danger:true}))return;
+          try{await store.saveSchoolHolidays((store.state.settings.holidays||[]).filter(x=>x.from!==h.from||x.to!==h.to));draw();ui.toast('Каникулы удалены');}catch(err){ui.toast(err.message);}
+        }}),
+      ]));
+    }
+    if(!holidays.length)list.append(el('p',{class:'sub',text:'Периоды каникул пока не добавлены.'}));
+    const save=el('button',{class:'btn primary wide',type:'button',text:'Добавить каникулы',onclick:async()=>{
+      const h={from:from.value,to:to.value};
+      const next=[...(store.state.settings.holidays||[]),h];
+      try{M.validateSchoolHolidays(next);}catch(err){return ui.toast(err.message);}
+      const existing=store.state.lessons.filter(l=>M.inRange(l.date,h.from,h.to)).length;
+      if(existing&&!await ui.confirmDialog({title:'Уже есть уроки на каникулах',text:'Будет исключено расписание для всех классов, но '+existing+' уже созданных уроков останутся в журнале. Их можно удалить вручную в редакторе уроков триместра. Оценки не удаляются.',ok:'Сохранить каникулы'}))return;
+      save.disabled=true;
+      try{await store.saveSchoolHolidays([...(store.state.settings.holidays||[]),h]);draw();ui.toast('Каникулы сохранены для всех классов');}catch(err){save.disabled=false;ui.toast(err.message);}
+    }});
+    card.replaceChildren(el('div',{class:'head',text:'Каникулы для всех классов'}),
+      el('p',{class:'sub',text:'Даты включительно. Общие для школы, исключаются из дневного расписания и планирования новых уроков. Уже созданные уроки и оценки не удаляются.'}),
+      list,el('label',{class:'field'},['Начало каникул',from]),el('label',{class:'field'},['Окончание каникул',to]),save);
+  };
+  draw();return card;
 }

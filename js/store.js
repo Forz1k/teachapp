@@ -194,6 +194,10 @@ export async function saveSettings(patch) {
   notify();
 }
 
+export async function saveSchoolHolidays(holidays){
+  await saveSettings({holidays:M.validateSchoolHolidays(holidays)});
+}
+
 export async function savePeriods(periods) {
   await saveSettings({trimesters:A.validatePeriods(periods,state.settings.year)});
 }
@@ -883,6 +887,7 @@ export function scheduleOfDay(weekday) {
 
 /** Расписание на конкретную дату с учётом переопределений. */
 export function scheduleForDate(dateIso) {
+  if(M.isSchoolHoliday(dateIso,state.settings.holidays||[]))return [];
   return M.scheduleForDate(state.schedule, state.scheduleOverrides, dateIso);
 }
 

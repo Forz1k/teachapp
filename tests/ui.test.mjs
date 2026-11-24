@@ -133,6 +133,8 @@ test('журнал строит сетку: строки учеников, ко�
   assert.deepEqual([...table.querySelectorAll('.name-cell')].map(n=>n.textContent.trim()), ['Иванов Иван','Петрова Анна']);
   assert.equal(table.querySelectorAll('thead .journal-lesson-head').length,2);
   assert.equal(screen.querySelector('.journal-manage').textContent,'Уроки триместра');
+  assert.ok(screen.querySelector('.journal-scroll-controls input[type=range]'));
+  assert.ok(screen.querySelector('.journal-scroll-end'));
 
   // Оценка 5 и отметка Н отрисованы
   const html = table.innerHTML;
@@ -245,7 +247,7 @@ test('настройки показывают все разделы', async () =
   renderSettings(screen, {});
 
   const text = screen.textContent;
-  for (const label of ['Учебный год', 'Триместры', 'Классы', 'Импорт', 'Экспорт', 'Резервная копия', 'Демонстрационные данные']) {
+  for (const label of ['Учебный год', 'Триместры', 'Каникулы для всех классов', 'Классы', 'Импорт', 'Экспорт', 'Резервная копия', 'Демонстрационные данные']) {
     assert.ok(text.includes(label), `раздел «${label}» есть`);
   }
 });
@@ -660,4 +662,21 @@ test('Зрительское табло безопасно отображает 
  renderSpectatorBoard(target,a);assert.equal(target.querySelector('.team').textContent,'<img src=x>');assert.equal(target.querySelector('img'),null);assert.equal(target.querySelector('.score').textContent,'7');
  renderSpectatorBoard(target,{...a,score:{ours:8,theirs:5}},false);assert.match(target.body.textContent,/НЕТ СВЯЗИ/);assert.equal(target.querySelector('.score').textContent,'8');assert.equal(target.querySelectorAll('#teachapp-score-style').length,1);
  [...target.querySelectorAll('button')].find(b=>b.textContent==='Компактное табло').click();assert.ok(target.documentElement.classList.contains('obs-compact'));renderSpectatorBoard(target,a);assert.ok(target.documentElement.classList.contains('obs-compact'));assert.ok([...target.querySelectorAll('button')].some(b=>b.textContent==='Полное табло'));
+});
+
+
+test('каникулы можно добавить в общих настройках',async()=>{
+  await seed();
+  const screen=doc.createElement('div');
+  renderSettings(screen,{});
+  const card=screen.querySelector('.school-holidays');
+  assert.ok(card);
+  assert.equal(card.closest('[data-group]').dataset.group,'school');
+  card.querySelector('input[aria-label="Начало каникул"]').value='2026-12-28';
+  card.querySelector('input[aria-label="Конец каникул"]').value='2027-01-10';
+  [...card.querySelectorAll('button')].find(b=>b.textContent==='Добавить каникулы').click();
+  await tick(80);
+  assert.deepEqual(store.state.settings.holidays,[{from:'2026-12-28',to:'2027-01-10'}]);
+  await store.load();
+  assert.deepEqual(store.state.settings.holidays,[{from:'2026-12-28',to:'2027-01-10'}]);
 });
