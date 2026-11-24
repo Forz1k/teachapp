@@ -39,7 +39,7 @@ let syncSession=null,autoBusy=false,autoAttempt=0;
 let syncHint='';
 function updateSyncIndicator(){
  const node=appRoot.querySelector('.personal-sync-action');if(!node)return;
- const report=autoSyncStatus(),problem=report.areas.some(x=>!['synced','setup'].includes(x.status)),setup=report.areas.some(x=>x.status==='setup');
+ const report=autoSyncStatus(),problem=report.phase==='interrupted'||report.areas.some(x=>!['synced','setup'].includes(x.status)),setup=report.areas.some(x=>x.status==='setup');
  const label=syncHint||(navigator.onLine===false?'Нет сети · данные сохранены локально':problem?'Требуется проверка синхронизации':setup?'Нужно подтвердить первое подключение':report.at?'Последняя проверка: '+new Date(report.at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'Синхронизировать сейчас');
  node.title=label;node.setAttribute('aria-label','Синхронизировать сейчас. '+label);node.dataset.status=navigator.onLine===false?'offline':problem?'review':report.at&&!setup?'ok':'idle';
 }
@@ -59,7 +59,7 @@ async function maybeAutoSync(initial=false,manual=false){
   const result=await syncSession.exclusive(()=>runPersonalSync());
   if(result?.areas.some(x=>x.changed))await store.load();
   syncHint=result?'':'Другая вкладка открыта · обмен отложен';
-  if(manual){const needsReview=result?.areas.some(x=>!['synced','setup'].includes(x.status)),hasSetup=result?.areas.some(x=>x.status==='setup');ui.toast(!result?'Закройте другие вкладки TeachApp.':needsReview?'Проверьте синхронизацию в настройках.':hasSetup?'Проверьте первичное подключение контуров в настройках.':'Синхронизация завершена.');}
+  if(manual){const needsReview=result&&(result.phase!=='finished'||result.areas.some(x=>!['synced','setup'].includes(x.status))),hasSetup=result?.areas.some(x=>x.status==='setup');ui.toast(!result?'Закройте другие вкладки TeachApp.':needsReview?'Проверьте синхронизацию в настройках.':hasSetup?'Проверьте первичное подключение контуров в настройках.':'Синхронизация завершена.');}
  }catch{syncHint='Обмен не завершён';if(manual)ui.toast(syncHint);}
  finally{appRoot.inert=false;if(oldTabbar)oldTabbar.inert=false;if(tabbarEl)tabbarEl.inert=false;autoBusy=false;updateSyncIndicator();}
 }
