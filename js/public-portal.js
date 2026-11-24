@@ -114,11 +114,14 @@ export function resultOutcome(x){return x.setsWon.ours>x.setsWon.theirs?'win':x.
 export function resultSummary(rows){
  const counts={win:0,loss:0,draw:0};for(const x of rows)counts[resultOutcome(x)]++;
  let streak=0;
- // Same-day manual results have no actual time; do not infer their sequence if outcomes differ.
- for(let i=0;i<rows.length;){
-  const day=localDay(rows[i].startedAt),group=[];do{group.push(rows[i++]);}while(i<rows.length&&localDay(rows[i].startedAt)===day);
-  if(group.every(x=>resultOutcome(x)==='win'))streak+=group.length;
-  else break;
+ // Manual results only have a date. On a mixed-outcome day with unknown order,
+ // do not invent a streak; exact live timestamps can be ordered.
+ const day=x=>x.id.startsWith('result_')?new Date(x.startedAt).toISOString().slice(0,10):localDay(x.startedAt);
+ const groups=new Map();for(const x of rows){const k=day(x);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(x);}
+ outer:for(const k of [...groups.keys()].sort().reverse()){
+  const group=groups.get(k).slice().sort((a,b)=>b.startedAt-a.startedAt);
+  if(group.some(x=>x.id.startsWith('result_'))&&group.some(x=>resultOutcome(x)!=='win'))break;
+  for(const x of group){if(resultOutcome(x)!=='win')break outer;streak++;}
  }
  return {...counts,total:rows.length,streak};
 }
