@@ -4,7 +4,7 @@ import {readPersonalCode,personalCredentials} from './personal-sync.js';
 let last={phase:'idle',areas:[],at:null},activeSession=null;
 export const withSyncSession=task=>activeSession?activeSession.exclusive(task):task();
 export const autoSyncStatus=()=>({...last,areas:last.areas.map(x=>({...x}))});
-export async function runPersonalSync({getCode=readPersonalCode,online=()=>globalThis.navigator?.onLine!==false,clientFactory=relayClient,runArea=syncPersonalArea}={}){
+export async function runPersonalSync({getCode=readPersonalCode,online=()=>globalThis.navigator?.onLine!==false,clientFactory=relayClient,runArea=syncPersonalArea,initialize=false}={}){
  const code=getCode();
  if(!code)return {phase:'off',areas:[],at:null};
  if(!online())return {phase:'offline',areas:[],at:null};
@@ -17,7 +17,7 @@ export async function runPersonalSync({getCode=readPersonalCode,online=()=>globa
    const credentials=await personalCredentials(code,area);
    if(getCode()!==code||!online())break;
    const client=clientFactory(credentials.endpoint,area,credentials.token,{timeoutMs:7000});
-   areas.push(await runArea({...credentials,client,stillAllowed:()=>getCode()===code&&online()}));
+   areas.push(await runArea({...credentials,client,initialize,stillAllowed:()=>getCode()===code&&online()}));
   }catch{areas.push({area,status:'error'});}
  }
  last={phase:'finished',areas,at:new Date().toISOString()};

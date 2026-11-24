@@ -283,10 +283,10 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
  }catch{throw Error((pullOnly?'Локальная запись не завершилась.':'Сервер принял пакет, но локальная запись не завершилась.')+' Ваши данные не заменены этой операцией. Повторите синхронизацию; при конфликте проверьте обе версии.');}
 }
 // Automatic sync only for an already confirmed workspace; never auto-propagate deletions.
-export async function syncPersonalArea({area,endpoint,password,client,stillAllowed=()=>true}){
- if(!await syncStatus(area))return {area,status:'setup'};
+export async function syncPersonalArea({area,endpoint,password,client,stillAllowed=()=>true,initialize=false}){
+ if(!initialize&&!await syncStatus(area))return {area,status:'setup'};
  const plan=await prepareSync({area,endpoint,password,client});
- if(!plan.checkpoint)return {area,status:'setup'};
+ if(!initialize&&!plan.checkpoint)return {area,status:'setup'};
  if(plan.conflicts.length)return {area,status:'conflict'};
  const current=await db.dumpAll(),preview=previewSync(current,plan,{});
  if(preview.conflicts.length||counts(plan.base,preview.snapshot).deleted||preview.counts.deleted)return {area,status:'review'};

@@ -82,6 +82,7 @@ try{
  await page.locator('.workspace-nav [aria-label="Ещё"]').click();
  await page.locator('.sheet.show').getByRole('button',{name:'Настройки',exact:true}).click();
  await page.getByRole('button',{name:'Синхронизация устройств · бета',exact:true}).click();
+ await page.getByText('Расширенные настройки',{exact:true}).click();
  await page.locator('select[aria-label="Контур синхронизации"]').waitFor();
  assert.equal(relayRequests,0);
  relayDirectory=await mkdtemp(join(tmpdir(),'teachapp-webkit-relay-'));

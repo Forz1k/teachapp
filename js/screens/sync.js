@@ -1,7 +1,9 @@
 import * as S from '../store.js';
 import * as db from '../db.js';
+import {ktpLinkIssues} from '../backup.js';
 import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,disconnectSync} from '../sync.js';
-import {autoSyncStatus,withSyncSession} from '../auto-sync.js';
+import {createDeviceInvite,redeemDeviceInvite,parseInvite} from '../device-invite.js';
+import {autoSyncStatus,withSyncSession,runPersonalSync} from '../auto-sync.js';
 import {parsePersonalCode,personalCredentials,readPersonalCode,savePersonalCode,forgetPersonalCode} from '../personal-sync.js';
 import {createPairingCode,readPairingCode} from '../sync-pairing.js';
 import {el,openSheet,closeSheet,isSheetOpen,confirmDialog,promptDialog,toast} from '../ui.js';
@@ -19,6 +21,33 @@ function blockConflict(c,onChoice){
  return el('section',{class:'card-block coach-card'},[el('h3',{text:labels[c.store]||c.store}),p('ID: '+c.id),
   ...values.map(([name,value])=>el('details',{},[el('summary',{text:name}),tooLarge?p('Слишком большая запись для безопасного сравнения в интерфейсе. Разрешите конфликт штатными инструментами.'):el('pre',{text:explain(value),style:'white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:12px'})])),select]);
 }
+// Repair only after explicit selection and confirmation; no network requests.
+export async function openKtpDiagnostics(){
+ try{
+  const data=await db.dumpAll(),issues=ktpLinkIssues(data);
+  const root=el('div',{class:'coach-form'},[el('h2',{text:'Диагностика КТП'}),p('Только локальная проверка. Перед исправлением сохраните защищённую резервную копию. Темы, уроки, ученики и оценки не удаляются.')]);
+  if(!issues.length)root.append(p('Некорректных полей и связей КТП не обнаружено.'));
+  for(const issue of issues){
+   const row=data.ktp.find(k=>k.id===issue.id);
+   const name=el('input',{type:'text',value:issue.name,placeholder:'Название КТП'});
+   const checks=data.classes.map(c=>({id:c.id,node:el('input',{type:'checkbox',checked:Array.isArray(row.classIds)&&row.classIds.includes(c.id)})}));
+   const detail=el('div',{class:'card-block coach-card'},[el('h3',{text:issue.name||'КТП без названия'}),p([issue.missingName?'Не указано название':'',issue.missingList?'Нет корректного списка классов':'',issue.invalidCount?'Связей с отсутствующими классами: '+issue.invalidCount:''].filter(Boolean).join(' · ')),field('Название плана',name),p('Выберите классы, к которым относится этот план.'),...checks.map((c,i)=>el('label',{class:'row-item'},[c.node,el('span',{text:data.classes[i].name})]))]);
+   const save=btn('Исправить этот КТП',async()=>{
+    if(!name.value.trim()){toast('Укажите название плана');return;}
+    const ids=checks.filter(c=>c.node.checked).map(c=>c.id);
+    if(!await confirmDialog({title:'Сохранить исправление?',text:'Будет изменено только название и список привязанных классов этого КТП. Темы и уроки сохранятся. Резервная копия должна быть сохранена заранее.',ok:'Исправить'}))return;
+    save.disabled=true;
+    try{
+     const result=await withSyncSession(async()=>{await S.repairKtpPlan(row,name.value,ids,true);return true;});
+     if(!result)throw Error('Закройте другие вкладки TeachApp.');
+     toast('КТП исправлено');await openKtpDiagnostics();
+    }catch(e){toast(e.message);save.disabled=false;}
+   },'primary');
+   detail.append(save);root.append(detail);
+  }
+  root.append(btn('Закрыть',closeSheet));openSheet(root,{fullHeight:true});
+ }catch(e){toast('Не удалось проверить КТП: '+e.message);}
+}
 export function openSync(){
  const area=el('select',{'aria-label':'Контур синхронизации'},Object.entries(syncAreas).map(([value,text])=>el('option',{value,text})));
  const endpoint=el('input',{type:'url',placeholder:'https://ваш-сервер',autocomplete:'off',spellcheck:'false'});
@@ -28,7 +57,7 @@ export function openSync(){
  let plan=null,client=null,secret=null,choices={},busy=false,seq=0,closed=false;
  const active=()=>!closed&&root.isConnected&&isSheetOpen();
  function clear(){plan=null;client=null;secret=null;choices={};token.value='';password.value='';results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}
- function controls(disabled){area.disabled=endpoint.disabled=token.disabled=password.disabled=preview.disabled=detach.disabled=pairCreate.disabled=pairImport.disabled=personalConnect.disabled=personalForget.disabled=disabled;}
+ function controls(disabled){area.disabled=endpoint.disabled=token.disabled=password.disabled=preview.disabled=detach.disabled=pairCreate.disabled=pairImport.disabled=personalConnect.disabled=personalForget.disabled=inviteCreate.disabled=inviteImport.disabled=both.disabled=disabled;}
  async function refresh(){
   const n=++seq,selected=area.value;
   try{
@@ -40,7 +69,7 @@ export function openSync(){
    }
    const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)).join(' · ');
    personalStatus.textContent=saved?'Личный код сохранён на этом устройстве.'+(report.at?' Последняя автопроверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:''):'Личный код не сохранён.';
-   personalForget.hidden=!saved;
+   personalForget.hidden=!saved;inviteCreate.hidden=!saved;both.hidden=!saved;inviteImport.hidden=Boolean(saved);
    status.textContent=cp?'Последняя подтверждённая ревизия: '+cp.revision:'Контур пока не подключён.';
    detach.hidden=!cp;detach.style.display=cp?'':'none';
   }catch{if(n===seq)status.textContent='Не удалось прочитать состояние.';}
@@ -54,7 +83,7 @@ export function openSync(){
    if(next.conflicts.length){choicesStatus.textContent='Осталось разрешить: '+next.conflicts.length;return;}
    choicesStatus.textContent='На этом устройстве: новых '+next.counts.added+', изменённых '+next.counts.changed+', удалённых '+next.counts.deleted+'. Сервер получит итоговый зашифрованный снимок.';
    apply.disabled=busy;
-  }catch(e){if(n===seq)choicesStatus.textContent=e.message;}
+  }catch(e){if(n===seq){choicesStatus.textContent=e.message;if(e.message.includes('разделе ktp'))results.append(btn('Проверить и исправить КТП',openKtpDiagnostics));}}
  }
  const preview=btn('Получить и сравнить ревизии',async()=>{
   if(busy)return;
@@ -78,7 +107,9 @@ export function openSync(){
   const selected=plan,selectedClient=client,pw=secret;
   busy=true;controls(true);apply.disabled=true;
   try{
-   if(selected.revision===0){
+   const code=readPersonalCode();
+   const saved=code?await personalCredentials(code,selected.area):null;
+   if(selected.revision===0&&!(saved&&saved.endpoint===selected.endpoint&&saved.password===pw)){
     const repeat=await promptDialog({title:'Подтвердите пароль нового контура',text:'Один пароль шифрования для всех доверенных устройств этого контура; храните отдельно от ключей доступа.',password:true,ok:'Далее'});
     if(repeat!==pw){if(repeat!==null)toast('Пароли не совпадают');return;}
    }
@@ -95,6 +126,60 @@ export function openSync(){
   if(!await confirmDialog({title:'Отключить контур?',text:'Локальные записи и серверная копия останутся. Удаляется только общая ревизия на этом устройстве. Если данные отличаются, повторное подключение потребует отдельного согласования. Для отзыва ключа обратитесь к администратору сервера.',ok:'Отключить',danger:true}))return;
   clear();try{await disconnectSync(area.value,true);await refresh();}catch(e){toast(e.message);}
  });
+ async function saveConnection(code){
+  const parsed=parsePersonalCode(code);
+  for(const scope of Object.keys(syncAreas)){
+   const cp=await syncStatus(scope);
+   if(cp&&cp.endpoint!==parsed.endpoint)throw Error('Сначала согласуйте прежнее подключение.');
+  }
+  if(!active())return false;
+  savePersonalCode(parsed.code);clear();await refresh();S.notify();return true;
+ }
+ async function exchangeBoth(){
+  if(!readPersonalCode())throw Error('Сначала подключите устройство');
+  const result=await withSyncSession(async()=>{
+   const report=await runPersonalSync({initialize:true});await S.load();return report;
+  });
+  if(!result)throw Error('Закройте другие вкладки TeachApp.');
+  const statuses={synced:'готово',setup:'нужно подключение',conflict:'конфликт',review:'подтвердите изменения',error:'нужна проверка данных или подключения',paused:'обмен остановлен'};
+  simpleResult.textContent=Object.keys(syncAreas).map(a=>syncAreas[a]+': '+(statuses[result.areas.find(x=>x.area===a)?.status]||'обмен не выполнен')).join(' · ');
+  const issues=ktpLinkIssues(await db.dumpAll());
+  if(issues.length)simpleResult.textContent+=' · Исправьте КТП через диагностику.';
+  await refresh();
+  return result.areas.length===2&&result.areas.every(x=>x.status==='synced');
+ }
+ const simpleResult=el('p',{class:'profile-note','aria-live':'polite'});
+ const both=btn('Синхронизировать школу и тренера',async()=>{
+  if(busy)return;
+  if(!await confirmDialog({title:'Синхронизировать обе области?',text:'Будут переданы только зашифрованные записи. Первое подключение не заменяет отличающиеся данные, конфликты и удаления требуют отдельного подтверждения. Сохраните защищённую копию. Только тестовые данные до согласования.',ok:'Синхронизировать'}))return;
+  clear();busy=true;controls(true);
+  try{await exchangeBoth();}catch(e){toast(e.message);}finally{busy=false;controls(false);}
+ },'primary');
+ const inviteCreate=btn('Создать код для компьютера',async()=>{
+  if(busy)return;
+  busy=true;controls(true);
+  try{
+   if(!await confirmDialog({title:'Подключить другое устройство?',text:'Сначала проверим и синхронизируем школу и тренера, без перезаписи отличающихся данных. Сохраните защищённую копию; используйте только тестовые записи до согласования. Затем создадим одноразовый код на 10 минут, предоставляющий полный доступ к личному пространству. Передайте его только на свой компьютер.',ok:'Создать'}))return;
+   clear();
+   if(!await exchangeBoth()){toast('Сначала устраните замечания синхронизации. Код пока не создан.');return;}
+   if(!active())return;
+   const code=await createDeviceInvite(readPersonalCode());
+   if(!active())return;
+   await promptDialog({title:'Код для компьютера',text:'Скопируйте код и введите его на другом устройстве. Действует 10 минут, только один раз.',value:code,multiline:true,ok:'Закрыть'});
+  }catch(e){toast(e.message,null,8000);}finally{busy=false;controls(false);}
+ });
+ const inviteImport=btn('Ввести код с телефона',async()=>{
+  if(busy)return;
+  busy=true;controls(true);
+  try{
+   const value=await promptDialog({title:'Код подключения',text:'Введите одноразовый код TAC1 с телефона.',password:true,ok:'Продолжить'});
+   if(value===null||!active())return;
+   const invite=parseInvite(value);
+   if(!await confirmDialog({title:'Подключить и синхронизировать?',text:'Сервер: '+invite.endpoint+'. Личный ключ сохранится на этом устройстве. Будет выполнена первая проверка школы и тренера без перезаписи отличающейся базы. Используйте только личное защищённое устройство и тестовые данные.',ok:'Подключить'}))return;
+   const code=await redeemDeviceInvite(value);
+   if(await saveConnection(code))await exchangeBoth();
+  }catch(e){toast(e.message,null,8000);}finally{busy=false;controls(false);}
+ },'primary');
  const personalStatus=el('p',{class:'profile-note','aria-live':'polite'});
  const personalConnect=btn('Ввести личный код',async()=>{
   if(busy)return;
@@ -110,8 +195,7 @@ export function openSync(){
    if(!active())return;
    if(!await confirmDialog({title:'Сохранить личный код?',text:'Сервер: '+parsed.endpoint+'. Код будет храниться в браузере этого устройства без дополнительного пароля. Любой, кто имеет доступ к профилю браузера, может получить код. Только на личном защищённом устройстве. Пока данные не отправляются.',ok:'Сохранить'}))return;
    if(!active())return;
-   savePersonalCode(parsed.code);clear();await refresh();S.notify();
-   toast('Код сохранён. Выполните первое сравнение для каждого нужного контура.');
+   if(await saveConnection(parsed.code))toast('Код сохранён. Нажмите «Создать код для компьютера».');
   }catch(e){if(active())toast(e.message,null,8000);}
   finally{busy=false;controls(false);if(plan&&active())await drawSummary();}
  },'primary');
@@ -162,7 +246,7 @@ export function openSync(){
  });
  area.onchange=()=>{clear();refresh();};
  for(const input of [endpoint,token,password])input.oninput=()=>{if(plan){plan=null;client=null;secret=null;choices={};results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}};
- const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,personalConnect,personalForget,p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach,btn('Закрыть',closeSheet)]);
+ const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
  openSheet(root,{fullHeight:true,onClose:()=>{closed=true;clear();}});
  refresh();
 }

@@ -61,17 +61,43 @@ export default {async fetch(request,env){
   // No data, credentials, or revision information is disclosed.
   return json(config(env)?200:503,{status:config(env)?'ready':'not-configured'});
  }
- const match=/^\/v1\/snapshot\/(school|coach)$/.exec(url.pathname);
- if(!match||url.search)return json(404,{error:'route'});
+ const match=/^\/v1\/snapshot\/(school|coach)$/.exec(url.pathname),pair=/^\/v1\/pairing\/(create|redeem)$/.exec(url.pathname);
+ if((!match&&!pair)||url.search)return json(404,{error:'route'});
  const settings=config(env);
  if(!settings)return json(503,{error:'not-configured'});
  const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};
  if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
  if(request.method==='OPTIONS'){
   if(origin!==settings.origin)return json(403,{error:'origin'});
-  return new Response(null,{status:204,headers:{...headers,...cors,'Access-Control-Allow-Methods':'GET, PUT, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'}});
+  return new Response(null,{status:204,headers:{...headers,...cors,'Access-Control-Allow-Methods':'GET, PUT, POST, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'}});
  }
  try{
+  if(pair){
+   if(request.method!=='POST')return json(405,{error:'method'},cors);
+   if(!/^application\/json(?:;|$)/i.test(request.headers.get('Content-Type')||''))return json(415,{error:'content-type'},cors);
+   const op=pair[1],auth=/^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(request.headers.get('Authorization')||'');
+   if(!auth)return json(401,{error:'unauthorized'},cors);
+   if(op==='create'&&!await authorized(request,settings.hashes.school))return json(401,{error:'unauthorized'},cors);
+   const rawLength=request.headers.get('Content-Length');
+   if(rawLength!==null&&(!/^\d+$/.test(rawLength)||Number(rawLength)>4096))return json(413,{error:'too-large'},cors);
+   if(!request.body)return json(400,{error:'packet'},cors);
+   const reader=request.body.getReader();let size=0,parts=[];
+   try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>4096){await reader.cancel();return json(413,{error:'too-large'},cors);}parts.push(value);}}finally{reader.releaseLock();}
+   const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.byteLength;}
+   let payload;try{payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{return json(400,{error:'packet'},cors);}
+   if(!payload||typeof payload!=='object'||Array.isArray(payload))return json(400,{error:'packet'},cors);
+   let body;
+   if(op==='create'){
+    if(Object.keys(payload).sort().join(',')!=='envelope,verifier'||!digestPattern.test(payload.verifier)||!envelopeValid(payload.envelope)||payload.envelope.data.length>2048)return json(400,{error:'packet'},cors);
+    body=payload;
+   }else{
+    if(Object.keys(payload).length)return json(400,{error:'packet'},cors);
+    body={verifier:await digestToken(auth[1])};
+   }
+   const stub=env.SNAPSHOTS.get(env.SNAPSHOTS.idFromName('device-invite-v1'));
+   const result=await stub.fetch(new Request('https://internal/pairing/'+op,{method:'POST',body:JSON.stringify(body)}));
+   return new Response(result.body,{status:result.status,headers:{...headers,...cors,'Content-Type':'application/json; charset=utf-8'}});
+  }
   if(!await authorized(request,settings.hashes[match[1]]))return json(401,{error:'unauthorized'},cors);
   if(!['GET','PUT'].includes(request.method))return json(405,{error:'method'},cors);
   if(request.method==='PUT'&&!/^application\/json(?:;|$)/i.test(request.headers.get('Content-Type')||''))return json(415,{error:'content-type'},cors);
@@ -103,8 +129,32 @@ export class SyncSnapshot extends DurableObject{
   if(!envelopeValid(envelope))throw Error('Invalid envelope');
   return {revision:row.revision,envelope};
  }
+ async alarm(){
+  // A newer invitation may have replaced the old one. Never remove a live invitation early.
+  const row=this.sql.exec('SELECT expires FROM device_invite WHERE id=1').toArray()[0];
+  if(row&&row.expires>Date.now())await this.storage.setAlarm(row.expires);else this.sql.exec('DELETE FROM device_invite WHERE id=1');
+ }
  async fetch(request){
   try{
+   const pair=/^\/pairing\/(create|redeem)$/.exec(new URL(request.url).pathname);
+   if(pair&&request.method==='POST'){
+    const body=await request.json(),now=Date.now();
+    this.sql.exec('CREATE TABLE IF NOT EXISTS device_invite (id INTEGER PRIMARY KEY CHECK (id=1), verifier TEXT NOT NULL, envelope TEXT NOT NULL, expires INTEGER NOT NULL)');
+    if(pair[1]==='create'){
+     this.sql.exec('INSERT INTO device_invite VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET verifier=excluded.verifier,envelope=excluded.envelope,expires=excluded.expires',body.verifier,JSON.stringify(body.envelope),now+600000);
+     await this.storage.setAlarm(now+600000);
+     return json(200,{status:'created'});
+    }
+    const result=this.storage.transactionSync(()=>{
+     const row=this.sql.exec('SELECT * FROM device_invite WHERE id=1').toArray()[0];
+     if(!row)return null;
+     if(row.expires<=now){this.sql.exec('DELETE FROM device_invite WHERE id=1');return null;}
+     if(!equal(row.verifier,body.verifier))return null;
+     this.sql.exec('DELETE FROM device_invite WHERE id=1');
+     return JSON.parse(row.envelope);
+    });
+    return result?json(200,{envelope:result}):json(410,{error:'expired-or-used'});
+   }
    if(request.method==='GET')return json(200,this.get());
    if(request.method!=='PUT')return json(405,{error:'method'});
    const packet=await readPacket(request);

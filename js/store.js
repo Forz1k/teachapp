@@ -1,4 +1,4 @@
-import { BACKUP_VERSION, validateBackup } from './backup.js';
+import { BACKUP_VERSION, validateBackup, ktpLinkIssues } from './backup.js';
 /* store.js — состояние приложения и все команды записи.
    UI читает состояние отсюда и подписывается на изменения.
    Каждая мутация: сначала IndexedDB, потом обновление кэша и уведомление подписчиков.
@@ -753,7 +753,23 @@ export async function updateKtp(id, patch) {
 
 /** Привязать/отвязать класс к КТП. */
 export async function setKtpClasses(ktpId, classIds) {
-  await updateKtp(ktpId, { classIds: [...new Set(classIds)] });
+  const ids=[...new Set(classIds)];
+  if(ids.some(id=>!state.classes.some(c=>c.id===id)))throw Error('Выберите существующие классы');
+  await updateKtp(ktpId, { classIds: ids });
+}
+// Explicitly repair only the selected plan's metadata; never delete a plan, class, topic or lesson.
+export async function repairKtpPlan(expected, name, classIds, confirmed=false){
+ if(!confirmed)throw Error('Подтвердите исправление КТП');
+ if(typeof name!=='string'||!name.trim()||!Array.isArray(classIds))throw Error('Укажите название и классы');
+ await db.transaction(['ktp','classes'],'readwrite',async s=>{
+  const row=await s.ktp.get(expected.id),classes=await s.classes.getAll();
+  if(!row||JSON.stringify(row)!==JSON.stringify(expected))throw Error('КТП изменилось. Откройте диагностику заново.');
+  if(!ktpLinkIssues({ktp:[row],classes}).length)throw Error('КТП уже исправлено');
+  const ids=[...new Set(classIds)],valid=new Set(classes.map(c=>c.id));
+  if(ids.some(id=>!valid.has(id)))throw Error('Выберите существующие классы');
+  await s.ktp.put({...row,name:name.trim(),classIds:ids});
+ });
+ await load();
 }
 
 /** Удалить КТП вместе с его темами. Темы в уроках обнуляются. */
