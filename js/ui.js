@@ -1,3 +1,4 @@
+import {animateOnce} from './motion.js';
 /* ui.js — мелкие строительные блоки интерфейса: иконки, шторка, тост, диалог, haptic.
    Никаких зависимостей. Только DOM. */
 
@@ -97,6 +98,7 @@ function ensureSheet() {
 export function openSheet(content, opts = {}) {
   ensureSheet();
   const revision = ++sheetRevision;
+  const wasOpen=sheetEl.classList.contains('show');
   if(!sheetEl.classList.contains('show')&&!sheetEl.contains(document.activeElement))sheetReturnFocus=document.activeElement;
   onCloseCb = opts.onClose || null;
   sheetEl.classList.toggle('sheet-full',opts.fullHeight===true);
@@ -106,6 +108,7 @@ export function openSheet(content, opts = {}) {
   sheetEl.append(el('div', { class: 'grabber' }));
   if (typeof content === 'string') sheetEl.append(el('div', { html: content }));
   else sheetEl.append(content);
+  if(wasOpen&&typeof content!=='string'&&!opts.match)content.classList?.add('sheet-content-enter');
   sheetEl.setAttribute('aria-label',sheetEl.querySelector('h1,h2,h3')?.textContent||'Окно TeachApp');
 
   requestAnimationFrame(() => {
@@ -170,7 +173,7 @@ export function toast(message, action = null, duration = 5000) {
       },
     }));
   }
-  requestAnimationFrame(() => toastEl.classList.add('show'));
+  requestAnimationFrame(() => {toastEl.classList.add('show');animateOnce(toastEl.querySelector('span'),'enter',{duration:180});});
   clearTimeout(toastTimer);
   toastTimer = setTimeout(hideToast, duration);
 }

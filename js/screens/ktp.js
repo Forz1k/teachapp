@@ -67,7 +67,7 @@ export function renderKtp(root, opts = {}) {
         onclick: () => openKtpDetail(ktp.id, opts),
       }, [icon('chevron')]),
     ]);
-    card.append(el('div',{class:'ktp-progress'},[el('span',{text:progress.total?'Темы × классы: '+progress.done+' из '+progress.total:'Нет привязанных тем и классов'}),el('progress',{max:Math.max(1,progress.total),value:progress.done,'aria-label':'Выполненные темы по классам'})]));
+    card.append(el('div',{class:'ktp-progress'},[el('span',{text:progress.total?'Темы × классы: '+progress.done+' из '+progress.total:'Нет привязанных тем и классов'}),el('progress',{max:Math.max(1,progress.total),value:progress.done,'aria-label':'Выполненные темы по классам',class:'next-progress'})]));
     body.append(card);
   }
 

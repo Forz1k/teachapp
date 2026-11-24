@@ -1,0 +1,35 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';import assert from 'node:assert/strict';
+import * as db from '../js/db.js';import * as S from '../js/store.js';import * as W from '../js/workbench.js';
+import {makeScopedBackup} from '../js/selective-backup.js';
+import {projectScope} from '../js/sync.js';
+import {assignmentOverview} from '../js/school-tools.js';
+import {detailEvent} from '../js/match-protocol.js';
+import {projectMatch,archiveMatch,buildPortal,readPortal,portalState} from '../js/public-portal.js';
+test('Назначение сохраняется, восстанавливается и не пересекает рабочие области',async()=>{
+ await db.clearAll();await S.load();await S.setYear('2026-09-01','2027-05-31');
+ const c=await S.addClass('7А'),p=await S.addStudent(c.id,'Синтетический ученик',1,'girls');
+ const norm=await S.saveNorm({name:'Прыжок',activityId:'standing',unit:'см',direction:'max',scale:[100,120,140,160,180]});
+ const a=await W.saveWork({kind:'normAssignment',name:'7А · Прыжок',classId:c.id,normId:norm.id,yearFrom:'2026-09-01',yearTo:'2027-05-31',from:'2026-10-01',to:'2026-10-31',targetGrade:4});
+ await assert.rejects(W.saveWork({...a,id:undefined}),/пересекающееся/);
+ const backup=await S.makeBackup(),part=makeScopedBackup(backup,{kind:'class',id:c.id}).payload;
+ assert.ok(part.data.norms.some(n=>n.id===norm.id),'assigned norm must be included without attempts');
+ assert.ok(part.data.workRecords.some(r=>r.id===a.id));
+ assert.ok(projectScope(backup.data,'school').workRecords.some(r=>r.id===a.id));
+ assert.ok(!projectScope(backup.data,'coach').workRecords.some(r=>r.id===a.id));
+ await W.deleteWork(a.id,'normAssignment');await S.restoreBackup(backup);
+ const restored=(await W.listWork('normAssignment'))[0];assert.equal(restored.id,a.id);
+ const v=assignmentOverview(S.state,restored,'2026-11-01');assert.equal(v.overdue,1);assert.equal(v.rows[0].student.id,p.id);assert.equal(S.state.marks.length,0);
+});
+test('Публичная страница завершает две партии и переключается на следующую встречу без закрытых данных',()=>{
+ const players=Array.from({length:6},(_,i)=>({id:'private-player-'+i,name:'SECRET NAME '+i,number:i+1}));
+ let d={id:'private-match',teamId:'private-team',date:'2026-11-24',mode:'dual',teamName:'Наши',opponent:'Гости',competition:'',venue:'SECRET VENUE',startedAt:'2026-11-24T12:00:00Z',ourPlayers:players,awayPlayers:[],roster:players.map(p=>p.id),lineup:players.map(p=>p.id),awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours',events:[]};
+ for(let i=0;i<15;i++)d=detailEvent(d,{type:'rally',side:'ours',kind:'point'});
+ const pause=projectMatch(d);assert.equal(pause.status,'break');
+ d=detailEvent(d,{type:'next',lineup:players.map(p=>p.id),awayLineup:[],serve:'ours'});
+ for(let i=0;i<15;i++)d=detailEvent(d,{type:'rally',side:'ours',kind:'point'});
+ const m=projectMatch(d,{scheduledId:'a'});assert.equal(m.status,'finished');assert.deepEqual(m.setsWon,{ours:2,theirs:0});
+ const schedule=[{id:'b',opponent:'Новые гости',startAt:Date.parse('2026-12-01T12:00:00Z')}],pub=readPortal(buildPortal('Наши',schedule,m,[archiveMatch(m)],Date.parse('2026-11-24T13:00:00Z')));
+ assert.equal(portalState(pub,Date.parse('2026-11-24T13:00:00Z')).mode,'upcoming');
+ assert.equal(pub.archive[0].setsWon.ours,2);assert.doesNotMatch(JSON.stringify(pub),/SECRET|private-player|private-team|private-match/);
+});

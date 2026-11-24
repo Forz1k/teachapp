@@ -18,6 +18,7 @@ import {openStudentSheet} from './screens/journal.js';
 import * as C from './coach.js';
 import {openCoachSearchResult} from './screens/coach.js';
 import {readNavigation,saveNavigation,coachRoutes,schoolRoutes} from './design.js';
+import {animateOnce} from './motion.js';
 const { el, icon } = ui;
 
 const TABS = [
@@ -51,6 +52,7 @@ function render() {
   journalUpdate = null;
   appRoot.replaceChildren();
   const screen = el('div', { class: 'screen' });
+  if(!sameRoute)screen.classList.add('route-enter');
   const workspace=store.state.currentTab==='coach'?'coach':'school';
   document.documentElement.dataset.workspace=workspace;
   const switcher=el('div',{class:'workspace-switch',role:'group','aria-label':'Рабочее пространство'},[
@@ -149,6 +151,8 @@ const coachTabs=[
  {id:'home',label:'Главная',icon:'home'},{id:'roster',label:'Команда',icon:'classes'},{id:'trainings',label:'Тренировки',icon:'quick'},{id:'matches',label:'Матчи',icon:'trophy'},{id:'analytics',label:'Аналитика',icon:'chart'}
 ];
 function renderTabbar(){
+ const previous=tabbarEl?[...tabbarEl.querySelectorAll('.tab')].findIndex(n=>n.classList.contains('active')):-1;
+ const previousArea=tabbarEl?.dataset.area;
  if(tabbarEl)tabbarEl.remove();
  const coach=store.state.currentTab==='coach',active=coach?navigation.coach:store.state.currentTab;
  const tabs=coach?coachTabs:schoolTabs;
@@ -156,6 +160,10 @@ function renderTabbar(){
   const current=active===t.id||!coach&&t.id==='more'&&!schoolTabs.some(x=>x.id===active);
   return el('button',{type:'button',class:'tab'+(current?' active':''),'aria-label':t.label,'aria-current':current?'page':null,onclick:()=>{if(coach)setCoachSection(t.id);else if(t.id==='more')openMore();else setTab(t.id);ui.haptic(6);}},[icon(t.icon),el('span',{text:t.label})]);
  }));
+ tabbarEl.dataset.area=coach?'coach':'school';
+ const current=[...tabbarEl.querySelectorAll('.tab')].findIndex(n=>n.classList.contains('active'));
+ tabbarEl.style.setProperty('--nav-index',Math.max(0,current));
+ if(previous>=0&&current>=0&&previous!==current&&previousArea===tabbarEl.dataset.area){tabbarEl.style.setProperty('--nav-from',previous);tabbarEl.classList.add('nav-moving');animateOnce(tabbarEl.querySelector('.tab.active svg'),'pulse',{duration:180});}
  document.body.append(tabbarEl);
 }
 async function openSearch(area){

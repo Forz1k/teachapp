@@ -1,3 +1,4 @@
+import {enterGroup} from './motion.js';
 import {el,icon,openSheet,closeSheet,toast} from './ui.js';
 import {attendanceDetails} from './assessment.js';
 import {exemptionCovers,todayIso} from './model.js';
@@ -31,7 +32,7 @@ export function trendChart(entries,{unit='',min,max,label='Динамика'}={}
   svg.append(node('line',{x1:36,y1:y(v),x2:308,y2:y(v),class:'trend-grid'}));
   const t=node('text',{x:2,y:y(v)+4,class:'trend-tick'});t.textContent=String(Math.round(v*10)/10);svg.append(t);
  }
- if(rows.length>1)svg.append(node('polyline',{points:rows.map((r,i)=>x(i)+','+y(r.value)).join(' '),class:'trend-line',fill:'none'}));
+ if(rows.length>1)svg.append(node('polyline',{points:rows.map((r,i)=>x(i)+','+y(r.value)).join(' '),class:'trend-line',pathLength:1,fill:'none'}));
  rows.forEach((r,i)=>svg.append(node('circle',{cx:x(i),cy:y(r.value),r:3.4,class:'trend-dot'})));
  wrap.append(svg,el('div',{class:'trend-caption'},[el('span',{text:rows[0].date||'Первая запись'}),el('span',{text:rows.at(-1).date||'Последняя запись'})]),el('small',{text:'По порядку записей · '+rows.length+' · '+(unit||'значения')}));
  return wrap;
@@ -73,3 +74,9 @@ export function dayDataIndex(state,rows,date=todayIso()){
  const exempt=new Set(state.exemptions.filter(e=>exemptionCovers(e,date)).map(e=>e.studentId));
  return {students,byLesson,exempt,attendance:row=>attendanceDetails([row.lesson],students.get(row.classId)||[],marks,parts)};
 }
+
+export function focusHero({eyebrow,title,subtitle='',glyph='calendar',action=null,progress=null}){
+ const meter=progress&&progress.total>0?el('div',{class:'focus-meter'},[el('div',{class:'focus-meter-label'},[el('span',{text:progress.label}),el('strong',{text:progress.done+' / '+progress.total})]),el('progress',{max:progress.total,value:Math.max(0,Math.min(progress.total,progress.done)),'aria-label':progress.label})]):null;
+ return el('section',{class:'focus-hero'},[el('div',{class:'focus-hero-copy'},[el('small',{class:'focus-eyebrow',text:eyebrow}),el('h2',{text:title}),subtitle?el('p',{text:subtitle}):null]),el('span',{class:'focus-hero-glyph','aria-hidden':'true'},[icon(glyph)]),meter,action]);
+}
+export function animateDashboard(root){if(!root?.isConnected)return;const first=[...root.children].filter(n=>n.matches('.focus-hero,.dashboard-metrics,.competition-card,.attention-holder,.day-lesson-list,.player-directory')).slice(0,5);enterGroup(first);}

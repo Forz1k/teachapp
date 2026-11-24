@@ -22,6 +22,7 @@ import {openArchive} from './school-archive.js';
 import {openLibrary} from './library.js';
 import {accents,readAccent,applyAccent,initializeDesign} from '../design.js';
 import {dashboardHeading,metric} from '../dashboard.js';
+import {motionModes,readMotion,applyMotion,animateOnce} from '../motion.js';
 const { el, icon } = ui;
 
 export function renderSettings(root, ctx = {}) {
@@ -359,6 +360,9 @@ export function renderSettings(root, ctx = {}) {
   accentSelect.value=readAccent();
   accentSelect.onchange=()=>applyAccent(accentSelect.value,document.documentElement);
   themeBlock.append(themeSeg,el('label',{class:'field',style:'margin:12px 16px'},[el('span',{text:'Акцент'}),accentSelect]));
+  const motionSelect=el('select',{'aria-label':'Анимации'},Object.entries(motionModes).map(([value,text])=>el('option',{value,text})));motionSelect.value=readMotion();
+  const sample=el('div',{class:'motion-sample'},[el('span',{text:'✦'}),el('strong',{text:'TeachApp Motion'}),el('small',{text:'Предпросмотр'})]);motionSelect.onchange=()=>{applyMotion(motionSelect.value);animateOnce(sample,'enter');};
+  themeBlock.append(el('label',{class:'field',style:'margin:12px 16px'},[el('span',{text:'Анимации'}),motionSelect]),el('div',{class:'motion-settings'},[sample,el('button',{type:'button',class:'btn small',text:'Показать анимацию',onclick:()=>animateOnce(sample,'pulse')}),el('p',{class:'profile-note',text:'Уменьшение движения в системе имеет приоритет. Анимации не задерживают ввод данных.'})]));
   body.append(themeBlock);
 
   const aboutBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'О приложении' })]);

@@ -1,4 +1,4 @@
-const VERSION = 'v4.22.0';
+const VERSION = 'v5.0.0';
 const PREFIX = `teachapp:${self.registration.scope}:`;
 const CACHE = PREFIX + VERSION;
 
@@ -9,7 +9,7 @@ const PRECACHE = [
   './live/index.html','./css/public-portal.css','./js/public-view.js','./js/public-portal.js','./js/firebase-portal.js','./js/public-publisher.js','./js/screens/public-portal.js',
   './manifest.webmanifest',
   './css/app.css',
-  './css/design.css',
+  './css/design.css','./css/next.css','./js/motion.js',
   './js/design.js',
   './js/dashboard.js','./js/dashboard-preferences.js','./js/competition-center.js','./js/screens/competition-center.js',
   './js/attention.js',

@@ -1,3 +1,4 @@
+import {readMotion,applyMotion} from './motion.js';
 export const accents={default:'По режиму (синий / фиолетовый)',orange:'Оранжевый'};
 const key='teachapp.design.accent';
 export function readAccent(storage){
@@ -9,7 +10,7 @@ export function applyAccent(value,root=document.documentElement,storage){
  try{(storage??globalThis.localStorage).setItem(key,accent);}catch{}
  return accent;
 }
-export function initializeDesign(root=document.documentElement,storage){return applyAccent(readAccent(storage),root,storage);}
+export function initializeDesign(root=document.documentElement,storage){applyMotion(readMotion(storage),root,storage);return applyAccent(readAccent(storage),root,storage);}
 
 export const schoolRoutes=['today','classes','journal','schedule','norms','analytics','settings'];
 export const coachRoutes=['home','roster','trainings','matches','analytics'];

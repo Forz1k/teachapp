@@ -25,7 +25,7 @@ import {attentionPanel} from './attention.js';
 import {listWork} from '../workbench.js';
 import {openWorkCalendar} from './work-calendar.js';
 import * as School from '../store.js';
-import {metric,actionTile,personalizedActions,dashboardHeading,trendChart} from '../dashboard.js';
+import {metric,actionTile,personalizedActions,dashboardHeading,trendChart,focusHero,animateDashboard} from '../dashboard.js';
 const {el,openSheet,closeSheet,toast}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
 const field=(text,input)=>el('label',{class:'field'},[el('span',{text}),input]);
@@ -105,7 +105,7 @@ function playerCard(team,player,view,refresh){
       card('История матчей',s.chosen.length?s.chosen.map(m=>p(fmtFull(m.date)+' · '+m.opponent+' · личные очки: '+format(m.stats[player.id]?.points))):[p('Матчей за период нет')]));
   }
   from.onchange=draw;to.onchange=draw;draw();
-  openSheet(el('div',{class:'coach-form player-profile'},[el('div',{class:'player-profile-head'},[el('div',{class:'profile-avatar',text:player.number??'—'}),el('div',{},[el('h2',{text:player.name}),p(C.positions[player.position]+(player.archived?' · Архив':''))])]),el('div',{class:'coach-columns'},[field('Период с',from),field('По',to)]),btn('Весь архив',()=>{from.value='';to.value='';draw();},'wide'),content,
+  openSheet(el('div',{class:'coach-form player-profile'},[el('div',{class:'player-profile-head'},[el('div',{class:'profile-avatar',text:player.number??'—'}),el('div',{},[el('small',{class:'profile-kicker',text:team.name+' · профиль спортсменки'}),el('h2',{text:player.name}),p(C.positions[player.position]+(player.archived?' · Архив':''))])]),el('div',{class:'coach-columns'},[field('Период с',from),field('По',to)]),btn('Весь архив',()=>{from.value='';to.value='';draw();},'wide'),content,
     p('Ограничений внесено: '+player.restrictions.length),
     ...player.restrictions.map(r=>p(activityName(r.activityId)+' · '+(r.type==='avoid'?'не выполнять':'адаптировать')+' · '+r.dateFrom+' — '+(r.dateTo||'бессрочно'))),
     btn('Редактировать карточку',()=>playerForm(team,player,refresh),'wide'),
@@ -243,7 +243,7 @@ export async function renderCoach(root,ctx={}){
         const active=view.players.filter(p=>!p.archived),wins=view.matches.filter(m=>{const s=C.matchScore(m);return s.ours>s.theirs;}).length;
         const upcoming=view.trainings.filter(t=>!t.held&&t.date>=todayIso()).sort(dateSort),next=upcoming[0];
         const go=id=>{selectedSection=id;ctx.onSection?.(id);refresh();};
-        body.append(dashboardHeading(team.name,'Рабочая панель команды'),el('div',{class:'dashboard-metrics'},[metric('Игроков',active.length,'classes'),metric('Матчей',view.matches.length,'trophy'),metric('Побед',wins,'check'),metric('Тренировки впереди',upcoming.length,'calendar')]));
+        body.append(focusHero({eyebrow:'Рабочая панель команды',title:team.name,subtitle:active.length+' в составе · '+view.matches.length+' матчей',glyph:'trophy',progress:{label:'Побед в матчах',done:wins,total:view.matches.length},action:team.archived?null:btn('Открыть матч',()=>openMatchCenter(team,refresh),'focus-action wide')}),el('div',{class:'dashboard-metrics'},[metric('Игроков',active.length,'classes'),metric('Матчей',view.matches.length,'trophy'),metric('Побед',wins,'check'),metric('Тренировки впереди',upcoming.length,'calendar')]));
         if(!team.archived)body.append(competitionCard(team,data,refresh));
         const taskHolder=el('div',{class:'attention-holder'}),tasks=coachTasks(data,team.id);
         const onTask=task=>{if(task.kind==='match')openMatchCenter(team,refresh,{draftId:task.target.draftId});else if(task.kind==='goal'){const player=view.players.find(p=>p.id===task.target.playerId);if(player)openPlayerGoals(team,player,closeSheet);}else if(task.kind==='training'){const t=view.trainings.find(t=>t.id===task.target.trainingId);if(t)trainingForm(team,view,t,refresh);}else if(task.kind==='backup'){closeSheet();ctx.onSettings?.();}else openWorkCalendar({date:task.target.date,source:'custom',span:'1'});};
@@ -251,6 +251,7 @@ export async function renderCoach(root,ctx={}){
         Promise.all([listWork('event'),listWork('coachGoal')]).then(([events,goals])=>{if(seq===sequence&&taskHolder.isConnected)taskHolder.replaceChildren(attentionPanel(tasks.concat(commonTasks(School.state.settings,events),goalTasks(goals,team.id)),onTask));}).catch(()=>{});
         body.append(el('article',{class:'card-block today-card lesson-card lesson-card-next'},[el('div',{class:'today-meta',text:'Ближайшая тренировка'}),el('h2',{text:next?next.title:'Нет запланированных тренировок'}),next?p(fmtFull(next.date)+' · '+next.time+' · '+next.minutes+' мин'):null,team.archived?null:btn(next?'Открыть тренировку':'Запланировать',()=>trainingForm(team,view,next||null,refresh),'primary wide')]));
         body.append(dashboardHeading('Быстрые действия'),personalizedActions('coach',[actionTile('Состав','classes',()=>go('roster')),actionTile('Тренировки','calendar',()=>go('trainings')),actionTile('Матчи','trophy',()=>go('matches')),actionTile('Аналитика','chart',()=>go('analytics')),team.archived?null:actionTile('Live-матч','quick',()=>openMatchCenter(team,refresh)),actionTile('Цели спортсменок','chart',()=>openTeamGoals(team)),actionTile('Конспекты','journal',()=>openLibrary('coach')),actionTile('Тактическая доска','classes',()=>openTacticBoards(team)),actionTile('Документы','journal',()=>openDocuments('teamReport')),actionTile('Инвентарь','classes',openInventory),actionTile('Достижения','trophy',()=>openAchievements({area:'coach'})),team.archived?null:actionTile('Помощник состава','quick',()=>openLineupAssistant(team,view))]));
+        if(root.classList.contains('route-enter')&&!body.dataset.motionShown){body.dataset.motionShown='1';animateDashboard(body);}
       }else if(selectedSection==='roster'){
         const active=view.players.filter(p=>!p.archived),arch=view.players.filter(p=>p.archived);
         const search=el('input',{type:'search',placeholder:'Найти игрока','aria-label':'Найти игрока'}),list=el('div',{class:'player-directory'});

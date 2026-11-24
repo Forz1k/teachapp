@@ -16,7 +16,7 @@ import {openDocuments} from './documents.js';
 import {openTournaments} from './tournaments.js';
 import {calendarShortcut} from './work-calendar.js';
 import {openLibrary} from './library.js';
-import {metric,actionTile,dashboardHeading,personalizedActions,dayReview,dayDataIndex} from '../dashboard.js';
+import {metric,actionTile,dashboardHeading,personalizedActions,dayReview,dayDataIndex,focusHero,animateDashboard} from '../dashboard.js';
 const {el} = ui;
 
 export function todayEntries(date = M.todayIso()) {
@@ -63,7 +63,7 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
   const rows = todayEntries(date);
   const body = el('div',{class:'today-list dashboard'});
   const index=dayDataIndex(S.state,rows,date),review=dayReview(rows,index.attendance),summary={total:rows.length};
-  body.append(el('div',{class:'dashboard-metrics'},[metric('Уроков в плане',summary.total,'calendar'),metric('Подтверждено',review.confirmed+' / '+summary.total,'check'),metric('Проверить явку',review.review,'journal')]));
+  body.append(el('div',{class:'dashboard-metrics day-metrics'},[metric('Уроков в плане',summary.total,'calendar'),metric('Подтверждено',review.confirmed+' / '+summary.total,'check'),metric('Проверить явку',review.review,'journal')]));
   const taskHolder=el('div',{class:'attention-holder'});
   const onTask=task=>{
     const t=task.target;
@@ -77,7 +77,8 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
   listWork('event').then(events=>{if(taskHolder.isConnected)taskHolder.replaceChildren(attentionPanel(tasks.concat(commonTasks(S.state.settings,events,date)),onTask));}).catch(()=>{});
   const next=review.next?.row;
   const openRow=async row=>{const current=todayEntries(date).find(r=>r.id===row.id&&r.classId===row.classId);if(!current)return ui.toast('Расписание изменилось. Проверьте урок.');S.state.currentClassId=row.classId;if(current.lesson)return showLessonSession(current.lesson.id);await openLessonSession(row.classId,date);};
-  if(next)body.append(el('section',{class:'card-block day-next'},[el('small',{text:'Следующий урок к работе'}),el('h2',{text:next.cls.name+' · '+(next.time||'без времени')}),el('button',{type:'button',class:'btn primary wide',text:next.lesson?'Продолжить урок':'Открыть урок',onclick:()=>openRow(next)})]));
+  const hero=focusHero({eyebrow:next?'Следующий урок к работе':'Рабочий день',title:next?next.cls.name:summary.total?'Уроки подтверждены':'Нет уроков в расписании',subtitle:next?(next.time||'Без времени')+' · '+(S.state.topics.find(t=>t.id===next.lesson?.topicId)?.name||'Тема КТП не указана'):review.review?'Проверьте неизвестную явку':summary.total?'Все занятия подтверждены':'На выбранную дату',glyph:'calendar',progress:{label:'Подтверждено уроков',done:review.confirmed,total:summary.total},action:next?el('button',{type:'button',class:'btn wide focus-action',text:next.lesson?'Продолжить урок':'Открыть урок',onclick:()=>openRow(next)}):null});
+  body.prepend(hero);
   body.append(dashboardHeading('Уроки дня','Подтверждение проведения и фактические отметки учитываются отдельно'));
   const filter=el('select',{'aria-label':'Статус уроков'},[['all','Все уроки'],['work','Не завершены'],['review','Проверить явку'],['done','Завершены']].map(([value,text])=>el('option',{value,text})));
   const list=el('div',{class:'day-lesson-list'}),empty=el('p',{class:'profile-note',text:'Нет уроков по выбранному статусу.'});body.append(filter,list,empty);
@@ -117,5 +118,5 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
     ctx.onAnalytics?actionTile('Аналитика','chart',ctx.onAnalytics):null
   ]));
   calendarShortcut(body);
-  root.append(body);
+  root.append(body);if(root.classList.contains('route-enter'))requestAnimationFrame(()=>animateDashboard(body));
 }
