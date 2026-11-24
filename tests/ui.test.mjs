@@ -512,3 +512,12 @@ test('Отложенное закрытие шторки не очищает н�
  await tick(285);ui.openSheet(ui.el('div',{text:'Новая'}));await tick(80);
  assert.match(doc.querySelector('.sheet').textContent,/Новая/);ui.closeSheet();
 });
+
+test('Подробный матч: табло и две половины площадки без записи при просмотре',async()=>{
+ const {openDetailedMatch}=await import('../js/screens/match-protocol.js');
+ const players=Array.from({length:6},(_,i)=>({id:'a'+i,number:i,name:'А'+i}));
+ const away=Array.from({length:6},(_,i)=>({id:'b'+i,number:i,name:'Б'+i}));
+ const d={mode:'dual',teamName:'Наши',opponent:'Гости',competition:'',venue:'',startedAt:'2026-01-01T12:00:00Z',ourPlayers:players,awayPlayers:away,roster:players.map(p=>p.id),lineup:players.map(p=>p.id),awayLineup:away.map(p=>p.id),libero:null,scheme:'5-1',bestOf:3,target:25,decider:15,firstServe:'ours',events:[]};
+ openDetailedMatch(d,()=>{},()=>{});await tick();
+ const sheet=doc.querySelector('.sheet');assert.equal(sheet.querySelectorAll('.vp-player').length,12);assert.match(sheet.textContent,/\+1 Наши/);assert.match(sheet.textContent,/Гости/);ui.closeSheet();
+});
