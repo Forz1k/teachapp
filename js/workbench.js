@@ -1,5 +1,6 @@
 import * as db from './db.js';
 import {uid} from './model.js';
+import {validateTournament} from './tournaments.js';
 import {validateEvent} from './work-calendar.js';
 import {catalog} from './health.js';
 export const exerciseCategories={warmup:'Разминка',athletics:'Лёгкая атлетика',gymnastics:'Гимнастика',volleyball:'Волейбол',games:'Игры',fitness:'ОФП / СФП',cooldown:'Заминка',other:'Другое'};
@@ -22,6 +23,7 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='tournament'){validateTournament(r);return;}
  if(r.kind==='event'){validateEvent(r);return;}
  if(r.kind==='exercise'){validateExercise(r);require(!r.id.startsWith('builtin-'),'Системное упражнение нельзя перезаписать');return;}
  if(r.kind==='plan'){
@@ -34,6 +36,7 @@ export function validateWorkRecord(r){
 }
 export async function listWork(kind){return (await db.getAll('workRecords')).filter(r=>r.kind===kind);}
 export async function saveWork(input){
+ require(['exercise','plan','event'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
  const r=structuredClone({...input,id:input.id||uid(input.kind)});validateWorkRecord(r);
  return db.transaction(['workRecords'],'readwrite',async s=>{
   const old=await s.workRecords.get(r.id);require(!old||old.kind===r.kind,'Нельзя изменить тип записи');if(input.id)require(old,'Запись уже удалена');await s.workRecords.put(r);return r;

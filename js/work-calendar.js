@@ -1,3 +1,4 @@
+import {tournamentCalendar} from './tournaments.js';
 import * as M from './model.js';
 import {validPeriod} from './health.js';
 import {only,txt,opt,require} from './workbench.js';
@@ -6,7 +7,7 @@ const timeOK=t=>typeof t==='string'&&(t===''||/^([01]\d|2[0-3]):[0-5]\d$/.test(t
 export function validateEvent(r){
  require(only(r,['id','kind','name','date','time','minutes','eventType','note','remind','done'])&&txt(r.id)&&r.kind==='event'&&txt(r.name)&&validPeriod(r.date,null)&&timeOK(r.time)&&Number.isInteger(r.minutes)&&r.minutes>=0&&r.minutes<=600&&(!r.minutes||r.time!=='')&&Object.hasOwn(eventTypes,r.eventType)&&opt(r.note,2000)&&[null,0,15,30,60,120,1440].includes(r.remind)&&typeof r.done==='boolean','Проверьте событие, дату, время и напоминание');
 }
-export function calendarEntries(school,coach,events,from,to){
+export function calendarEntries(school,coach,events,from,to,tournaments=[]){
  require(validPeriod(from,to)&&!!to&&M.addDays(from,62)>=to,'Выберите период до 63 дней');
  const out=[],classes=new Map(school.classes.map(c=>[c.id,c.name])),teams=new Map(coach.coachTeams.map(t=>[t.id,t.name]));
  for(let date=from;date<=to;date=M.addDays(date,1)){
@@ -22,11 +23,12 @@ export function calendarEntries(school,coach,events,from,to){
  for(const t of coach.coachTrainings){if(!M.inRange(t.date,from,to))continue;out.push({id:'training-'+t.id,source:'coach',date:t.date,time:t.time,minutes:t.minutes,title:t.title+' · '+(teams.get(t.teamId)||'Команда'),exportTitle:'Тренировка',done:t.held,remind:30});}
  for(const m of coach.coachMatches){if(!M.inRange(m.date,from,to))continue;out.push({id:'match-'+m.id,source:'coach',date:m.date,time:'',minutes:0,title:'Матч · '+m.opponent,exportTitle:'Волейбольный матч',done:true,remind:null});}
  for(const e of events){if(!M.inRange(e.date,from,to))continue;out.push({id:e.id,source:'custom',date:e.date,time:e.time,minutes:e.minutes,title:e.name,exportTitle:eventTypes[e.eventType],done:e.done,remind:e.remind,record:e});}
+ out.push(...tournamentCalendar(tournaments,from,to));
  const last=school.settings.lastBackupAt;
  let backupDue=last&&Number.isFinite(Date.parse(last))?M.addDays(M.iso(new Date(last)),7):M.todayIso();
  const postponed=school.settings.backupReminderAfter;
  if(postponed&&Number.isFinite(Date.parse(postponed))){const date=M.iso(new Date(postponed));if(date>backupDue)backupDue=date;}
- if(backupDue<from&&from===M.todayIso())backupDue=from;
+ if(backupDue<M.todayIso())backupDue=M.todayIso();
  if(M.inRange(backupDue,from,to))out.push({id:'backup-'+backupDue,source:'backup',date:backupDue,time:'',minutes:0,title:'Создать резервную копию',exportTitle:'Резервная копия',done:false,remind:0});
  return out.sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'00:00').localeCompare(b.time||'00:00')||a.title.localeCompare(b.title,'ru'));
 }

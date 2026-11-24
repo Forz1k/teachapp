@@ -28,7 +28,7 @@ test('Сохранение расстановки и черновика, коп�
  let d=await C.startLiveMatch({...base,teamId:team.id,date:'2026-01-01',opponent:'Соперник',roster,lineup,libero});
  d=await C.changeLiveMatch(d.id,d.revision,{type:'rally',side:'ours',kind:'point'});
  await assert.rejects(C.changeLiveMatch(d.id,0,null),/изменился/);
- const backup=await S.makeBackup();assert.equal(backup.version,13);await S.restoreBackup(backup);
+ const backup=await S.makeBackup();assert.equal(backup.version,14);await S.restoreBackup(backup);
  assert.equal((await C.loadCoach()).coachLineups.length,1);assert.equal(V.replay((await C.loadCoach()).coachLive[0]).ours,1);
  await assert.rejects(C.finishLiveMatch(d.id,d.revision),/завершите/);
  for(let i=1;i<15;i++)d=await C.changeLiveMatch(d.id,d.revision,{type:'rally',side:'ours',kind:'point'});
