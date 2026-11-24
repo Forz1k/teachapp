@@ -172,7 +172,13 @@ export function replayDetailed(d){
 export function detailEvent(d,event,now=new Date().toISOString()){
  if(event===null)return {...d,events:d.events.slice(0,-1)};
  let events=[...d.events];
- if(event.type==='attribute'){
+ if(event.type==='editRally'){
+  const i=event.index,last=events[i];fail(integer(i,0,events.length-1)&&last?.type==='rally','Выберите розыгрыш в журнале');
+  const patch=event.patch;fail(patch&&typeof patch==='object'&&!Array.isArray(patch)&&Object.keys(patch).every(k=>['kind','player','placement','secondary','observations'].includes(k)),'Редактирование не меняет команду, счёт и порядок событий');
+  const updated={...last};if(Object.hasOwn(patch,'kind')&&patch.kind!==last.kind){delete updated.placement;delete updated.secondary;}
+  for(const [k,v] of Object.entries(patch)){if(v===null&&['placement','secondary','observations'].includes(k))delete updated[k];else updated[k]=v;}
+  events[i]=updated;
+ }else if(event.type==='attribute'){
   const last=events.at(-1);fail(last?.type==='rally','Можно уточнить только последнее очко');
   events[events.length-1]={...last,kind:event.kind,player:event.player??null};
   if(last.kind!==event.kind){delete events[events.length-1].placement;delete events[events.length-1].secondary;}

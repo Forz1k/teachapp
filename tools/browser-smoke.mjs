@@ -85,6 +85,7 @@ try{
  await clickText('.vp-tabs button','Статистика');await ready('.vp-heat-grid');
  assert.equal(await evalJs('Array.from(document.querySelectorAll(".vp-heat-cell")).some(n=>n.getAttribute("aria-label")==="Зона 4: 1")'),true);
  await capture('390-live-analytics');
+ await clickText('.vp-tabs button','События');await clickText('.vp-history-row button','Уточнить');await ready('.vp-report-section');await clickText('.sheet button','Сохранить уточнение');await ready('.vp-history-row');
  await clickText('.vp-tabs button','Матч');await ready('.vp-undo');
  await click('.vp-scout-open');await ready('.vp-scout-panel');await capture('390-live-scout');
  await click('[data-scout-entry]');await clickText('.sheet button','Вернуться к матчу');await ready('.vp-undo');

@@ -163,3 +163,13 @@ test('Наблюдения успешных действий не меняют �
  assert.throws(()=>detailEvent(d,{type:'observations',observations:[{side:'theirs',kind:'serve',player:'b2'}]}),/Успешный приём/);
  assert.equal(replayDetailed(detailEvent(d,null)).ours,1);
 });
+
+test('Редактирование старого розыгрыша сохраняет победителя, переходы, хронологию и последующие события',()=>{
+ let d=detailEvent(base,{type:'rally',side:'ours',kind:'point'});d=detailEvent(d,{type:'timeout',side:'theirs'});d=detailEvent(d,{type:'rally',side:'ours',kind:'point'});
+ const before=replayDetailed(d),old=d.events[0].at;
+ d=detailEvent(d,{type:'editRally',index:0,patch:{kind:'tip',player:'a2',placement:4,secondary:{kind:'defenseError',player:'b2'}}});
+ const s=replayDetailed(d);assert.deepEqual(s.score,before.score);assert.deepEqual(s.lineup,before.lineup);assert.equal(d.events[0].at,old);assert.equal(d.events[1].type,'timeout');assert.equal(s.sides.ours.stats.a2.tipKills,1);assert.equal(s.sides.theirs.stats.b2.defenseErrors,1);
+ assert.throws(()=>detailEvent(d,{type:'editRally',index:0,patch:{side:'theirs'}}),/не меняет/);
+ assert.throws(()=>detailEvent(d,{type:'editRally',index:1,patch:{kind:'point'}}),/розыгрыш/);
+ assert.throws(()=>detailEvent(d,{type:'editRally',index:0,patch:{kind:'ace',player:'a1'}}),/подающей/);
+});
