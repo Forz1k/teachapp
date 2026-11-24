@@ -287,12 +287,14 @@ export async function deleteClass(id) {
   notify();
 }
 
-export async function addStudent(classId, fullName, number) {
+export async function addStudent(classId, fullName, number, normGroup=null) {
+  if(!A.validNormGroup(normGroup))throw Error('Проверьте категорию нормативов');
   const st = {
     id: M.uid('stu'),
     classId,
     number: number ?? studentsOfClass(classId).length + 1,
     fullName: fullName.trim(),
+    normGroup,
   };
   await db.put('students', st);
   state.students.push(st);
@@ -304,10 +306,28 @@ export async function addStudent(classId, fullName, number) {
 export async function updateStudent(id, patch) {
   const st = state.students.find((s) => s.id === id);
   if (!st) return;
-  Object.assign(st, patch);
-  await db.put('students', st);
+  if(Object.hasOwn(patch,'normGroup')&&!A.validNormGroup(patch.normGroup))throw Error('Проверьте категорию нормативов');
+  const next={...st,...patch};
+  await db.put('students',next);
+  Object.assign(st,next);
   state.students = M.sortStudents(state.students);
   notify();
+}
+
+export async function setClassNormLevel(classId,gradeLevel){
+  if(!A.validGradeLevel(gradeLevel))throw Error('Параллель должна быть от 1 до 11');
+  const cls=state.classes.find(c=>c.id===classId);if(!cls)throw Error('Класс недоступен');
+  const next={...cls,gradeLevel};await db.put('classes',next);Object.assign(cls,next);notify();
+}
+export async function saveNormGroups(classId,entries){
+  const rows=await db.transaction(['students'],'readwrite',async s=>{
+    const out=[];for(const [id,normGroup] of Object.entries(entries)){
+      if(!A.validNormGroup(normGroup))throw Error('Проверьте категорию нормативов');
+      const st=await s.students.get(id);if(!st||st.classId!==classId)throw Error('Состав класса изменился');
+      const next={...st,normGroup};await s.students.put(next);out.push(next);
+    }return out;
+  });
+  const byId=new Map(rows.map(r=>[r.id,r]));state.students=state.students.map(s=>byId.get(s.id)||s);notify();
 }
 
 /** Удаление ученика вместе с его отметками — обычно нужно при ошибочном импорте. */
@@ -1079,7 +1099,9 @@ export function attendanceFor(lessons,students,classId){
   return A.attendanceDetails(lessons.map(l=>({...l,held:lessonHeld(l)})),students,markMap(classId),parts);
 }
 export async function saveNorm(input){
-  const n={...input,id:input.id||M.uid('norm'),name:input.name.trim(),scale:[...input.scale]};
+  const n={id:input.id||M.uid('norm'),name:input.name.trim(),activityId:input.activityId,unit:input.unit,direction:input.direction};
+  if(input.scales!==undefined)n.scales=input.scales.map(r=>({classId:r.classId??null,gradeLevel:r.gradeLevel??null,group:r.group,scale:[...r.scale]}));
+  else n.scale=[...input.scale];
   A.validateNorm(n,new Set(activities().map(a=>a.id)));
   await db.put('norms',n);state.norms=state.norms.filter(x=>x.id!==n.id).concat(n);notify();return n;
 }
@@ -1094,7 +1116,8 @@ export async function saveNormResult({normId,studentId,lessonId,status,value=nul
   if(status==='restricted'&&!matches.length&&!full)throw Error('Нет внесённого основания ограничения');
   if(status==='done'&&(full||mark?.flag==='Н'||matches.some(m=>['avoid','no_test'].includes(m.restriction.type))))throw Error('Обычная сдача не разрешена по внесённым сведениям');
   if(status==='done'&&matches.length&&!basis.trim())throw Error('Укажите подтверждённое основание допуска');
-  const record={id:M.uid('result'),normId,studentId,lessonId,date:lesson.date,status,value:status==='done'?value:null,grade:status==='done'?A.gradeNorm(norm,value):null,basis:basis.trim(),definition:{...norm,scale:[...norm.scale]},createdAt:new Date().toISOString()};
+  const definition=A.normSnapshot(norm,state.classes.find(c=>c.id===student.classId),student);
+  const record={id:M.uid('result'),normId,studentId,lessonId,date:lesson.date,status,value:status==='done'?value:null,grade:status==='done'?A.gradeNorm(definition,value):null,basis:basis.trim(),definition,createdAt:new Date().toISOString()};
   await db.put('normResults',record);state.normResults.push(record);notify();return record;
 }
 export async function deleteNormResult(id){await db.del('normResults',id);state.normResults=state.normResults.filter(r=>r.id!==id);notify();}
