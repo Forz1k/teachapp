@@ -5,6 +5,11 @@ import * as ui from '../ui.js';
 import { openLessonSession } from './session.js';
 import { warning } from './health.js';
 
+import {schoolTasks,commonTasks} from '../attention.js';
+import {attentionPanel} from './attention.js';
+import {listWork} from '../workbench.js';
+import {openWorkCalendar} from './work-calendar.js';
+import {showLessonSession} from './session.js';
 import {openTournaments} from './tournaments.js';
 import {calendarShortcut} from './work-calendar.js';
 import {openLibrary} from './library.js';
@@ -37,6 +42,17 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
   const body = el('div',{class:'today-list dashboard'});
   const summary=lessonOverview(rows,S.lessonHeld);
   body.append(el('div',{class:'dashboard-metrics'},[metric('Уроков в плане',summary.total,'calendar'),metric('Проведено',summary.done+' / '+summary.total,'check')]));
+  const taskHolder=el('div',{class:'attention-holder'});
+  const onTask=task=>{
+    const t=task.target;
+    if(task.kind==='lesson'){if(t.lessonId)showLessonSession(t.lessonId);else openLessonSession(t.classId,t.date);}
+    else if(task.kind==='review'){S.state.currentClassId=t.classId;ui.closeSheet();ctx.onAnalytics?.();}
+    else if(task.kind==='backup'){ui.closeSheet();ctx.onSettings?.();}
+    else openWorkCalendar({date:t.date,source:'custom',span:'1'});
+  };
+  const tasks=schoolTasks(S.state,date);
+  taskHolder.append(attentionPanel(tasks.concat(commonTasks(S.state.settings,[],date)),onTask));body.append(taskHolder);
+  listWork('event').then(events=>{if(taskHolder.isConnected)taskHolder.replaceChildren(attentionPanel(tasks.concat(commonTasks(S.state.settings,events,date)),onTask));}).catch(()=>{});
   body.append(dashboardHeading('Уроки дня',summary.next?'Первый незавершённый урок выделен':'Все уроки завершены или нет расписания'));
   if (!rows.length) body.append(el('div',{class:'empty',text:'На сегодня нет запланированных уроков.'}));
   const topics = new Map(S.state.topics.map(t => [t.id,t]));

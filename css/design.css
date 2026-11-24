@@ -310,3 +310,14 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 @media(max-width:350px){.app-brand>span:last-child{display:none}.app-shell{padding-inline:9px}.dashboard-metric{padding:10px}.metric-value{font-size:24px}.workspace-option{min-height:36px}.workspace-nav{padding-inline:3px}.workspace-nav .tab span{max-width:100%;overflow:hidden;text-overflow:ellipsis}}
 @media(orientation:landscape) and (max-height:500px){.sheet.sheet-full{top:0;border-radius:0}.sheet{max-height:94dvh}.journal-grid{max-height:calc(100dvh - 245px);min-height:110px}.app-shell{padding-block:4px}.workspace-nav .tab{font-size:10px}}
 @media(hover:hover){.btn:not(:disabled):hover,.dashboard-action:hover,.player-directory-row:hover,.class-card:hover{border-color:var(--accent);}.workspace-nav .tab:hover{color:var(--accent-ink)}}
+
+/* Actionable attention centre */
+.attention-panel{padding:13px;display:grid;gap:8px;min-width:0}
+.attention-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.attention-heading h2{font-size:18px;margin:0;letter-spacing:-.025em}
+.attention-count{font-size:15px;font-weight:750;color:var(--accent-ink);background:var(--accent-soft);padding:4px 10px;border-radius:999px}
+.attention-row{display:flex;align-items:center;gap:10px;min-height:64px;text-align:left;background:var(--card-2);border:1px solid var(--sep);border-radius:12px;padding:10px;min-width:0;width:100%}
+.attention-row .metric-icon{flex:none}.attention-row.priority-3 .metric-icon,.attention-row.priority-4 .metric-icon{background:var(--mark-3-bg);color:var(--mark-3)}
+.attention-text{display:grid;gap:4px;flex:1;min-width:0}
+.attention-text strong{font-size:14px;overflow-wrap:anywhere}.attention-text small{font-size:12px;color:var(--text-2);line-height:1.45;overflow-wrap:anywhere}
+.attention-row>svg{width:16px;height:16px;flex:none;color:var(--text-3)}
