@@ -47,3 +47,18 @@ test('Резервная копия 4 хранит тренерские данн
  const old=structuredClone(backup);old.version=3;for(const n of C.coachStores)delete old.data[n];
  await S.restoreBackup(old);assert.deepEqual((await C.loadCoach()).coachTeams,[]);
 });
+
+test('Карточка игрока: период и парные знаменатели, неизвестное не становится нулём',()=>{
+ const matches=[
+  {date:'2026-09-10',roster:['p'],stats:{p:{serves:10,serveErrors:2,receptions:4}}},
+  {date:'2026-09-11',roster:['p'],stats:{p:{serves:20,serveErrors:1,receptionGood:3}}},
+  {date:'2026-09-12',roster:['p'],stats:{p:{receptions:8,receptionGood:6,attackKills:2}}},
+  {date:'2025-09-10',roster:['p'],stats:{p:{serves:50,serveErrors:0}}},
+ ];
+ const s=C.playerSeasonStats(matches,'p',{from:'2026-09-01',to:'2027-08-31'});
+ assert.equal(s.rosterMatches,3);
+ assert.deepEqual(s.rates.serve,{total:30,success:27});
+ assert.deepEqual(s.rates.receive,{total:8,success:6});
+ assert.deepEqual(s.rates.attack,{total:0,success:0});
+ assert.equal(s.summary.sums.aces,null);
+});
