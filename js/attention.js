@@ -8,8 +8,15 @@ export function schoolTasks(s,today=M.todayIso(),days=30){
  const from=M.addDays(today,-Math.min(90,Math.max(1,days))),until=M.addDays(today,7),year=s.settings.year;
  const classes=new Map(s.classes.map(c=>[c.id,c])),students=new Map(),marks=new Map(),parts=new Map(),existing=new Set(),tasks=[];
  for(const p of s.students){if(!students.has(p.classId))students.set(p.classId,[]);students.get(p.classId).push(p);}
- for(const m of s.marks)marks.set(m.lessonId+'|'+m.studentId,m);
- for(const p of s.participation)parts.set(p.lessonId+'|'+p.studentId,p);
+ // Index only lessons in the review window, not the whole school year.
+ const recent=new Set(s.lessons.filter(l=>M.inRange(l.date,from,today)&&M.inRange(l.date,year.from,year.to)&&classes.has(l.classId)).map(l=>l.id));
+ for(const m of s.marks)if(recent.has(m.lessonId))marks.set(m.lessonId+'|'+m.studentId,m);
+ for(const p of s.participation)if(recent.has(p.lessonId))parts.set(p.lessonId+'|'+p.studentId,p);
+ const overridesByDate=new Map();
+ for(const o of s.scheduleOverrides)if(M.inRange(o.date,from,today)){
+  if(!overridesByDate.has(o.date))overridesByDate.set(o.date,[]);
+  overridesByDate.get(o.date).push(o);
+ }
  for(const l of s.lessons){
   existing.add(l.classId+'|'+l.date);
   if(!M.inRange(l.date,from,today)||!M.inRange(l.date,year.from,year.to)||!classes.has(l.classId))continue;
@@ -21,7 +28,7 @@ export function schoolTasks(s,today=M.todayIso(),days=30){
  // Only past scheduled days, respecting cancellations and holidays.
  for(let date=from;date<today;date=M.addDays(date,1)){
   if(!M.inRange(date,year.from,year.to)||(s.settings.holidays||[]).some(h=>M.inRange(date,h.from,h.to)))continue;
-  for(const r of M.scheduleForDate(s.schedule,s.scheduleOverrides,date)){
+  for(const r of M.scheduleForDate(s.schedule,overridesByDate.get(date)||[],date)){
    const key=r.classId+'|'+date;if(existing.has(key)||!classes.has(r.classId)||!(students.get(r.classId)||[]).length)continue;
    existing.add(key);tasks.push(item('planned-'+key,'lesson',classes.get(r.classId).name+' · урок без записи','Урок был в расписании. Проверьте, состоялся ли он.',date,2,{classId:r.classId,date}));
   }
