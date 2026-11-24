@@ -1,3 +1,4 @@
+import { warning } from './health.js';
 /* screens/schedule.js — раздел «Расписание».
    Два режима: неделя (шаблон по дням недели) и день (конкретная дата с правками).
    Правка на конкретный день не меняет шаблон — она живёт в scheduleOverrides. */
@@ -153,6 +154,7 @@ export function renderSchedule(root, opts = {}) {
       }, [icon('chevron')]));
 
       wrap.append(row);
+      if (cls) wrap.append(warning(store.lessonsOfClass(cls.id).find(l => l.date === state.date) || {classId:cls.id,date:state.date}));
     }
 
     wrap.append(el('div', { style: 'margin-top:14px' }, [

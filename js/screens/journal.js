@@ -1,3 +1,4 @@
+import { openHealth, warning, checkGrade } from './health.js';
 /* screens/journal.js — сетка журнала класса: ученики × даты уроков.
    Здесь же шторка отметки с трёхрежимной постановкой ОСВ. */
 
@@ -203,7 +204,7 @@ export function openMarkSheet(studentId, lessonId, classId) {
     el('h2', { text: M.shortName(student.fullName) }),
     el('div', { class: 'sub', text: `${M.fmtFull(lesson.date)} · ${topicName(lesson.topicId)}` }),
   ]);
-  sheet.append(header);
+  sheet.append(header,warning(lesson,studentId));
 
   if (exemption) {
     sheet.append(el('div', {
@@ -248,7 +249,7 @@ export function openMarkSheet(studentId, lessonId, classId) {
       }),
       el('button', {
         type: 'button', class: existing.weight === 2 ? 'active' : '', text: 'вес 2 (норматив)',
-        onclick: async () => { await store.setMarkWeight(studentId, lessonId, 2); ui.closeSheet(); },
+        onclick: async () => { if (!checkGrade(lesson,studentId)) return; await store.setMarkWeight(studentId, lessonId, 2); ui.closeSheet(); },
       }),
     ]);
     sheet.append(el('div', { class: 'sub', style: 'margin-top:14px;margin-bottom:0', text: 'Вес оценки' }), wRow);
@@ -268,6 +269,7 @@ export function openMarkSheet(studentId, lessonId, classId) {
   ui.openSheet(sheet);
 
   async function applyAndClose(vals) {
+    if (vals.value && !checkGrade(lesson,studentId)) return;
     const { mark, undo } = await store.setMark(studentId, lessonId, vals);
     ui.closeSheet();
     ui.haptic(10);
@@ -451,6 +453,7 @@ async function openStudentSheet(studentId, classId) {
     el('div', { class: 'sub', text: `№ ${student.number ?? '—'} в списке` }),
   ]);
 
+  sheet.append(el('button',{class:'btn',type:'button',text:'Группа здоровья и ограничения',onclick:() => openHealth(studentId)}));
   if (exs.length) {
     const block = el('div', { class: 'card-block', style: 'margin-top:8px' }, [
       el('div', { class: 'head', text: 'Освобождения' }),
@@ -614,7 +617,7 @@ export function openQuickEntrySheet(classId, initialDate) {
   }
 
   function draw() {
-    listWrap.innerHTML = '';
+    listWrap.replaceChildren(warning(lesson || {classId,date:currentDate}));
     const markMap = store.markMap(classId);
 
     for (const st of students) {
@@ -635,6 +638,7 @@ export function openQuickEntrySheet(classId, initialDate) {
       const btns = el('div', { class: 'mark-buttons' });
       const set = async (value, flag) => {
         if (!lesson) lesson = await ensureLesson();
+        if (value && !checkGrade(lesson,st.id)) return;
         await store.setMark(st.id, lesson.id, { value, flag });
         ui.haptic(8);
         draw();

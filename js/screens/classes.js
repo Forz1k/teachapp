@@ -1,3 +1,4 @@
+import { openRoster, warning } from './health.js';
 /* screens/classes.js — стартовый экран: 9 карточек классов. */
 
 import * as M from '../model.js';
@@ -78,6 +79,17 @@ export function renderClasses(root, ctx = {}) {
     return;
   }
 
+  const todayClasses = new Set([...store.scheduleForDate(today).map(row => row.classId),
+    ...store.state.lessons.filter(l => l.date === today).map(l => l.classId)]);
+  const todayList = el('section', {class:'card-block'});
+  for (const cls of store.state.classes.filter(c => todayClasses.has(c.id))) {
+    const lesson = store.lessonsOfClass(cls.id).find(l => l.date === today);
+    todayList.append(el('h3',{text:cls.name}),warning(lesson || {classId:cls.id,date:today}));
+  }
+  if (todayList.childElementCount) {
+    todayList.prepend(el('h2',{text:'Сегодня'}));
+    list.append(todayList);
+  }
   for (const cls of store.state.classes) {
     const students = store.studentsOfClass(cls.id);
     const lessons = store.lessonsInRange(cls.id, tr.from, tr.to);
@@ -114,7 +126,7 @@ export function renderClasses(root, ctx = {}) {
       ctx.onOpenJournal?.(cls.id);
     });
 
-    list.append(card);
+    list.append(card, el('button', {class:'btn', type:'button',text:'Состав класса ' + cls.name, onclick:() => openRoster(cls.id)}));
   }
 
   root.append(list);

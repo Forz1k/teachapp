@@ -1,3 +1,4 @@
+import { editTags, warning } from './health.js';
 /* screens/ktp.js — управление КТП: отдельный список на класс (или несколько классов).
    Каждое КТП — своя нумерация тем. Один и тот же КТП можно привязать к нескольким классам:
    тогда 6А и 6Б идут по одному плану, а 7В — по своему. */
@@ -247,7 +248,12 @@ export function openKtpDetail(ktpId, opts = {}) {
             },
           }),
         ]);
+        row.append(el('button',{class:'btn small',type:'button',text:'Нагрузки',onclick:() => editTags(t,true,() => openKtpDetail(ktpId,opts))}));
         list.append(row);
+        for (const l of store.state.lessons.filter(l => l.topicId === t.id)) {
+          const cls = store.state.classes.find(c => c.id === l.classId);
+          list.append(el('p',{text:(cls?.name || '') + ' · ' + l.date}),warning(l));
+        }
       });
     }
 

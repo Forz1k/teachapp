@@ -351,3 +351,31 @@ test('Участие: история по ученику и сохранение
   assert.match(screen.textContent, /Родительские записки: 1/);
   assert.match(screen.textContent, /Не отмечено: 1/);
 });
+
+test('Предупреждение до ввода оценки и проверка конкретного норматива', async () => {
+  const {cls,a,l1} = await seed();
+  await store.updateLesson(l1.id,{activityIds:['3x10']});
+  await store.saveRestriction({studentId:a.id,activityId:'shuttle',type:'no_test',dateFrom:l1.date});
+  const health = await import('../js/screens/health.js');
+  const summary = health.warning(l1);
+  assert.match(summary.textContent,/Ограничение нагрузки/);
+  assert.ok(!summary.textContent.includes(a.fullName));
+  let calls = 0;
+  const original = window.confirm;
+  window.confirm = () => { calls++; return false; };
+  try {
+    openMarkSheet(a.id,l1.id,cls.id);
+    doc.querySelector('.sheet-buttons .v2').click();
+    await tick();
+    assert.equal(calls,1);
+    assert.equal(store.markMap(cls.id).get(l1.id+'|'+a.id).value,'5');
+    health.prepareTest(l1);
+    const sheet = doc.querySelector('#sheet') || doc.querySelector('.sheet');
+    const choice = sheet.querySelector('select');
+    choice.value = '3x10'; choice.dispatchEvent(new window.Event('change'));
+    assert.match(sheet.textContent,/Ограничение нагрузки/);
+    [...sheet.querySelectorAll('button')].find(b => b.textContent === 'Проверить ограничения').click();
+    assert.match(sheet.textContent,/Челночный бег/);
+    assert.ok(sheet.textContent.includes(a.fullName));
+  } finally { window.confirm = original; }
+});

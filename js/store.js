@@ -4,6 +4,7 @@
    Автосохранение каждого тапа обеспечено самим фактом записи в базу. */
 
 import * as db from './db.js';
+import * as H from './health.js';
 import * as M from './model.js';
 
 /** Кэш в памяти. Грузим один раз при старте — база маленькая (сотни записей). */
@@ -20,6 +21,9 @@ export const state = {
   marks: [],      // все отметки
   exemptions: [],
   monthly: [],
+  studentHealthProfiles: [],
+  activityRestrictions: [],
+  activityCategories: [],
   participation: [],
   // выбор пользователя
   currentClassId: null,
@@ -57,7 +61,7 @@ export function notify() {
 
 /** Первичная загрузка всей базы в кэш. */
 export async function load() {
-  const [settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides, marks, exemptions, monthly, participation] = await Promise.all([
+  const [settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides, marks, exemptions, studentHealthProfiles, activityRestrictions, activityCategories, monthly, participation] = await Promise.all([
     db.getAll('meta'),
     db.getAll('classes'),
     db.getAll('students'),
@@ -68,7 +72,7 @@ export async function load() {
     db.getAll('scheduleOverrides'),
     db.getAll('marks'),
     db.getAll('exemptions'),
-    db.getAll('monthly'), db.getAll('participation'),
+    db.getAll('studentHealthProfiles'), db.getAll('activityRestrictions'), db.getAll('activityCategories'), db.getAll('monthly'), db.getAll('participation'),
   ]);
 
   state.settings = { ...M.defaultSettings(), ...(settingsArr.find((s) => s.id === 'settings') || {}) };
@@ -86,6 +90,9 @@ export async function load() {
   state.scheduleOverrides = scheduleOverrides;
   state.marks = marks;
   state.exemptions = exemptions;
+  state.studentHealthProfiles = studentHealthProfiles;
+  state.activityRestrictions = activityRestrictions;
+  state.activityCategories = activityCategories;
   state.monthly = monthly;
   state.participation = participation;
   state.lastBackupAt = state.settings.lastBackupAt || null;
@@ -215,7 +222,11 @@ export async function deleteClass(id) {
   const monthly = state.monthly.filter((m) => studentIds.has(m.studentId));
 
   const records = state.participation.filter(p => studentIds.has(p.studentId) || lessonIds.has(p.lessonId));
-  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly', 'participation'], 'readwrite', (s) => {
+  const removedStudents = studentIds;
+  const restricted = state.activityRestrictions.filter(r => removedStudents.has(r.studentId));
+  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions'], 'readwrite', (s) => {
+    for (const key of removedStudents) s.studentHealthProfiles.delete(key);
+    for (const r of restricted) s.activityRestrictions.delete(r.id);
     for (const p of records) s.participation.delete(p.id);
     for (const m of marks) s.marks.delete(m.id);
     for (const l of lessons) s.lessons.delete(l.id);
@@ -237,6 +248,8 @@ export async function deleteClass(id) {
 
   if (state.currentClassId === id) state.currentClassId = state.classes[0]?.id || null;
   state.participation = state.participation.filter(p => !records.includes(p));
+  state.studentHealthProfiles = state.studentHealthProfiles.filter(p => !removedStudents.has(p.id));
+  state.activityRestrictions = state.activityRestrictions.filter(r => !removedStudents.has(r.studentId));
   notify();
 }
 
@@ -269,7 +282,11 @@ export async function deleteStudent(id) {
   const exemptions = state.exemptions.filter((e) => e.studentId === id);
   const monthly = state.monthly.filter((m) => m.studentId === id);
   const records = state.participation.filter(p => p.studentId === id);
-  await db.transaction(['students', 'marks', 'exemptions', 'monthly', 'participation'], 'readwrite', (s) => {
+  const removedStudents = new Set([id]);
+  const restricted = state.activityRestrictions.filter(r => removedStudents.has(r.studentId));
+  await db.transaction(['students', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions'], 'readwrite', (s) => {
+    for (const key of removedStudents) s.studentHealthProfiles.delete(key);
+    for (const r of restricted) s.activityRestrictions.delete(r.id);
     for (const p of records) s.participation.delete(p.id);
     for (const m of marks) s.marks.delete(m.id);
     for (const e of exemptions) s.exemptions.delete(e.id);
@@ -282,6 +299,8 @@ export async function deleteStudent(id) {
   state.exemptions = state.exemptions.filter((e) => !exemptions.some((x) => x.id === e.id));
   state.monthly = state.monthly.filter((m) => !monthly.some((x) => x.id === m.id));
   state.participation = state.participation.filter(p => !records.includes(p));
+  state.studentHealthProfiles = state.studentHealthProfiles.filter(p => !removedStudents.has(p.id));
+  state.activityRestrictions = state.activityRestrictions.filter(r => !removedStudents.has(r.studentId));
   notify();
 }
 
@@ -973,7 +992,8 @@ export async function saveParticipation(studentId, lessonId, input, expectedRevi
     const id = previous?.id || M.uid('part');
     let nextMark = mark;
     const record = input ? { id, studentId, lessonId, date: lesson.date, mode: input.mode,
-      basis: input.basis, full: Boolean(input.full), revision: M.uid('rev') } : null;
+      activityId: activities().some(a => a.id === input.activityId) ? input.activityId : null,
+      alternative: H.alternatives.includes(input.alternative) ? input.alternative : '', basis: input.basis, full: Boolean(input.full), revision: M.uid('rev') } : null;
     if (record?.full) {
       if (mark?.flag !== 'ОСВ' || mark.source === 'auto-osv') {
         nextMark = { ...mark, id: mark?.id || M.uid('mk'), studentId, lessonId,
@@ -1002,4 +1022,48 @@ export async function saveParticipation(studentId, lessonId, input, expectedRevi
   state.marks = state.marks.filter(other).concat(result.nextMark || []);
   notify();
   return () => saveParticipation(studentId, lessonId, result.previous, result.record?.revision ?? null);
+}
+
+export const activities = () => [...H.catalog, ...state.activityCategories];
+export const healthGroups = () => [...new Set([...H.groups, ...(state.settings.healthGroups || [])])];
+export function lessonCheck(lesson) {
+  const topic = state.topics.find(t => t.id === lesson.topicId);
+  return H.checkLessonRestrictions({ lesson: { ...lesson, activityIds: lesson.activityIds ?? topic?.activityIds },
+    activities: activities(), students: state.students, restrictions: state.activityRestrictions });
+}
+
+export async function saveProfiles(ids, group, dateFrom, dateTo) {
+  if (!ids.length || !ids.every(id => state.students.some(s => s.id === id))
+      || (group && !healthGroups().includes(group)) || !H.validPeriod(dateFrom,dateTo)) throw new Error('Проверьте группу, учеников и даты');
+  const records = ids.map(id => ({ id, group, dateFrom, dateTo: dateTo || null, updatedAt: new Date().toISOString() }));
+  await db.bulkPut('studentHealthProfiles', records);
+  state.studentHealthProfiles = state.studentHealthProfiles.filter(p => !ids.includes(p.id)).concat(records);
+  notify();
+}
+
+export async function saveRestriction(input) {
+  const existing = input.id && state.activityRestrictions.find(r => r.id === input.id);
+  if (!state.students.some(s => s.id === input.studentId) || !activities().some(a => a.id === input.activityId)
+      || !Object.hasOwn(H.types,input.type) || !H.validPeriod(input.dateFrom,input.dateTo)
+      || (input.id && existing?.studentId !== input.studentId)) throw new Error('Проверьте упражнение, тип и даты');
+  const now = new Date().toISOString();
+  const record = { id: existing?.id || M.uid('rest'), studentId: input.studentId, activityId: input.activityId,
+    type: input.type, dateFrom: input.dateFrom, dateTo: input.dateTo || null, enabled: input.enabled !== false,
+    instruction: input.type === 'individual' ? String(input.instruction || '').trim().slice(0,160) : '',
+    createdAt: existing?.createdAt || now, updatedAt: now };
+  await db.put('activityRestrictions', record);
+  state.activityRestrictions = state.activityRestrictions.filter(r => r.id !== record.id).concat(record);
+  notify();
+  return record;
+}
+
+export async function addActivity(name, parents) {
+  const known = activities();
+  if (!name.trim() || known.some(a => a.name.toLowerCase() === name.trim().toLowerCase())
+      || !parents.every(id => known.some(a => a.id === id))) throw new Error('Проверьте название и категории');
+  const record = { id: M.uid('act'), name: name.trim(), parents: [...new Set(parents)] };
+  await db.put('activityCategories', record);
+  state.activityCategories.push(record);
+  notify();
+  return record;
 }

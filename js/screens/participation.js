@@ -1,3 +1,4 @@
+import { alternatives } from '../health.js';
 import * as store from '../store.js';
 import * as M from '../model.js';
 import { el, openSheet, closeSheet, toast, downloadBlob } from '../ui.js';
@@ -12,13 +13,15 @@ function select(options, value) {
   return control;
 }
 
-export function openParticipation(studentId, lessonId) {
+export function openParticipation(studentId, lessonId, activityId) {
   const student = store.state.students.find(s => s.id === studentId);
   const lesson = store.state.lessons.find(l => l.id === lessonId);
   if (!student || !lesson) return toast('Ученик или урок недоступен');
   const previous = store.state.participation.find(p => p.studentId === studentId && p.lessonId === lessonId);
   const mode = select({ '': 'Выберите режим', ...store.participationModes }, previous?.mode || '');
   const basis = select(bases, previous?.basis || 'none');
+  const activity = store.activities().find(a => a.id === (activityId || previous?.activityId));
+  const alternative = select(Object.fromEntries(['',...alternatives].map(a => [a,a || 'Не выбрано'])),previous?.alternative || '');
   const full = el('input', { type: 'checkbox' });
   full.checked = Boolean(previous?.full);
   const confirmation = field('Подтверждаю полное освобождение по документу на этом уроке. Поставить ОСВ', full);
@@ -39,8 +42,8 @@ export function openParticipation(studentId, lessonId) {
   }
   const body = el('div', {}, [el('h2', { text: 'Самочувствие и нагрузка' }),
     el('p', { text: student.fullName + ' · ' + M.fmtFull(lesson.date) }),
-    field('Фактическое участие', mode), field('Основание', basis), confirmation,
-    button('Сохранить', () => commit({ mode: mode.value, basis: basis.value, full: full.checked }))]);
+    el('p',{text:activity?.name || ''}), field('Фактическое участие', mode), field('Основание', basis), field('Вариант участия по выбору преподавателя',alternative), confirmation,
+    button('Сохранить', () => commit({ mode: mode.value, basis: basis.value, activityId: activity?.id, alternative: alternative.value, full: full.checked }))]);
   if (previous) body.append(button('Снять запись', () => commit(null)));
   openSheet(body);
 }
@@ -74,7 +77,7 @@ export function renderParticipation(screen, classId) {
     for (const m of store.state.marks) if (m.source === 'manual') held.add(m.lessonId);
     for (const l of lessons) if (l.held) held.add(l.id);
     const history = el('div');
-    const matrix = [['Ученик','Дата','Участие','Основание','Полное освобождение по документу','ОСВ в журнале']];
+    const matrix = [['Ученик','Дата','Участие','Основание','Полное освобождение по документу','ОСВ в журнале','Вариант участия','Упражнение']];
     for (const l of lessons) {
       const p = entries.get(l.id);
       const mark = marks.get(l.id + '|' + student.value);
@@ -86,8 +89,8 @@ export function renderParticipation(screen, classId) {
         if (p.full) counts.full++;
       } else counts.empty++;
       const osv = mark?.flag === 'ОСВ';
-      matrix.push([student.selectedOptions[0].textContent, M.fmtFull(l.date), mode, basis, p?.full ? 'Да' : '', osv ? 'ОСВ' : '']);
-      history.append(button([M.fmtFull(l.date), mode, basis, osv ? 'ОСВ в журнале' : ''].filter(Boolean).join(' · '),
+      matrix.push([student.selectedOptions[0].textContent, M.fmtFull(l.date), mode, basis, p?.full ? 'Да' : '', osv ? 'ОСВ' : '',p?.alternative || '',store.activities().find(a => a.id === p?.activityId)?.name || '']);
+      history.append(button([M.fmtFull(l.date), mode, basis, p?.alternative, osv ? 'ОСВ в журнале' : ''].filter(Boolean).join(' · '),
         () => openParticipation(student.value, l.id)));
       if (!held.has(l.id)) history.append(button('Подтвердить проведение · ' + M.fmtFull(l.date), async () => {
         try { await store.updateLesson(l.id, { held: true }); draw(); }

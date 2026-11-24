@@ -1,3 +1,4 @@
+import { warning, editTags, prepareTest } from './health.js';
 /* screens/lesson.js — редактирование отдельного урока и массовый планировщик дат. */
 
 import * as M from '../model.js';
@@ -102,6 +103,19 @@ export function openLessonSheet(lessonId, classId) {
     ]),
   ]);
 
+  const draft = () => ({...lesson,date:dateInput.value,topicId:topicSelect.value || null});
+  const checks = el('div');
+  const refresh = () => checks.replaceChildren(warning(draft()));
+  topicSelect.onchange = () => {
+    if (lesson.activityIds != null) ui.toast('У урока вручную заданы теги нагрузки. Они сохранятся при смене темы.');
+    refresh();
+  };
+  dateInput.onchange = refresh;
+  sheet.insertBefore(checks,sheet.querySelector('.actions'));
+  checks.before(el('button',{class:'btn',type:'button',text:'Виды физической нагрузки',onclick:() =>
+    editTags(draft(),false,() => { refresh(); ui.openSheet(sheet); })}),
+    el('button',{class:'btn',type:'button',text:'Подготовка норматива',onclick:() => prepareTest(draft())}));
+  refresh();
   ui.openSheet(sheet);
 }
 
