@@ -520,7 +520,11 @@ test('Подробный матч: табло и две половины пло�
  const away=Array.from({length:6},(_,i)=>({id:'b'+i,number:i,name:'Б'+i}));
  const d={mode:'dual',teamName:'Наши',opponent:'Гости',competition:'',venue:'',startedAt:'2026-01-01T12:00:00Z',ourPlayers:players,awayPlayers:away,roster:players.map(p=>p.id),lineup:players.map(p=>p.id),awayLineup:away.map(p=>p.id),libero:null,scheme:'5-1',bestOf:3,target:25,decider:15,firstServe:'ours',events:[]};
  openDetailedMatch(d,()=>{},()=>{});await tick();
- const sheet=doc.querySelector('.sheet');assert.equal(sheet.querySelectorAll('.vp-player').length,12);assert.match(sheet.textContent,/\+1 Наши/);assert.match(sheet.textContent,/Гости/);ui.closeSheet();
+ const sheet=doc.querySelector('.sheet');assert.equal(sheet.querySelectorAll('.vp-mini-player').length,12);assert.ok(sheet.querySelector('[aria-label="Очко Наши"]'));assert.match(sheet.textContent,/Гости/);
+ sheet.querySelector('[aria-label="Очко Наши"]').click();assert.ok(sheet.querySelector('.match-attribution'));assert.equal(sheet.querySelector('.vp-score-side.ours strong').textContent,'0');
+ sheet.querySelector('[data-reason="tip"]').click();assert.deepEqual([...sheet.querySelectorAll('[data-player]')].map(x=>x.dataset.player).sort(),players.map(p=>p.id).sort());
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Отмена').click();assert.equal(sheet.querySelector('.vp-score-side.ours strong').textContent,'0');assert.equal(d.events.length,0);
+ sheet.querySelector('.vp-score-side.ours .vp-mini-player').click();assert.ok(sheet.querySelector('.vp-player-overlay'));[...sheet.querySelectorAll('button')].find(b=>b.textContent==='Отмена').click();assert.equal(d.events.length,0);ui.closeSheet();
 });
 
 test('Расстановка по зонам: последовательный выбор, дубли, либеро, копирование',async()=>{
@@ -538,6 +542,8 @@ test('Расстановка по зонам: последовательный �
  assert.ok(!choices().some(b=>b.textContent.includes('Игрок 0')));
  for(let i=1;i<6;i++)click(i);
  assert.deepEqual(picker.get(),prev);assert.match(node.querySelector('.lineup-status').textContent,/готова/);
+ node.querySelector('.zone-1').click();node.querySelector('.lineup-swap-list button').click();assert.deepEqual(picker.get(),[prev[1],prev[0],...prev.slice(2)]);
+ [...node.querySelectorAll('button')].find(b=>b.textContent==='Отменить изменение').click();assert.deepEqual(picker.get(),prev);
  node.querySelector('.zone-3').click();click(6);
  assert.equal(picker.get()[2],'p6');assert.equal(new Set(picker.get()).size,6);
  [...node.querySelectorAll('button')].find(b=>b.textContent==='Взять состав на конец партии').click();assert.deepEqual(picker.get(),final);

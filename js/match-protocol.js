@@ -5,10 +5,29 @@ const text=(x,max=200)=>typeof x==='string'&&x.trim().length>0&&x.length<=max;
 const integer=(x,min,max)=>Number.isInteger(x)&&x>=min&&x<=max;
 const timestamp=x=>typeof x==='string'&&Number.isFinite(Date.parse(x));
 const uniq=a=>new Set(a).size===a.length;
-export const reasons={point:'Без детализации',kill:'Атака',block:'Блок',ace:'Эйс',serveError:'Ошибка подачи',attackError:'Ошибка атаки',receiveError:'Ошибка приёма',otherError:'Другая ошибка'};
-const errors=['serveError','attackError','receiveError','otherError'];
-const canPlace=kind=>kind==='ace'||kind==='kill';
-const isError=k=>errors.includes(k);
+export const reasons={point:'Без детализации',kill:'Атака',tip:'Скидка',block:'Блок',ace:'Эйс',serveError:'Ошибка подачи',attackError:'Ошибка атаки',receiveError:'Ошибка приёма',defenseError:'Ошибка защиты',setError:'Ошибка передачи',netError:'Касание сетки',otherError:'Другая ошибка'};
+const errors=['serveError','attackError','receiveError','defenseError','setError','netError','otherError'];
+export const canPlace=kind=>['ace','kill','tip'].includes(kind);
+export const isError=k=>errors.includes(k);
+export const rallyActor=(winner,kind)=>isError(kind)?other(winner):winner;
+export const secondaryKind=kind=>kind==='ace'?'receiveError':['kill','tip'].includes(kind)?'defenseError':null;
+// Filter the choices for new entry; legacy receiveError events remain replayable.
+export function rallyReasonOptions(winner,serve){
+ fail(sides.includes(winner)&&sides.includes(serve),'Выберите команду');
+ return Object.keys(reasons).filter(k=>k==='ace'?serve===winner:k==='serveError'?serve!==winner:k==='receiveError'?serve===winner:true);
+}
+export function rallyCandidates(d,lineups,serve,winner,kind){
+ if(kind==='point'||!Object.hasOwn(reasons,kind))return [];
+ const actor=rallyActor(winner,kind),ids=lineups[actor];
+ const roster=actor==='ours'?d.ourPlayers:d.awayPlayers;
+ return ids.flatMap((id,i)=>{
+  if(['ace','serveError'].includes(kind)&&(actor!==serve||i!==0))return [];
+  if(kind==='block'&&![1,2,3].includes(i))return [];
+  if(actor==='ours'&&id===d.libero&&['kill','tip','block'].includes(kind))return [];
+  const player=roster.find(p=>p.id===id);
+  return player?[{...player,zone:i+1}]:[];
+ });
+}
 const emptyRotations=()=>Array.from({length:6},(_,i)=>({position:i+1,rallies:0,won:0,lost:0}));
 const sideData=()=>({stats:{},points:0,opponentErrors:0,onServe:0,maxRun:0,run:0,rotations:emptyRotations(),runs:[],activeRun:null,unknown:0});
 const validRoster=arr=>Array.isArray(arr)&&arr.length<=100&&arr.every(p=>text(p.id)&&text(p.name)&&integer(p.number??0,0,99))&&uniq(arr.map(p=>p.id));
@@ -87,15 +106,19 @@ export function replayDetailed(d){
    timeline(ev,{side:'ours'});continue;
   }
   fail(ev.type==='rally'&&sides.includes(ev.side)&&Object.hasOwn(reasons,ev.kind),'Неизвестное действие');
-  const winner=ev.side,loser=other(winner),actor=isError(ev.kind)?loser:winner,player=ev.player??null,before={lineups:{ours:visible('ours'),theirs:visible('theirs')},serve:s.serve};
+  const winner=ev.side,actor=rallyActor(winner,ev.kind),player=ev.player??null,before={lineups:{ours:visible('ours'),theirs:visible('theirs')},serve:s.serve};
   fail(ev.kind!=='point'||player===null,'Для неуточнённого очка не указывайте игрока');
   fail(ev.placement==null||canPlace(ev.kind)&&integer(ev.placement,1,6),'Зона завершения — 1–6 только для эйса или результативной атаки');
   if(player!==null)fail(visible(actor).includes(player),'Выберите игрока до перехода');
   if(['ace','serveError'].includes(ev.kind))fail(s.serve===actor&&(player===null||server(actor)===player),'Эйс или ошибка подачи относится к подающей команде и игроку');
   if(ev.kind==='block'&&player!==null)fail([2,3,4].includes(lineupFor(actor).indexOf(player)+1)&&!(actor==='ours'&&player===d.libero),'Блок — игрок передней линии');
-  if(ev.kind==='kill'&&actor==='ours'&&player!==null)fail(player!==d.libero,'Проверьте действие либеро');
-  const keys={ace:['serves','aces','points'],kill:['attacks','attackKills','points'],block:['blocks','points'],serveError:['serves','serveErrors','errors'],attackError:['attacks','errors','attackErrors'],receiveError:['receptions','errors','receiveErrors'],otherError:['errors','otherErrors']};
+  if(['kill','tip'].includes(ev.kind)&&actor==='ours'&&player!==null)fail(player!==d.libero,'Проверьте действие либеро');
+  const keys={ace:['serves','aces','points'],kill:['attacks','attackKills','points'],tip:['attacks','attackKills','tipKills','points'],block:['blocks','points'],serveError:['serves','serveErrors','errors'],attackError:['attacks','errors','attackErrors'],receiveError:['receptions','errors','receiveErrors'],defenseError:['errors','otherErrors','defenseErrors'],setError:['errors','otherErrors','setErrors'],netError:['errors','otherErrors','netErrors'],otherError:['errors','otherErrors']};
   if(keys[ev.kind])stat(actor,player,keys[ev.kind]);
+  if(ev.secondary!=null){
+   fail(ev.secondary&&typeof ev.secondary==='object'&&secondaryKind(ev.kind)!==null&&ev.secondary.kind===secondaryKind(ev.kind)&&typeof ev.secondary.player==='string','Дополнительная ошибка: приём для эйса, защита для атаки или скидки');
+   stat(other(winner),ev.secondary.player,keys[ev.secondary.kind]);
+  }
   if(ev.kind==='point')s.sides[winner].unknown++;
   if(isError(ev.kind))s.sides[winner].opponentErrors++;
   for(const side of sides){
@@ -137,7 +160,12 @@ export function detailEvent(d,event,now=new Date().toISOString()){
  if(event.type==='attribute'){
   const last=events.at(-1);fail(last?.type==='rally','Можно уточнить только последнее очко');
   events[events.length-1]={...last,kind:event.kind,player:event.player??null};
-  if(last.kind!==event.kind)delete events[events.length-1].placement;
+  if(last.kind!==event.kind){delete events[events.length-1].placement;delete events[events.length-1].secondary;}
+ }else if(event.type==='secondary'){
+  const last=events.at(-1);fail(last?.type==='rally'&&secondaryKind(last.kind),'Уточните последнее результативное действие');
+  events[events.length-1]={...last};
+  if(event.player===null)delete events[events.length-1].secondary;
+  else events[events.length-1].secondary={kind:secondaryKind(last.kind),player:event.player};
  }else if(event.type==='placement'){
   const last=events.at(-1);fail(last?.type==='rally'&&canPlace(last.kind),'Укажите направление последнего эйса или результативной атаки');
   fail(event.zone===null||integer(event.zone,1,6),'Выберите зону 1–6');
@@ -161,6 +189,25 @@ export function reportData(d){
 export function placementSummary(timeline,side,kind){
  fail(sides.includes(side)&&canPlace(kind),'Выберите сторону и вид завершения');
  const zones=Array(6).fill(0);let total=0,known=0;
- for(const e of timeline)if(e.type==='rally'&&e.side===side&&e.kind===kind){total++;if(integer(e.placement,1,6)){zones[e.placement-1]++;known++;}}
+ for(const e of timeline)if(e.type==='rally'&&e.side===side&&(e.kind===kind||kind==='kill'&&e.kind==='tip')){total++;if(integer(e.placement,1,6)){zones[e.placement-1]++;known++;}}
  return {zones,total,known,unknown:total-known};
+}
+
+/** Set-level progression, based exclusively on recorded rally winners. */
+export function setMomentum(timeline,set){
+ const points=[{ours:0,theirs:0}],maxRun={ours:0,theirs:0},maxLead={ours:0,theirs:0};
+ let runSide=null,run=0,changes=0,lastLeader=null,ties=0;
+ for(const e of timeline){
+  if(e.type!=='rally'||e.set!==set)continue;
+  const prev=points.at(-1),curr={...prev,[e.side]:prev[e.side]+1};points.push(curr);
+  if(runSide===e.side)run++;else{runSide=e.side;run=1;}
+  maxRun[e.side]=Math.max(maxRun[e.side],run);
+  const diff=curr.ours-curr.theirs;
+  maxLead.ours=Math.max(maxLead.ours,diff);maxLead.theirs=Math.max(maxLead.theirs,-diff);
+  if(!diff){ties++;continue;}
+  const leader=diff>0?'ours':'theirs';
+  if(lastLeader&&lastLeader!==leader)changes++;
+  lastLeader=leader;
+ }
+ return {points,maxRun,maxLead,changes,ties,runSide,run};
 }
