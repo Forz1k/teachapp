@@ -1,0 +1,7 @@
+# Candidate archive migration (8.2)
+
+Production config `firebase.json` and `firebase-portal.rules.json` are unchanged. Candidate uses `firebase-archive-dev.json` with `firebase-portal-v2.rules.json`. Do not deploy before emulator success and owner approval. New path is `publicMatchArchive/{uid}/{slug}/{timestamp_id}`, separate from live score and old 20-result projection. Explicit publishing of score-only records via ETag conditional write. Public reads require existing published parent, list queries must be ordered by key and bounded to 42 records, single-result reads are direct. Unpublishing the parent hides archive but retains records. Republishing can reveal retained records; delete/sanitization procedure must be approved before production.
+
+Run emulator using workflow or equivalent command. Copy existing results only by explicit confirmation, don't export local private matches in bulk. Keep old public URL working. Test with synthetic accounts, 45 matches, guest bounded pagination, denial of private fields and foreign writers, stale revisions and removal. Existing legacy data is not changed by adding a new path. No real data migration performed.
+
+Remaining: owner-side full archive manager (pagination, deletion), server validation of key/body equality and score consistency, seasons/events schema, explicit migration of published old history. Candidate rules are not a release.
