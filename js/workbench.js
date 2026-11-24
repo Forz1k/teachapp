@@ -4,6 +4,7 @@ import {validateGradeHistory} from './grade-history.js';
 import {validateInventory,validateAchievement} from './resources.js';
 import {validateBoard} from './tactics.js';
 import {validateGoal} from './coach-goals.js';
+import {validateSeasonPlan} from './season-plan.js';
 import {validateRubric} from './school-tools.js';
 import {validateTournament} from './tournaments.js';
 import {validateEvent} from './work-calendar.js';
@@ -33,6 +34,7 @@ export function validateWorkRecord(r){
  if(r.kind==='achievement'){validateAchievement(r);return;}
  if(r.kind==='tacticBoard'){validateBoard(r);return;}
  if(r.kind==='coachGoal'){validateGoal(r);return;}
+ if(r.kind==='seasonPlan'){validateSeasonPlan(r);return;}
  if(r.kind==='rubric'){validateRubric(r);return;}
  if(r.kind==='tournament'){validateTournament(r);return;}
  if(r.kind==='event'){validateEvent(r);return;}

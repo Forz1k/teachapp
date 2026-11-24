@@ -14,6 +14,7 @@ import {openTacticBoards,openLineupAssistant} from './tactics.js';
 import {openPlayerGoals} from './coach-goals.js';
 import {openMatchTactics,openTeamTactics} from './match-tactics.js';
 import {openSeasonAnalytics,playerInsightCard} from './coach-season.js';
+import {openSeasonPlans} from './season-plan.js';
 import {openTournaments} from './tournaments.js';
 import {openLibrary,chooseTrainingPlan} from './library.js';
 import {coachTasks,commonTasks,goalTasks} from '../attention.js';
@@ -248,6 +249,7 @@ export async function renderCoach(root,ctx={}){
           !active.length?p('Нет действующих игроков'):null,
           arch.length?el('details',{},[el('summary',{text:'Архив игроков ('+arch.length+')'}),...arch.map(player=>btn(label(player),()=>playerCard(team,player,view,refresh),'wide'))]):null]));
       }else if(selectedSection==='trainings'){
+        body.append(card('Подготовка сезона',[btn('План сезона и недельные циклы',()=>openSeasonPlans(team),'primary wide')]));
         body.append(card('Тестирования',[testList(team,view,refresh)]));
         body.append(card('Тренировки',[btn('Библиотека и конспекты',()=>openLibrary('coach'),'wide'),team.archived?null:btn('+ Тренировка',()=>trainingForm(team,view,null,refresh),'primary wide'),team.archived?null:btn('Из конспекта',()=>chooseTrainingPlan((plan,exercises)=>trainingForm(team,view,null,refresh,{...plan,exercises})),'wide')]));
         const upcoming=view.trainings.filter(t=>!t.held&&t.date>=todayIso()).sort(dateSort);
