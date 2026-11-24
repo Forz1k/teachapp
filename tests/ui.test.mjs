@@ -554,3 +554,10 @@ test('Редизайн: поиск класса не удаляет данные
  input.value='';input.dispatchEvent(new window.Event('input'));
  assert.ok([...screen.querySelectorAll('.class-entry')].every(n=>!n.hidden));
 });
+
+test('Редизайн: полноэкранная шторка матча не влияет на обычную',()=>{
+ const node=doc.createElement('div');const sheet=ui.openSheet(node,{fullHeight:true,match:true});
+ assert.ok(sheet.classList.contains('sheet-full'));assert.ok(sheet.classList.contains('sheet-match'));
+ ui.openSheet(doc.createElement('div'));assert.ok(!sheet.classList.contains('sheet-full'));assert.ok(!sheet.classList.contains('sheet-match'));
+ ui.closeSheet();
+});

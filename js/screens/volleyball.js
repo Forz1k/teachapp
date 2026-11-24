@@ -69,14 +69,14 @@ function setup(team,players,preset,refresh){
 }
 function live(team,players,initial,refresh){
  let d=initial,busy=false,selected=null;
- const body=el('div',{class:'vb-stack'});
+ const body=el('div',{class:'vb-stack vb-live'});
  const perform=async ev=>{if(busy)return;busy=true;try{d=await C.changeLiveMatch(d.id,d.revision,ev);draw();}catch(e){toast(e.message);}finally{busy=false;}};
  function draw(){
   const s=V.replay(d),won=s.sets.filter(x=>x.ours>x.theirs).length;
   const ids=s.lineup.map(id=>id===s.liberoFor?d.libero:id);
   if(!ids.includes(selected))selected=null;
   body.replaceChildren(el('h2',{text:team.name+' — '+d.opponent}),p('Партии: '+won+':'+(s.sets.length-won)+' · '+s.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),
-   el('div',{class:'vb-score',text:s.ours+' : '+s.theirs}),p('Подача: '+(s.serve==='ours'?'Наши':'Соперник')+' · '+V.schemes[d.scheme]),
+   el('div',{class:'vp-scoreboard'},[['ours',team.name,s.ours,won],['theirs',d.opponent,s.theirs,s.sets.length-won]].map(([side,name,value,sets])=>el('div',{class:'vp-score-side '+side+(s.serve===side?' score-serving':'')},[el('span',{text:name}),el('strong',{text:String(value)}),el('small',{text:(s.serve===side?'● Подача · ':'')+'Партии '+sets})]))),p('Схема '+V.schemes[d.scheme]),
    court(players,s.lineup,d.libero,s.liberoFor,s.serve,id=>{selected=id;draw();}),p('Выбран: '+name(players,selected)));
   if(s.finished)body.append(p('Матч завершён'),btn('Сохранить в историю матчей',async()=>{
     if(busy||!await ui.confirmDialog({title:'Сохранить матч?',text:'Счёт и отмеченные действия будут перенесены в историю. Черновик будет закрыт.',ok:'Сохранить'}))return;
@@ -101,5 +101,5 @@ function live(team,players,initial,refresh){
    btn('Отменить последнее действие',()=>{if(d.events.length)perform(null);},'wide'),btn('Сохранить черновик и выйти',()=>openMatchCenter(team,refresh),'wide'),
    btn('Удалить черновик',async()=>{if(busy||!await ui.confirmDialog({title:'Удалить черновик?',text:'Действия этого матча будут удалены.',ok:'Удалить',danger:true}))return;busy=true;try{await C.discardLiveMatch(d.id,d.revision);openMatchCenter(team,refresh);}catch(e){toast(e.message);}finally{busy=false;}},'wide'));
  }
- draw();openSheet(body);
+ draw();openSheet(body,{fullHeight:true,match:true});
 }
