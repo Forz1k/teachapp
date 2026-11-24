@@ -495,3 +495,20 @@ test('Рабочий экран урока: явка, оценки, нормат
  assert.equal(store.state.marks.filter(m=>m.lessonId===l2.id).length,0);
  ui.closeSheet();
 });
+
+test('Генератор из урока исключает отсутствующего и не меняет журнал',async()=>{
+ const {l1}=await seed();const {openSchoolTeams}=await import('../js/screens/team-generator.js');
+ const before=JSON.stringify(store.state.marks);
+ openSchoolTeams(l1.id);await tick();
+ const sheet=doc.querySelector('.sheet');const activity=[...sheet.querySelectorAll('select')].find(s=>[...s.options].some(o=>o.value==='volley'));
+ activity.value='volley';activity.dispatchEvent(new window.Event('change'));await tick();
+ assert.match(sheet.textContent,/Генератор команд/);assert.match(sheet.textContent,/Отсутствует/);
+ const checks=[...sheet.querySelectorAll('input[type=checkbox]')];assert.equal(checks.filter(c=>c.disabled).length,1);assert.equal(checks.filter(c=>c.checked).length,1);
+ assert.equal(JSON.stringify(store.state.marks),before);ui.closeSheet();
+});
+
+test('Отложенное закрытие шторки не очищает новую шторку',async()=>{
+ ui.openSheet(ui.el('div',{text:'Старая'}));await tick();ui.closeSheet();
+ await tick(285);ui.openSheet(ui.el('div',{text:'Новая'}));await tick(80);
+ assert.match(doc.querySelector('.sheet').textContent,/Новая/);ui.closeSheet();
+});

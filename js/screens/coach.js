@@ -3,6 +3,7 @@ import * as C from '../coach.js';
 import {catalog} from '../health.js';
 import {todayIso,fmtFull} from '../model.js';
 import * as ui from '../ui.js';
+import {openCoachTeams} from './team-generator.js';
 const {el,openSheet,closeSheet,toast}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
 const field=(text,input)=>el('label',{class:'field'},[el('span',{text}),input]);
@@ -179,6 +180,7 @@ export async function renderCoach(root,ctx={}){
       if(selectedSection==='roster'){
         const active=view.players.filter(p=>!p.archived),arch=view.players.filter(p=>p.archived);
         body.append(card('Состав · '+active.length,[team.archived?null:btn('+ Игрок',()=>playerForm(team,null,refresh),'primary wide'),
+          team.archived?null:btn('Генератор команд',()=>openCoachTeams(team,active,closeSheet),'wide'),
           ...active.map(player=>btn(label(player)+' · '+C.positions[player.position],()=>playerCard(team,player,view,refresh),'wide')),
           !active.length?p('Нет действующих игроков'):null,
           arch.length?el('details',{},[el('summary',{text:'Архив игроков ('+arch.length+')'}),...arch.map(player=>btn(label(player),()=>playerCard(team,player,view,refresh),'wide'))]):null]));
