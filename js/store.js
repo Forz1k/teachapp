@@ -981,6 +981,8 @@ export function overridesOfDate(dateIso) {
 
 export async function makeBackup() {
   const data = await db.dumpAll();
+  // Device-specific encrypted sync checkpoints are never portable backup data.
+  data.meta=data.meta.filter(r=>!r.id.startsWith('sync-checkpoint-'));
   const payload = {
     app: 'teachapp',
     version: BACKUP_VERSION,
@@ -994,6 +996,7 @@ export async function restoreBackup(payload) {
   if(payload?.scope)throw Error('Это выборочная копия. Используйте выборочное восстановление; полная замена запрещена');
   const copy = typeof structuredClone === 'function' ? structuredClone(payload) : JSON.parse(JSON.stringify(payload));
   const snapshot = validateBackup(copy);
+  snapshot.meta=snapshot.meta.filter(r=>!r.id.startsWith('sync-checkpoint-'));
   await db.replaceAll(snapshot);
   applySnapshot(snapshot);
   return true;
