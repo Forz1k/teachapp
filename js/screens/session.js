@@ -8,6 +8,7 @@ import {editTags} from './health.js';
 import {batchTable} from './norm-batch.js';
 import {openSchoolTeams} from './team-generator.js';
 import {metric} from '../dashboard.js';
+import * as W from '../workbench.js';
 const {el,toast,openSheet}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
 const p=text=>el('p',{text});
@@ -28,6 +29,39 @@ export async function openLessonSession(classId,date=M.todayIso()){
     showLessonSession(lesson.id);
   }catch(e){toast(e.message);}
 }
+/** A preview never assigns work or changes existing lesson activity tags. */
+export async function openLessonPlanReview(lessonId,back=ui.closeSheet){
+  try{
+    const plans=(await W.listWork('plan')).filter(p=>p.context==='school');
+    const panel=el('div',{class:'coach-form'},[el('h2',{text:'Конспект и подготовка урока'}),p('Выберите утверждённый конспект. Просмотр не меняет тему, журнал или виды нагрузки урока.')]);
+    const choice=select([['','Выберите конспект'],...plans.map(p=>[p.id,p.name+' · '+p.minutes+' мин'])],'');
+    const preview=el('div',{class:'coach-stack'});
+    function draw(){
+      preview.replaceChildren();
+      const plan=plans.find(p=>p.id===choice.value),lesson=S.state.lessons.find(l=>l.id===lessonId);
+      if(!lesson){preview.append(p('Урок больше недоступен.'));return;}
+      if(!plan)return;
+      const review=W.lessonPlanReview(plan,lesson,{students:S.state.students,activities:S.activities(),restrictions:S.state.activityRestrictions,exemptions:S.state.exemptions});
+      const pupils=new Map(S.studentsOfClass(lesson.classId).map(s=>[s.id,s]));
+      preview.append(el('h3',{text:plan.name}),p('Цель: '+(plan.goal||'Не указана')),p('Время упражнений: '+review.minutes+' / '+plan.minutes+' мин'),p('Инвентарь: '+(plan.equipment||'Не указан')),...(plan.resources||[]).map(r=>p(r.name+' · '+r.qty+' '+r.unit)),
+        p('Документальные ОСВ: '+review.full.length+(review.full.length?' · '+review.full.map(id=>pupils.get(id)?.fullName).filter(Boolean).join(', '):'')),
+        p('Сведения сверяются на дату урока. Отсутствие совпадений не является допуском. Проверьте фактическую нагрузку и основания.'));
+      for(const {item,matches,needsReview} of review.items){
+        const card=el('section',{class:'card-block'},[el('h3',{text:W.phases[item.phase]+' · '+item.exercise.name+' · '+item.minutes+' мин'}),p(item.exercise.description),item.exercise.equipment?p('Инвентарь: '+item.exercise.equipment):null,item.notes?p('Указания: '+item.notes):null]);
+        if(needsReview)card.append(p('Категория нагрузки требует проверки.'));
+        if(matches.length)for(const m of matches)card.append(el('p',{class:'session-warning has-warning',text:(pupils.get(m.studentId)?.fullName||'Ученик')+' · '+(H.types[m.restriction.type]||'Проверить')}));
+        else if(!needsReview)card.append(p('Совпадений по этому упражнению не найдено.'));
+        preview.append(card);
+      }
+    }
+    choice.onchange=draw;
+    if(plans.length)panel.append(field('Школьный конспект',choice),preview);
+    else panel.append(p('Создайте школьный конспект в библиотеке.'));
+    panel.append(btn('Вернуться к уроку',back,'wide'));
+    openSheet(panel);
+  }catch(e){toast(e.message);}
+}
+
 export function showLessonSession(lessonId){
   let mode='attendance',query='',action='normal',grade='5',busy=false;
   const selected=new Set();
@@ -63,13 +97,14 @@ export function showLessonSession(lessonId){
       needsReview?p('Содержание нагрузки требует проверки. Отсутствие совпадений не является допуском.'):p('Проверка по внесённым сведениям, не медицинский допуск.'));
     nav.replaceChildren(...Object.entries({attendance:'Явка',grades:'Оценки',participation:'Нагрузка',norms:'Нормативы',details:'Тема и завершение'}).map(([id,text])=>btn(text,()=>{mode=id;selected.clear();action=id==='grades'?'grade':'normal';draw();},mode===id?'primary':'')));
     body.replaceChildren();
-    if(mode==='attendance')body.append(btn('Генератор команд',()=>openSchoolTeams(lessonId,reopen),'wide'));
+    if(mode==='attendance')body.append(btn('Конспект и подготовка урока',()=>openLessonPlanReview(lessonId,reopen),'wide'),btn('Генератор команд',()=>openSchoolTeams(lessonId,reopen),'wide'));
     if(mode==='details'){
       const topics=S.topicsForClass(lesson.classId),options=[['','Без темы'],...topics.map(t=>[t.id,t.name])];
       if(topic&&!topics.some(t=>t.id===topic.id))options.push([topic.id,topic.name+' (другой план)']);
       const choice=select(options,lesson.topicId||''),note=el('textarea',{placeholder:'Заметка к уроку'});note.value=lesson.note||'';
       body.append(field('Тема КТП',choice),field('Заметка',note),btn('Сохранить тему и заметку',()=>run(()=>S.updateLesson(lessonId,{topicId:choice.value||null,note:note.value.trim()})),'primary wide'),
         btn('Настроить виды нагрузки',()=>editTags(lesson,false,reopen),'wide'),
+        btn('Конспект и подготовка урока',()=>openLessonPlanReview(lessonId,reopen),'wide'),
         p('Подтверждение проведения не заполняет автоматически пустые строки явки.'),
         btn(lesson.held?'Закрыть урок':'Подтвердить проведение урока',async()=>{
           if(lesson.held){ui.closeSheet();return;}
