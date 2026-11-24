@@ -60,9 +60,22 @@ export function projectMatch(d,{events=true,numbers=false,stats=true,scheduledId
  return {...(logos?{logos}:{}),id:'match_'+Date.parse(d.startedAt),opponent:clean(d.opponent),startedAt:Date.parse(d.startedAt),status:s.finished?'finished':s.setEnded?'break':'live',set:s.setEnded?s.sets.length:s.sets.length+1,score:{...s.score},setsWon:{ours:wins,theirs:s.sets.length-wins},sets:s.sets.map(x=>({...x})),serve:s.serve,colors:{...(d.boardColors||defaultBoardColors)},events:recent,stats:rows,...(scheduledId&&validId(scheduledId)?{scheduledId}:{})};
 }
 export function archiveMatch(m){return {id:m.id,opponent:m.opponent,startedAt:m.startedAt,setsWon:{...m.setsWon},sets:m.sets.map(x=>({...x}))};}
+export async function savedResult(m){
+ if(!m||!validId(m.id)||!clean(m.opponent)||!/^\d{4}-\d{2}-\d{2}$/.test(m.date)||!Array.isArray(m.sets)||!m.sets.length||m.sets.length>5||m.sets.some(x=>!score(x)||x.ours===x.theirs))throw Error('Проверьте дату, соперника и счёт партий');
+ const day=Date.parse(m.date+'T12:00:00Z');
+ if(!dateMs(day)||new Date(day).toISOString().slice(0,10)!==m.date||m.date>localDay(Date.now()))throw Error('Дата результата некорректна');
+ if(m.detail){const d=projectMatch(m.detail,{events:false,numbers:false,stats:false});if(d.status!=='finished')throw Error('Матч ещё не завершён');return archiveMatch(d);}
+ // Stable opaque public ID; no internal record ID or player information is published.
+ const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('teachapp-public-result:'+m.id));
+ const id='result_'+Array.from(new Uint8Array(hash),x=>x.toString(16).padStart(2,'0')).join('');
+ const sets=m.sets.map(score),ours=sets.filter(x=>x.ours>x.theirs).length;
+ return {id,opponent:clean(m.opponent),startedAt:day,setsWon:{ours,theirs:sets.length-ours},sets};
+}
+export function sortedArchive(rows){return rows.slice().sort((a,b)=>b.startedAt-a.startedAt||a.id.localeCompare(b.id)).slice(0,MAX_ARCHIVE);}
+export function resultFixtures(schedule,m,activeId){return schedule.filter(x=>x.id!==activeId&&norm(x.opponent)===norm(m.opponent)&&localDay(x.startAt)===m.date);}
 export function buildPortal(team,schedule,match,archive,now=Date.now()){
  const {logos,...scoreboard}=match||{};
- return {...(logos?{logos}:{}),schema:PORTAL_SCHEMA,team:clean(team)||'Команда',updatedAt:now,schedule:sortedSchedule(schedule),...(match?{match:scoreboard}:{}),archive:archive.slice(0,MAX_ARCHIVE)};
+ return {...(logos?{logos}:{}),schema:PORTAL_SCHEMA,team:clean(team)||'Команда',updatedAt:now,schedule:sortedSchedule(schedule),...(match?{match:scoreboard}:{}),archive:sortedArchive(archive)};
 }
 export function portalState(data,now=Date.now()){
  if(!data)return {mode:'empty'};

@@ -4,6 +4,7 @@ import {catalog} from '../health.js';
 import {todayIso,fmtFull} from '../model.js';
 import * as ui from '../ui.js';
 import {openMatchCenter} from './volleyball.js';
+import {openPublicResult} from './public-portal.js';
 import {competitionCard} from './competition-center.js';
 import {historyPanel} from './match-history.js';
 import {openVideoReview} from './video-review.js';
@@ -286,7 +287,7 @@ export async function renderCoach(root,ctx={}){
         body.append(historyPanel(view.matches,m=>{
           const s=C.matchScore(m);
           return card(m.opponent+' · '+s.ours+':'+s.theirs,[p(fmtFull(m.date)+(m.competition?' · '+m.competition:'')),p(m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),p('Игроков в составе: '+m.roster.length),
-            m.imported?btn('Импортированный протокол VolleyPoint',()=>openImportedReport(m,view),'primary wide'):m.detail?btn('Протокол матча · PDF / печать',()=>openMatchReport(m,ui.closeSheet),'primary wide'):btn('Состав, партии и статистика',()=>matchForm(team,view,m,refresh),'wide'),m.detail?btn('Выводы и план работы',()=>openMatchDebrief(m),'wide'):null,m.detail?btn('Тактический разбор',()=>openMatchTactics(m),'wide'):null,m.detail?btn('Видеоразбор',()=>openVideoReview(m),'wide'):null,btn('Удалить матч',()=>confirm('Удалить матч?','Результат и статистика будут удалены.',()=>C.removeEvent('coachMatches',m.id),refresh),'wide')]);
+            m.imported?btn('Импортированный протокол VolleyPoint',()=>openImportedReport(m,view),'primary wide'):m.detail?btn('Протокол матча · PDF / печать',()=>openMatchReport(m,ui.closeSheet),'primary wide'):btn('Состав, партии и статистика',()=>matchForm(team,view,m,refresh),'wide'),m.detail?btn('Выводы и план работы',()=>openMatchDebrief(m),'wide'):null,m.detail?btn('Тактический разбор',()=>openMatchTactics(m),'wide'):null,m.detail?btn('Видеоразбор',()=>openVideoReview(m),'wide'):null,team.archived?null:btn('Результат на зрительский сайт',()=>openPublicResult(team,m),'wide'),btn('Удалить матч',()=>confirm('Удалить матч?','Локальный результат и статистика будут удалены. Если он опубликован, уберите его отдельно в настройках зрительской страницы.',()=>C.removeEvent('coachMatches',m.id),refresh),'wide')]);
         }));
       }else{
         body.append(card('Сезонная статистика',[p('Рейтинги по отдельным показателям, сравнение игроков, динамика и тренерские подсказки.'),btn('Открыть сезонную аналитику',()=>openSeasonAnalytics(view),'primary wide'),btn('Развитие команды и цели',()=>openTeamGoals(team),'wide'),btn('Тактическая аналитика матчей',()=>openTeamTactics(view),'wide')]));

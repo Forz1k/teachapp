@@ -1,6 +1,6 @@
 import * as P from '../public-publisher.js';
 import {prepareLogo} from '../match-protocol.js';
-import {primaryPortal} from '../public-portal.js';
+import {primaryPortal,savedResult,resultFixtures} from '../public-portal.js';
 import {resetPortalPassword} from '../firebase-portal.js';
 import {uid} from '../model.js';
 import {el,openSheet,closeSheet,toast,confirmDialog} from '../ui.js';
@@ -32,10 +32,34 @@ export function openPublicPortal(team,back=closeSheet){
     field('Соперник',opponent),field('Дата и время',when),el('details',{},[el('summary',{text:'Эмблемы команд'}),field('Наша команда',ours),field('Соперник',theirs)]),btn(editing?'Сохранить изменения':'+ Добавить матч',()=>run(async()=>{if(!when.value)throw Error('Укажите дату и время');P.saveFixture(id,{id:editing?.id||uid('fixture'),opponent:opponent.value,startAt:new Date(when.value).getTime(),logos:{ours:await fixtureLogo(ours,'ours'),theirs:await fixtureLogo(theirs,'theirs')}});editing=null;}),'primary wide'),
     editing?btn('Отмена редактирования',()=>{editing=null;draw();},'wide'):null,
     ...d.schedule.map(x=>el('div',{class:'vp-portal-fixture'},[el('strong',{text:(d.team||team.name)+' — '+x.opponent}),p(date(x.startAt)+(x.startAt<Date.now()?' · проверьте актуальность':'')),el('div',{class:'vp-actions'},[btn('Изменить',()=>{editing=x;draw();}),btn('Удалить',()=>run(async()=>{if(await confirmDialog({title:'Убрать матч из расписания?',text:'Зрители больше не увидят эту встречу.',ok:'Удалить',danger:true}))P.removeFixture(id,x.id);}))])]))),
+   card('Опубликованные результаты',p('Добавляйте результаты из раздела Тренер → Матчи. Здесь можно убрать отдельную встречу, не удаляя локальную запись.'),...d.archive.map(x=>el('div',{class:'vp-portal-fixture'},[el('strong',{text:x.opponent+' · '+x.setsWon.ours+':'+x.setsWon.theirs}),p(x.sets.map(s=>s.ours+':'+s.theirs).join(' / ')),btn('Убрать с сайта',()=>run(async()=>{if(await confirmDialog({title:'Убрать результат с сайта?',text:'Локальный матч и статистика сохранятся. Изменение станет видимым после синхронизации.',ok:'Убрать',danger:true}))P.unpublishResult(id,x.id);}), 'wide')])),!d.archive.length?p('Пока нет опубликованных результатов.'):null),
    card('Что видят зрители',check('Лента событий', 'events'),check('Номера игроков (при наличии разрешений)','numbers'),check('Результативность игроков (требуются номера)','stats'),check('Автозапуск трансляции запланированного матча','auto'),p('Автозапуск срабатывает только при открытии подробного матча с одним совпадением соперника и даты. Можно начать вручную из матча. Имена, тактика и медицинские данные закрыты.')),
    card('Текущая трансляция',d.match?p(d.match.opponent+' · '+d.match.status+' · '+d.match.score.ours+':'+d.match.score.theirs):p('Трансляция не запущена.'),d.activeId?btn('Остановить текущую трансляцию',()=>run(async()=>{if(await confirmDialog({title:'Остановить трансляцию?',text:'Страница вернётся к расписанию. Запись локального матча продолжится.',ok:'Остановить'}))P.stopPortalMatch(id);}), 'wide'):null,p('Матч продолжает записываться без интернета. Для зрителей показывается последний полученный счёт.'),p('Архив опубликованных матчей: '+d.archive.length)),
    btn('Назад',()=>{unsubscribe();back();},'wide'));
  }
  let unsubscribe=P.watchPortal(id,()=>{if(!body.isConnected){unsubscribe();return;}const n=body.querySelector('.vp-portal-status');if(n)n.textContent=P.portalInfo(id).status;});
  draw();openSheet(body,{onClose:unsubscribe});
+}
+
+export async function openPublicResult(team,match,back=closeSheet){
+ try{
+  const result=await savedResult(match),id=team.id,info=P.portalInfo(id),d=info.data;
+  const existing=d.archive.some(x=>x.id===result.id)||d.match?.id===result.id&&d.match.status==='finished';
+  const fixtures=resultFixtures(d.schedule,match,d.activeId?d.match?.scheduledId:null);
+  const fixture=el('select',{'aria-label':'Связать с расписанием'},[el('option',{value:'',text:'Не изменять расписание'}),...fixtures.map(x=>el('option',{value:x.id,text:date(x.startAt)+' · '+x.opponent}))]);
+  if(fixtures.length===1)fixture.value=fixtures[0].id;
+  const status=el('p',{class:'vp-portal-status',role:'status',text:info.status});
+  const body=el('div',{class:'vb-stack'},[el('h2',{text:'Результат на зрительском сайте'}),card('Предпросмотр',el('strong',{text:(d.team||team.name)+' — '+result.opponent}),p(match.date),el('div',{class:'public-result-score',text:result.setsWon.ours+' : '+result.setsWon.theirs}),p('Партии: '+result.sets.map(s=>s.ours+':'+s.theirs).join(' / '))),p('Будут опубликованы только дата, соперник и счёт партий. Состав, имена, индивидуальная статистика и тактика не передаются.'),status,p(existing?'Результат уже добавлен в публичный архив. Можно обновить его.':'Результат ещё не добавлен в публичный архив.')]);
+  if(fixtures.length)body.append(field('Убрать завершённую встречу из расписания',fixture));
+  if(!d.enabled)body.append(p('Сначала подключите и опубликуйте страницу команды.'),btn('Настройки зрительской страницы',()=>openPublicPortal(team,()=>openPublicResult(team,match,back)),'primary wide'));
+  else{
+   const publish=btn(existing?'Обновить результат на сайте':'Опубликовать результат',async()=>{publish.disabled=true;try{if(!await confirmDialog({title:'Опубликовать результат?',text:'Счёт станет доступен зрителям после синхронизации.'+(fixture.value?' Выбранная встреча будет убрана из расписания.':''),ok:'Опубликовать'}))return;await P.publishSavedResult(id,match,{fixtureId:fixture.value||null});toast('Результат сохранён для публикации');await openPublicResult(team,match,back);}catch(e){toast(e.message);}finally{publish.disabled=false;}},'primary wide');
+   body.append(publish);
+   if(existing)body.append(btn('Убрать результат с сайта',async()=>{if(!await confirmDialog({title:'Убрать результат с сайта?',text:'Матч останется в истории TeachApp. Изменение появится после синхронизации.',ok:'Убрать',danger:true}))return;try{P.unpublishResult(id,result.id);await openPublicResult(team,match,back);}catch(e){toast(e.message);}},'wide'));
+   if(!info.connected)body.append(p('Войдите в Firebase для отправки сохранённых изменений.'),btn('Войти в Firebase',()=>openPublicPortal(team,()=>openPublicResult(team,match,back)),'wide'));
+  }
+  const link=P.portalLink(id);if(link)body.append(el('a',{class:'btn wide',href:link,target:'_blank',rel:'noopener noreferrer',text:'Открыть зрительский сайт'}));
+  let unsubscribe=P.watchPortal(id,()=>{if(!body.isConnected){unsubscribe();return;}status.textContent=P.portalInfo(id).status;});
+  body.append(btn('Назад',()=>{unsubscribe();back();},'wide'));openSheet(body,{onClose:unsubscribe});
+ }catch(e){toast(e.message);}
 }
