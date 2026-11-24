@@ -5,3 +5,11 @@ node_modules/
 .DS_Store
 backups/
 *backup*.json
+
+# Local Worker credentials and data
+.wrangler/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+cloudflare-secrets.json

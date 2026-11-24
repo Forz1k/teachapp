@@ -1,0 +1,72 @@
+name: TeachApp Cloudflare
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'server/cloudflare-relay.mjs'
+      - 'server/cloudflare-protocol.mjs'
+      - 'wrangler.jsonc'
+      - 'tools/cloudflare-smoke.mjs'
+      - '.github/workflows/cloudflare.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cloudflare-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npx --yes wrangler@4.161.0 deploy --dry-run --outdir "${RUNNER_TEMP}/worker-build"
+      - run: node tools/cloudflare-smoke.mjs
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.TEACHAPP_CLOUDFLARE_DEPLOY == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TEACHAPP_SYNC_ORIGIN: ${{ vars.TEACHAPP_SYNC_ORIGIN }}
+      TEACHAPP_SYNC_TOKEN_HASHES: ${{ secrets.TEACHAPP_SYNC_TOKEN_HASHES }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check authorization and construct private secrets file
+        run: |
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          import {join} from 'node:path';
+          const e=process.env;
+          if(!e.CLOUDFLARE_API_TOKEN || !e.CLOUDFLARE_ACCOUNT_ID) throw Error('Cloudflare owner authorization is required');
+          const url=new URL(e.TEACHAPP_SYNC_ORIGIN);
+          if(url.protocol!=='https:'||url.origin!==e.TEACHAPP_SYNC_ORIGIN)throw Error('Exact HTTPS PWA origin required');
+          let h;try{h=JSON.parse(e.TEACHAPP_SYNC_TOKEN_HASHES||'{}')}catch{throw Error('Invalid token hash configuration')}
+          if(!h||typeof h!=='object'||Array.isArray(h)||Object.keys(h).some(k=>!['school','coach'].includes(k)))throw Error('Invalid area configuration');
+          const seen=new Set();
+          for(const k of ['school','coach']){
+            const list=h[k]??[];
+            if(!Array.isArray(list)||list.length>32)throw Error('Invalid token hash configuration');
+            for(const v of list){if(typeof v!=='string'||!/^[0-9a-f]{64}$/.test(v)||seen.has(v))throw Error('Invalid or reused token hash');seen.add(v);}
+          }
+          if(!seen.size)throw Error('No enabled areas');
+          writeFileSync(join(e.RUNNER_TEMP,'teachapp-secrets.json'),JSON.stringify({TEACHAPP_SYNC_ORIGIN:e.TEACHAPP_SYNC_ORIGIN,TEACHAPP_SYNC_TOKEN_HASHES:e.TEACHAPP_SYNC_TOKEN_HASHES}),{mode:0o600,flag:'wx'});
+          NODE
+      - name: Publish authorized beta worker
+        run: npx --yes wrangler@4.161.0 deploy --secrets-file "${RUNNER_TEMP}/teachapp-secrets.json"
+      - name: Remove temporary secrets
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/teachapp-secrets.json"
