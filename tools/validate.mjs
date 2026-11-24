@@ -43,7 +43,7 @@ if (!list) {
 /* 3. Синтаксис JS */
 console.log('\nСинтаксис модулей:');
 const modules = [
-  'js/app.js', 'js/db.js', 'js/backup.js', 'js/model.js', 'js/store.js', 'js/ui.js', 'js/export.js', 'js/demo.js',
+  'js/design.js', 'js/app.js', 'js/db.js', 'js/backup.js', 'js/model.js', 'js/store.js', 'js/ui.js', 'js/export.js', 'js/demo.js',
   'js/screens/today.js', 'js/screens/classes.js', 'js/screens/journal.js', 'js/screens/monthly.js',
   'js/privacy.js', 'js/retention.js', 'js/analytics.js', 'js/screens/analytics.js', 'js/coach.js', 'js/volleyball.js', 'js/match-protocol.js', 'js/screens/match-protocol.js', 'js/screens/lineup-picker.js', 'js/screens/volleyball.js', 'js/screens/coach.js', 'js/norm-import.js', 'js/screens/norm-batch.js', 'js/screens/session.js', 'js/team-generator.js', 'js/screens/team-generator.js', 'js/assessment.js', 'js/screens/norms.js', 'js/health.js', 'js/screens/health.js', 'js/screens/participation.js', 'js/screens/exemptions.js', 'js/screens/lesson.js', 'js/screens/settings.js',
   'js/screens/schedule.js', 'js/screens/ktp.js', 'js/version.js', 'sw.js',
@@ -70,7 +70,7 @@ ok('проверка импортов завершена');
 /* 5. Запрет внешних ресурсов в HTML/CSS */
 console.log('\nВнешние ресурсы (должно быть 0):');
 const html = readFileSync('index.html', 'utf8');
-const css = readFileSync('css/app.css', 'utf8');
+const css = ['css/app.css','css/design.css'].map(p=>readFileSync(p,'utf8')).join('\n');
 const externals = [
   ...html.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g),
   ...css.matchAll(/url\((https?:\/\/[^)]+)\)/g),
