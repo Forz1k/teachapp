@@ -21,6 +21,7 @@ import {openCoachSearchResult} from './screens/coach.js';
 import {readNavigation,saveNavigation,coachRoutes,schoolRoutes} from './design.js';
 import {animateOnce} from './motion.js';
 import {readPersonalCode} from './personal-sync.js';
+import {installPrivacyShield} from './privacy-shield.js';
 import {openSyncSession,runPersonalSync,autoSyncStatus,syncRetryDelay} from './auto-sync.js';
 const { el, icon } = ui;
 
@@ -48,14 +49,14 @@ function safeAutoRoute(){
  return store.state.currentTab==='today'||store.state.currentTab==='coach'&&navigation.coach==='home';
 }
 async function maybeAutoSync(initial=false,manual=false,retry=false){
- if(!readPersonalCode()||autoBusy)return;
+ if(!readPersonalCode()||autoBusy||document.body.classList.contains('privacy-covered'))return;
  if(!syncSession||navigator.onLine===false||document.visibilityState==='hidden'){
   if(manual)ui.toast(navigator.onLine===false?'Нет интернета. Изменения сохранены на устройстве.':'Откройте синхронизацию в настройках для ручного обмена.');return;
  }
  if(!initial&&(ui.isSheetOpen()||document.querySelector('.dialog-backdrop,.privacy-cover')||document.activeElement?.matches('input,textarea,select,[contenteditable=true]')||!manual&&(!safeAutoRoute()||!retry&&Date.now()-autoAttempt<55000)))return;
  clearAutoRetry(manual);autoBusy=true;autoAttempt=Date.now();syncHint='Синхронизация…';updateSyncIndicator();
  const oldTabbar=tabbarEl;
- appRoot.inert=true;if(oldTabbar)oldTabbar.inert=true;
+ ui.setUnderlyingInert(appRoot,true);ui.setUnderlyingInert(oldTabbar,true);
  try{
   const result=await syncSession.exclusive(()=>runPersonalSync());
   if(result?.areas.some(x=>x.changed))await store.load();
@@ -70,7 +71,7 @@ async function maybeAutoSync(initial=false,manual=false,retry=false){
    }else if(result&&!result.areas.some(x=>x.retryable===true))autoRetryCount=0;
   if(manual){const needsReview=result&&(result.phase!=='finished'||result.areas.some(x=>!['synced','setup'].includes(x.status))),hasSetup=result?.areas.some(x=>x.status==='setup');ui.toast(!result?'Закройте другие вкладки TeachApp.':needsReview?'Проверьте синхронизацию в настройках.':hasSetup?'Проверьте первичное подключение контуров в настройках.':'Синхронизация завершена.');}
  }catch{syncHint='Обмен не завершён';if(manual)ui.toast(syncHint);}
- finally{appRoot.inert=false;if(oldTabbar)oldTabbar.inert=false;if(tabbarEl)tabbarEl.inert=false;autoBusy=false;updateSyncIndicator();}
+ finally{ui.setUnderlyingInert(appRoot,false);ui.setUnderlyingInert(oldTabbar,false);ui.setUnderlyingInert(tabbarEl,false);autoBusy=false;updateSyncIndicator();}
 }
 let journalUpdate = null;
 let renderedRoute = '';
@@ -303,6 +304,7 @@ async function boot() {
     else render();
   });
   render();
+  installPrivacyShield({cover:()=>ui.coverPrivacy()});
   window.addEventListener('online',()=>{clearAutoRetry(true);autoAttempt=0;syncHint='';updateSyncIndicator();void maybeAutoSync();});
   window.addEventListener('offline',()=>{clearAutoRetry(true);syncHint='';updateSyncIndicator();});
   const refreshPeriod=()=>{if(store.refreshSchoolPeriod())store.notify();};

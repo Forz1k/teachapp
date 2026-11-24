@@ -1,3 +1,4 @@
+import {privacyIdleOptions,readShieldPreferences,saveShieldPreferences} from '../privacy-shield.js';
 import {openBriefings,openGymBoards} from './methodical.js';
 import {isEncryptedBackup,decryptBackup} from '../privacy.js';
 import {retentionPreview,purgeExpired} from '../retention.js';
@@ -296,6 +297,19 @@ export function renderSettings(root, ctx = {}) {
       }catch(e){ui.toast(e.message);}
     }})]));
 
+    const shield=readShieldPreferences();
+  const idle=el('select',{'aria-label':'Автоматическая экранная ширма'},privacyIdleOptions.map(minutes=>el('option',{value:String(minutes),text:minutes?minutes+' мин':'Выключена'})));
+  idle.value=String(shield.idleMinutes);
+  const hideBackground=el('input',{type:'checkbox',checked:shield.hideOnBackground});
+  body.append(el('div',{class:'card-block'},[
+    el('div',{class:'head',text:'Конфиденциальность · автоширма'}),
+    el('p',{text:'Скрывает интерфейс при бездействии или уходе с вкладки. Открывается без пароля. Это не шифрование и не защита от доступа к браузерному профилю. Настройки действуют только на этом устройстве; системный снимок экрана при сворачивании не гарантируется.'}),
+    el('label',{class:'field'},['Скрывать данные после бездействия',idle]),
+    el('label',{class:'row-item'},[hideBackground,el('span',{text:'Скрывать при уходе с вкладки или приложения'})]),
+    el('button',{class:'btn wide',type:'button',text:'Сохранить автоширму',onclick:()=>{
+      try{saveShieldPreferences({idleMinutes:Number(idle.value),hideOnBackground:hideBackground.checked});ui.toast('Настройки автоширмы сохранены');}catch{ui.toast('Не удалось сохранить настройки автоширмы');}
+    }})
+  ]));
   /* ---------- демо-данные ---------- */
   const demoBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Демонстрационные данные' })]);
   const demoDesc = el('div', {

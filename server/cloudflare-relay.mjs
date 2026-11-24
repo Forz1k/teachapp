@@ -1,6 +1,7 @@
 /* Optional Cloudflare relay for synthetic data. No default credentials. */
 import {DurableObject} from 'cloudflare:workers';
 import {LIMIT,digestToken} from './cloudflare-protocol.mjs';
+import {DeviceRegistry,validDeviceHash,validRegistration,validRevocation} from './device-trust.mjs';
 const areas=['school','coach'];
 const tokenPattern=/^[A-Za-z0-9_-]{32,256}$/;
 const digestPattern=/^[0-9a-f]{64}$/;
@@ -9,7 +10,7 @@ function json(status,body,extra={}){
  return new Response(JSON.stringify(body),{status,headers:{...headers,'Content-Type':'application/json; charset=utf-8',...extra}});
 }
 function config(env){
- let origin,hashes;
+ let origin,hashes,adminHash=null;
  try{
   const url=new URL(env.TEACHAPP_SYNC_ORIGIN);
   if(url.protocol!=='https:'||url.origin!==env.TEACHAPP_SYNC_ORIGIN)throw Error();
@@ -23,9 +24,12 @@ function config(env){
    for(const h of list){if(typeof h!=='string'||!digestPattern.test(h)||seen.has(h))throw Error();seen.add(h);}
    hashes[area]=list;
   }
-  if(!seen.size)throw Error();
+  const admin=env.TEACHAPP_SYNC_ADMIN_HASH;
+  // v2 is opt-in. A legacy shared token can never become the administrative token.
+  if(validDeviceHash(admin)&&!seen.has(admin))adminHash=admin;
+  if(!seen.size&&!adminHash)throw Error();
  }catch{return null;}
- return {origin,hashes};
+ return {origin,hashes,adminHash};
 }
 function equal(a,b){let diff=0;for(let i=0;i<64;i++)diff|=a.charCodeAt(i)^b.charCodeAt(i);return diff===0;}
 async function authorized(request,hashes){
@@ -55,6 +59,14 @@ async function readPacket(request){
  if(!body||Object.keys(body).sort().join(',')!=='envelope,expectedRevision'||!Number.isSafeInteger(body.expectedRevision)||body.expectedRevision<0||!envelopeValid(body.envelope))return {error:400};
  return {body};
 }
+async function readSmallJson(request){
+ const raw=request.headers.get('Content-Length');
+ if(raw!==null&&(!/^\d+$/.test(raw)||Number(raw)>4096))return {error:413};
+ if(!request.body)return {error:400};
+ const reader=request.body.getReader();let size=0,parts=[];
+ try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>4096){await reader.cancel();return {error:413};}parts.push(value);}}finally{reader.releaseLock();}
+ try{const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.byteLength;}return {body:JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes))};}catch{return {error:400};}
+}
 export default {async fetch(request,env){
  const url=new URL(request.url);
  if(url.pathname==='/healthz'&&request.method==='GET'){
@@ -62,9 +74,11 @@ export default {async fetch(request,env){
   return json(config(env)?200:503,{status:config(env)?'ready':'not-configured'});
  }
  const match=/^\/v1\/snapshot\/(school|coach)$/.exec(url.pathname),pair=/^\/v1\/pairing\/(create|redeem)$/.exec(url.pathname);
- if((!match&&!pair)||url.search)return json(404,{error:'route'});
+ const v2Snapshot=/^\/v2\/snapshot\/(school|coach)$/.exec(url.pathname),devices=/^\/v2\/devices\/(school|coach)(\/revoke)?$/.exec(url.pathname),pairV2=/^\/v2\/pairing\/(create|redeem)$/.exec(url.pathname);
+ if((!match&&!pair&&!pairV2&&!v2Snapshot&&!devices)||url.search)return json(404,{error:'route'});
  const settings=config(env);
  if(!settings)return json(503,{error:'not-configured'});
+ if((v2Snapshot||devices||pairV2)&&!settings.adminHash)return json(404,{error:'route'});
  const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};
  if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
  if(request.method==='OPTIONS'){
@@ -72,12 +86,47 @@ export default {async fetch(request,env){
   return new Response(null,{status:204,headers:{...headers,...cors,'Access-Control-Allow-Methods':'GET, PUT, POST, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'}});
  }
  try{
-  if(pair){
+  if(devices){
+   if(!await authorized(request,[settings.adminHash]))return json(401,{error:'unauthorized'},cors);
+   const revoke=Boolean(devices[2]);
+   if(revoke?request.method!=='POST':!['GET','POST'].includes(request.method))return json(405,{error:'method'},cors);
+   const init={method:request.method};
+   if(request.method==='POST'){
+    if(!/^application\/json(?:;|$)/i.test(request.headers.get('Content-Type')||''))return json(415,{error:'content-type'},cors);
+    const packet=await readSmallJson(request);
+    if(packet.error)return json(packet.error,{error:packet.error===413?'too-large':'packet'},cors);
+    const body=packet.body;
+    if(revoke?!validRevocation(body):!validRegistration(body))return json(400,{error:'packet'},cors);
+    if(!revoke&&(equal(body.tokenHash,settings.adminHash)||areas.some(a=>settings.hashes[a].some(h=>equal(body.tokenHash,h)))))return json(400,{error:'shared-key-not-allowed'},cors);
+    init.body=JSON.stringify(body);
+   }
+   const stub=env.SNAPSHOTS.get(env.SNAPSHOTS.idFromName(devices[1]));
+   const result=await stub.fetch(new Request('https://internal/devices'+(revoke?'/revoke':''),init));
+   return new Response(result.body,{status:result.status,headers:{...headers,...cors,'Content-Type':'application/json; charset=utf-8'}});
+  }
+  if(v2Snapshot){
+   const auth=/^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(request.headers.get('Authorization')||'');
+   if(!auth)return json(401,{error:'unauthorized'},cors);
+   if(!['GET','PUT'].includes(request.method))return json(405,{error:'method'},cors);
+   const hash=await digestToken(auth[1]);
+   if(equal(hash,settings.adminHash)||areas.some(a=>settings.hashes[a].some(h=>equal(hash,h))))return json(401,{error:'unauthorized'},cors);
+   const init={method:request.method,headers:{'X-TeachApp-Device-Hash':hash}};
+   if(request.method==='PUT'){
+    if(!/^application\/json(?:;|$)/i.test(request.headers.get('Content-Type')||''))return json(415,{error:'content-type'},cors);
+    const n=request.headers.get('Content-Length');
+    if(n!==null&&(!/^\d+$/.test(n)||Number(n)>LIMIT))return json(413,{error:'too-large'},cors);
+    init.body=request.body;
+   }
+   const stub=env.SNAPSHOTS.get(env.SNAPSHOTS.idFromName(v2Snapshot[1]));
+   const result=await stub.fetch(new Request('https://internal/snapshot-v2',init));
+   return new Response(result.body,{status:result.status,headers:{...headers,...cors,'Content-Type':'application/json; charset=utf-8'}});
+  }
+  if(pair||pairV2){
    if(request.method!=='POST')return json(405,{error:'method'},cors);
    if(!/^application\/json(?:;|$)/i.test(request.headers.get('Content-Type')||''))return json(415,{error:'content-type'},cors);
-   const op=pair[1],auth=/^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(request.headers.get('Authorization')||'');
+   const op=(pairV2||pair)[1],auth=/^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(request.headers.get('Authorization')||'');
    if(!auth)return json(401,{error:'unauthorized'},cors);
-   if(op==='create'&&!await authorized(request,settings.hashes.school))return json(401,{error:'unauthorized'},cors);
+   if(op==='create'&&!await authorized(request,pairV2?[settings.adminHash]:settings.hashes.school))return json(401,{error:'unauthorized'},cors);
    const rawLength=request.headers.get('Content-Length');
    if(rawLength!==null&&(!/^\d+$/.test(rawLength)||Number(rawLength)>4096))return json(413,{error:'too-large'},cors);
    if(!request.body)return json(400,{error:'packet'},cors);
@@ -94,7 +143,7 @@ export default {async fetch(request,env){
     if(Object.keys(payload).length)return json(400,{error:'packet'},cors);
     body={verifier:await digestToken(auth[1])};
    }
-   const stub=env.SNAPSHOTS.get(env.SNAPSHOTS.idFromName('device-invite-v1'));
+   const stub=env.SNAPSHOTS.get(env.SNAPSHOTS.idFromName(pairV2?'device-invite-v2':'device-invite-v1'));
    const result=await stub.fetch(new Request('https://internal/pairing/'+op,{method:'POST',body:JSON.stringify(body)}));
    return new Response(result.body,{status:result.status,headers:{...headers,...cors,'Content-Type':'application/json; charset=utf-8'}});
   }
@@ -129,6 +178,15 @@ export class SyncSnapshot extends DurableObject{
   if(!envelopeValid(envelope))throw Error('Invalid envelope');
   return {revision:row.revision,envelope};
  }
+ // Must be called inside the same synchronous transaction as v2 authorization.
+ write(expectedRevision,envelope){
+  const current=this.get();
+  if(current.revision!==expectedRevision)return null;
+  if(current.revision===Number.MAX_SAFE_INTEGER)throw Error('Revision limit');
+  const revision=current.revision+1;
+  this.sql.exec('INSERT INTO snapshot (id, revision, envelope) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision, envelope=excluded.envelope',revision,JSON.stringify(envelope));
+  return {revision,envelope};
+ }
  async alarm(){
   // A newer invitation may have replaced the old one. Never remove a live invitation early.
   const row=this.sql.exec('SELECT expires FROM device_invite WHERE id=1').toArray()[0];
@@ -136,7 +194,37 @@ export class SyncSnapshot extends DurableObject{
  }
  async fetch(request){
   try{
-   const pair=/^\/pairing\/(create|redeem)$/.exec(new URL(request.url).pathname);
+   const path=new URL(request.url).pathname,pair=/^\/pairing\/(create|redeem)$/.exec(path);
+   if(path==='/devices'||path==='/devices/revoke'){
+    const registry=new DeviceRegistry(this.sql);
+    if(path==='/devices'&&request.method==='GET')return json(200,{devices:registry.list()});
+    if(request.method!=='POST')return json(405,{error:'method'});
+    const body=await request.json();
+    const result=this.storage.transactionSync(()=>path==='/devices'?registry.register(body):validRevocation(body)?registry.revoke(body.id):{status:400,error:'packet'});
+    return json(result.status,result.device?{device:result.device}:{error:result.error});
+   }
+   if(path==='/snapshot-v2'){
+    const registry=new DeviceRegistry(this.sql),hash=request.headers.get('X-TeachApp-Device-Hash');
+    // Reject unauthorized streams early, and recheck inside the commit transaction.
+    if(!registry.active(hash))return json(401,{error:'unauthorized'});
+    if(request.method==='GET'){
+     const result=this.storage.transactionSync(()=>{
+      const id=registry.active(hash);if(!id)return null;
+      const snapshot=this.get();registry.touch(id);return snapshot;
+     });
+     return result?json(200,result):json(401,{error:'unauthorized'});
+    }
+    if(request.method!=='PUT')return json(405,{error:'method'});
+    const packet=await readPacket(request);
+    if(packet.error)return json(packet.error,{error:packet.error===413?'too-large':'packet'});
+    const result=this.storage.transactionSync(()=>{
+     const id=registry.active(hash);if(!id)return {status:401,error:'unauthorized'};
+     const next=this.write(packet.body.expectedRevision,packet.body.envelope);
+     if(!next)return {status:409,error:'stale'};
+     registry.touch(id,Date.now(),true);return {status:200,snapshot:next};
+    });
+    return json(result.status,result.snapshot||{error:result.error});
+   }
    if(pair&&request.method==='POST'){
     const body=await request.json(),now=Date.now();
     this.sql.exec('CREATE TABLE IF NOT EXISTS device_invite (id INTEGER PRIMARY KEY CHECK (id=1), verifier TEXT NOT NULL, envelope TEXT NOT NULL, expires INTEGER NOT NULL)');
@@ -160,14 +248,7 @@ export class SyncSnapshot extends DurableObject{
    const packet=await readPacket(request);
    if(packet.error)return json(packet.error,{error:packet.error===413?'too-large':'packet'});
    const {expectedRevision,envelope}=packet.body;
-   const next=this.storage.transactionSync(()=>{
-    const current=this.get();
-    if(current.revision!==expectedRevision)return null;
-    if(current.revision===Number.MAX_SAFE_INTEGER)throw Error('Revision limit');
-    const revision=current.revision+1;
-    this.sql.exec('INSERT INTO snapshot (id, revision, envelope) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision, envelope=excluded.envelope',revision,JSON.stringify(envelope));
-    return {revision,envelope};
-   });
+   const next=this.storage.transactionSync(()=>this.write(expectedRevision,envelope));
    return next?json(200,next):json(409,{error:'stale'});
   }catch{return json(503,{error:'storage-unavailable'});}
  }

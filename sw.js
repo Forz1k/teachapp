@@ -16,6 +16,7 @@ const PRECACHE = [
   './js/school-tools.js',
   './js/screens/school-tools.js',
   './js/screens/attention.js',
+  './js/device-trust.js','./js/privacy-shield.js',
   './js/app.js','./js/search.js','./js/screens/search.js',
   './js/version.js',
   './js/db.js',
