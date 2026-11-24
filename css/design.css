@@ -392,3 +392,8 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .vp-live:has(.vp-rally-overlay){min-height:calc(100dvh - 80px)}
 @media(max-height:700px){.vp-board-score .vp-score-side{min-height:260px;padding:8px 5px;gap:3px}.vp-board-score .vp-score-side>.vp-score-number{font-size:58px}.vp-mini-player{min-height:44px}}
 @media(orientation:landscape) and (max-height:500px){.vp-board-score .vp-score-side{min-height:210px;grid-template-columns:1fr 1fr;grid-template-rows:auto 1fr auto}.vp-board-score .vp-score-side>span{grid-column:1/-1}.vp-board-score .vp-score-side>.vp-score-number{grid-column:1;grid-row:2}.vp-board-score .vp-mini-court{grid-column:2;grid-row:2}.vp-board-score .vp-board-indicators{grid-column:1/-1;grid-template-columns:1fr 1fr 1fr}.vp-board-score .vp-score-side>small{display:none}}
+
+.lineup-swap{border:1px solid var(--sep);border-radius:12px;padding:8px}
+.lineup-swap summary{cursor:pointer;min-height:32px;font-size:13px;font-weight:700}
+.lineup-swap-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:6px}
+.lineup-swap-list .btn{min-height:44px;white-space:normal;overflow-wrap:anywhere;font-size:12px}

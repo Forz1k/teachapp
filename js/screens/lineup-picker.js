@@ -3,7 +3,7 @@ import {el} from '../ui.js';
 const label=p=>(p.number==null?'':'№'+p.number+' · ')+p.name;
 export function lineupPicker(players,initial=[],{excluded=[],previous=null,final=null,side='ours'}={}){
  const byId=new Map(players.map(p=>[p.id,p]));
- let blocked=new Set(excluded),slots=[],active=-1;
+ let blocked=new Set(excluded),slots=[],active=-1,history=[];
  const node=el('div',{class:'lineup-picker'}),progress=el('div',{class:'lineup-progress','aria-hidden':'true'}),court=el('div',{class:'lineup-court '+side}),choices=el('div',{class:'lineup-choices'}),status=el('p',{class:'lineup-status',role:'status','aria-live':'polite'});
  const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
  function normalize(value){
@@ -13,7 +13,11 @@ export function lineupPicker(players,initial=[],{excluded=[],previous=null,final
   });
  }
  function next(start=0){for(let k=0;k<6;k++){const i=(start+k)%6;if(!slots[i])return i;}return -1;}
- function set(value){slots=normalize(value);active=next();draw();}
+ function set(value){slots=normalize(value);active=next();history=[];draw();}
+ function remember(){history.push({slots:[...slots],active});if(history.length>30)history.shift();}
+ function undo(){const last=history.pop();if(!last)return;slots=last.slots;active=last.active;draw();}
+ function apply(value){remember();slots=normalize(value);active=next();draw();}
+ const undoButton=btn('Отменить изменение',undo,'wide');
  function draw(focus=false){
   const filled=slots.filter(Boolean).length;
   progress.replaceChildren(...slots.map((id,i)=>el('span',{class:'lineup-step'+(id?' filled':'')+(active===i?' active':''),text:String(i+1)})));
@@ -23,23 +27,26 @@ export function lineupPicker(players,initial=[],{excluded=[],previous=null,final
    return el('button',{type:'button',class:'lineup-zone zone-'+(i+1)+(active===i?' active':''),'aria-pressed':String(active===i),'aria-label':'Зона '+(i+1)+': '+(p?label(p):'не заполнена'),onclick:()=>{active=i;draw(true);}},[
     el('small',{text:'Зона '+(i+1)}),el('strong',{text:p?.number??(p?'•':'+')}),el('span',{text:p?.name||'Выбрать'})]);
   }));
+  undoButton.disabled=!history.length;
   choices.replaceChildren();
   if(active<0)return;
   const zone=active;
   choices.append(el('strong',{text:'Игрок в зону '+(zone+1)}));
   const available=players.filter(p=>!blocked.has(p.id)&&(!slots.includes(p.id)||slots[zone]===p.id));
   const list=el('div',{class:'lineup-player-list'},available.map(p=>btn(label(p),()=>{
-   slots[zone]=p.id;active=next((zone+1)%6);draw(true);
+   if(slots[zone]!==p.id){remember();slots[zone]=p.id;}active=next((zone+1)%6);draw(true);
   },slots[zone]===p.id?'primary':'')));
   choices.append(list);
   if(!available.length)choices.append(el('p',{text:'Нет свободных игроков. Проверьте заявку или освободите другую зону.'}));
-  if(slots[zone])choices.append(btn('Освободить зону '+(zone+1),()=>{slots[zone]='';draw(true);},'wide'));
+  const others=slots.map((id,i)=>({id,i})).filter(x=>x.id&&x.i!==zone);
+  if(others.length)choices.append(el('details',{class:'lineup-swap'},[el('summary',{text:slots[zone]?'Поменять позиции':'Переместить из другой зоны'}),el('div',{class:'lineup-swap-list'},others.map(({id,i})=>btn('P'+(i+1)+' · '+label(byId.get(id)),()=>{remember();[slots[zone],slots[i]]=[slots[i],slots[zone]];active=next();draw(true);})))]));
+  if(slots[zone])choices.append(btn('Освободить зону '+(zone+1),()=>{remember();slots[zone]='';draw(true);},'wide'));
   if(focus){const first=list.querySelector('button');if(first)first.focus({preventScroll:true});}
  }
  node.append(progress,court,status,choices,el('div',{class:'lineup-tools'},[
-  previous?btn('Копировать старт прошлой партии',()=>set(previous),'wide'):null,
-  final?btn('Взять состав на конец партии',()=>set(final),'wide'):null,
-  btn('Очистить расстановку',()=>set([]),'wide')
+  previous?btn('Копировать старт прошлой партии',()=>apply(previous),'wide'):null,
+  final?btn('Взять состав на конец партии',()=>apply(final),'wide'):null,
+  undoButton,btn('Очистить расстановку',()=>apply([]),'wide')
  ]));
  set(initial);
  return {node,get:()=>[...slots],set,setExcluded(ids){blocked=new Set(ids);set(slots);}};

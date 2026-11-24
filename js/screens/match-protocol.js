@@ -38,7 +38,7 @@ export function openDetailedSetup(team,players,back,refresh,preset=null){
  let awayPlayers=[],awayFields=six([]),parsedText='',ownFields,eligible=[],libero;
  const checked=new Set(players.map(p=>p.id));
  function refreshOwn(){
-  const previous=ownFields?.get()||preset?.lineup||[],previousLib=libero?.value||preset?.libero||'';
+  const previous=ownFields?.get()||preset?.lineup||[],previousLib=libero?.value??preset?.libero??'';
   const warnings=C.trainingWarnings({date:date.value,roster:players.map(p=>p.id),exercises:[{name:'Волейбол',activityId:'volley'},{name:'Прыжки',activityId:'jump'},{name:'Соревнование',activityId:'competition'}]},players);
   const restricted=new Set(warnings.map(x=>x.player.id));
   eligible=players.filter(p=>!p.archived&&!restricted.has(p.id)&&checked.has(p.id));
@@ -101,7 +101,7 @@ export function openDetailedMatch(initial,back,refresh){
   const s=V.replayDetailed(d),last=s.timeline.at(-1),won=s.sets.filter(x=>x.ours>x.theirs).length;
   const set=s.setEnded?s.sets.length:s.sets.length+1;
   const pre=pointDraft?.editing&&last?.before;
-  const begin=(side,editing=false)=>{pointDraft={side,editing,kind:null};selected=null;draw();body.closest('.sheet')?.scrollTo(0,0);};
+  const begin=(side,editing=false)=>{pointDraft={side,editing,kind:null};selected=null;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;};
   const cancel=()=>{pointDraft=null;selected=null;draw();};
   const courtState=pre?last.before.lineups:shown(d,s),serve=pre?last.before.serve:s.serve;
   const active=section==='match'&&!s.setEnded&&!s.finished;
@@ -137,10 +137,10 @@ export function openDetailedMatch(initial,back,refresh){
    if(!pointDraft)body.append(controls);
    if(!active&&!pointDraft)body.append(court(d,courtState,serve,selected,choose));
    const showOverlay=area=>{
-    for(const child of [...body.children])child.inert=true;
-    const overlay=el('div',{class:'vp-rally-overlay'},[area]);
+    for(const child of [...body.children]){child.inert=true;child.setAttribute('inert','');}
+    const overlay=el('div',{class:'vp-rally-overlay',onkeydown:e=>{if(e.key==='Escape'&&!busy){e.stopPropagation();cancel();}}},[area]);
     body.append(overlay);
-    area.setAttribute('tabindex','-1');area.focus({preventScroll:true});
+    area.setAttribute('tabindex','-1');area.setAttribute('role','dialog');area.setAttribute('aria-modal','true');area.focus({preventScroll:true});
    };
    if(pointDraft){
     const {side:winner,editing,kind}=pointDraft;
