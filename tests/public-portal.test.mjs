@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {primaryPortal,firebaseOrigin,portalAddress,shareUrl,projectMatch,buildPortal,readPortal,portalState,countdown,matchingSchedule,archiveMatch} from '../js/public-portal.js';
+import {primaryPortal,firebaseOrigin,portalAddress,shareUrl,viewerTarget,projectMatch,buildPortal,readPortal,portalState,countdown,matchingSchedule,archiveMatch} from '../js/public-portal.js';
 import {detailEvent} from '../js/match-protocol.js';
 const players=Array.from({length:6},(_,i)=>({id:'a'+i,number:i+1,name:'PRIVATE '+i}));
 const away=players.map((p,i)=>({...p,id:'b'+i,name:'SECRET '+i}));
@@ -35,3 +35,5 @@ test('Firebase возвращает массивы или индексирова
 });
 
 test('Основная команда получает короткую постоянную ссылку, дополнительные — отдельные адреса',()=>{assert.equal(shareUrl('https://example.com/teachapp/',primaryPortal.origin,primaryPortal.owner,primaryPortal.slug),'https://example.com/teachapp/live/');assert.equal(new URL(shareUrl('https://example.com/teachapp/',primaryPortal.origin,primaryPortal.owner,'other')).searchParams.get('team'),'other');});
+
+test('Короткая ссылка указывает на действующую команду, старые URL не теряют адрес назначения',()=>{const base='https://forz1k.github.io/teachapp/live/',origin='https://teachapp-96626-default-rtdb.europe-west1.firebasedatabase.app',owner='nVMf7mGnsQgdjjAEjnuoJlbXhOY2',slug='b7d0cf3a3e88b316d6766f5929f5696e';const old=new URL(base);old.search=new URLSearchParams({db:origin,owner,team:slug});const address=origin+'/publicTeams/'+owner+'/'+slug+'.json';assert.deepEqual(viewerTarget(base),{address,primary:true,share:base});assert.deepEqual(viewerTarget(old.href),viewerTarget(base));assert.equal(viewerTarget(base+'?utm_source=chat').address,address);assert.equal(viewerTarget(base+'index.html').share,base);assert.equal(shareUrl('https://forz1k.github.io/teachapp/',origin,owner,slug),base);const other=new URL(old);other.searchParams.set('team','volleyball');assert.equal(viewerTarget(other.href).share,other.href);assert.equal(viewerTarget(other.href).primary,false);assert.throws(()=>viewerTarget(base+'?team=other'));});
