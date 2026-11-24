@@ -150,3 +150,16 @@ test('Разведка использует реальные позиции по
  assert.equal(a.rows.find(x=>x.id==='a3').zone,3);assert.equal(a.rows.find(x=>x.id==='a3').misses,1);
  assert.equal(a.zones[3],1);assert.equal(a.zones[2],0);
 });
+
+test('Наблюдения успешных действий не меняют счёт, учитывают сторону приёма и выборку разведки',()=>{
+ let d=detailEvent(base,{type:'rally',side:'ours',kind:'point'});
+ d=detailEvent(d,{type:'observations',observations:[{side:'ours',kind:'serve',player:'a1'},{side:'ours',kind:'tip',player:'a2'},{side:'theirs',kind:'attack',player:'b2'}]});
+ let s=replayDetailed(d);assert.equal(s.ours,1);assert.equal(d.events.length,1);
+ assert.equal(scoutSummary(s.timeline,'ours',{kind:'serve',active:s.lineup}).rows.find(r=>r.id==='a1').success,1);
+ assert.throws(()=>detailEvent(d,{type:'observations',observations:[{side:'theirs',kind:'serve',player:'b2'}]}),/Успешный приём/);
+ assert.throws(()=>detailEvent(d,{type:'observations',observations:[{side:'ours',kind:'tip',player:'b2'}]}),/до розыгрыша/);
+ d=detailEvent(d,{type:'rally',side:'ours',kind:'receiveError',player:'b2'});
+ s=replayDetailed(d);const a=scoutSummary(s.timeline,'theirs',{active:s.awayLineup}).rows.find(r=>r.id==='b2');assert.equal(a.attempts,2);assert.equal(a.errorRate,.5);
+ assert.throws(()=>detailEvent(d,{type:'observations',observations:[{side:'theirs',kind:'serve',player:'b2'}]}),/Успешный приём/);
+ assert.equal(replayDetailed(detailEvent(d,null)).ours,1);
+});

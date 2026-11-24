@@ -249,6 +249,7 @@ export function openDetailedMatch(initial,back,refresh){
    }
    if(!pointDraft&&d.events.at(-1)?.type==='rally'){
     const details=el('details',{class:'vp-match-more'},[el('summary',{text:'Детали последнего очка'}),btn('Уточнить последнее очко',()=>begin(last.side,true),'wide')]);body.append(details);
+    if(last?.type==='rally')details.append(observationEditor(d,last,items=>perform({type:'observations',observations:items},()=>{})));
     if(last&&V.secondaryKind(last.kind)){
      const losing=last.side==='ours'?'theirs':'ours',kind=V.secondaryKind(last.kind),players=roster(d,losing).filter(p=>last.before.lineups[losing].includes(p.id));
      const extra=select([['','Не указана'],...players.map(p=>[p.id,playerLabel(p)])],last.secondary?.player||'');
@@ -292,12 +293,22 @@ function placementBlock(d,s,side,kind){
    p('Зона на стороне принимающей команды. Указано '+a.known+' из '+a.total+' · без зоны '+a.unknown+'. Не включает подачи или атаки, продолжившие розыгрыш.'),
    el('div',{class:'tactical-grid'},[4,3,2,5,6,1].map(z=>el('div',{class:'tactical-cell'},[el('small',{text:'Зона '+z}),el('strong',{text:a.zones[z-1]}),el('progress',{max,value:a.zones[z-1],'aria-label':'Зона '+z+' · '+a.zones[z-1]})]))));
 }
+function observationEditor(d,event,save){
+ const items=[...(event.observations||[])],side=select(sides.map(x=>[x,sideName(d,x)]),event.before.serve==='ours'?'theirs':'ours'),kind=select([['serve','Приём подачи · мяч остался в игре'],['attack','Защита от атаки'],['tip','Защита от скидки'],['defense','Защита без уточнения']],'serve'),person=select([],'');
+ function fill(){person.replaceChildren(el('option',{value:'',text:'Выберите игрока'}),...roster(d,side.value).filter(p=>event.before.lineups[side.value].includes(p.id)).map(p=>el('option',{value:p.id,text:playerLabel(p)})));}
+ side.onchange=fill;fill();
+ const node=el('details',{class:'vp-match-more'},[el('summary',{text:'Успешные приёмы и защита · '+items.length}),p('Запишите только наблюдавшиеся мячи, которые остались в игре. Игроки — до перехода. Можно отметить несколько защитных действий.'),
+ field('Команда',side),field('Действие',kind),field('Игрок',person),btn('Добавить успешное действие',()=>{if(!person.value)return toast('Выберите игрока');save([...items,{side:side.value,kind:kind.value,player:person.value}]);},'wide'),
+ ...items.map((x,i)=>el('div',{class:'vp-observed-row'},[p(sideName(d,x.side)+' · '+name(d,x.side,x.player)+' · '+V.scoutTypes[x.kind]),btn('Удалить',()=>save(items.filter((_,j)=>i!==j)))]))]);
+ return node;
+}
 function scoutPanel(d,s,options,change,close){
  const side=options.side,kind=options.kind,active=shown(d,s)[side],current=s.setEnded?s.sets.length:s.sets.length+1;
  const a=V.scoutSummary(s.timeline,side,{kind,set:options.set,active});
  const types=select(Object.entries(V.scoutTypes),kind),period=select([[0,'Весь матч'],...Array.from({length:current},(_,i)=>[i+1,'Партия '+(i+1)])],options.set);
  types.onchange=()=>change({kind:types.value});period.onchange=()=>change({set:Number(period.value)});
  const top=a.ranked[0],zone=a.topZones[0],hint=side==='theirs'?'Проверить игрока соперника':'Обратить внимание на нашу защиту';
+ const observed=[...a.rows].filter(r=>r.attempts>=5&&r.success>0&&r.misses>0).sort((x,y)=>y.errorRate-x.errorRate||y.attempts-x.attempts)[0];
  const ranked=top&&top.misses>=2?el('div',{class:'vp-scout-tip'},[el('strong',{text:hint+': '+name(d,side,top.id)+' · P'+top.zone}),p('Отмечено '+top.misses+' ошибок выбранного типа за период. Это наблюдение, не вероятность ошибки. '+(a.ranked.filter(x=>x.misses===top.misses).length>1?'Есть другие игроки с таким же количеством.':''))]):p('Пока нет повторяющихся персональных ошибок выбранного типа.');
  const zoneTip=zone&&zone.count>=2?el('div',{class:'vp-scout-tip'},[el('strong',{text:(side==='theirs'?'Проверить зону соперника P':'Прикрыть нашу зону P')+zone.zone}),p('Зафиксировано завершений: '+zone.count+'. '+(a.topZones.filter(x=>x.count===zone.count).length>1?'Есть зоны с таким же количеством.':''))]):p('Пока нет повторяющихся завершений в известной зоне.');
  const byZone=new Map(a.rows.map(x=>[x.zone,x])),maxPlayer=Math.max(1,...a.rows.map(x=>x.misses)),maxZone=Math.max(1,...a.zones);
@@ -308,11 +319,11 @@ function scoutPanel(d,s,options,change,close){
  return el('section',{class:'vp-attribution vp-scout-panel','aria-label':'Тактическая разведка'},[
   el('h3',{text:'Тактическая разведка'}),el('div',{class:'vp-tabs'},[['theirs','Соперник'],['ours','Наша команда']].map(([id,label])=>btn(label,()=>change({side:id}),side===id?'primary':''))),field('Период',period),field('Тип действия',types),
   p('Розыгрышей: '+a.rallies+' · пропущенных завершений выбранного типа: '+a.total),p('С автором ошибки: '+a.knownPlayers+' из '+a.total+' · с зоной: '+a.knownZones+' из '+a.total),
-  ranked,zoneTip,el('strong',{text:'Игроки в текущей расстановке'}),el('div',{class:'vp-heat-net',text:'СЕТКА'}),grid(true),p('P1–P6 — текущие позиции по расстановке, не фактическое место игрока в розыгрыше. Цвет показывает число отмеченных ошибок, а не качество игры.'),
+  ranked,observed?el('div',{class:'vp-scout-tip'},[el('strong',{text:'По записанным попыткам: '+name(d,side,observed.id)}),p(Math.round(observed.errorRate*100)+'% ошибок · '+observed.misses+' из '+observed.attempts+' отмеченных действий. Выборка может быть неполной.')]):null,zoneTip,el('strong',{text:'Игроки в текущей расстановке'}),el('div',{class:'vp-heat-net',text:'СЕТКА'}),grid(true),p('P1–P6 — текущие позиции по расстановке, не фактическое место игрока в розыгрыше. Цвет показывает число отмеченных ошибок, а не качество игры.'),
   el('strong',{text:'Карта пропущенных завершений'}),el('div',{class:'vp-heat-net',text:'СЕТКА'}),grid(false),
-  table(['Игрок на площадке','На площадке¹','Подача/приём','Атака','Скидка','Защита*','Всего'],[...a.rows].sort((x,y)=>y.misses-x.misses||x.zone-y.zone).map(r=>[name(d,side,r.id),r.onCourt,r.serve,r.attack,r.tip,r.defense,r.misses])),
+  table(['Игрок на площадке','Розыгрыши¹','Ошибки','Успешно','Попытки','Доля²','Приём','Атака','Скидка'],[...a.rows].sort((x,y)=>y.misses-x.misses||x.zone-y.zone).map(r=>[name(d,side,r.id),r.onCourt,r.misses,r.success,r.attempts,r.attempts>=5&&r.success>0?Math.round(r.errorRate*100)+'%':'—',r.serve,r.attack,r.tip])),
   a.former.length?el('details',{},[el('summary',{text:'Игроки вне площадки · '+a.former.length}),...a.former.map(r=>p(name(d,side,r.id)+' · '+r.misses+' отмеченных ошибок'))]):null,
-  p('¹ Число розыгрышей с игроком на площадке, не число направленных ему мячей. * Ошибка защиты без указанного типа атаки. Ноль отмеченных ошибок не означает безошибочную игру.'),
+  p('¹ Розыгрыши с игроком на площадке. ² Доля ошибок среди записанных попыток (не менее пяти и хотя бы одно успешное действие). Не все мячи обязательно отмечены. Ноль ошибок не доказывает безошибочную игру.'),
   el('button',{type:'button',class:'btn wide'+(options.entry?' primary':''),'aria-pressed':String(options.entry),'data-scout-entry':'true',text:options.entry?'Уточнение очка: включено':'Уточнение очка: выключено',onclick:()=>change({entry:!options.entry})}),
   p('При включении после выбора автора атаки, скидки, эйса или ошибки приёма/защиты появится необязательный шаг для отметки зоны и ошибки соперника.'),
   btn('Вернуться к матчу',close,'primary wide')]);
