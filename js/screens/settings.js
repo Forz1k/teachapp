@@ -16,6 +16,7 @@ import {openWorkCalendar} from './work-calendar.js';
 import {openArchive} from './school-archive.js';
 import {openLibrary} from './library.js';
 import {accents,readAccent,applyAccent,initializeDesign} from '../design.js';
+import {dashboardHeading,metric} from '../dashboard.js';
 const { el, icon } = ui;
 
 export function renderSettings(root, ctx = {}) {
@@ -25,7 +26,7 @@ export function renderSettings(root, ctx = {}) {
     el('div', { class: 'topbar-row' }, [el('h1', { text: 'Настройки' })]),
   ]));
 
-  const body = el('div', { class: 'list', style: 'gap:0' });
+  const body = el('div', { class:'list settings-directory' });
   root.append(body);
   if(ctx.onAnalytics)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Аналитика и итоговые оценки'}),el('button',{class:'btn wide',type:'button',text:'Открыть аналитику',onclick:ctx.onAnalytics})]));
   if(ctx.onCoach)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Режим тренера'}),el('button',{class:'btn wide',type:'button',text:'Волейбол · команды и тренировки',onclick:ctx.onCoach})]));
@@ -158,7 +159,7 @@ export function renderSettings(root, ctx = {}) {
       ui.toast('Ошибка импорта: ' + err.message, null, 6000);
     }
   });
-  document.body.append(fileInput);
+  impBlock.append(fileInput);
 
   impBlock.append(el('div', { class: 'row-item' }, [
     el('div', { class: 'label' }, [
@@ -190,13 +191,15 @@ export function renderSettings(root, ctx = {}) {
 
   /* ---------- резервная копия ---------- */
   const backupBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Резервная копия' })]);
+  backupBlock.classList.add('settings-backup');
   const lastBackup = store.state.lastBackupAt
     ? `Последняя: ${store.state.lastBackupAt.slice(0, 10)}`
     : 'Ещё не делали';
+  backupBlock.append(el('div',{class:'backup-status'},[el('span',{class:'metric-icon'},[icon('shield')]),el('div',{},[el('strong',{text:store.state.lastBackupAt?'Последняя копия: '+store.state.lastBackupAt.slice(0,10):'Резервная копия ещё не создана'}),el('p',{text:'Храните защищённую копию отдельно от устройства.'})])]));
   backupBlock.append(
     el('div', { class: 'row-item' }, [
       el('div', { class: 'label' }, [
-        el('div', { text: 'Сохранить копию (JSON)' }),
+        el('div', { text: 'Незашифрованная копия (JSON)' }),
         el('div', { style: 'font-size:12px;color:var(--text-3)', text: lastBackup }),
       ]),
       el('button', {
@@ -208,7 +211,7 @@ export function renderSettings(root, ctx = {}) {
     ]),
   );
 
-  backupBlock.append(el('div',{class:'row-item'},[el('div',{class:'label',text:'Защищённая копия (рекомендуется)'}),el('button',{class:'btn small',type:'button',text:'Шифровать',onclick:async()=>{
+  backupBlock.append(el('div',{class:'row-item'},[el('div',{class:'label',text:'Защищённая копия (рекомендуется)'}),el('button',{class:'btn small',type:'button',text:'Создать',onclick:async()=>{
     let password=await ui.promptDialog({title:'Пароль для копии',text:'Не менее 12 символов. Пароль не сохраняется. Без него открыть копию нельзя.',password:true,ok:'Далее'});
     if(password===null)return;
     if(password.length<12){ui.toast('Не менее 12 символов');return;}
@@ -243,6 +246,10 @@ export function renderSettings(root, ctx = {}) {
       ui.toast('Не удалось: ' + err.message, null, 6000);
     }
   });
+  const protectedRow=backupBlock.lastElementChild;
+  protectedRow.classList.add('backup-recommended');
+  const ordinaryRow=protectedRow.previousElementSibling;
+  if(ordinaryRow)backupBlock.insertBefore(protectedRow,ordinaryRow);
   backupBlock.append(restoreInput);
 
   backupBlock.append(el('div', { class: 'row-item' }, [
@@ -331,8 +338,8 @@ export function renderSettings(root, ctx = {}) {
       },
     })));
   const accentSelect=el('select',{'aria-label':'Цвет оформления'},Object.entries(accents).map(([value,text])=>el('option',{value,text})));
-  accentSelect.value=readAccent(window.localStorage);
-  accentSelect.onchange=()=>applyAccent(accentSelect.value,document.documentElement,window.localStorage);
+  accentSelect.value=readAccent();
+  accentSelect.onchange=()=>applyAccent(accentSelect.value,document.documentElement);
   themeBlock.append(themeSeg,el('label',{class:'field',style:'margin:12px 16px'},[el('span',{text:'Акцент'}),accentSelect]));
   body.append(themeBlock);
 
@@ -345,13 +352,13 @@ export function renderSettings(root, ctx = {}) {
   }));
   body.append(aboutBlock);
 
-  body.append(el('div', { style: 'height:20px' }));
+  organizeSettings(body);
 }
 
 /** Применяет тему к документу. */
 export function applyTheme(theme) {
   const root = document.documentElement;
-  initializeDesign(root,window.localStorage);
+  initializeDesign(root);
   if (theme === 'auto') {
     root.removeAttribute('data-theme');
     const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -624,4 +631,17 @@ function showTsvHelp() {
     ]),
   ]);
   ui.openSheet(sheet);
+}
+
+/** Keep original controls and handlers; group them without rebuilding inputs. */
+export function organizeSettings(body){
+ const groups=[{name:'Рабочие инструменты',id:'tools',match:/Аналитика|Режим тренера|Методические|Рабочий календарь|Соревнования/},{name:'Учебный год и классы',id:'school',match:/Учебный год|Учебные периоды|^Классы$|КТП/},{name:'Данные и безопасность',id:'data',match:/^Импорт$|^Экспорт$|Резервная копия|Конфиденциальность|Демонстрационные/},{name:'Приложение',id:'app',match:/Оформление|О приложении/}];
+ const cards=[...body.children],sections=[];
+ for(const g of groups){const list=cards.filter(c=>g.match.test(c.querySelector('.head')?.textContent||''));if(!list.length)continue;const section=el('section',{class:'settings-group','data-group':g.id},[dashboardHeading(g.name),...list]);sections.push(section);}
+ const extras=cards.filter(c=>!sections.some(s=>s.contains(c)));if(extras.length)sections.push(el('section',{class:'settings-group'},extras));
+ const search=el('input',{type:'search',placeholder:'Найти настройку','aria-label':'Найти настройку'}),empty=el('p',{class:'empty',text:'Настройки не найдены',hidden:true});
+ const nav=el('div',{class:'settings-nav'},groups.map(g=>el('button',{type:'button',class:'chip',text:g.name,onclick:()=>{search.value='';filter();sections.find(s=>s.dataset.group===g.id)?.scrollIntoView({behavior:'auto',block:'start'});}})));
+ function filter(){const q=search.value.trim().toLocaleLowerCase('ru');let n=0;for(const section of sections){let visible=0;for(const c of section.querySelectorAll(':scope > .card-block')){c.hidden=!!q&&!c.textContent.toLocaleLowerCase('ru').includes(q);if(!c.hidden){visible++;n++;}}section.hidden=!!q&&!visible;}empty.hidden=!q||n>0;}
+ search.oninput=filter;
+ body.replaceChildren(search,nav,...sections,empty);
 }
