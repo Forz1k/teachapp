@@ -5,7 +5,7 @@ import * as M from '../model.js';
 import * as W from '../workbench.js';
 import * as T from '../tournaments.js';
 import {testHistory,summarizeTests} from '../coach-tests.js';
-import {documentTypes,buildDocument,makeDocx,documentWorkbook} from '../documents.js';
+import {documentTypes,buildDocument,makeDocx,documentWorkbook,documentColumnWidths} from '../documents.js';
 import {el,openSheet,closeSheet,toast,confirmDialog,downloadBlob} from '../ui.js';
 const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
 const input=(value='',type='text',props={})=>el('input',{type,value,...props});
@@ -16,7 +16,7 @@ const card=(title,children)=>el('section',{class:'card-block coach-card'},[el('h
 const stack=children=>el('div',{class:'coach-form'},children);
 const val=v=>v==null?'—':String(v);
 function reportView(report){
- return el('article',{class:'document-preview'},[el('h1',{text:report.title}),...report.sections.map(s=>el('section',{},[el('h2',{text:s.heading}),...s.paragraphs.map(p),s.matrix?el('div',{class:'document-table'},[el('table',{},[el('thead',{},[el('tr',{},s.matrix[0].map(v=>el('th',{text:val(v)})))]),el('tbody',{},s.matrix.slice(1).map(row=>el('tr',{},row.map(v=>el('td',{text:val(v)})))))])]):null]))]);
+ return el('article',{class:'document-preview'},[el('h1',{text:report.title}),...report.sections.map(s=>el('section',{},[el('h2',{text:s.heading}),...s.paragraphs.map(p),s.matrix?el('div',{class:'document-table'},[el('table',{},[el('colgroup',{},documentColumnWidths(s.matrix).map(w=>el('col',{style:'width:'+w/100+'%'}))),el('thead',{},[el('tr',{},s.matrix[0].map(v=>el('th',{text:val(v)})))]),el('tbody',{},s.matrix.slice(1).map(row=>el('tr',{},row.map(v=>el('td',{text:val(v)})))))])]):null]))]);
 }
 function printReport(report){
  document.getElementById('teachapp-print-report')?.remove();const node=el('div',{id:'teachapp-print-report'},[reportView(report)]);document.body.append(node);

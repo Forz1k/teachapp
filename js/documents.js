@@ -55,9 +55,28 @@ const enc=new TextEncoder();
 export function xmlText(v){return val(v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g,'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&apos;");}
 function runs(text){return val(text).split(/\r\n|\r|\n/).map((s,i)=>(i?'<w:r><w:br/></w:r>':'')+'<w:r><w:t xml:space="preserve">'+xmlText(s)+'</w:t></w:r>').join('');}
 const para=(text,style='Normal')=>'<w:p><w:pPr><w:pStyle w:val="'+style+'"/></w:pPr>'+runs(text)+'</w:p>';
+/** Stable proportional widths: plan content and instructions get the most room. */
+export function documentColumnWidths(matrix,width=10000){
+ const n=matrix[0].length;
+ check(Number.isInteger(width)&&width>=n&&n>0,'Проверьте ширину таблицы');
+ const isPlan=n===5&&matrix[0].join('|')==='Часть|Время, мин|Содержание|Методические указания|Инвентарь';
+ const weights=isPlan?[14,9,36,29,12]:matrix[0].map((_,col)=>{
+  const len=matrix.slice(0,300).reduce((max,row)=>Math.max(max,...val(row[col]).split(/\r?\n/).map(t=>Math.min(100,t.length))),1);
+  return Math.max(1,Math.min(4,Math.sqrt(len/6)));
+ });
+ const sum=weights.reduce((a,b)=>a+b,0);
+ const result=weights.map(w=>Math.max(1,Math.floor(width*w/sum)));
+ let remaining=width-result.reduce((a,b)=>a+b,0);
+ // Preserve exact grid width, distributing rounding residue without a zero-width column.
+ for(let i=0;remaining!==0;i=(i+1)%n){
+  if(remaining>0){result[i]++;remaining--;}
+  else if(result[i]>1){result[i]--;remaining++;}
+ }
+ return result;
+}
 function table(matrix,width){
- const n=matrix[0].length,cw=Math.floor(width/n);
- return '<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="'+width+'" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>'+Array.from({length:n},()=>'<w:gridCol w:w="'+cw+'"/>').join('')+'</w:tblGrid>'+matrix.map((row,i)=>'<w:tr><w:trPr><w:cantSplit/>'+(i===0?'<w:tblHeader/>':'')+'</w:trPr>'+row.map(v=>'<w:tc><w:tcPr><w:tcW w:w="'+cw+'" w:type="dxa"/>'+(i===0?'<w:shd w:fill="E8EEF7"/>':'')+'</w:tcPr>'+para(v,i===0?'TableHeading':'TableText')+'</w:tc>').join('')+'</w:tr>').join('')+'</w:tbl>';
+ const widths=documentColumnWidths(matrix,width);
+ return '<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="'+width+'" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>'+widths.map(cw=>'<w:gridCol w:w="'+cw+'"/>').join('')+'</w:tblGrid>'+matrix.map((row,i)=>'<w:tr><w:trPr><w:cantSplit/>'+(i===0?'<w:tblHeader/>':'')+'</w:trPr>'+row.map((v,col)=>'<w:tc><w:tcPr><w:tcW w:w="'+widths[col]+'" w:type="dxa"/>'+(i===0?'<w:shd w:fill="E8EEF7"/>':'')+'</w:tcPr>'+para(v,i===0?'TableHeading':'TableText')+'</w:tc>').join('')+'</w:tr>').join('')+'</w:tbl>';
 }
 const xml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const word='http://schemas.openxmlformats.org/wordprocessingml/2006/main',rel='http://schemas.openxmlformats.org/package/2006/relationships',office='http://schemas.openxmlformats.org/officeDocument/2006/relationships';
