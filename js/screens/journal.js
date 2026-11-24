@@ -220,6 +220,8 @@ export function renderJournal(root, ctx) {
   const scrollControls=el('div',{class:'journal-scroll-controls',role:'group','aria-label':'Перемещение по датам'},[left,range,right,end]);
   root.append(topbar,scrollControls,wrap);
   syncScroll();
+  // Restore the visible slider after app.js restores scroll position on rerender.
+  window.requestAnimationFrame?.(()=>{if(wrap.isConnected)syncScroll();});
   // При ручной отметке сохраняем DOM таблицы, прокрутку и остальные строки.
   return changedStudents => {
     const latest = store.markMap(classId);

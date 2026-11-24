@@ -463,7 +463,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 /* Compact journal: keep the scroll container inside its actual parent, not the viewport. */
 .screen:has(>.journal-grid){min-width:0}
 .screen>.journal-grid{--journal-name-width:138px;--journal-date-width:64px;--journal-total-width:62px;width:calc(100% - 16px);max-width:none;min-width:0;align-self:center;margin:4px 8px 12px;overflow:auto;scrollbar-width:auto;scrollbar-gutter:stable}
-.journal-grid table.journal{width:max(100%,calc(32px + var(--journal-name-width) + var(--journal-lessons)*var(--journal-date-width) + 2*var(--journal-total-width)));min-width:100%;table-layout:fixed}
+.journal-grid table.journal{width:calc(32px + var(--journal-name-width) + var(--journal-lessons)*var(--journal-date-width) + 2*var(--journal-total-width));min-width:0;table-layout:fixed}
 .journal-grid .journal th.col-num,.journal-grid .journal td.col-num{width:32px;min-width:32px;max-width:32px}
 .journal-grid .journal th.col-name,.journal-grid .journal td.col-name{width:var(--journal-name-width);min-width:var(--journal-name-width);max-width:var(--journal-name-width)}
 .journal-grid .journal th.col-lesson{width:var(--journal-date-width);min-width:var(--journal-date-width);max-width:var(--journal-date-width)}

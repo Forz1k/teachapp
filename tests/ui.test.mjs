@@ -663,3 +663,20 @@ test('Зрительское табло безопасно отображает 
  renderSpectatorBoard(target,{...a,score:{ours:8,theirs:5}},false);assert.match(target.body.textContent,/НЕТ СВЯЗИ/);assert.equal(target.querySelector('.score').textContent,'8');assert.equal(target.querySelectorAll('#teachapp-score-style').length,1);
  [...target.querySelectorAll('button')].find(b=>b.textContent==='Компактное табло').click();assert.ok(target.documentElement.classList.contains('obs-compact'));renderSpectatorBoard(target,a);assert.ok(target.documentElement.classList.contains('obs-compact'));assert.ok([...target.querySelectorAll('button')].some(b=>b.textContent==='Полное табло'));
 });
+
+
+test('каникулы можно добавить в общих настройках',async()=>{
+  await seed();
+  const screen=doc.createElement('div');
+  renderSettings(screen,{});
+  const card=screen.querySelector('.school-holidays');
+  assert.ok(card);
+  assert.equal(card.closest('[data-group]').dataset.group,'school');
+  card.querySelector('input[aria-label="Начало каникул"]').value='2026-12-28';
+  card.querySelector('input[aria-label="Конец каникул"]').value='2027-01-10';
+  [...card.querySelectorAll('button')].find(b=>b.textContent==='Добавить каникулы').click();
+  await tick(80);
+  assert.deepEqual(store.state.settings.holidays,[{from:'2026-12-28',to:'2027-01-10'}]);
+  await store.load();
+  assert.deepEqual(store.state.settings.holidays,[{from:'2026-12-28',to:'2027-01-10'}]);
+});
