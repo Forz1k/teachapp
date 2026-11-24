@@ -2,7 +2,7 @@ import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates,setMomentum,validBoardColors,opponentHistory,rallySummary,scoutSummary,spectatorSnapshot} from '../js/match-protocol.js';
+import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates,setMomentum,validBoardColors,opponentHistory,rallySummary,scoutSummary,spectatorSnapshot,validBoardLogos} from '../js/match-protocol.js';
 import * as C from '../js/coach.js';
 import * as S from '../js/store.js';
 import * as db from '../js/db.js';
@@ -179,4 +179,11 @@ test('Зрительское табло публикует только счёт
  const a=spectatorSnapshot(d);assert.deepEqual(a.score,{ours:1,theirs:0});assert.equal(a.serve,'ours');assert.equal(a.status,'live');
  assert.equal(JSON.stringify(a).includes('a2'),false);assert.equal(Object.hasOwn(a,'events'),false);assert.equal(Object.hasOwn(a,'ourPlayers'),false);
  assert.equal(spectatorSnapshot(detailEvent(d,null)).score.ours,0);
+});
+
+test('Эмблемы: только ограниченные PNG data URL, старые матчи совместимы',()=>{
+ const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB';
+ assert.equal(validBoardLogos({ours:png,theirs:null}),true);assert.equal(validBoardLogos({ours:'https://example.org/logo.png',theirs:null}),false);assert.equal(validBoardLogos({ours:'data:image/svg+xml;base64,AAAA',theirs:null}),false);assert.equal(validBoardLogos({ours:png+'A'.repeat(120000),theirs:null}),false);
+ const d={...base,boardLogos:{ours:png,theirs:null}};assert.equal(replayDetailed(d).ours,0);assert.equal(spectatorSnapshot(d).logos.ours,png);
+ assert.throws(()=>replayDetailed({...base,boardLogos:{ours:'bad',theirs:null}}),/параметры/);
 });
