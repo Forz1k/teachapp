@@ -7,6 +7,7 @@ import {openParticipation} from './participation.js';
 import {editTags} from './health.js';
 import {batchTable} from './norm-batch.js';
 import {openSchoolTeams} from './team-generator.js';
+import {metric} from '../dashboard.js';
 const {el,toast,openSheet}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
 const p=text=>el('p',{text});
@@ -57,8 +58,8 @@ export function showLessonSession(lessonId){
     const unknown=rows.filter(r=>!r.absent&&!r.present).length;
     const topic=S.state.topics.find(t=>t.id===lesson.topicId);
     head.replaceChildren(el('h2',{text:(cls?.name||'Класс')+' · Урок'}),p(M.fmtFull(lesson.date)+' · '+(lesson.held?'Проведение подтверждено':'Рабочий экран')),
-      p(topic?.name||'Тема КТП не указана'),p('Присутствуют: '+rows.filter(r=>r.present).length+' · отсутствуют: '+rows.filter(r=>r.absent).length+' · не отмечено: '+unknown),
-      p('ОСВ: '+rows.filter(r=>r.covered).length+' · совпадения ограничений: '+byStudent.size),
+      el('h3',{class:'session-topic',text:topic?.name||'Тема КТП не указана'}),el('div',{class:'dashboard-metrics session-metrics'},[metric('Присутствуют',rows.filter(r=>r.present).length,'check'),metric('Отсутствуют',rows.filter(r=>r.absent).length,'classes'),metric('Не отмечено',unknown,'journal'),metric('ОСВ',rows.filter(r=>r.covered).length,'shield')]),
+      el('div',{class:'session-warning'+(byStudent.size?' has-warning':''),text:'Совпадения ограничений: '+byStudent.size}),
       needsReview?p('Содержание нагрузки требует проверки. Отсутствие совпадений не является допуском.'):p('Проверка по внесённым сведениям, не медицинский допуск.'));
     nav.replaceChildren(...Object.entries({attendance:'Явка',grades:'Оценки',participation:'Нагрузка',norms:'Нормативы',details:'Тема и завершение'}).map(([id,text])=>btn(text,()=>{mode=id;selected.clear();action=id==='grades'?'grade':'normal';draw();},mode===id?'primary':'')));
     body.replaceChildren();
@@ -93,10 +94,10 @@ export function showLessonSession(lessonId){
       const shown=visible();list.replaceChildren();selectionStatus.textContent='Выбрано: '+selected.size;
       for(const r of shown){
         const {st,mark,part,covered,warnings}=r;
-        const row=el('article',{class:'card-block lesson-session-row'},[el('strong',{text:st.fullName}),
+        const row=el('article',{class:'card-block lesson-session-row'+(warnings.length?' session-row-warning':''),},[el('div',{class:'session-person'},[el('span',{class:'session-number',text:st.number??'—'}),el('strong',{text:st.fullName})]),
           p((r.absent?'Отсутствует':r.present?'Присутствует':'Явка не отмечена')+' · '+(mark?.value?'Оценка '+mark.value:'Без оценки')+(covered?' · ОСВ':''))]);
         if(part)row.append(p(S.participationModes[part.mode]||'Участие записано'));
-        for(const m of warnings)row.append(p('Ограничение: '+(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'нагрузка')+' · '+(H.types[m.restriction.type]||'проверить')+(m.restriction.instruction?' · '+m.restriction.instruction:'')));
+        for(const m of warnings)row.append(el('p',{class:'session-warning has-warning',text:'Ограничение: '+(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'нагрузка')+' · '+(H.types[m.restriction.type]||'проверить')+(m.restriction.instruction?' · '+m.restriction.instruction:'')}));
         if(mode==='participation'||mode==='attendance')row.append(btn('Участие / основание',()=>openParticipation(st.id,lessonId,undefined,reopen),'wide'));
         if(mode==='grades'||mode==='attendance'){
           const check=el('input',{type:'checkbox','aria-label':'Выбрать '+st.fullName});check.checked=selected.has(st.id);check.disabled=!eligible(r);

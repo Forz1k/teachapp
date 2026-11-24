@@ -30,3 +30,9 @@ test('Панель уроков: незавершённое занятие и р
  const s=lessonOverview(rows,l=>l.held);
  assert.equal(s.total,3);assert.equal(s.done,1);assert.equal(s.next,rows[1]);
 });
+
+test('КТП: выполненные темы считаются отдельно по классам и без дублей',async()=>{
+ const {curriculumProgress}=await import('../js/dashboard.js');
+ const lessons=[{classId:'a',topicId:'x',held:true},{classId:'a',topicId:'x',held:true},{classId:'b',topicId:'x',held:false},{classId:'b',topicId:'y',held:true}];
+ assert.deepEqual(curriculumProgress([{id:'x'},{id:'y'}],['a','b'],lessons,l=>l.held),{done:2,total:4});
+});

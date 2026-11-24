@@ -7,6 +7,7 @@ import * as M from '../model.js';
 import * as store from '../store.js';
 import * as ui from '../ui.js';
 
+import {curriculumProgress} from '../dashboard.js';
 const { el, icon } = ui;
 
 /** Экран списка КТП. */
@@ -25,7 +26,7 @@ export function renderKtp(root, opts = {}) {
   ]);
   root.append(topbar);
 
-  const body = el('div', { class: 'list', style: 'gap:10px;padding-top:12px' });
+  const body = el('div', { class: 'list ktp-directory', style: 'gap:10px;padding-top:12px' });
   root.append(body);
 
   if (!store.state.ktp.length) {
@@ -52,9 +53,8 @@ export function renderKtp(root, opts = {}) {
       .map((id) => store.state.classes.find((c) => c.id === id)?.name)
       .filter(Boolean);
 
-    const card = el('div', {
-      style: 'background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow-1);padding:14px 16px;display:flex;align-items:center;gap:12px',
-    }, [
+    const progress=curriculumProgress(topics,ktp.classIds||[],store.state.lessons,store.lessonHeld);
+    const card = el('div', {class:'card-block ktp-card'}, [
       el('div', { style: 'flex:1;min-width:0' }, [
         el('div', { style: 'font-size:17px;font-weight:700', text: ktp.name }),
         el('div', {
@@ -67,6 +67,7 @@ export function renderKtp(root, opts = {}) {
         onclick: () => openKtpDetail(ktp.id, opts),
       }, [icon('chevron')]),
     ]);
+    card.append(el('div',{class:'ktp-progress'},[el('span',{text:progress.total?'Темы × классы: '+progress.done+' из '+progress.total:'Нет привязанных тем и классов'}),el('progress',{max:Math.max(1,progress.total),value:progress.done,'aria-label':'Выполненные темы по классам'})]));
     body.append(card);
   }
 
