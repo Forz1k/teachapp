@@ -89,7 +89,7 @@ try{
     const assign=(key,v)=>{const parts=key.split('/').filter(Boolean);if(!parts.length||parts.some(k=>['__proto__','constructor','prototype'].includes(k)))return;let parent=current;for(const k of parts.slice(0,-1)){if(!Object.hasOwn(parent,k)||!parent[k]||typeof parent[k]!=='object')parent[k]=Object.create(null);parent=parent[k];}if(v===null)delete parent[parts.at(-1)];else parent[parts.at(-1)]=v;};
     if(event.type==='put')assign(path,value);else for(const [key,v] of Object.entries(value||{}))assign(path+'/'+key,v);
    }
-   const next=readPortal(current),same=JSON.stringify(data&&{...data,updatedAt:0})===JSON.stringify(next&&{...next,updatedAt:0}),wasConnected=connected&&!awaitingSnapshot;data=next;received=true;connected=true;awaitingSnapshot=false;if(!same||!wasConnected||lastStale||portalState(data).mode!==lastMode)draw();
+   const next=readPortal(current),same=JSON.stringify(data&&{...data,updatedAt:0})===JSON.stringify(next&&{...next,updatedAt:0}),wasConnected=connected&&!awaitingSnapshot;data=next;received=true;connected=true;awaitingSnapshot=false;const nextMode=portalState(data).mode,nextStale=!!data&&['live','break'].includes(nextMode)&&Date.now()-data.updatedAt>90000;if(!same||!wasConnected||nextStale!==lastStale||nextMode!==lastMode)draw();
   }catch{connected=false;awaitingSnapshot=true;problem='Не удалось прочитать обновление. Ожидаем повторного подключения.';draw();}
  }
  stream.addEventListener('put',receive);stream.addEventListener('patch',receive);
