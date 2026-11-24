@@ -521,3 +521,24 @@ test('Подробный матч: табло и две половины пло�
  openDetailedMatch(d,()=>{},()=>{});await tick();
  const sheet=doc.querySelector('.sheet');assert.equal(sheet.querySelectorAll('.vp-player').length,12);assert.match(sheet.textContent,/\+1 Наши/);assert.match(sheet.textContent,/Гости/);ui.closeSheet();
 });
+
+test('Расстановка заполняется по зонам и исключает уже выбранных игроков',async()=>{
+ const dom=setupDom();
+ const {six}=await import('../js/screens/match-protocol.js');
+ const players=Array.from({length:7},(_,i)=>({id:'p'+i,number:i+1,name:'Игрок '+i}));
+ const editor=six(players,[],()=> 'p6');
+ assert.equal(editor.node.querySelector('[aria-pressed="true"]').dataset.zone,'1');
+ assert.equal(editor.node.querySelector('[data-player-id="p6"]'),null);
+ for(let i=0;i<6;i++){
+  assert.equal(editor.node.querySelector('[aria-pressed="true"]').dataset.zone,String(i+1));
+  editor.node.querySelector('[data-player-id="p'+i+'"]').click();
+  assert.equal(editor.node.querySelector('[data-player-id="p'+i+'"]'),null);
+ }
+ assert.deepEqual(editor.get(),players.slice(0,6).map(p=>p.id));
+ editor.node.querySelector('[data-zone="3"]').click();
+ assert.ok(editor.node.querySelector('[data-player-id="p2"]'));
+ assert.equal(editor.node.querySelector('[data-player-id="p0"]'),null);
+ [...editor.node.querySelectorAll('button')].find(b=>b.textContent==='Очистить позицию').click();
+ assert.equal(editor.get()[2],'');
+ dom.window?.close();
+});
