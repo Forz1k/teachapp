@@ -9,6 +9,7 @@ import {openVolleyImport,openImportedReport} from './volleypoint-import.js';
 import {openCoachTeams} from './team-generator.js';
 import {openTestForm,testList,playerTestCards} from './coach-tests.js';
 import {openSeasonAnalytics,playerInsightCard} from './coach-season.js';
+import {openTournaments} from './tournaments.js';
 import {openLibrary,chooseTrainingPlan} from './library.js';
 const {el,openSheet,closeSheet,toast}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
@@ -197,6 +198,7 @@ export async function renderCoach(root,ctx={}){
       picker.onchange=()=>{selectedTeam=picker.value;refresh();};
       const archived=el('input',{type:'checkbox'});archived.checked=showArchived;archived.onchange=()=>{showArchived=archived.checked;refresh();};
       body.append(card('Команды',[teams.length?field('Команда',picker):p('Добавьте первую волейбольную команду.'),field('Показать архивные команды',archived),btn('+ Команда',()=>teamForm(null,refresh),'primary wide')]));
+      body.append(btn('Организация соревнований',openTournaments,'wide'));
       const team=teams.find(t=>t.id===selectedTeam);if(!team)return;
       const view=C.teamView(data,team.id);
       body.append(el('div',{class:'coach-actions'},[btn('Название',()=>teamForm(team,refresh)),btn(team.archived?'Восстановить команду':'Архивировать',()=>confirm('Изменить статус команды?','Данные сохранятся.',()=>C.saveTeam({...team,archived:!team.archived}),refresh))]));

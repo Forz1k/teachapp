@@ -11,14 +11,14 @@ const inp=(value='',type='text',props={})=>el('input',{type,value,...props});
 const select=(opts,value)=>{const n=el('select',{},opts.map(([v,text])=>el('option',{value:v,text})));n.value=value??opts[0]?.[0]??'';return n;};
 const card=(title,children)=>el('section',{class:'card-block coach-card'},[el('h3',{text:title}),...children]);
 const stack=children=>el('div',{class:'coach-form'},children);
-async function entries(from,to){const [coach,events]=await Promise.all([C.loadCoach(),W.listWork('event')]);return calendarEntries(S.state,coach,events,from,to);}
+async function entries(from,to){const [coach,events,tournaments]=await Promise.all([C.loadCoach(),W.listWork('event'),W.listWork('tournament')]);return calendarEntries(S.state,coach,events,from,to,tournaments);}
 function form(existing,date,back){
  const e=existing||{},name=inp(e.name||''),day=inp(e.date||date,'date'),time=inp(e.time||'','time'),duration=inp(e.minutes??0,'number',{min:0,max:600}),type=select(Object.entries(eventTypes),e.eventType||'task'),note=el('textarea',{maxlength:2000,rows:3},[e.note||'']),remind=select([['','Без напоминания'],['0','В момент события'],['15','За 15 минут'],['30','За 30 минут'],['60','За час'],['120','За 2 часа'],['1440','За день']],e.remind==null?'':String(e.remind)),done=el('input',{type:'checkbox'});done.checked=!!e.done;
  const save=btn('Сохранить',async()=>{save.disabled=true;try{await W.saveWork({id:e.id,kind:'event',name:name.value.trim(),date:day.value,time:time.value,minutes:Number(duration.value),eventType:type.value,note:note.value,remind:remind.value===''?null:Number(remind.value),done:done.checked});await back();}catch(err){toast(err.message);}finally{save.disabled=false;}},'primary');
  openSheet(stack([el('h2',{text:'Рабочее событие'}),field('Название',name),field('Дата',day),field('Время (необязательно)',time),field('Минуты (0 — не указаны)',duration),field('Тип',type),field('Примечание (без персональных данных)',note),field('Напомнить',remind),p('Без времени напоминание действует на день события или за день. Для фоновых уведомлений экспортируйте событие в календарь телефона.'),field('Выполнено',done),save,btn('Назад',back)]));
 }
 export async function openWorkCalendar(){
- const day=inp(M.todayIso(),'date'),span=select([['7','7 дней'],['14','14 дней'],['31','31 день']],'7'),source=select([['all','Все'],['school','Уроки'],['coach','Волейбол'],['custom','Свои события'],['review','Проверки'],['backup','Резервные копии']],'all'),titles=el('input',{type:'checkbox'}),body=el('div',{class:'coach-stack'});
+ const day=inp(M.todayIso(),'date'),span=select([['7','7 дней'],['14','14 дней'],['31','31 день']],'7'),source=select([['all','Все'],['school','Уроки'],['coach','Волейбол'],['tournament','Турниры'],['custom','Свои события'],['review','Проверки'],['backup','Резервные копии']],'all'),titles=el('input',{type:'checkbox'}),body=el('div',{class:'coach-stack'});
  let sequence=0,visible=[];
  async function draw(){
   const seq=++sequence;try{

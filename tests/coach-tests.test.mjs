@@ -37,6 +37,6 @@ test('Тренировочные тесты: массовая атомарная
  await C.savePlayer({...p,restrictions:[{activityId:'volley',dateFrom:'2025-01-01',type:'adapt'}]});
  await assert.rejects(C.saveCoachTest({...base,results:{[p.id]:skill(10,9,1)}}),/адаптированную/);
  await C.saveCoachTest({...base,results:{[p.id]:{...skill(10,9,1),adapted:true}}});
- const backup=await S.makeBackup();assert.equal(backup.version,13);await S.restoreBackup(backup);assert.equal((await C.loadCoach()).coachTests.length,2);
+ const backup=await S.makeBackup();assert.equal(backup.version,14);await S.restoreBackup(backup);assert.equal((await C.loadCoach()).coachTests.length,2);
  const old=structuredClone(backup);old.version=9;delete old.data.coachTests;await S.restoreBackup(old);assert.equal((await C.loadCoach()).coachTests.length,0);
 });
