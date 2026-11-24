@@ -83,7 +83,7 @@ try{
  await clickText('.sheet summary','Детали последнего очка');await click('[data-zone="4"]');
  await wait(()=>evalJs('document.querySelector(".vp-last-event")?.textContent.includes("зона 4")'),'placement saved');
  await clickText('.vp-tabs button','Статистика');await ready('.vp-heat-grid');
- assert.equal(await evalJs('document.querySelector(".vp-heat-cell[aria-label=\\"Зона 4: 1\\"]")!==null'),true);
+ assert.equal(await evalJs('Array.from(document.querySelectorAll(".vp-heat-cell")).some(n=>n.getAttribute("aria-label")==="Зона 4: 1")'),true);
  await capture('390-live-analytics');
  await clickText('.vp-tabs button','Матч');await ready('.vp-undo');
  await click('.vp-undo');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="0"'),'undo score');
