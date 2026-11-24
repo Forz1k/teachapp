@@ -399,3 +399,9 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .lineup-swap-list .btn{min-height:44px;white-space:normal;overflow-wrap:anywhere;font-size:12px}
 
 .vp-momentum-content{display:grid;gap:8px}.vp-momentum-chart{width:100%;height:auto;color:var(--text-2)}.vp-momentum-legend{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:700}.vp-momentum-legend .ours{color:#397CCB}.vp-momentum-legend .theirs{color:#C85066}.vp-run-note{border:1px solid var(--sep);background:var(--card);padding:8px;border-radius:10px;font-size:12px;color:var(--text)}
+
+.vp-live .vp-board-score .vp-score-side.ours{background:linear-gradient(160deg,var(--vp-ours-start,#2265B8),var(--vp-ours-end,#123C79))}
+.vp-live .vp-board-score .vp-score-side.theirs{background:linear-gradient(160deg,var(--vp-theirs-start,#C33E50),var(--vp-theirs-end,#812238))}
+.vp-live .vp-points .vp-ours{background:var(--vp-ours-end,#123C79)}.vp-live .vp-points .vp-theirs{background:var(--vp-theirs-end,#812238)}
+.vp-live .vp-score-side.ours{background:var(--vp-ours-end,#123C79)}.vp-live .vp-score-side.theirs{background:var(--vp-theirs-end,#812238)}
+.vp-color-preview{display:grid;grid-template-columns:1fr 1fr;gap:6px}.vp-color-preview span{padding:12px;border-radius:10px;text-align:center;color:#fff;font-weight:700;font-size:13px}

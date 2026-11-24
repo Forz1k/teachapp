@@ -6,6 +6,13 @@ const integer=(x,min,max)=>Number.isInteger(x)&&x>=min&&x<=max;
 const timestamp=x=>typeof x==='string'&&Number.isFinite(Date.parse(x));
 const uniq=a=>new Set(a).size===a.length;
 export const reasons={point:'Без детализации',kill:'Атака',tip:'Скидка',block:'Блок',ace:'Эйс',serveError:'Ошибка подачи',attackError:'Ошибка атаки',receiveError:'Ошибка приёма',defenseError:'Ошибка защиты',setError:'Ошибка передачи',netError:'Касание сетки',otherError:'Другая ошибка'};
+export const boardPalette={blue:{label:'Синий',start:'#2265B8',end:'#123C79'},red:{label:'Красный',start:'#C33E50',end:'#812238'},green:{label:'Зелёный',start:'#19754D',end:'#105137'},purple:{label:'Фиолетовый',start:'#7546AB',end:'#482775'},orange:{label:'Оранжевый',start:'#A94C13',end:'#783009'},graphite:{label:'Графитовый',start:'#4C596C',end:'#293445'}};
+export const defaultBoardColors={ours:'blue',theirs:'red'};
+export function validBoardColors(colors){return !!colors&&typeof colors==='object'&&!Array.isArray(colors)&&Object.keys(colors).length===2&&sides.every(side=>Object.hasOwn(boardPalette,colors[side]))&&colors.ours!==colors.theirs;}
+// Most recent detailed encounter per opponent; never copy into a new match without explicit selection.
+export function opponentHistory(matches,teamId){
+ const seen=new Set();return matches.filter(m=>m.teamId===teamId&&m.detail?.mode==='dual'&&m.detail.awayPlayers.length>=6&&m.detail.awayPlayers.length<=30&&m.detail.awayPlayers.every(p=>Number.isInteger(p.number))&&uniq(m.detail.awayPlayers.map(p=>p.number))).sort((a,b)=>b.date.localeCompare(a.date)||b.detail.startedAt.localeCompare(a.detail.startedAt)).filter(m=>{const k=m.opponent.trim().toLocaleLowerCase('ru');if(seen.has(k))return false;seen.add(k);return true;});
+}
 const errors=['serveError','attackError','receiveError','defenseError','setError','netError','otherError'];
 export const canPlace=kind=>['ace','kill','tip'].includes(kind);
 export const isError=k=>errors.includes(k);
@@ -55,7 +62,7 @@ export function replayDetailed(d){
    validLine(d.lineup,d.ourPlayers)&&validLine(d.awayLineup,d.awayPlayers,true)&&(!d.awayPlayers.length||d.awayLineup.length===6)&&
    (d.libero===null||d.ourPlayers.some(p=>p.id===d.libero)&&!d.lineup.includes(d.libero))&&
    [3,5].includes(d.bestOf)&&[15,21,25].includes(d.target)&&[15,21,25].includes(d.decider)&&sides.includes(d.firstServe)&&
-   ['5-1','4-2','free'].includes(d.scheme)&&(d.substitutionMode===undefined||['simple','paired'].includes(d.substitutionMode))&&Array.isArray(d.events)&&d.events.length<=5000,'Проверьте параметры матча');
+   (d.boardColors===undefined||validBoardColors(d.boardColors))&&['5-1','4-2','free'].includes(d.scheme)&&(d.substitutionMode===undefined||['simple','paired'].includes(d.substitutionMode))&&Array.isArray(d.events)&&d.events.length<=5000,'Проверьте параметры матча');
  const rosters={ours:d.ourPlayers,theirs:d.awayPlayers};
  const s={lineup:[...d.lineup],awayLineup:[...d.awayLineup],liberoFor:null,serve:d.firstServe,score:{ours:0,theirs:0},sets:[],setDetails:[],timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(d.lineup,d.awayLineup),rotations:{ours:0,theirs:0},sides:{ours:sideData(),theirs:sideData()},timeline:[],setEnded:false,finished:false};
  let setStarted=d.startedAt,lastAt=d.startedAt;
