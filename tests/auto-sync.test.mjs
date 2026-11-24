@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import * as db from '../js/db.js';
 import {defaultSettings} from '../js/model.js';
-import {prepareSync,executeSync,syncPersonalArea} from '../js/sync.js';
+import {prepareSync,executeSync,syncPersonalArea,localSyncState,disconnectSync} from '../js/sync.js';
 import {createPersonalCode} from '../js/personal-sync.js';
 import {runPersonalSync,openSyncSession,autoSyncStatus} from '../js/auto-sync.js';
 const endpoint='https://sync.example.test',area='school',password='synthetic-only-long-passphrase';
@@ -76,4 +76,38 @@ test('concurrent offline request cannot reset active exchange',async()=>{
   assert.equal(autoSyncStatus().phase,'running');
  }finally{release();await active;}
  assert.equal(autoSyncStatus().phase,'finished');
+});
+
+test('local state detects unsent changes and retains only matching confirmation metadata',async()=>{
+ let remote={revision:0,envelope:null},writes=0;
+ const client={get:async()=>structuredClone(remote),put:async(revision,envelope)=>{
+  assert.equal(revision,remote.revision);writes++;remote={revision:revision+1,envelope};return structuredClone(remote);
+ }};
+ const params={area,endpoint,password,client};
+ await db.replaceAll(empty());await db.put('meta',defaultSettings());
+ assert.equal((await localSyncState(params)).status,'setup');
+ await executeSync({plan:await prepareSync(params),choices:{},password,client,confirmed:true});
+ const first=await localSyncState(params);
+ assert.equal(first.status,'clean');assert.equal(first.revision,1);
+ assert.ok(Number.isFinite(Date.parse(first.successfulAt)));
+ const before=await db.get('meta','sync-checkpoint-school');
+ await syncPersonalArea(params);
+ assert.equal(writes,1);
+ assert.deepEqual(await db.get('meta','sync-checkpoint-school'),before);
+ await db.put('classes',{id:'pending-class',name:'Synthetic class'});
+ assert.equal((await localSyncState(params)).status,'pending');
+ assert.equal(writes,1);
+ assert.equal((await localSyncState({...params,endpoint:'https://other.example.test'})).status,'review');
+ await syncPersonalArea(params);
+ assert.equal(writes,2);
+ const next=await localSyncState(params);
+ assert.equal(next.status,'clean');assert.equal(next.revision,2);
+ assert.ok(Number.isFinite(Date.parse(next.successfulAt)));
+ const record=await db.get('meta','sync-checkpoint-status-school');
+ await db.put('meta',{...record,revision:1});
+ assert.equal((await localSyncState(params)).successfulAt,null);
+ await disconnectSync(area,true);
+ assert.equal((await localSyncState(params)).status,'setup');
+ assert.equal(await db.get('meta','sync-checkpoint-status-school'),undefined);
+ assert.ok(await db.get('classes','pending-class'));
 });
