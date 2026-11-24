@@ -1,3 +1,4 @@
+import {animateOnce} from './motion.js';
 /* ui.js — мелкие строительные блоки интерфейса: иконки, шторка, тост, диалог, haptic.
    Никаких зависимостей. Только DOM. */
 
@@ -172,7 +173,7 @@ export function toast(message, action = null, duration = 5000) {
       },
     }));
   }
-  requestAnimationFrame(() => toastEl.classList.add('show'));
+  requestAnimationFrame(() => {toastEl.classList.add('show');animateOnce(toastEl.querySelector('span'),'enter',{duration:180});});
   clearTimeout(toastTimer);
   toastTimer = setTimeout(hideToast, duration);
 }
