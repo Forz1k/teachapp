@@ -330,3 +330,5 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .score-trend{stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}
 .score-trend.ours{stroke:var(--accent-ink)}.score-trend.theirs{stroke:var(--mark-2);stroke-dasharray:5 2}
 .score-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px}.score-legend span::before{content:'';display:inline-block;width:15px;height:3px;vertical-align:middle;margin-right:5px;background:var(--accent-ink)}.score-legend .theirs::before{background:var(--mark-2)}
+
+.goal-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.goal-values>div{display:grid;gap:4px;padding:8px;background:var(--card-2);border:1px solid var(--sep);border-radius:10px;min-width:0}.goal-values small{font-size:11px;color:var(--text-2)}.goal-values strong{font-size:17px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}

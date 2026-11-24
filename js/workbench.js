@@ -1,5 +1,6 @@
 import * as db from './db.js';
 import {uid} from './model.js';
+import {validateGoal} from './coach-goals.js';
 import {validateRubric} from './school-tools.js';
 import {validateTournament} from './tournaments.js';
 import {validateEvent} from './work-calendar.js';
@@ -24,6 +25,7 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='coachGoal'){validateGoal(r);return;}
  if(r.kind==='rubric'){validateRubric(r);return;}
  if(r.kind==='tournament'){validateTournament(r);return;}
  if(r.kind==='event'){validateEvent(r);return;}

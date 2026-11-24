@@ -34,5 +34,5 @@ test('VolleyPoint: атомарная запись, дубли, резервна
  const broken=structuredClone(input);broken.imported.hash='b'.repeat(64);broken.imported.rallies.pop();await assert.rejects(C.saveVolleyImport({...broken,opponent:'Другой'}));
  assert.equal((await C.loadCoach()).coachMatches.length,1);
  const stat=C.playerSeasonStats([m],player.id);assert.equal(stat.importedMatches,1);assert.equal(stat.importedServiceWins,2);assert.equal(stat.rates.attack.total,0);
- const backup=await S.makeBackup();assert.equal(backup.version,15);await S.restoreBackup(backup);assert.equal((await C.loadCoach()).coachMatches[0].imported.rallies.length,3);
+ const backup=await S.makeBackup();assert.equal(backup.version,16);await S.restoreBackup(backup);assert.equal((await C.loadCoach()).coachMatches[0].imported.rallies.length,3);
 });

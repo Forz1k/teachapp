@@ -1,7 +1,7 @@
 import * as M from '../model.js';
 import {el,openSheet,closeSheet,icon} from '../ui.js';
 import {taskLabels,orderTasks} from '../attention.js';
-const icons={lesson:'journal',review:'shield',training:'calendar',match:'trophy',custom:'check',backup:'shield'};
+const icons={lesson:'journal',review:'shield',training:'calendar',goal:'chart',match:'trophy',custom:'check',backup:'shield'};
 function taskRow(task,onOpen){return el('button',{type:'button',class:'attention-row priority-'+task.priority,onclick:()=>onOpen(task)},[el('span',{class:'metric-icon'},[icon(icons[task.kind]||'check')]),el('span',{class:'attention-text'},[el('strong',{text:task.title}),el('small',{text:M.fmtFull(task.date)+' · '+task.detail})]),icon('chevron')]);}
 export function attentionPanel(tasks,onOpen){
  const sorted=orderTasks(tasks),box=el('section',{class:'card-block attention-panel'});
