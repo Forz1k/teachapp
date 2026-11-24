@@ -14,3 +14,11 @@ test('Центр управления тренера и общие задачи 
  assert.deepEqual(coachTasks(data,'t','2026-11-24').map(x=>x.kind),['match','training']);
  const common=commonTasks({lastBackupAt:'2026-11-23T12:00:00Z'},[{id:'e',name:'Задача',date:'2026-11-22',done:false},{id:'f',name:'Будущее',date:'2026-11-25',done:false}],'2026-11-24');assert.deepEqual(common.map(x=>x.kind),['custom']);
 });
+
+test('expiry warnings keep the specific record category',()=>{
+ const state={settings:{year:{from:'2026-09-01',to:'2027-05-31'}},classes:[{id:'c',name:'7А'}],students:[{id:'a',classId:'c'}],lessons:[],marks:[],participation:[],schedule:[],scheduleOverrides:[],exemptions:[{studentId:'a',dateTo:'2026-11-24'}],activityRestrictions:[{studentId:'a',dateTo:'2026-12-01'},{studentId:'a',dateTo:'2026-11-25',enabled:false}],studentHealthProfiles:[{id:'a',dateTo:'2026-11-26'}]};
+ const review=schoolTasks(state,'2026-11-24').filter(t=>t.kind==='review');
+ assert.equal(review.length,3);
+ assert.deepEqual(new Set(review.map(t=>t.target.reviewType)),new Set(['exemptions','activityRestrictions','studentHealthProfiles']));
+ assert.ok(review.every(t=>t.target.classId==='c'&&t.detail.endsWith(': 1')));
+});

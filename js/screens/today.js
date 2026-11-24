@@ -3,7 +3,8 @@ import * as M from '../model.js';
 import * as S from '../store.js';
 import * as ui from '../ui.js';
 import { openLessonSession } from './session.js';
-import { warning } from './health.js';
+import { warning, openHealth } from './health.js';
+import { openEditExemption } from './exemptions.js';
 
 import {schoolTasks,commonTasks} from '../attention.js';
 import {attentionPanel} from './attention.js';
@@ -35,6 +36,25 @@ export function todayEntries(date = M.todayIso()) {
   return rows;
 }
 
+/** Open a fresh list of the records behind an expiry warning, not a stale snapshot. */
+export function openReviewTask(target,date=M.todayIso()) {
+  const {classId,reviewType}=target;
+  const labels={exemptions:'Освобождения',activityRestrictions:'Ограничения',studentHealthProfiles:'Группы здоровья'};
+  const cls=S.state.classes.find(c=>c.id===classId);
+  if(!cls||!Object.hasOwn(labels,reviewType))return ui.toast('Задача больше не актуальна');
+  const students=new Map(S.studentsOfClass(classId).map(s=>[s.id,s]));
+  const until=M.addDays(date,7);
+  const rows=(S.state[reviewType]||[]).filter(r=>students.has(reviewType==='studentHealthProfiles'?r.id:r.studentId)&&r.enabled!==false&&r.dateTo&&M.inRange(r.dateTo,date,until)).sort((a,b)=>a.dateTo.localeCompare(b.dateTo));
+  const sheet=el('div',{},[el('h2',{text:cls.name+' · '+labels[reviewType]}),el('p',{text:'Сведения с окончанием срока в ближайшие 7 дней. Проверьте основания перед изменением.'})]);
+  if(!rows.length)sheet.append(el('p',{class:'empty',text:'Нет актуальных записей для проверки.'}));
+  for(const r of rows){
+    const id=reviewType==='studentHealthProfiles'?r.id:r.studentId;
+    const detail=reviewType==='activityRestrictions'?(S.activities().find(a=>a.id===r.activityId)?.name||'Нагрузка'):reviewType==='studentHealthProfiles'?(r.group||'Группа'):'Освобождение';
+    sheet.append(el('button',{type:'button',class:'btn wide',text:students.get(id).fullName+' · '+detail+' · до '+M.fmtFull(r.dateTo),onclick:()=>reviewType==='exemptions'?openEditExemption(r.id,classId):openHealth(id)}));
+  }
+  ui.openSheet(sheet);
+}
+
 export function renderToday(root,ctx = {},date = M.todayIso()) {
   root.append(el('div',{class:'topbar'},[
     el('div',{class:'topbar-row'},[el('h1',{text:'Сегодня'}),ctx.onCoach?el('button',{class:'btn small',type:'button',text:'Волейбол',onclick:ctx.onCoach}):null]),
@@ -48,7 +68,7 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
   const onTask=task=>{
     const t=task.target;
     if(task.kind==='lesson'){if(t.lessonId)showLessonSession(t.lessonId);else openLessonSession(t.classId,t.date);}
-    else if(task.kind==='review'){S.state.currentClassId=t.classId;ui.closeSheet();ctx.onAnalytics?.();}
+    else if(task.kind==='review'){openReviewTask(t,date);}
     else if(task.kind==='backup'){ui.closeSheet();ctx.onSettings?.();}
     else openWorkCalendar({date:t.date,source:'custom',span:'1'});
   };

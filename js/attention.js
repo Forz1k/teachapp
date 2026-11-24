@@ -39,10 +39,10 @@ export function schoolTasks(s,today=M.todayIso(),days=30){
   for(const r of s[key]||[]){
    const classId=pupilClass.get(key==='studentHealthProfiles'?r.id:r.studentId);
    if(!classId||!classes.has(classId)||r.enabled===false||!r.dateTo||!M.inRange(r.dateTo,today,until))continue;
-   const id=key+'|'+classId,old=reviews.get(id)||{label,classId,count:0,date:r.dateTo};old.count++;if(r.dateTo<old.date)old.date=r.dateTo;reviews.set(id,old);
+   const id=key+'|'+classId,old=reviews.get(id)||{label,classId,reviewType:key,count:0,date:r.dateTo};old.count++;if(r.dateTo<old.date)old.date=r.dateTo;reviews.set(id,old);
   }
  }
- for(const [id,r] of reviews)tasks.push(item('review-'+id,'review',classes.get(r.classId).name+' · '+r.label,'Истекают в ближайшие 7 дней: '+r.count,r.date,3,{classId:r.classId}));
+ for(const [id,r] of reviews)tasks.push(item('review-'+id,'review',classes.get(r.classId).name+' · '+r.label,'Истекают в ближайшие 7 дней: '+r.count,r.date,3,{classId:r.classId,reviewType:r.reviewType}));
  return orderTasks(tasks);
 }
 export function coachTasks(data,teamId,today=M.todayIso(),days=30){

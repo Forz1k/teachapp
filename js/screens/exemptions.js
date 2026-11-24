@@ -161,7 +161,7 @@ function openNewExemption(studentId) {
   ui.openSheet(sheet);
 }
 
-function openEditExemption(exId, classId) {
+export function openEditExemption(exId, classId) {
   const ex = store.state.exemptions.find((e) => e.id === exId);
   if (!ex) return;
   const student = store.state.students.find((s) => s.id === ex.studentId);
