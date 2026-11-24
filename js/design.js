@@ -10,7 +10,9 @@ export function applyAccent(value,root=document.documentElement,storage){
  try{(storage??globalThis.localStorage).setItem(key,accent);}catch{}
  return accent;
 }
-export function initializeDesign(root=document.documentElement,storage){applyMotion(readMotion(storage),root,storage);return applyAccent(readAccent(storage),root,storage);}
+export function readGymMode(storage){try{return (storage??globalThis.localStorage).getItem('teachapp.gym-mode')==='1';}catch{return false;}}
+export function applyGymMode(enabled,root=document.documentElement,storage){root.dataset.gymMode=enabled?'on':'off';try{(storage??globalThis.localStorage).setItem('teachapp.gym-mode',enabled?'1':'0');}catch{}return enabled;}
+export function initializeDesign(root=document.documentElement,storage){applyGymMode(readGymMode(storage),root,storage);applyMotion(readMotion(storage),root,storage);return applyAccent(readAccent(storage),root,storage);}
 
 export const schoolRoutes=['today','classes','journal','schedule','norms','analytics','settings'];
 export const coachRoutes=['home','roster','trainings','matches','analytics'];

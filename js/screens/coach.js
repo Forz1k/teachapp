@@ -1,3 +1,4 @@
+import {openAssistant} from './assistant.js';
 import {openStudio} from './studio.js';
 /* Тренерский интерфейс: отдельная навигация и данные, без связи со школьным журналом. */
 import * as C from '../coach.js';
@@ -249,6 +250,7 @@ export async function renderCoach(root,ctx={}){
         if(!team.archived)body.append(competitionCard(team,data,refresh));
         const taskHolder=el('div',{class:'attention-holder'}),tasks=coachTasks(data,team.id);
         const onTask=task=>{if(task.kind==='match')openMatchCenter(team,refresh,{draftId:task.target.draftId});else if(task.kind==='goal'){const player=view.players.find(p=>p.id===task.target.playerId);if(player)openPlayerGoals(team,player,closeSheet);}else if(task.kind==='training'){const t=view.trainings.find(t=>t.id===task.target.trainingId);if(t)trainingForm(team,view,t,refresh);}else if(task.kind==='backup'){closeSheet();ctx.onSettings?.();}else openWorkCalendar({date:task.target.date,source:'custom',span:'1'});};
+        body.append(btn('TeachApp Assistant',()=>openAssistant({area:'coach',state:School.state,data,teamId:team.id,onTask}),'wide'));
         taskHolder.append(attentionPanel(tasks.concat(commonTasks(School.state.settings,[])),onTask));body.append(taskHolder);
         Promise.all([listWork('event'),listWork('coachGoal')]).then(([events,goals])=>{if(seq===sequence&&taskHolder.isConnected)taskHolder.replaceChildren(attentionPanel(tasks.concat(commonTasks(School.state.settings,events),goalTasks(goals,team.id)),onTask));}).catch(()=>{});
         body.append(el('article',{class:'card-block today-card lesson-card lesson-card-next'},[el('div',{class:'today-meta',text:'Ближайшая тренировка'}),el('h2',{text:next?next.title:'Нет запланированных тренировок'}),next?p(fmtFull(next.date)+' · '+next.time+' · '+next.minutes+' мин'):null,team.archived?null:btn(next?'Открыть тренировку':'Запланировать',()=>trainingForm(team,view,next||null,refresh),'primary wide')]));

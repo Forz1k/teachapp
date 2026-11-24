@@ -1,3 +1,4 @@
+import {openAssistant} from './assistant.js';
 import {openBriefings,openGymBoards} from './methodical.js';
 /* Дневной обзор. Не создаёт записи журнала до явного начала урока. */
 import * as M from '../model.js';
@@ -73,6 +74,7 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
     else if(task.kind==='backup'){ui.closeSheet();ctx.onSettings?.();}
     else openWorkCalendar({date:t.date,source:'custom',span:'1'});
   };
+  body.append(el('button',{type:'button',class:'btn wide',text:'TeachApp Assistant',onclick:()=>openAssistant({area:'school',state:S.state,onTask,date})}));
   const tasks=schoolTasks(S.state,date);
   taskHolder.append(attentionPanel(tasks.concat(commonTasks(S.state.settings,[],date)),onTask));body.append(taskHolder);
   listWork('event').then(events=>{if(taskHolder.isConnected)taskHolder.replaceChildren(attentionPanel(tasks.concat(commonTasks(S.state.settings,events,date)),onTask));}).catch(()=>{});

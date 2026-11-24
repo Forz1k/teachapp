@@ -22,7 +22,7 @@ import {openDocuments} from './documents.js';
 import {openRubrics} from './school-tools.js';
 import {openArchive} from './school-archive.js';
 import {openLibrary} from './library.js';
-import {accents,readAccent,applyAccent,initializeDesign} from '../design.js';
+import {accents,readAccent,applyAccent,initializeDesign,readGymMode,applyGymMode} from '../design.js';
 import {dashboardHeading,metric} from '../dashboard.js';
 import {motionModes,readMotion,applyMotion,animateOnce} from '../motion.js';
 const { el, icon } = ui;
@@ -36,6 +36,7 @@ export function renderSettings(root, ctx = {}) {
 
   const body = el('div', { class:'list settings-directory' });
   root.append(body);
+  const gym=el('input',{type:'checkbox',checked:readGymMode()});gym.onchange=()=>applyGymMode(gym.checked);body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Режим спортивного зала'}),el('label',{class:'row-item'},[gym,el('span',{text:'Крупные кнопки, высокий контраст, минимум анимации'})])]));
   if(ctx.onAnalytics)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Аналитика и итоговые оценки'}),el('button',{class:'btn wide',type:'button',text:'Открыть аналитику',onclick:ctx.onAnalytics})]));
   if(ctx.onCoach)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Режим тренера'}),el('button',{class:'btn wide',type:'button',text:'Волейбол · команды и тренировки',onclick:ctx.onCoach})]));
 

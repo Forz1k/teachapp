@@ -10,7 +10,7 @@ const PRECACHE = [
   './manifest.webmanifest',
   './css/app.css',
   './css/design.css','./css/next.css','./js/motion.js',
-  './js/design.js',
+  './js/design.js','./js/assistant.js','./js/screens/assistant.js',
   './js/dashboard.js','./js/dashboard-preferences.js','./js/competition-center.js','./js/screens/competition-center.js',
   './js/attention.js',
   './js/school-tools.js',
