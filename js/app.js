@@ -21,7 +21,7 @@ import {openCoachSearchResult} from './screens/coach.js';
 import {readNavigation,saveNavigation,coachRoutes,schoolRoutes} from './design.js';
 import {animateOnce} from './motion.js';
 import {readSyncIdentity} from './device-trust.js';
-import {installPrivacyShield} from './privacy-shield.js';
+import {installPrivacyShield,screenLockEnabled} from './privacy-shield.js';
 import {openSyncSession,runPersonalSync,autoSyncStatus,syncRetryDelay} from './auto-sync.js';
 const { el, icon } = ui;
 
@@ -270,6 +270,7 @@ function openClassPicker() {
 /* ---------- инициализация ---------- */
 
 async function boot() {
+  if(screenLockEnabled())ui.coverPrivacy();
   // Тема — до первой отрисовки, чтобы не было вспышки белого
   try {
     const db = await import('./db.js');
@@ -305,6 +306,7 @@ async function boot() {
   });
   render();
   installPrivacyShield({cover:()=>ui.coverPrivacy()});
+  window.addEventListener('storage',e=>{if(e.key==='teachapp.screen-lock.v1'&&screenLockEnabled())ui.coverPrivacy();});
   window.addEventListener('online',()=>{clearAutoRetry(true);autoAttempt=0;syncHint='';updateSyncIndicator();void maybeAutoSync();});
   window.addEventListener('offline',()=>{clearAutoRetry(true);syncHint='';updateSyncIndicator();});
   const refreshPeriod=()=>{if(store.refreshSchoolPeriod())store.notify();};

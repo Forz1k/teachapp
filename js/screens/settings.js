@@ -1,4 +1,4 @@
-import {privacyIdleOptions,readShieldPreferences,saveShieldPreferences} from '../privacy-shield.js';
+import {privacyIdleOptions,readShieldPreferences,saveShieldPreferences,screenLockEnabled,changeScreenLock} from '../privacy-shield.js';
 import {openBriefings,openGymBoards} from './methodical.js';
 import {isEncryptedBackup,decryptBackup} from '../privacy.js';
 import {retentionPreview,purgeExpired} from '../retention.js';
@@ -304,13 +304,21 @@ export function renderSettings(root, ctx = {}) {
   const hideBackground=el('input',{type:'checkbox',checked:shield.hideOnBackground});
   body.append(el('div',{class:'card-block'},[
     el('div',{class:'head',text:'Конфиденциальность · автоширма'}),
-    el('p',{text:'Скрывает интерфейс при бездействии или уходе с вкладки. Открывается без пароля. Это не шифрование и не защита от доступа к браузерному профилю. Настройки действуют только на этом устройстве; системный снимок экрана при сворачивании не гарантируется.'}),
+    el('p',{text:'Скрывает интерфейс при бездействии или уходе с вкладки. Если включён PIN или пароль, требуется разблокировка. Это не шифрование и не защита от доступа к браузерному профилю. Настройки действуют только на этом устройстве; системный снимок экрана при сворачивании не гарантируется.'}),
     el('label',{class:'field'},['Скрывать данные после бездействия',idle]),
     el('label',{class:'row-item'},[hideBackground,el('span',{text:'Скрывать при уходе с вкладки или приложения'})]),
     el('button',{class:'btn wide',type:'button',text:'Сохранить автоширму',onclick:()=>{
       try{saveShieldPreferences({idleMinutes:Number(idle.value),hideOnBackground:hideBackground.checked});ui.toast('Настройки автоширмы сохранены');}catch{ui.toast('Не удалось сохранить настройки автоширмы');}
     }})
   ]));
+  const lockStatus=el('p',{text:screenLockEnabled()?'PIN / пароль включён':'PIN / пароль не настроен'});
+  const lockChange=async(remove=false)=>{try{
+    const current=screenLockEnabled()?await ui.promptDialog({title:'Действующий PIN или пароль',password:true,ok:'Продолжить'}):'';if(current===null)return;
+    let next=null;if(!remove){next=await ui.promptDialog({title:'Новый PIN или пароль',text:'6–12 цифр либо пароль от 8 символов. Запомните его. Это не шифрование и не системная защита.',password:true});if(next===null)return;const repeat=await ui.promptDialog({title:'Повторите PIN или пароль',password:true});if(repeat!==next)throw Error('Значения не совпадают');}
+    if(!await ui.confirmDialog({title:remove?'Отключить блокировку?':'Включить блокировку интерфейса?',text:remove?'Экранная ширма останется доступной без пароля.':'Блокировка будет требоваться при каждом новом открытии приложения и активации ширмы. Данные и резервные копии не меняются. Храните код безопасно.',ok:remove?'Отключить':'Включить'}))return;
+    const enabled=await changeScreenLock({current,next});lockStatus.textContent=enabled?'PIN / пароль включён':'PIN / пароль не настроен';ui.toast('Настройка сохранена');
+  }catch(e){ui.toast(e.message);}};
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Локальная блокировка интерфейса'}),lockStatus,el('p',{text:'Ограничивает случайный доступ через интерфейс, но не защищает IndexedDB от доступа к профилю браузера. Используйте пароль устройства и зашифрованные резервные копии.'}),el('button',{class:'btn wide',type:'button',text:'Настроить / изменить PIN или пароль',onclick:()=>lockChange()}),el('button',{class:'btn wide',type:'button',text:'Отключить PIN или пароль',onclick:()=>lockChange(true)})]));
   /* ---------- демо-данные ---------- */
   const demoBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Демонстрационные данные' })]);
   const demoDesc = el('div', {

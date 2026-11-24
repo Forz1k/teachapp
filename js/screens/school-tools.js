@@ -1,3 +1,4 @@
+import {saveStudentGoal} from '../student-goals.js';
 import * as S from '../store.js';
 import * as W from '../workbench.js';
 import * as M from '../model.js';
@@ -18,7 +19,7 @@ export async function openPassport(id,back=closeSheet){
   body.append(card('Учебные годы',data.years.map(y=>p(y.year.from+' — '+y.year.to+' · '+y.className+' · результатов '+y.count))));
   for(const g of data.groups)body.append(card(g.name,[el('div',{class:'dashboard-metrics'},[metric('Первый',g.first==null?'—':g.first+' '+g.unit,'chart'),metric('Последний',g.last==null?'—':g.last+' '+g.unit,'check'),metric('Лучший',g.best==null?'—':g.best+' '+g.unit,'trophy')]),trendChart(g.comparable.slice(-30),{unit:g.unit,label:g.name}),el('details',{},[el('summary',{text:'История попыток · '+g.history.length}),...g.history.map(r=>p(M.fmtFull(r.date)+' · '+r.className+' · '+r.value+' '+g.unit+' · оценка '+(r.grade??'—')+(r.basisRecorded?' · вне сравнения':'')))])]));
   if(!data.groups.length)body.append(p('Записанных результатов пока нет.'));
-  body.append(btn('Назад',back));openSheet(body);
+  body.append(btn('Индивидуальные цели и портфолио',()=>openStudentPortfolio(id,()=>openPassport(id,back)),'primary'),btn('Назад',back));openSheet(body);
  }catch(e){toast(e.message);}
 }
 export function openNormChecklist(norm,back=closeSheet){
@@ -69,4 +70,20 @@ export async function openNormAssignments(back=closeSheet){
   if(assignments.length>active.length)body.append(el('details',{},[el('summary',{text:'Назначения других учебных лет · '+(assignments.length-active.length)}),...assignments.filter(a=>!active.includes(a)).map(a=>p(a.name+' · '+a.yearFrom+' — '+a.yearTo))]));
   body.append(btn('Назад',back));openSheet(body);
  }catch(e){toast(e.message);}};await draw();
+}
+
+const goalLabels={planned:'Запланирована',inProgress:'В работе',achieved:'Достигнута',cancelled:'Отменена'};
+export async function openStudentPortfolio(id,back=closeSheet){
+ try{
+  const pupil=S.state.students.find(s=>s.id===id);if(!pupil)return toast('Ученик недоступен');
+  const [goals,achievements,archives]=await Promise.all(['studentGoal','achievement','archive'].map(W.listWork));const passport=physicalPassport(S.state,archives,id);
+  const own=goals.filter(g=>g.studentId===id).sort((a,b)=>b.from.localeCompare(a.from)),awards=achievements.filter(a=>a.subjectType==='student'&&a.subjectId===id);
+  const reload=()=>openStudentPortfolio(id,back);
+  const form=g=>{
+   const title=input(g?.name||''),from=input(g?.from||M.todayIso(),'date'),to=input(g?.to||M.todayIso(),'date'),target=input(g?.target||''),status=select(Object.entries(goalLabels),g?.status||'planned'),note=el('textarea',{rows:3,maxlength:2000},[g?.note||'']);
+   openSheet(stack([el('h2',{text:g?'Изменить индивидуальную цель':'Новая индивидуальная цель'}),p('Цель не назначает нагрузку и не изменяет оценки. Проверьте ограничения и возможность участия.'),field('Цель',title),field('Начало',from),field('Срок',to),field('Критерий достижения',target),field('Подтверждённый статус',status),field('Заметка учителя',note),btn('Сохранить',async()=>{try{await saveStudentGoal({...(g?{id:g.id}:{}),studentId:id,name:title.value.trim(),from:from.value,to:to.value,target:target.value.trim(),status:status.value,note:note.value});reload();}catch(e){toast(e.message);}},'primary'),btn('Назад',reload)]));
+  };
+  const body=stack([el('h2',{text:'Портфолио · '+pupil.fullName}),p('Приватная сводка: подтверждённые записи, без публичной публикации.'),btn('+ Индивидуальная цель',()=>form(null),'primary'),...own.map(g=>card(g.name,[p(g.from+' — '+g.to+' · '+goalLabels[g.status]),p(g.target),g.note?p(g.note):null,btn('Изменить',()=>form(g)),btn('Удалить',async()=>{if(!await confirmDialog({title:'Удалить цель?',text:'Результаты, оценки и достижения не изменятся.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(g.id,'studentGoal');reload();}catch(e){toast(e.message);}})])),card('Достижения',awards.length?awards.map(a=>p(a.date+' · '+a.title)): [p('Нет записей о достижениях')]),card('Физическая подготовка',passport?.groups?.length?passport.groups.map(g=>p(g.name+' · лучший '+(g.best??'—')+' '+g.unit+' · последний '+(g.last??'—')+' '+g.unit)):[p('Нет результатов')]),btn('Открыть историю подготовки',()=>openPassport(id,back)),btn('Назад',back)]);
+  openSheet(body);
+ }catch(e){toast(e.message);}
 }
