@@ -6,6 +6,7 @@ const CACHE = PREFIX + VERSION;
 const PRECACHE = [
   './',
   './index.html',
+  './live/index.html','./css/public-portal.css','./js/public-view.js','./js/public-portal.js',
   './manifest.webmanifest',
   './css/app.css',
   './css/design.css',
@@ -121,7 +122,9 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET' || !request.url.startsWith(self.registration.scope)) return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
-    const key = request.mode === 'navigate' ? new URL('index.html',self.registration.scope).href : request;
+    const path=new URL(request.url).pathname,base=new URL(self.registration.scope).pathname;
+    const publicPage=path===base+'live/'||path===base+'live/index.html'||path===base+'live';
+    const key = request.mode === 'navigate' ? new URL(publicPage?'live/index.html':'index.html',self.registration.scope).href : request;
     const cached = await cache.match(key,{ignoreSearch:true});
     if (cached) return cached;
     try { return await fetch(request); }
