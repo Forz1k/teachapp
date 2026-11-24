@@ -228,6 +228,7 @@ async function boot() {
   const shortcut=location.hash.slice(1);
   if(shortcut==='coach')navigation=saveNavigation({...navigation,workspace:'coach'});
   else if(shortcut==='journal'||shortcut==='quick')navigation=saveNavigation({...navigation,workspace:'school',school:shortcut==='journal'?'journal':'today'});
+  if(['coach','journal','quick'].includes(shortcut))history.replaceState(null,'',location.pathname+location.search);
   store.state.currentTab=navigation.workspace==='coach'?'coach':navigation.school;
   applyTheme(store.state.settings.theme || 'auto');
 

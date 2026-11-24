@@ -194,6 +194,7 @@ export async function renderCoach(root,ctx={}){
     const seq=++sequence;
     try{
       const data=await C.loadCoach();if(seq!==sequence)return;
+      if(root.isConnected&&ctx.onSection)ctx.onSection(selectedSection);
       body.replaceChildren();
       const teams=data.coachTeams.filter(t=>showArchived||!t.archived);
       if(!teams.some(t=>t.id===selectedTeam))selectedTeam=teams[0]?.id||null;

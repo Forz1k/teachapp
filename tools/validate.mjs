@@ -1,7 +1,8 @@
 /* tools/validate.mjs — проверка целостности проекта перед публикацией:
    синтаксис модулей, наличие всех файлов из precache-списка, валидность манифеста. */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import {resolve,dirname,relative} from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 let errors = 0;
@@ -42,12 +43,7 @@ if (!list) {
 
 /* 3. Синтаксис JS */
 console.log('\nСинтаксис модулей:');
-const modules = [
-  'js/dashboard.js', 'js/design.js', 'js/app.js', 'js/db.js', 'js/backup.js', 'js/model.js', 'js/store.js', 'js/ui.js', 'js/export.js', 'js/demo.js',
-  'js/screens/today.js', 'js/screens/classes.js', 'js/screens/journal.js', 'js/screens/monthly.js',
-  'js/privacy.js', 'js/retention.js', 'js/analytics.js', 'js/screens/analytics.js', 'js/coach.js', 'js/volleyball.js', 'js/match-protocol.js', 'js/screens/match-protocol.js', 'js/screens/lineup-picker.js', 'js/screens/volleyball.js', 'js/screens/coach.js', 'js/norm-import.js', 'js/screens/norm-batch.js', 'js/screens/session.js', 'js/team-generator.js', 'js/screens/team-generator.js', 'js/assessment.js', 'js/screens/norms.js', 'js/health.js', 'js/screens/health.js', 'js/screens/participation.js', 'js/screens/exemptions.js', 'js/screens/lesson.js', 'js/screens/settings.js',
-  'js/screens/schedule.js', 'js/screens/ktp.js', 'js/version.js', 'sw.js',
-];
+const modules = [...readdirSync('js',{recursive:true}).filter(p=>p.endsWith('.js')).map(p=>'js/'+p.replaceAll('\\','/')),'sw.js'];
 for (const m of modules) {
   const r = spawnSync(process.execPath, ['--check', m], { encoding: 'utf8' });
   if (r.status === 0) ok(m);
@@ -58,11 +54,11 @@ for (const m of modules) {
 console.log('\nИмпорты:');
 for (const m of modules) {
   const src = readFileSync(m, 'utf8');
-  const imports = [...src.matchAll(/from\s+'(\.[^']+)'/g)].map((x) => x[1]);
+  const imports = [...src.matchAll(/(?:from\s*|import\(\s*)['"](\.[^'"]+)['"]/g)].map(x=>x[1]);
   for (const imp of imports) {
-    const base = m.includes('/') ? m.slice(0, m.lastIndexOf('/')) : '.';
-    const target = new URL(imp, 'file:///' + base + '/').pathname.slice(1);
-    if (!existsSync(decodeURIComponent(target))) bad(`${m} → ${imp} не найден`);
+    const target=relative(process.cwd(),resolve(dirname(m),imp)).replaceAll('\\','/');
+    if (!existsSync(target)) bad(`${m} → ${imp} не найден`);
+    if(sw.includes("'./"+m+"'")&&!sw.includes("'./"+target+"'"))bad('В кеше нет зависимости '+target+' для '+m);
   }
 }
 ok('проверка импортов завершена');
