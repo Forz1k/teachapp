@@ -36,3 +36,10 @@ test('КТП: выполненные темы считаются отдельн�
  const lessons=[{classId:'a',topicId:'x',held:true},{classId:'a',topicId:'x',held:true},{classId:'b',topicId:'x',held:false},{classId:'b',topicId:'y',held:true}];
  assert.deepEqual(curriculumProgress([{id:'x'},{id:'y'}],['a','b'],lessons,l=>l.held),{done:2,total:4});
 });
+
+test('Графики: общая шкала сохраняет ноль и отрицательные значения',async()=>{
+ const {trendDomain}=await import('../js/dashboard.js');
+ assert.deepEqual(trendDomain([-4,8,NaN]),{low:-4,high:8});
+ assert.deepEqual(trendDomain([0,0]),{low:0,high:1});
+ assert.deepEqual(trendDomain([22,90],{min:0,max:100}),{low:0,high:100});
+});

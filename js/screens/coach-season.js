@@ -2,6 +2,7 @@ import * as C from '../coach.js';
 import {sourceLabels,matchMetrics,testMetrics,matchComparison,testComparison,testDefinitions,ranked,personalInsights,eligiblePlayers} from '../coach-season.js';
 import {todayIso,fmtFull} from '../model.js';
 import {el,openSheet,closeSheet} from '../ui.js';
+import {trendChart,trendDomain} from '../dashboard.js';
 const p=text=>el('p',{text});
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
 const field=(name,node)=>el('label',{class:'field'},[el('span',{text:name}),node]);
@@ -15,7 +16,7 @@ function meter(value,max,title){
 }
 export function playerInsightCard(view,id,range){
  const notes=personalInsights(view.tests,id,range);
- return card('Тренерские выводы',[p('По записанным сопоставимым тестам; это подсказки, а не оценка спортсменки или допуск к нагрузке.'),...notes.map(n=>p((n.kind==='strength'?'Сильная сторона / рост: ':'Зона работы: ')+n.text)),...(!notes.length?[p('Пока недостаточно данных для выраженного вывода.')]:[])]);
+ return card('Тренерские выводы',[p('По записанным сопоставимым тестам; это подсказки, а не оценка спортсменки или допуск к нагрузке.'),...notes.map(n=>el('div',{class:'insight-note '+n.kind},[el('strong',{text:n.kind==='strength'?'Сильная сторона / рост':'Зона работы'}),p(n.text)])),...(!notes.length?[p('Пока недостаточно данных для выраженного вывода.')]:[])]);
 }
 export function seasonPanel(view){
  const now=todayIso(),year=Number(now.slice(0,4))-(Number(now.slice(5,7))<9?1:0);
@@ -33,10 +34,12 @@ export function seasonPanel(view){
   const selected=rows.filter(r=>chosen.includes(r.player.id));
   if(!selected.length)return;
   compare.append(card('Сравнение игроков',selected.map(r=>el('div',{class:'coach-stack'},[el('strong',{text:label(r.player)}),p(format(r.value,r.unit)+' · '+r.sample+(r.eligible?'':' · вне рейтинга'))]))));
-  const chartMax=Math.max(1,...selected.flatMap(r=>r.history.map(h=>Math.abs(h.value))));
+  const domain=trendDomain(selected.flatMap(r=>r.history.map(h=>h.value)));
   for(const r of selected){
    const trend=[p('Показатель отдельных записей, общая шкала для выбранных игроков.')];
-   for(const h of r.history.slice(-20))trend.push(p(fmtFull(h.date)+' · '+h.label+' · '+format(h.value,mode.value==='test'&&r.unit==='п.п.'?'%':r.unit)),meter(Math.abs(h.value),chartMax,label(r.player)+' '+h.date));
+   const unit=mode.value==='test'&&r.unit==='п.п.'?'%':r.unit;
+   trend.push(trendChart(r.history.slice(-20),{min:domain.low,max:domain.high,unit,label:label(r.player)}));
+   const records=el('details',{},[el('summary',{text:'Числовые значения'}),...r.history.slice(-20).map(h=>p(fmtFull(h.date)+' · '+h.label+' · '+format(h.value,unit)))]);trend.push(records);
    if(!r.history.length)trend.push(p('Нет записей.'));
    if(r.history.length>20)trend.push(p('Показаны последние 20 записей периода.'));
    compare.append(card('Динамика · '+label(r.player),trend),playerInsightCard(view,r.player.id,filter()));
@@ -61,7 +64,7 @@ export function seasonPanel(view){
    const meaningful=metric.value!=='progress'||winners[0].value>0;
    if(meaningful)result.append(p((winners.length>1?'Лидеры по показателю: ':'Лидер по показателю: ')+winners.map(r=>label(r.player)).join(', ')+ ' · '+format(winners[0].value,winners[0].unit)));
    else result.append(p('Положительного прогресса по выбранным данным пока нет.'));
-   for(const r of leaders)result.append(card(r.place+'. '+label(r.player),[p(format(r.value,r.unit)+' · '+r.sample),meter(Math.abs(r.value),max,label(r.player)+' '+metric.value)]));
+   for(const r of leaders)result.append(el('section',{class:'card-block rank-card'},[el('div',{class:'rank-row'},[el('span',{class:'rank-place'+(r.place===1?' first':''),text:String(r.place)}),el('div',{class:'rank-name'},[el('strong',{text:label(r.player)}),p(r.sample)]),el('strong',{class:'rank-value',text:format(r.value,r.unit)})]),meter(Math.abs(r.value),max,label(r.player)+' '+metric.value)]));
   }else result.append(p('Пока недостаточно данных для рейтинга.'));
   if(excluded.length)result.append(card('Вне рейтинга',[...excluded.map(r=>p(label(r.player)+' · '+format(r.value,r.unit)+' · '+r.sample))]));
   const options=[['','Не выбран'],...eligiblePlayers(view.players,f).map(player=>[player.id,label(player)])];setOptions(a,options,'');setOptions(b,options,'');
@@ -70,6 +73,6 @@ export function seasonPanel(view){
  for(const n of [from,to,position,archived,mode,source,definition,metric])n.onchange=draw;
  a.onchange=b.onchange=drawComparison;
  draw();
- return el('div',{class:'coach-stack'},[el('h2',{text:'Сезонная аналитика'}),el('div',{class:'coach-columns'},[field('С',from),field('По',to)]),btn('Весь архив',()=>{from.value='';to.value='';draw();}),field('Амплуа',position),field('Включить архивных игроков',archived),field('Данные',mode),modeFields,result,el('h3',{text:'Сравнить двух игроков'}),field('Игрок A',a),field('Игрок B',b),compare]);
+ return el('div',{class:'coach-stack season-panel'},[el('h2',{text:'Сезонная аналитика'}),el('div',{class:'coach-columns'},[field('С',from),field('По',to)]),btn('Весь архив',()=>{from.value='';to.value='';draw();}),field('Амплуа',position),field('Включить архивных игроков',archived),field('Данные',mode),modeFields,result,el('h3',{text:'Сравнить двух игроков'}),field('Игрок A',a),field('Игрок B',b),compare]);
 }
 export function openSeasonAnalytics(view){openSheet(el('div',{class:'coach-form'},[seasonPanel(view),btn('Закрыть',closeSheet)]));}

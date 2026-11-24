@@ -3,6 +3,7 @@ import {testPresets,testRestrictions,testHistory,summarizeTests} from '../coach-
 import {todayIso,fmtFull} from '../model.js';
 import {catalog} from '../health.js';
 import {el,openSheet,closeSheet,toast,confirmDialog} from '../ui.js';
+import {trendChart} from '../dashboard.js';
 const p=text=>el('p',{text});
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
 const field=(name,node)=>el('label',{class:'field'},[el('span',{text:name}),node]);
@@ -61,5 +62,5 @@ export function testList(team,view,refresh){
  return el('div',{class:'coach-stack'},nodes);
 }
 export function playerTestCards(view,id,range){
- return summarizeTests(testHistory(view.tests,id,range)).map(g=>card(g.definition.name,[p(g.definition.protocol),g.definition.kind==='skill'?p('Успешность: '+percent(g.pct)+' · '+g.success+'/'+g.attempts+' · ошибки '+g.errors+' · цель '+percent(g.targetPct)):p('Первый: '+(g.first??'—')+' · последний: '+(g.last??'—')+' · лучший: '+(g.best??'—')+' '+g.definition.unit),p('Адаптированных: '+g.adapted+' · пропущено: '+g.skipped+' · ограничение: '+g.restricted),...g.history.map(h=>{const r=h.result;return p(fmtFull(h.date)+' · '+(r.status==='done'?(h.definition.kind==='skill'?r.success+'/'+r.attempts+' · ошибки '+r.errors+(r.target===null?'':' · цель '+r.target):r.value+' '+h.definition.unit)+(r.adapted?' (адаптировано)':''):r.status==='restricted'?'Ограничение':'Не выполнено'));})]));
+ return summarizeTests(testHistory(view.tests,id,range)).map(g=>card(g.definition.name,[p(g.definition.protocol),g.definition.kind==='skill'?p('Успешность: '+percent(g.pct)+' · '+g.success+'/'+g.attempts+' · ошибки '+g.errors+' · цель '+percent(g.targetPct)):p('Первый: '+(g.first??'—')+' · последний: '+(g.last??'—')+' · лучший: '+(g.best??'—')+' '+g.definition.unit),g.definition.kind==='skill'?trendChart(g.history.filter(h=>h.result.status==='done'&&!h.result.adapted).map(h=>({date:h.date,value:100*h.result.success/h.result.attempts})).slice(-20),{min:0,max:100,unit:'%',label:g.definition.name}):trendChart(g.measurements.slice(-20),{unit:g.definition.unit,label:g.definition.name}),p('Адаптированных: '+g.adapted+' · пропущено: '+g.skipped+' · ограничение: '+g.restricted),...g.history.map(h=>{const r=h.result;return p(fmtFull(h.date)+' · '+(r.status==='done'?(h.definition.kind==='skill'?r.success+'/'+r.attempts+' · ошибки '+r.errors+(r.target===null?'':' · цель '+r.target):r.value+' '+h.definition.unit)+(r.adapted?' (адаптировано)':''):r.status==='restricted'?'Ограничение':'Не выполнено'));})]));
 }

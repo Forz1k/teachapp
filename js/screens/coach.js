@@ -11,7 +11,7 @@ import {openTestForm,testList,playerTestCards} from './coach-tests.js';
 import {openSeasonAnalytics,playerInsightCard} from './coach-season.js';
 import {openTournaments} from './tournaments.js';
 import {openLibrary,chooseTrainingPlan} from './library.js';
-import {metric,actionTile,dashboardHeading} from '../dashboard.js';
+import {metric,actionTile,dashboardHeading,trendChart} from '../dashboard.js';
 const {el,openSheet,closeSheet,toast}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
 const field=(text,input)=>el('label',{class:'field'},[el('span',{text}),input]);
@@ -76,7 +76,8 @@ function playerCard(team,player,view,refresh){
     const s=C.playerSeasonStats(view.matches,player.id,range);
     const n=s.errors;
     content.replaceChildren(
-      card('Матчи · выбранный период',[p('В заявке: '+s.rosterMatches+' · подробных протоколов: '+s.detailedMatches),p('Розыгрышей на площадке по подробным протоколам: '+s.rallies),p('Личные очки (зафиксировано): '+format(s.summary.sums.points)+' · Эйсы: '+format(s.summary.sums.aces)),p('Результативные атаки: '+format(s.summary.sums.attackKills)+' · Блоки: '+format(s.summary.sums.blocks))]),
+      el('div',{class:'dashboard-metrics'},[metric('Личные очки',format(s.summary.sums.points),'trophy','Зафиксировано'),metric('Эйсы',format(s.summary.sums.aces),'quick','Зафиксировано'),metric('Атаки',format(s.summary.sums.attackKills),'chart','Результативные'),metric('Блоки',format(s.summary.sums.blocks),'shield','Зафиксировано')]),
+      card('Матчи · выбранный период',[p('В заявке: '+s.rosterMatches+' · подробных протоколов: '+s.detailedMatches),p('Розыгрышей на площадке по подробным протоколам: '+s.rallies),trendChart(s.chosen.filter(m=>Number.isFinite(m.stats[player.id]?.points)).map(m=>({date:m.date,value:m.stats[player.id].points})).sort((a,b)=>a.date.localeCompare(b.date)).slice(-20),{unit:'очки',label:'Личные очки в матчах'}),p('График: последние 20 матчей с известным показателем.')]),
       card('Подача · подробные матчи',[p('Розыгрышей на своей подаче: '+(s.detailedMatches?s.serviceRallies:'—')),p('Выиграно командой на подаче: '+ratio(s.serviceWins,s.serviceRallies)),p('Эйсы: '+(s.detailedMatches?s.serviceAces:'—')+' · отмеченные ошибки подачи: '+(s.detailedMatches?s.serviceErrors:'—')),p('Проигрыши на подаче без указанной причины: '+s.unclassifiedServiceLosses),p('Выигрыш розыгрыша на подаче — командный показатель, не личная точность подачи.')]),
       card('Ошибки · подробные матчи',[p(s.detailedMatches?'Подача '+n.serve+' · атака '+n.attack+' · приём '+n.receive+' · прочие '+n.other:'Нет подробных протоколов'),p('Розыгрыши без полной атрибуции на площадке: '+s.unknownOnCourt),p('Ноль отмеченных ошибок не доказывает отсутствие ошибок.')]),
       card('Данные прежних и ручных матчей',[p('Доля успешных среди записанных действий (не гарантирует полноту):'),p('Подача '+ratio(s.rates.serve.success,s.rates.serve.total)),p('Приём '+ratio(s.rates.receive.success,s.rates.receive.total)),p('Атака '+ratio(s.rates.attack.success,s.rates.attack.total)),p('Событийные протоколы не содержат все попытки атаки и приёма; их проценты здесь не вычисляются.')]),
@@ -87,7 +88,7 @@ function playerCard(team,player,view,refresh){
       card('История матчей',s.chosen.length?s.chosen.map(m=>p(fmtFull(m.date)+' · '+m.opponent+' · личные очки: '+format(m.stats[player.id]?.points))):[p('Матчей за период нет')]));
   }
   from.onchange=draw;to.onchange=draw;draw();
-  openSheet(el('div',{class:'coach-form'},[el('h2',{text:label(player)}),p(C.positions[player.position]),field('Период с',from),field('По',to),btn('Весь архив',()=>{from.value='';to.value='';draw();},'wide'),content,
+  openSheet(el('div',{class:'coach-form player-profile'},[el('div',{class:'player-profile-head'},[el('div',{class:'profile-avatar',text:player.number??'—'}),el('div',{},[el('h2',{text:player.name}),p(C.positions[player.position]+(player.archived?' · Архив':''))])]),el('div',{class:'coach-columns'},[field('Период с',from),field('По',to)]),btn('Весь архив',()=>{from.value='';to.value='';draw();},'wide'),content,
     p('Ограничений внесено: '+player.restrictions.length),
     ...player.restrictions.map(r=>p(activityName(r.activityId)+' · '+(r.type==='avoid'?'не выполнять':'адаптировать')+' · '+r.dateFrom+' — '+(r.dateTo||'бессрочно'))),
     btn('Редактировать карточку',()=>playerForm(team,player,refresh),'wide'),
@@ -215,9 +216,11 @@ export async function renderCoach(root,ctx={}){
         body.append(dashboardHeading('Быстрые действия'),el('div',{class:'dashboard-actions'},[actionTile('Состав','classes',()=>go('roster')),actionTile('Тренировки','calendar',()=>go('trainings')),actionTile('Матчи','trophy',()=>go('matches')),actionTile('Аналитика','chart',()=>go('analytics')),team.archived?null:actionTile('Live-матч','quick',()=>openMatchCenter(team,refresh)),actionTile('Конспекты','journal',()=>openLibrary('coach'))]));
       }else if(selectedSection==='roster'){
         const active=view.players.filter(p=>!p.archived),arch=view.players.filter(p=>p.archived);
+        const search=el('input',{type:'search',placeholder:'Найти игрока','aria-label':'Найти игрока'}),list=el('div',{class:'player-directory'});
+        for(const player of active)list.append(el('button',{class:'player-directory-row',type:'button','data-name':(player.name+' '+(player.number??'')).toLocaleLowerCase('ru'),onclick:()=>playerCard(team,player,view,refresh)},[el('span',{class:'player-number',text:player.number??'—'}),el('span',{class:'player-directory-info'},[el('strong',{text:player.name}),el('small',{text:C.positions[player.position]})]),ui.icon('chevron')]));
+        search.oninput=()=>{const q=search.value.trim().toLocaleLowerCase('ru');for(const row of list.children)row.hidden=!row.dataset.name.includes(q);};
         body.append(card('Состав · '+active.length,[team.archived?null:btn('+ Игрок',()=>playerForm(team,null,refresh),'primary wide'),
-          team.archived?null:btn('Генератор команд',()=>openCoachTeams(team,active,closeSheet),'wide'),
-          ...active.map(player=>btn(label(player)+' · '+C.positions[player.position],()=>playerCard(team,player,view,refresh),'wide')),
+          team.archived?null:btn('Генератор команд',()=>openCoachTeams(team,active,closeSheet),'wide'),search,list,
           !active.length?p('Нет действующих игроков'):null,
           arch.length?el('details',{},[el('summary',{text:'Архив игроков ('+arch.length+')'}),...arch.map(player=>btn(label(player),()=>playerCard(team,player,view,refresh),'wide'))]):null]));
       }else if(selectedSection==='trainings'){
