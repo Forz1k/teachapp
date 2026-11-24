@@ -1,5 +1,6 @@
 import * as db from './db.js';
 import {uid} from './model.js';
+import {validateGradeHistory} from './grade-history.js';
 import {validateInventory,validateAchievement} from './resources.js';
 import {validateBoard} from './tactics.js';
 import {validateGoal} from './coach-goals.js';
@@ -27,6 +28,7 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='gradeHistory'){validateGradeHistory(r);return;}
  if(r.kind==='inventory'){validateInventory(r);return;}
  if(r.kind==='achievement'){validateAchievement(r);return;}
  if(r.kind==='tacticBoard'){validateBoard(r);return;}
@@ -53,6 +55,6 @@ export async function saveWork(input){
   const old=await s.workRecords.get(r.id);require(!old||old.kind===r.kind,'Нельзя изменить тип записи');if(input.id)require(old,'Запись уже удалена');await s.workRecords.put(r);return r;
  });
 }
-export async function deleteWork(id,kind){return db.transaction(['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');await s.workRecords.delete(id);});}
+export async function deleteWork(id,kind){return db.transaction(kind==='archive'?['workRecords','students','lessons']:['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');if(kind==='archive'){const pupils=new Set(old.snapshot.students.map(p=>p.id)),lessons=new Set(old.snapshot.lessons.map(l=>l.id));for(const p of await s.students.getAll())pupils.delete(p.id);for(const l of await s.lessons.getAll())lessons.delete(l.id);for(const r of await s.workRecords.index('kind').getAll('gradeHistory'))if(pupils.has(r.studentId)||lessons.has(r.lessonId))await s.workRecords.delete(r.id);}await s.workRecords.delete(id);});}
 export function planExercises(plan){return plan.items.map(i=>({name:i.exercise.name,activityId:i.exercise.activityId,minutes:i.minutes}));}
 export function librarySearch(exercises,query='',category=''){const q=query.trim().toLowerCase();return exercises.filter(e=>(!category||e.category===category)&&(!q||[e.name,e.description,e.equipment].some(x=>x.toLowerCase().includes(q))));}
