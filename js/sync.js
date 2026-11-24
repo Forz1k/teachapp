@@ -22,7 +22,7 @@ const validArea=a=>Object.hasOwn(syncAreas,a);
 const keysFor=area=>area==='school'?[...school,'workRecords','meta']:[...coach,'workRecords'];
 function recordArea(r){
  if(['archive','gradeHistory','rubric'].includes(r.kind))return 'school';
- if(['coachGoal','tacticBoard'].includes(r.kind))return 'coach';
+ if(['coachGoal','tacticBoard','seasonPlan'].includes(r.kind))return 'coach';
  if(r.kind==='plan')return r.context;
  if(r.kind==='achievement')return ['class','student'].includes(r.subjectType)?'school':['team','player'].includes(r.subjectType)?'coach':null;
  return null;
@@ -178,7 +178,7 @@ const revision=n=>Number.isSafeInteger(n)&&n>=1;
 async function readPacket(envelope,password,area,rev){
  check(isEncryptedBackup(envelope),'Сервер не вернул зашифрованный пакет');
  const p=await decryptBackup(envelope,password);
- check(p?.app==='teachapp-sync'&&p.version===1&&[19,BACKUP_VERSION].includes(p.backupVersion)&&p.area===area&&uuid.test(p.workspaceId)&&p.revision===rev,'Несовместимый пакет синхронизации или подмена ревизии');
+ check(p?.app==='teachapp-sync'&&p.version===1&&[19,20,BACKUP_VERSION].includes(p.backupVersion)&&p.area===area&&uuid.test(p.workspaceId)&&p.revision===rev,'Несовместимый пакет синхронизации или подмена ревизии');
  validateScope(p.snapshot,area);
  return p;
 }

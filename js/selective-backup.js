@@ -45,7 +45,7 @@ export function makeScopedBackup(source,scope){
   const team=data.coachTeams.find(t=>t.id===id);check(team,'Команда отсутствует в копии');out.coachTeams=[team];
   for(const n of ['coachPlayers','coachTrainings','coachMatches','coachLineups','coachLive','coachTests'])out[n]=data[n].filter(r=>r.teamId===id);
   const players=new Set(out.coachPlayers.map(p=>p.id));
-  out.workRecords=data.workRecords.filter(r=>['coachGoal','tacticBoard'].includes(r.kind)&&r.teamId===id||r.kind==='achievement'&&(r.subjectType==='team'&&r.subjectId===id||r.subjectType==='player'&&players.has(r.subjectId)));
+  out.workRecords=data.workRecords.filter(r=>['coachGoal','tacticBoard','seasonPlan'].includes(r.kind)&&r.teamId===id||r.kind==='achievement'&&(r.subjectType==='team'&&r.subjectId===id||r.subjectType==='player'&&players.has(r.subjectId)));
  }else{
   const a=data.workRecords.find(r=>r.kind==='archive'&&r.id===id);check(a,'Архив отсутствует в копии');
   const pupils=new Set(a.snapshot.students.map(p=>p.id)),lineages=new Set(a.snapshot.students.map(lineageOf)),classes=new Set(a.snapshot.classes.map(c=>c.id)),lessons=new Set(a.snapshot.lessons.map(l=>l.id));
