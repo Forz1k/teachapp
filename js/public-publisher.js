@@ -42,7 +42,7 @@ export async function connectPortal(id,{origin,apiKey,email,password,slug='',tea
  const session=await firebaseSignIn(apiKey,email,password,fetcher);
  try{
   if(d.owner&&d.owner!==session.uid)throw Error('Войдите в исходную учётную запись владельца страницы');
-  const chosen=d.slug||slug||globalThis.crypto.randomUUID().replaceAll('-','');portalAddress(origin,session.uid,chosen);
+  const chosen=d.slug||slug||Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');portalAddress(origin,session.uid,chosen);
   const publisher=firebasePublisher(origin,chosen,session,fetcher);
   const remote=readPortal(await publisher.read());
   if(!d.slug&&remote){d.team=remote.team;d.schedule=remote.schedule;d.archive=remote.archive;d.match=remote.match;d.enabled=true;d.activeId=null;}
@@ -64,7 +64,7 @@ export function setPortalSettings(id,patch){
  save(e);if(d.enabled)enqueue(e);else notify(e);
 }
 export function saveFixture(id,item){
- const e=entry(id),d=e.data,x=scheduleItem(item),next=d.schedule.filter(t=>t.id!==x.id);if(next.length>=20)throw Error('Не более 20 предстоящих матчей');d.schedule=sortedSchedule([...next,x]);save(e);if(d.enabled)enqueue(e);else notify(e);
+ const e=entry(id),d=e.data,x=scheduleItem(item),next=d.schedule.filter(t=>t.id!==x.id);if(d.activeId&&d.match?.scheduledId===x.id)throw Error('Матч уже идёт');if(next.length>=20)throw Error('Не более 20 предстоящих матчей');d.schedule=sortedSchedule([...next,x]);save(e);if(d.enabled)enqueue(e);else notify(e);
 }
 export function removeFixture(id,fixtureId){const e=entry(id);if(e.data.match?.scheduledId===fixtureId&&['live','break'].includes(e.data.match.status))throw Error('Матч уже идёт');e.data.schedule=e.data.schedule.filter(x=>x.id!==fixtureId);save(e);if(e.data.enabled)enqueue(e);else notify(e);}
 export function syncPortalMatch(match,{start=false,finish=false,discard=false}={}){

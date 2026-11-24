@@ -7,7 +7,7 @@ const clean=(v,max=100)=>typeof v==='string'?v.trim().slice(0,max):'';
 const validId=v=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(v);
 const int=(v,max=9999)=>Number.isInteger(v)&&v>=0&&v<=max;
 const dateMs=v=>Number.isFinite(v)&&v>=0&&v<=8640000000000000;
-const list=v=>Array.isArray(v)?v:Object.values(v&&typeof v==='object'?v:{});
+const list=v=>Array.isArray(v)?v:v&&typeof v==='object'?Object.keys(v).filter(k=>/^(0|[1-9][0-9]?)$/.test(k)).sort((a,b)=>Number(a)-Number(b)).map(k=>v[k]):[];
 const score=v=>v&&int(v.ours)&&int(v.theirs)?{ours:v.ours,theirs:v.theirs}:null;
 const norm=v=>clean(v).replace(/\s+/g,' ').toLocaleLowerCase('ru');
 export function firebaseOrigin(input){

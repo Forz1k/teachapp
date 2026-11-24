@@ -27,3 +27,9 @@ test('Адрес Firebase проверяется, токен не входит �
  assert.throws(()=>portalAddress('https://demo.firebaseio.com','../x','a'));
  const link=shareUrl('https://example.com/teachapp/','https://demo.firebaseio.com','uid','slug');assert.equal(new URL(link).pathname,'/teachapp/live/');assert.equal(new URL(link).searchParams.get('team'),'slug');
 });
+
+test('Firebase возвращает массивы или индексированные объекты; неизвестные поля отбрасываются',()=>{
+ const raw={schema:1,team:'Команда',updatedAt:10,schedule:{'1':{id:'second',opponent:'Б',startAt:20},'0':{id:'first',opponent:'А',startAt:10}},secret:'private',archive:null};
+ const a=readPortal(raw);assert.deepEqual(a.schedule.map(x=>x.id),['first','second']);assert.equal(Object.hasOwn(a,'secret'),false);
+ assert.equal(readPortal({...raw,schema:99}),null);
+});
