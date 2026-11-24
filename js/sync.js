@@ -1,7 +1,7 @@
 /* TeachApp 4.0 beta: explicit scoped revision synchronization. No implicit network traffic. */
 import * as db from './db.js';
 import {validateBackup,BACKUP_VERSION} from './backup.js';
-import {defaultSettings} from './model.js';
+import {defaultSettings,exemptionCovers,hasOsv} from './model.js';
 import {gradeState,finalState} from './grade-history.js';
 import {encryptBackup,decryptBackup,isEncryptedBackup} from './privacy.js';
 
@@ -105,7 +105,7 @@ export function mergeScopes(base,local,remote,area,choices={}){
   }
   result[store]=rows;
  }
- if(area==='school'&&!conflicts.length)assertGradePairs(result,local,remote);
+ if(area==='school'&&!conflicts.length){assertGradePairs(result,local,remote);assertCoveragePairs(result,local,remote);}
  return {snapshot:result,conflicts};
 }
 function gradePairs(snapshot){
@@ -126,6 +126,36 @@ function assertGradePairs(merged,local,remote){
  for(const [id,row] of m.history){
   const grade=m.grade(row);if(grade===null)continue;
   check(sources.some(src=>same(src.history.get(id),row)&&same(src.grade(row),grade)),'Оценка и история выбраны из разных несовместимых версий. Согласуйте связанные записи.');
+ }
+}
+function coverageView(snapshot){
+ const pupils=byId(snapshot.students),lessons=byId(snapshot.lessons),byClass=new Map(),exemptions=new Map(),parts=new Map(),marks=new Map();
+ const key=(studentId,lessonId)=>JSON.stringify([studentId,lessonId]);
+ for(const l of snapshot.lessons){if(!byClass.has(l.classId))byClass.set(l.classId,[]);byClass.get(l.classId).push(l);}
+ for(const e of snapshot.exemptions){if(!exemptions.has(e.studentId))exemptions.set(e.studentId,[]);exemptions.get(e.studentId).push(e);}
+ for(const p of snapshot.participation)if(p.full)parts.set(key(p.studentId,p.lessonId),p);
+ for(const m of snapshot.marks)marks.set(key(m.studentId,m.lessonId),m);
+ const state=k=>{
+  const [studentId,lessonId]=JSON.parse(k),pupil=pupils.get(studentId),lesson=lessons.get(lessonId);
+  if(!pupil||!lesson||pupil.classId!==lesson.classId)return null;
+  return {covered:(exemptions.get(studentId)||[]).some(e=>exemptionCovers(e,lesson.date)),partId:parts.get(k)?.id??null,mark:marks.get(k)??null};
+ };
+ const affected=new Set(parts.keys());
+ for(const [studentId,list] of exemptions){
+  for(const l of byClass.get(pupils.get(studentId)?.classId)||[])if(list.some(e=>exemptionCovers(e,l.date)))affected.add(key(studentId,l.id));
+ }
+ for(const [k,m] of marks)if(['auto-osv','participation'].includes(m.source)||m.participationId)affected.add(k);
+ return {state,affected};
+}
+function assertCoveragePairs(merged,local,remote){
+ const m=coverageView(merged),sources=[coverageView(local),coverageView(remote)];
+ for(const k of m.affected){
+  const x=m.state(k);if(!x)continue;
+  const required=x.covered||x.partId!==null,mark=x.mark;
+  const invalid=required&&!hasOsv(mark)||x.partId!==null&&(mark?.participationId!==x.partId||mark?.source!=='participation')||
+   x.partId===null&&(mark?.source==='participation'||!!mark?.participationId)||!required&&mark?.source==='auto-osv';
+  // Historical inconsistencies may already exist; do not introduce a new one by combining devices.
+  check(!invalid||sources.some(src=>same(src.state(k),x)),'Объединение создаёт несогласованное освобождение или участие. Проверьте ученика и урок в обычном журнале до синхронизации.');
  }
 }
 function counts(before,after){
