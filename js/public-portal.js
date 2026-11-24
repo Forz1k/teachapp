@@ -103,3 +103,25 @@ export function readPortal(raw){
  const schedule=[];for(const x of list(raw.schedule).slice(0,MAX_SCHEDULE)){try{schedule.push(scheduleItem(x));}catch{}}
  return {schema:PORTAL_SCHEMA,team:clean(raw.team),updatedAt:raw.updatedAt,schedule:sortedSchedule(schedule),match,archive:list(raw.archive).map(archived).filter(Boolean).slice(0,MAX_ARCHIVE)};
 }
+
+/** Results are derived solely from the published archive and completed current match. */
+export function fanResults(data){
+ const rows=new Map((data?.archive||[]).map(x=>[x.id,x]));
+ if(data?.match?.status==='finished')rows.set(data.match.id,archiveMatch(data.match));
+ return [...rows.values()].sort((a,b)=>b.startedAt-a.startedAt||a.id.localeCompare(b.id));
+}
+export function resultOutcome(x){return x.setsWon.ours>x.setsWon.theirs?'win':x.setsWon.ours<x.setsWon.theirs?'loss':'draw';}
+export function resultSummary(rows){
+ const counts={win:0,loss:0,draw:0};for(const x of rows)counts[resultOutcome(x)]++;
+ let streak=0;
+ // Manual results only have a date. On a mixed-outcome day with unknown order,
+ // do not invent a streak; exact live timestamps can be ordered.
+ const day=x=>x.id.startsWith('result_')?new Date(x.startedAt).toISOString().slice(0,10):localDay(x.startedAt);
+ const groups=new Map();for(const x of rows){const k=day(x);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(x);}
+ outer:for(const k of [...groups.keys()].sort().reverse()){
+  const group=groups.get(k).slice().sort((a,b)=>b.startedAt-a.startedAt);
+  if(group.some(x=>x.id.startsWith('result_'))&&group.some(x=>resultOutcome(x)!=='win'))break;
+  for(const x of group){if(resultOutcome(x)!=='win')break outer;streak++;}
+ }
+ return {...counts,total:rows.length,streak};
+}

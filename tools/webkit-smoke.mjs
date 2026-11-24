@@ -58,6 +58,14 @@ try{
  assert.ok(await fan.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'public viewport overflow');
  await fan.locator('#fan-motion').click();await fan.locator('#fan-motion').click();assert.equal(await fan.locator('html').getAttribute('data-motion'),'off');
  await fan.emulateMedia({reducedMotion:'reduce'});assert.equal(await fan.evaluate(()=>getComputedStyle(document.querySelector('.brand img')).animationName),'none');
+ assert.equal(await fan.locator('#brand-team').textContent(),'Гимназия №26');
+ const archive=[0,1,2].map(i=>({id:'result_'+i,opponent:'Тест '+i,startedAt:Date.now()-i*86400000,setsWon:i===2?{ours:0,theirs:2}:{ours:2,theirs:0},sets:i===2?[{ours:19,theirs:25},{ours:22,theirs:25}]:[{ours:25,theirs:18},{ours:25,theirs:20}]}));
+ await fan.evaluate(x=>window.__fanPush(x),{...future,schedule:[],archive});
+ await fan.locator('.record-streak').waitFor();assert.match(await fan.locator('.record-streak').textContent(),/2 подряд/);
+ assert.equal(await fan.locator('.record-streak .flame').evaluate(n=>getComputedStyle(n).animationName),'none');
+ await fan.locator('[data-tab=results]').click();await fan.locator('[data-filter=loss]').click();assert.equal(await fan.locator('.result-card').count(),1);
+ await fan.locator('[data-filter=win]').click();assert.equal(await fan.locator('.result-card .trophy').count(),2);
+ assert.ok(await fan.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'public result cards overflow');
  await fan.close();
  await context.setOffline(true);
  await page.reload();
