@@ -32,7 +32,7 @@ const PRECACHE = [
   './js/screens/session.js',
   './js/team-generator.js',
   './js/screens/team-generator.js',
-  './js/coach.js','./js/media-studio.js','./js/screens/studio.js',
+  './js/coach.js','./js/coach-opponents.js','./js/screens/coach-opponents.js','./js/media-studio.js','./js/screens/studio.js',
   './js/workbench.js','./js/methodical.js','./js/portable-library.js',
   './js/tournaments.js',
   './js/screens/tournaments.js',

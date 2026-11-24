@@ -25,7 +25,7 @@ const validArea=a=>Object.hasOwn(syncAreas,a);
 const keysFor=area=>area==='school'?[...school,'workRecords','meta']:[...coach,'workRecords'];
 function recordArea(r){
  if(['archive','gradeHistory','rubric','normAssignment','briefing','gymBoard'].includes(r.kind))return 'school';
- if(['coachGoal','tacticBoard','seasonPlan','videoReview'].includes(r.kind))return 'coach';
+ if(['coachGoal','tacticBoard','seasonPlan','videoReview','opponentNote'].includes(r.kind))return 'coach';
  if(r.kind==='plan')return r.context;
  if(r.kind==='achievement')return ['class','student'].includes(r.subjectType)?'school':['team','player'].includes(r.subjectType)?'coach':null;
  return null;

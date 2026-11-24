@@ -61,7 +61,8 @@ export function openDetailedSetup(team,players,back,refresh,preset=null,{matches
  const date=input(todayIso(),'date',{max:todayIso()}),opp=input(fixture?.opponent||'','text',{placeholder:'Название соперника'}),comp=input('','text',{placeholder:'Турнир'}),venue=input('','text',{placeholder:'Спортивный зал'});
  const best=select([[3,'До двух побед'],[5,'До трёх побед']],5),target=select([15,21,25].map(n=>[n,n]),25),decider=select([15,21,25].map(n=>[n,n]),15);
  const serve=select([['ours',team.name],['theirs','Соперник']],'ours'),scheme=select([['5-1','5–1'],['4-2','4–2'],['free','Свободная']],preset?.scheme||'5-1');
- const substitutions=select([['simple','Упрощённые (до 6)'],['paired','Парные (возврат стартового игрока)']],'simple');
+ const substitutions=select([['simple','Упрощённые'],['paired','Парные (возврат стартового игрока)']],'simple');
+ const subLimit=el('input',{type:'number',min:0,max:20,step:1,value:6}),timeoutLimit=el('input',{type:'number',min:0,max:5,step:1,value:2});
  const colors=colorFields(V.defaultBoardColors,fixture?.logos||{ours:null,theirs:null});
  const previousMatches=matches.filter(m=>m.teamId===team.id&&m.detail?.mode==='dual').sort((a,b)=>b.date.localeCompare(a.date)||b.detail.startedAt.localeCompare(a.detail.startedAt));
  const previous=previousMatches[0]?.detail;
@@ -107,11 +108,11 @@ export function openDetailedSetup(team,players,back,refresh,preset=null,{matches
    if(!V.validBoardColors(colors.get()))throw Error('Выберите два разных цвета команд');
    if(!await ui.confirmDialog({title:'Начать матч?',text:'Подтвердите фактические составы и выбранный регламент.',ok:'Начать'}))return;
    const d=await C.startDetailedMatch({teamId:team.id,teamName:team.name,opponent:opp.value,date:date.value,competition:comp.value,venue:venue.value,
-     roster:eligible.map(p=>p.id),ourPlayers:eligible,awayPlayers,awayLineup:away,lineup:line,libero:libero.value||null,bestOf:Number(best.value),target:Number(target.value),decider:Number(decider.value),firstServe:serve.value,scheme:scheme.value,substitutionMode:substitutions.value,boardColors:colors.get(),boardLogos:colors.getLogos()});
+     roster:eligible.map(p=>p.id),ourPlayers:eligible,awayPlayers,awayLineup:away,lineup:line,libero:libero.value||null,bestOf:Number(best.value),target:Number(target.value),decider:Number(decider.value),firstServe:serve.value,scheme:scheme.value,substitutionMode:substitutions.value,limits:{substitutions:Number(subLimit.value),timeouts:Number(timeoutLimit.value)},boardColors:colors.get(),boardLogos:colors.getLogos()});
    openDetailedMatch(d,back,refresh);
   }catch(e){toast(e.message);}finally{save.disabled=false;}
  },'primary wide');
- openSheet(el('div',{class:'vp-stack vp-setup'},[el('h2',{text:'Новый подробный матч'}),field('Соперник',opp),field('Дата',date),field('Турнир',comp),field('Место',venue),field('Формат',best),field('Очков в партии',target),field('Решающая партия',decider),field('Первая подача',serve),field('Тактическая схема',scheme),field('Правила замен',substitutions),el('details',{class:'vp-match-more'},[el('summary',{text:'Цвета табло'}),colors.node]),p('Парные замены: один запасной на стартового игрока, один возврат за партию. Исключительные замены и все судейские правила не реализованы.'),
+ openSheet(el('div',{class:'vp-stack vp-setup'},[el('h2',{text:'Новый подробный матч'}),field('Соперник',opp),field('Дата',date),field('Турнир',comp),field('Место',venue),field('Формат',best),field('Очков в партии',target),field('Решающая партия',decider),field('Первая подача',serve),field('Тактическая схема',scheme),field('Правила замен',substitutions),field('Лимит замен на команду за партию',subLimit),field('Лимит тайм-аутов на команду за партию',timeoutLimit),el('details',{class:'vp-match-more'},[el('summary',{text:'Цвета табло'}),colors.node]),p('Парные замены: один запасной на стартового игрока, один возврат за партию. Исключительные замены и все судейские правила не реализованы.'),
   el('h3',{text:team.name}),ownArea,el('h3',{text:'Состав соперника (необязательно)'}),p('Один игрок в строке: номер и имя. Если фамилии неизвестны, достаточно номера.'),history.length?field('Состав из истории',opponentPick):null,history.length?btn('Загрузить состав соперника',loadOpponent,'wide'):null,awayInput,btn('Подготовить расстановку соперника',()=>{try{parse();}catch(e){toast(e.message);}},'wide'),awayArea,save,btn('Назад',back,'wide')]));
 }
 function court(d,lineups,serve,selected,choose){
@@ -191,8 +192,8 @@ export function openDetailedMatch(initial,back,refresh){
     teamEmblem(d,side),el('span',{text:sideName(d,side)}),el('strong',{class:'vp-score-number','data-score-side':side,text:String(s.score[side])}),
     el('small',{text:'Партии '+(side==='ours'?won:s.sets.length-won)}),mini,
     active?el('div',{class:'vp-board-indicators'},[
-     el('div',{class:'vp-pips','aria-label':'Замены '+s.subCounts[side]+' из 6'},[el('span',{text:'Замены'}),...Array.from({length:6},(_,i)=>el('i',{class:i<s.subCounts[side]?'used':''}))]),
-     el('button',{type:'button',class:'vp-timeout-button',disabled:s.timeouts[side]>=2||!!pointDraft,onclick:()=>perform({type:'timeout',side},()=>{selected=null;}),'aria-label':'Тайм-аут '+sideName(d,side)},[el('span',{text:'Тайм-аут'}),...Array.from({length:2},(_,i)=>el('i',{class:i<s.timeouts[side]?'used':''}))]),
+     el('div',{class:'vp-pips','aria-label':'Замены '+s.subCounts[side]+' из '+V.matchLimits(d).substitutions},[el('span',{text:'Замены'}),...Array.from({length:V.matchLimits(d).substitutions},(_,i)=>el('i',{class:i<s.subCounts[side]?'used':''}))]),
+     el('button',{type:'button',class:'vp-timeout-button',disabled:s.timeouts[side]>=V.matchLimits(d).timeouts||!!pointDraft,onclick:()=>perform({type:'timeout',side},()=>{selected=null;}),'aria-label':'Тайм-аут '+sideName(d,side)},[el('span',{text:'Тайм-аут'}),...Array.from({length:V.matchLimits(d).timeouts},(_,i)=>el('i',{class:i<s.timeouts[side]?'used':''}))]),
      el('small',{class:'vp-board-serving',text:serving?'● Подаёт '+(player?.number!=null?'№'+player.number:player?.name||'команда'):'Приём'})]):null]);
   }));
   body.replaceChildren(el('div',{class:'vp-match-head'},[el('div',{class:'vp-match-title'},[el('span',{class:'match-live-label',text:s.finished?'ЗАВЕРШЁН':s.setEnded?'ПЕРЕРЫВ':'● LIVE'}),el('strong',{text:'Партия '+set})]),displayScore,el('div',{class:'match-sets'},s.sets.length?s.sets.map((x,i)=>el('span',{class:'match-set',text:(i+1)+' · '+score(x)})):[el('span',{text:'Первая партия'})])]),
@@ -281,7 +282,7 @@ export function openDetailedMatch(initial,back,refresh){
     body.append(points,el('button',{type:'button',class:'btn wide vp-scout-open',onclick:()=>{if(busy)return;selected=null;scoutOpen=true;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;},text:'◎ Тактическая разведка'}));
     if(last)body.append(el('div',{class:'vp-last-event',role:'status',text:'Последнее: '+eventText(d,last)}));
     const momentum=V.setMomentum(s.timeline,set);
-    if(momentum.run>=4&&momentum.runSide==='theirs')body.append(el('div',{class:'vp-run-note',role:'status',text:'Соперник выиграл '+momentum.run+' розыгрыша подряд. '+(s.timeouts.ours<2?'Можно рассмотреть тайм-аут.':'Лимит тайм-аутов исчерпан.')}));
+    if(momentum.run>=4&&momentum.runSide==='theirs')body.append(el('div',{class:'vp-run-note',role:'status',text:'Соперник выиграл '+momentum.run+' розыгрыша подряд. '+(s.timeouts.ours<V.matchLimits(d).timeouts?'Можно рассмотреть тайм-аут.':'Лимит тайм-аутов исчерпан.')}));
     if(selected){
      const side=selected.side;
      const candidates=V.legalSubstitutions(d,s,side,selected.id);
@@ -291,7 +292,7 @@ export function openDetailedMatch(initial,back,refresh){
       el('h3',{text:name(d,side,selected.id)}),
       p('Очки: '+(playerStats.points||0)+' · Ошибки: '+(playerStats.errors||0)),
       p('Атаки: '+(playerStats.attackKills||0)+' · Скидки: '+(playerStats.tipKills||0)+' · Блоки: '+(playerStats.blocks||0)+' · Эйсы: '+(playerStats.aces||0)),
-      field('Игрок на замену',reserve),candidates.length?btn('Замена · '+s.subCounts[side]+'/6',()=>{if(!reserve.value)return toast('Выберите запасного');perform({type:'sub',side,out:selected.id,in:reserve.value},()=>selected=null);},'primary wide'):p('Допустимых обычных замен нет.')]);
+      field('Игрок на замену',reserve),candidates.length?btn('Замена · '+s.subCounts[side]+'/'+V.matchLimits(d).substitutions,()=>{if(!reserve.value)return toast('Выберите запасного');perform({type:'sub',side,out:selected.id,in:reserve.value},()=>selected=null);},'primary wide'):p('Допустимых обычных замен нет.')]);
      if(side==='ours'&&d.libero&&(s.liberoFor===null?[1,5,6].includes(s.lineup.indexOf(selected.id)+1)&&!(s.serve==='ours'&&s.lineup[0]===selected.id):selected.id===d.libero))area.append(btn(s.liberoFor?'Вернуть основного игрока':'Выход либеро',()=>perform({type:'libero',for:s.liberoFor?null:selected.id},()=>selected=null),'wide'));
      area.append(btn('Отмена',()=>{selected=null;draw();},'wide'));showOverlay(area);return;
     }

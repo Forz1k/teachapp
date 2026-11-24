@@ -52,7 +52,10 @@ function allowedPair(state,out,incoming){
  if(state.starters.includes(out))return !pair&&!state.starters.includes(incoming)&&!state.pairs.some(p=>p.reserve===incoming);
  return !!pair&&!pair.returned&&pair.reserve===out&&pair.starter===incoming;
 }
+export const matchLimits=d=>d.limits??{substitutions:6,timeouts:2};
+export function validMatchLimits(v){return v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===2&&integer(v.substitutions,0,20)&&integer(v.timeouts,0,5);}
 export function legalSubstitutions(d,s,side,out){
+ if(s.subCounts[side]>=matchLimits(d).substitutions)return [];
  if(!sides.includes(side)||s.setEnded||s.finished||s.subCounts[side]>=6)return [];
  const line=side==='ours'?s.lineup:s.awayLineup,roster=side==='ours'?d.ourPlayers:d.awayPlayers;
  if(!line.includes(out)||side==='ours'&&out===s.liberoFor)return [];
@@ -65,7 +68,7 @@ export function replayDetailed(d){
    validLine(d.lineup,d.ourPlayers)&&validLine(d.awayLineup,d.awayPlayers,true)&&(!d.awayPlayers.length||d.awayLineup.length===6)&&
    (d.libero===null||d.ourPlayers.some(p=>p.id===d.libero)&&!d.lineup.includes(d.libero))&&
    [3,5].includes(d.bestOf)&&[15,21,25].includes(d.target)&&[15,21,25].includes(d.decider)&&sides.includes(d.firstServe)&&
-   (d.boardColors===undefined||validBoardColors(d.boardColors))&&(d.boardLogos===undefined||validBoardLogos(d.boardLogos))&&['5-1','4-2','free'].includes(d.scheme)&&(d.substitutionMode===undefined||['simple','paired'].includes(d.substitutionMode))&&Array.isArray(d.events)&&d.events.length<=5000,'Проверьте параметры матча');
+   (d.limits===undefined||validMatchLimits(d.limits))&&(d.boardColors===undefined||validBoardColors(d.boardColors))&&(d.boardLogos===undefined||validBoardLogos(d.boardLogos))&&['5-1','4-2','free'].includes(d.scheme)&&(d.substitutionMode===undefined||['simple','paired'].includes(d.substitutionMode))&&Array.isArray(d.events)&&d.events.length<=5000,'Проверьте параметры матча');
  const rosters={ours:d.ourPlayers,theirs:d.awayPlayers};
  const s={lineup:[...d.lineup],awayLineup:[...d.awayLineup],liberoFor:null,serve:d.firstServe,score:{ours:0,theirs:0},sets:[],setDetails:[],timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(d.lineup,d.awayLineup),rotations:{ours:0,theirs:0},sides:{ours:sideData(),theirs:sideData()},timeline:[],setEnded:false,finished:false};
  let setStarted=d.startedAt,lastAt=d.startedAt;
@@ -94,13 +97,13 @@ export function replayDetailed(d){
   }
   fail(!s.setEnded,'Начните следующую партию');
   if(ev.type==='timeout'){
-   fail(sides.includes(ev.side)&&s.timeouts[ev.side]<2,'Лимит тайм-аутов (2)');s.timeouts[ev.side]++;timeline(ev,{number:s.timeouts[ev.side]});continue;
+   fail(sides.includes(ev.side)&&s.timeouts[ev.side]<matchLimits(d).timeouts,'Лимит тайм-аутов ('+matchLimits(d).timeouts+')');s.timeouts[ev.side]++;timeline(ev,{number:s.timeouts[ev.side]});continue;
   }
   if(ev.type==='sub'){
    fail(sides.includes(ev.side),'Выберите команду');
    const l=lineupFor(ev.side),i=l.indexOf(ev.out);
-   fail(i>=0&&rosters[ev.side].some(p=>p.id===ev.in)&&!l.includes(ev.in)&&s.subCounts[ev.side]<6&&
-    (ev.side!=='ours'||ev.out!==s.liberoFor&&ev.in!==d.libero),'Проверьте замену или лимит (6)');
+   fail(i>=0&&rosters[ev.side].some(p=>p.id===ev.in)&&!l.includes(ev.in)&&s.subCounts[ev.side]<matchLimits(d).substitutions&&
+    (ev.side!=='ours'||ev.out!==s.liberoFor&&ev.in!==d.libero),'Проверьте замену или лимит ('+matchLimits(d).substitutions+')');
    if(d.substitutionMode==='paired'){
     const state=s.substitutionState[ev.side];
     fail(allowedPair(state,ev.out,ev.in),'Парная замена: стартовый игрок возвращается только вместо своего запасного, один раз за партию');
