@@ -68,7 +68,8 @@ export function openSync(){
     if(!cp||cp.endpoint===credentials.endpoint){endpoint.value=credentials.endpoint;token.value=credentials.token;password.value=credentials.password;}
    }
    const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)).join(' · ');
-   personalStatus.textContent=saved?'Личный код сохранён на этом устройстве.'+(report.at?' Последняя автопроверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:''):'Личный код не сохранён.';
+   const successes=report.areas.filter(r=>r.status==='synced'&&r.successfulAt).map(r=>syncAreas[r.area]+': '+new Date(r.successfulAt).toLocaleString('ru-RU')).join(' · ');
+   personalStatus.textContent=saved?'Личный код сохранён на этом устройстве.'+(report.phase==='offline'?' Нет сети.':report.phase==='running'?' Обмен выполняется.':report.phase==='interrupted'?' Обмен прерван.':'')+(report.at?' Последняя проверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:'')+(successes?' Успешный обмен в последней попытке: '+successes:''):'Личный код не сохранён.';
    personalForget.hidden=!saved;inviteCreate.hidden=!saved;both.hidden=!saved;inviteImport.hidden=Boolean(saved);
    status.textContent=cp?'Последняя подтверждённая ревизия: '+cp.revision:'Контур пока не подключён.';
    detach.hidden=!cp;detach.style.display=cp?'':'none';
