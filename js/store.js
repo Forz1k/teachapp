@@ -1175,3 +1175,48 @@ export async function saveFinalGrade(studentId,periodId,value,confirmed=false){
   state.finalGrades=state.finalGrades.filter(r=>r.id!==result.previous?.id).concat(result.next||[]);
   notify();return result.next;
 }
+
+/* Массовые действия урока: только явно выбранные ученики, без перезаписи.
+   Проверяем актуальные данные в той же транзакции, что и сохранение. */
+export function lessonBatchReason(action,mark,part,covered,matched){
+  if(mark)return 'В журнале уже есть отметка';
+  if(action==='absent')return part?'Уже зафиксировано участие':'';
+  if(covered)return 'Действует освобождение';
+  if(matched)return 'Есть ограничение нагрузки';
+  if(part&&(action==='normal'||part.mode!=='normal'))return 'Уже зафиксировано участие';
+  return '';
+}
+export async function applyLessonBatch(lessonId,studentIds,action,value=null,confirmed=false){
+  if(!confirmed)throw Error('Подтвердите массовое действие');
+  if(!Array.isArray(studentIds)||!studentIds.length||studentIds.length>500||new Set(studentIds).size!==studentIds.length||
+    !['grade','normal','absent'].includes(action)||(action==='grade'&&!['1','2','3','4','5'].includes(value)))throw Error('Проверьте выбранных учеников и действие');
+  const result=await db.transaction(['students','lessons','topics','marks','participation','exemptions','activityRestrictions','activityCategories'],'readwrite',async s=>{
+    const lesson=await s.lessons.get(lessonId);
+    if(!lesson||lesson.date>M.todayIso())throw Error('Урок недоступен или ещё не состоялся');
+    const [students,marks,parts,exemptions,restrictions,custom,topic]=await Promise.all([
+      s.students.index('classId').getAll(lesson.classId),s.marks.index('lessonId').getAll(lessonId),
+      s.participation.index('lessonId').getAll(lessonId),s.exemptions.getAll(),s.activityRestrictions.getAll(),
+      s.activityCategories.getAll(),lesson.topicId?s.topics.get(lesson.topicId):Promise.resolve(null)]);
+    const ids=new Set(students.map(st=>st.id)),byMark=new Map(marks.map(m=>[m.studentId,m])),byPart=new Map(parts.map(p=>[p.studentId,p]));
+    const matches=H.checkLessonRestrictions({lesson:{...lesson,activityIds:lesson.activityIds??topic?.activityIds},activities:[...H.catalog,...custom],students,restrictions}).matches;
+    const restricted=new Set(matches.map(m=>m.studentId));
+    const nextMarks=[],nextParts=[];
+    for(const id of studentIds){
+      if(!ids.has(id))throw Error('Состав класса изменился. Откройте урок заново');
+      const covered=exemptions.some(x=>x.studentId===id&&M.exemptionCovers(x,lesson.date));
+      const reason=lessonBatchReason(action,byMark.get(id),byPart.get(id),covered,restricted.has(id));
+      if(reason)throw Error('Массовое действие отменено: '+reason+'. Проверьте список.');
+      if(action==='normal')nextParts.push({id:M.uid('part'),studentId:id,lessonId,date:lesson.date,mode:'normal',basis:'none',activityId:null,alternative:'',full:false,revision:M.uid('rev')});
+      else {
+        const mark={id:M.uid('mk'),studentId:id,lessonId,value:action==='grade'?value:null,flag:action==='absent'?'Н':null,source:'manual'};
+        nextMarks.push(withCoverage(mark,null,lesson,id,exemptions,null));
+      }
+    }
+    for(const m of nextMarks)await s.marks.add(m);
+    for(const p of nextParts)await s.participation.add(p);
+    return {nextMarks,nextParts};
+  });
+  cacheMarks(result.nextMarks.map(m=>({id:m.id,next:m})));
+  state.participation.push(...result.nextParts);notify();
+  return studentIds.length;
+}

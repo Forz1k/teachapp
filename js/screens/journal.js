@@ -66,8 +66,8 @@ export function renderJournal(root, ctx) {
     }),
     el('div', { style: 'flex:1' }),
     el('button', {
-      class: 'icon-btn', type: 'button', title: 'Быстрый ввод',
-      onclick: () => openQuickEntrySheet(classId, today),
+      class: 'icon-btn', type: 'button', title: 'Проведение урока',
+      onclick: () => import('./session.js').then(m=>m.openLessonPicker(classId,today)),
     }, [icon('quick')]),
     el('button', {
       class: 'icon-btn', type: 'button', title: 'Освобождения',

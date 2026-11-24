@@ -479,3 +479,19 @@ test('Нормативы с отдельными шкалами показыва
  [...screen.querySelectorAll('button')].find(b=>b.textContent==='Редактировать шкалу').click();await tick();
  const sheet=doc.querySelector('.sheet');assert.match(sheet.textContent,/Добавить шкалу/);assert.equal(sheet.querySelectorAll('.norm-scale').length,2);ui.closeSheet();
 });
+
+test('Рабочий экран урока: явка, оценки, нормативы и завершение без создания отметок',async()=>{
+ const {l2}=await seed();
+ const {showLessonSession}=await import('../js/screens/session.js');
+ showLessonSession(l2.id);await tick();
+ const sheet=doc.querySelector('.sheet');
+ assert.match(sheet.textContent,/не отмечено: 2/);
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Оценки').click();
+ assert.match(sheet.textContent,/Индивидуальная оценка/);
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Нормативы').click();
+ assert.match(sheet.textContent,/Выберите норматив/);
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Тема и завершение').click();
+ assert.match(sheet.textContent,/Подтвердить проведение урока/);
+ assert.equal(store.state.marks.filter(m=>m.lessonId===l2.id).length,0);
+ ui.closeSheet();
+});

@@ -13,7 +13,7 @@ function select(options, value) {
   return control;
 }
 
-export function openParticipation(studentId, lessonId, activityId) {
+export function openParticipation(studentId, lessonId, activityId, onReturn) {
   const student = store.state.students.find(s => s.id === studentId);
   const lesson = store.state.lessons.find(l => l.id === lessonId);
   if (!student || !lesson) return toast('Ученик или урок недоступен');
@@ -34,7 +34,7 @@ export function openParticipation(studentId, lessonId, activityId) {
   async function commit(data) {
     try {
       const undo = await store.saveParticipation(studentId, lessonId, data, previous?.revision ?? null);
-      closeSheet();
+      if(onReturn)onReturn();else closeSheet();
       toast('Изменения сохранены', { label: 'Отменить', onClick: async () => {
         try { await undo(); } catch (e) { toast(e.message); }
       } });
@@ -45,6 +45,7 @@ export function openParticipation(studentId, lessonId, activityId) {
     el('p',{text:activity?.name || ''}), field('Фактическое участие', mode), field('Основание', basis), field('Вариант участия по выбору преподавателя',alternative), confirmation,
     button('Сохранить', () => commit({ mode: mode.value, basis: basis.value, activityId: activity?.id, alternative: alternative.value, full: full.checked }))]);
   if (previous) body.append(button('Снять запись', () => commit(null)));
+  if(onReturn)body.append(button('Вернуться к уроку',onReturn));
   openSheet(body);
 }
 
