@@ -72,12 +72,13 @@ export function openNormBatch(norm){
 export function batchTable(norm,classId,lessonId,onReturn){
   const lesson=S.state.lessons.find(l=>l.id===lessonId),cls=S.state.classes.find(c=>c.id===classId);
   if(!lesson||!cls)return toast('Урок или класс недоступен');
-  const students=S.studentsOfClass(classId),marks=S.markMap(classId),entries=new Map(),list=el('div',{class:'norm-scale-list'}),count=el('p',{role:'status'});
+  const students=S.studentsOfClass(classId),marks=S.markMap(classId),entries=new Map(),invalid=new Set(),list=el('div',{class:'norm-scale-list'}),count=el('p',{role:'status'});
   const existing=new Map(S.state.normResults.filter(r=>r.normId===norm.id&&r.lessonId===lessonId).map(r=>[r.studentId,r]));
-  const update=()=>count.textContent='К сохранению: '+entries.size;
+  const update=()=>count.textContent='К сохранению: '+entries.size+(invalid.size?' · исправьте строк: '+invalid.size:'');
   for(const st of students){
     const scope=A.selectNormScale(norm,cls,st),matches=S.normCheck(norm,lesson,st.id),mark=marks.get(lessonId+'|'+st.id),full=S.activeExemption(st.id,lesson.date)||M.hasOsv(mark);
-    const blocked=full||mark?.flag==='Н'||matches.some(m=>['avoid','no_test'].includes(m.restriction.type));
+    const part=S.state.participation.find(p=>p.studentId===st.id&&p.lessonId===lessonId);
+    const blocked=full||mark?.flag==='Н'||part?.mode==='paused'||matches.some(m=>['avoid','no_test'].includes(m.restriction.type));
     const row=el('div',{class:'card-block norm-batch-row'},[el('strong',{text:st.fullName}),p(scope?scope.label:'Нет подходящей шкалы')]);
     if(existing.has(st.id)){
       const r=existing.get(st.id);row.append(p('Уже записано: '+(r.status==='restricted'?'Не выполнялся по ограничению':r.value+' '+r.definition.unit+' · '+(r.grade||'без оценки'))));list.append(row);continue;
@@ -85,26 +86,29 @@ export function batchTable(norm,classId,lessonId,onReturn){
     const result=el('input',{type:'number',inputmode:'decimal',min:0,step:'any',placeholder:norm.unit,'aria-label':'Результат: '+st.fullName}),estimate=p('');
     const basis=el('input',{placeholder:'Подтверждённое основание (без диагноза)'}),skip=el('input',{type:'checkbox'});
     function recalc(){
-      entries.delete(st.id);estimate.textContent='';
+      entries.delete(st.id);invalid.delete(st.id);estimate.textContent='';
       if(skip.checked){entries.set(st.id,{studentId:st.id,status:'restricted'});estimate.textContent='Не выполнялся';}
-      else if(!blocked&&result.value.trim()!==''){
-        try{const value=Number(result.value),grade=A.gradeNorm({direction:norm.direction,scale:scope?.scale??null},value);
+      else if(!blocked&&(result.value.trim()!==''||result.validity.badInput)){
+        try{if(result.validity.badInput)throw Error('Введите корректный результат');if((matches.length||part?.mode==='adapted')&&!basis.value.trim())throw Error('Укажите подтверждённое основание');const value=Number(result.value),grade=A.gradeNorm({direction:norm.direction,scale:scope?.scale??null},value);
           entries.set(st.id,{studentId:st.id,status:'done',value,basis:basis.value});estimate.textContent=grade?'Оценка '+grade:'Без оценки';
-        }catch(e){estimate.textContent=e.message;}
+        }catch(e){invalid.add(st.id);estimate.textContent=e.message;}
       }
       update();
     }
     result.oninput=basis.oninput=recalc;skip.onchange=()=>{result.disabled=skip.checked;basis.disabled=skip.checked;recalc();};
     if(mark?.flag==='Н')row.append(p('Отсутствует'));
     if(full)row.append(p('Освобождение / ОСВ'));
+    if(part?.mode==='paused')row.append(p('По записи участия упражнения не выполнялись'));
     for(const m of matches)row.append(p('Ограничение: '+(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'нагрузка')+' · '+m.restriction.type+' · '+(m.restriction.instruction||'')));
     if((matches.length||full)&&mark?.flag!=='Н')row.append(field('Не выполнялся по ограничению',skip));
-    if(!blocked){row.append(field('Результат ('+norm.unit+')',result));if(matches.length)row.append(field('Основание допуска',basis));}
+    if(!blocked){row.append(field('Результат ('+norm.unit+')',result));if(matches.length||part?.mode==='adapted')row.append(field('Основание допуска',basis));}
     row.append(estimate);list.append(row);
   }
   update();let busy=false;
   const save=btn('Сохранить заполненные строки',async()=>{
-    if(busy||!entries.size)return toast('Нет заполненных строк');
+    if(busy)return;
+    if(invalid.size)return toast('Исправьте все заполненные строки перед сохранением');
+    if(!entries.size)return toast('Нет заполненных строк');
     const draft=[...entries.values()];
     if(!await ui.confirmDialog({title:'Сохранить результаты?',text:'Записей: '+draft.length+'. Пустые строки пропускаются. Отметки журнала не изменяются. Без подходящей шкалы — без оценки.',ok:'Сохранить'}))return;
     busy=true;save.disabled=true;

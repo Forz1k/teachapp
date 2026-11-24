@@ -257,6 +257,14 @@ export function renderSettings(root, ctx = {}) {
     el('button', { class: 'btn small', type: 'button', text: 'Выбрать файл', onclick: () => restoreInput.click() }),
   ]));
   body.append(backupBlock);
+  const diagnostics=el('p',{role:'status',text:'Проверка не меняет данные и ничего не отправляет.'});
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Диагностика базы'}),diagnostics,el('button',{class:'btn wide',type:'button',text:'Проверить целостность и хранилище',onclick:async e=>{
+    const button=e.currentTarget;button.disabled=true;
+    try{const payload=await store.makeBackup();validateBackup(payload);
+      let storage='';try{const estimate=await navigator.storage?.estimate?.();if(estimate&&Number.isFinite(estimate.usage)&&Number.isFinite(estimate.quota))storage=' · Хранилище: '+Math.round(estimate.usage/1048576)+' / '+Math.round(estimate.quota/1048576)+' МБ (оценка браузера)';}catch{}
+      diagnostics.textContent='Структура и связи корректны · записей '+Object.values(payload.data).reduce((n,a)=>n+a.length,0)+storage;
+    }catch{diagnostics.textContent='Проверка не пройдена. Не удаляйте приложение и не очищайте хранилище. Сохраните защищённую копию для диагностики.';}finally{button.disabled=false;}
+  }})]));
   const retention=el('input',{type:'number',min:0,max:3650,step:1,value:settings.retentionDays??0});
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Конфиденциальность и сроки хранения'}),
     el('p',{text:'Экранная ширма не заменяет пароль устройства. Данные IndexedDB не шифруются. Срок действует только для истёкших сведений об ограничениях и группах; 0 — срок не задан. Автоматического удаления нет.'}),
@@ -635,7 +643,7 @@ function showTsvHelp() {
 
 /** Keep original controls and handlers; group them without rebuilding inputs. */
 export function organizeSettings(body){
- const groups=[{name:'Рабочие инструменты',id:'tools',match:/Аналитика|Режим тренера|Методические|Рабочий календарь|Соревнования/},{name:'Учебный год и классы',id:'school',match:/Учебный год|Учебные периоды|^Классы$|КТП/},{name:'Данные и безопасность',id:'data',match:/^Импорт$|^Экспорт$|Резервная копия|Конфиденциальность|Демонстрационные/},{name:'Приложение',id:'app',match:/Оформление|О приложении/}];
+ const groups=[{name:'Рабочие инструменты',id:'tools',match:/Аналитика|Режим тренера|Методические|Рабочий календарь|Соревнования/},{name:'Учебный год и классы',id:'school',match:/Учебный год|Учебные периоды|^Классы$|КТП/},{name:'Данные и безопасность',id:'data',match:/^Импорт$|^Экспорт$|Резервная копия|Диагностика базы|Конфиденциальность|Демонстрационные/},{name:'Приложение',id:'app',match:/Оформление|О приложении/}];
  const cards=[...body.children],sections=[];
  for(const g of groups){const list=cards.filter(c=>g.match.test(c.querySelector('.head')?.textContent||''));if(!list.length)continue;const section=el('section',{class:'settings-group','data-group':g.id},[dashboardHeading(g.name),...list]);sections.push(section);}
  const extras=cards.filter(c=>!sections.some(s=>s.contains(c)));if(extras.length)sections.push(el('section',{class:'settings-group'},extras));

@@ -33,7 +33,7 @@ export function schoolAnalytics(classId,from,to,studentId=null,today=M.todayIso(
 export function healthOverview(classId,today=M.todayIso()){
   const students=S.studentsOfClass(classId),ids=new Set(students.map(s=>s.id));
   const profiles=new Map(S.state.studentHealthProfiles.filter(p=>ids.has(p.id)).map(p=>[p.id,p]));
-  const groups={},review=new Set(),activeIds=new Set();
+  const groups=Object.create(null),review=new Set(),activeIds=new Set();
   for(const s of students){
     const p=profiles.get(s.id);
     if(H.active(p,today)&&p.group)groups[p.group]=(groups[p.group]||0)+1;else review.add(s.id);
@@ -42,7 +42,7 @@ export function healthOverview(classId,today=M.todayIso()){
     if(H.active(r,today))activeIds.add(r.studentId);
     if(r.dateTo&&r.dateTo<today)review.add(r.studentId);
   }
-  return {groups,withGroup:Object.values(groups).reduce((a,b)=>a+b,0),active:activeIds.size,review:review.size,total:students.length};
+  return {groups:{...groups},withGroup:Object.values(groups).reduce((a,b)=>a+b,0),active:activeIds.size,review:review.size,total:students.length};
 }
 export function upcomingLessons(classId,start=M.todayIso(),days=14){
   const out=[],end=M.addDays(start,Math.min(60,Math.max(1,days))-1);

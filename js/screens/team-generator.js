@@ -86,7 +86,7 @@ export function openTeamGenerator({title,date,activities,initial='',candidates,o
   activity.onchange=day.onchange=reload;
   count.onchange=()=>{locks.clear();clear();draw();};
   mode.onchange=()=>{clear();draw();};
-  const content=el('div',{class:'team-generator'},[el('h2',{text:'Генератор команд · '+title}),p('Выберите конкретную нагрузку. Совпадения с внесёнными ограничениями исключаются. Это не медицинский допуск.'),
+  const content=el('div',{class:'team-generator'},[el('h2',{text:'Генератор команд · '+title}),p('Выберите конкретную нагрузку. Совпадения и возможные совпадения с ограничениями при общей нагрузке исключаются. Для уточнения выберите конкретное упражнение. Это не медицинский допуск.'),
     field('Дата',day),field('Вид нагрузки',activity),field('Количество команд',count),field('Распределение',mode),
     p('Уровень 1–5 задаётся вручную только для этого распределения. Школьные оценки не используются.'),
     btn('Выбрать всех с подтверждённой явкой',()=>{for(const r of rows)if(r.confirmed&&!r.reason)picked.add(r.id);clear();draw();},'wide'),
