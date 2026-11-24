@@ -420,3 +420,6 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .vp-history-row,.vp-observed-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--sep)}.vp-history-row p,.vp-observed-row p{margin:0;min-width:0;overflow-wrap:anywhere;flex:1}.vp-history-row .btn,.vp-observed-row .btn{flex-shrink:0;min-height:44px}
 
 .vp-team-emblem{display:block;width:42px;height:42px;object-fit:contain;margin:0 auto;flex-shrink:0}.vp-color-preview>span{display:grid;justify-items:center;gap:4px}.vp-color-preview>span>span{padding:0;background:transparent}.vp-score-side .vp-team-emblem{width:34px;height:34px}.vp-report-score>div{text-align:center;min-width:0}.vp-report-score .vp-team-emblem{width:48px;height:48px}
+
+.vp-scout-panel select,.vp-history-row .btn,.vp-observed-row .btn,.vp-match-more input[type=file]{min-height:44px}.vp-scout-panel .vp-table{overflow-x:auto}.vp-scout-panel .vp-heat-grid{min-width:0}.vp-scout-cell strong{font-size:clamp(16px,5vw,25px)}.vp-match-more input[type=file]{max-width:100%;width:100%}
+@media(max-width:380px){.vp-scout-cell{min-height:70px;padding:4px}.vp-scout-cell small{font-size:10px}.vp-team-emblem{width:30px;height:30px}}
