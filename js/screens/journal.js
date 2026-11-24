@@ -7,6 +7,7 @@ import {periodName} from '../assessment.js';
 import * as store from '../store.js';
 import * as ui from '../ui.js';
 
+import {metric,dashboardHeading} from '../dashboard.js';
 const { el, icon } = ui;
 
 /** Цвет класса бейджа по значению. */
@@ -86,10 +87,11 @@ export function renderJournal(root, ctx) {
       },
     })));
 
-  topbar.append(row1, trChips);
+  const search=el('input',{type:'search',placeholder:'Найти ученика','aria-label':'Найти ученика в журнале'});
+  topbar.append(row1,trChips,el('div',{class:'journal-tools'},[search,el('span',{class:'journal-count',text:students.length+' учеников · '+lessons.length+' уроков'})]));
 
   /* ---- сетка ---- */
-  const wrap = el('div', { class: 'grid-wrap' });
+  const wrap = el('div', { class: 'grid-wrap journal-grid',tabindex:'0','aria-label':'Таблица журнала. Прокрутите для просмотра дат.' });
 
   if (!lessons.length) {
     wrap.append(el('div', { class: 'empty' }, [
@@ -142,14 +144,14 @@ export function renderJournal(root, ctx) {
   const studentById=new Map(students.map(s=>[s.id,s]));
   const attTitle=a=>'Проведено: '+a.held+'; будущих: '+a.future+'; не подтверждено уроков: '+a.unconfirmed+'; не отмечено: '+a.unknown+'; Н: '+a.absent+'; ОСВ: '+a.exempt;
   for (const st of students) {
-    const tr_ = el('tr');
+    const tr_ = el('tr',{'data-name':st.fullName.toLocaleLowerCase('ru')});
     rowByStudent.set(st.id,tr_);
 
     tr_.append(el('td', { class: 'col-num', text: st.number ?? '' }));
 
     const activeEx = activeByStudent.get(st.id);
     const nameCell = el('td', { class: 'col-name' }, [
-      el('span', { class: 'name-cell', text: M.shortName(st.fullName) }),
+      el('button', { class:'name-cell',type:'button',text:M.shortName(st.fullName),'aria-label':'Карточка ученика: '+st.fullName,title:st.fullName }),
     ]);
     if (activeEx) nameCell.firstChild.append(el('span', { class: 'ex-dot', title: M.exemptionLabel(activeEx) }));
     nameCell.addEventListener('click', () => openStudentSheet(st.id, classId));
@@ -167,12 +169,14 @@ export function renderJournal(root, ctx) {
         class: `cell ${mark ? 'filled' : ''}`,
         'data-student': st.id,
         'data-lesson': lesson.id,
+        tabindex:'0','aria-label':st.fullName+' · '+M.fmtFull(lesson.date)+' · '+(mark?.value||mark?.flag||'нет отметки'),
       }, [el('div', { class: 'cell-inner' }, [badgeFor(mark)])]);
 
       cell.addEventListener('click', () => {
         ui.haptic(6);
         openMarkSheet(st.id, lesson.id, classId);
       });
+      cell.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openMarkSheet(st.id,lesson.id,classId);}});
       tr_.append(cell);
     }
 
@@ -191,7 +195,9 @@ export function renderJournal(root, ctx) {
   }
 
   table.append(tbody);
-  wrap.append(table);
+  const filterStatus=el('p',{class:'empty',text:'Ученики не найдены',hidden:true});
+  search.oninput=()=>{const q=search.value.trim().toLocaleLowerCase('ru');let count=0;for(const row of tbody.rows){row.hidden=!row.dataset.name.includes(q);if(!row.hidden)count++;}filterStatus.hidden=count!==0;};
+  wrap.append(table,filterStatus);
   root.append(topbar, wrap);
   // При ручной отметке сохраняем DOM таблицы, прокрутку и остальные строки.
   return changedStudents => {
@@ -207,6 +213,7 @@ export function renderJournal(root, ctx) {
         if (mark?.value) { sum += Number(mark.value); count++; }
         cells[i].classList.toggle('filled',Boolean(mark));
         cells[i].firstChild.replaceChildren(badgeFor(mark));
+        cells[i].setAttribute('aria-label',studentById.get(id).fullName+' · '+M.fmtFull(lesson.date)+' · '+(mark?.value||mark?.flag||'нет отметки'));
       });
       const [avg,attendance] = row.querySelectorAll('.col-sum');
       avg.textContent = count ? M.fmtAvg(sum/count) : '—';
@@ -483,11 +490,14 @@ async function openStudentSheet(studentId, classId) {
   if (!student) return;
   const exs = store.exemptionsOfStudent(studentId).sort((a, b) => a.dateFrom.localeCompare(b.dateFrom));
 
-  const sheet = el('div', {}, [
+  const period=store.currentTrimester(),lessons=store.lessonsInRange(classId,period.from,period.to),lessonIds=new Set(lessons.map(l=>l.id)),marks=store.state.marks.filter(m=>m.studentId===studentId&&lessonIds.has(m.lessonId)),grades=marks.filter(m=>m.value).map(m=>Number(m.value)),att=store.attendanceFor(lessons,[student],classId),results=store.state.normResults.filter(r=>r.studentId===studentId&&M.inRange(r.date,period.from,period.to));
+  const sheet = el('div', {class:'student-profile coach-stack'}, [
+    el('div',{class:'profile-avatar',text:student.number??'—','aria-hidden':'true'}),
     el('h2', { text: student.fullName }),
     el('div', { class: 'sub', text: `№ ${student.number ?? '—'} в списке` }),
   ]);
 
+  sheet.append(dashboardHeading(periodName(period)),el('div',{class:'dashboard-metrics'},[metric('Средняя оценка',grades.length?M.fmtAvg(grades.reduce((a,b)=>a+b,0)/grades.length):'—','journal'),metric('Посещаемость',att.pct==null?'—':att.pct+'%','check'),metric('Оценок',grades.length,'chart'),metric('Нормативов',results.length,'quick')]),el('div',{class:'profile-note',text:'Не отмечено: '+att.unknown+' · отсутствия: '+att.absent+' · ОСВ: '+att.exempt}),dashboardHeading('Нормативы за период'),...results.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10).map(r=>el('div',{class:'profile-result'},[el('strong',{text:r.definition?.name||'Норматив'}),el('span',{text:M.fmtFull(r.date)+' · '+(r.value??'—')+' '+(r.definition?.unit||'')+' · оценка '+(r.grade??'—')})])),!results.length?el('p',{text:'Нет результатов за выбранный период.'}):null,dashboardHeading('Участие и ограничения'));
   sheet.append(el('button',{class:'btn',type:'button',text:'Группа здоровья и ограничения',onclick:() => openHealth(studentId)}));
   if (exs.length) {
     const block = el('div', { class: 'card-block', style: 'margin-top:8px' }, [

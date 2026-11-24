@@ -124,18 +124,18 @@ function renderJournalScreen(screen) {
 
   // Плавающий переключатель разделов класса
   const switcher = el('div', {
-    style: 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--tabbar) + var(--safe-b) + 12px);z-index:35;display:flex;gap:4px;padding:4px;border-radius:999px;background:color-mix(in srgb, var(--card) 94%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-2)',
+    class:'journal-subnav',role:'group','aria-label':'Разделы журнала',
   }, [
     ['journal', 'Журнал'],
     ['participation', 'Участие'],
     ['exemptions', 'Освобождения'],
   ].map(([id, label]) => el('button', {
     type: 'button',
-    style: `padding:8px 14px;border-radius:999px;font-size:14px;font-weight:600;${subtab === id ? 'background:var(--accent);color:#fff' : 'color:var(--text-2)'}`,
+    class:'journal-subnav-button'+(subtab===id?' active':''),'aria-pressed':String(subtab===id),
     text: label,
     onclick: () => { store.state.classSubtab = id; render(); },
   })));
-  screen.append(switcher);
+  screen.insertBefore(switcher,screen.firstChild);
 }
 
 const schoolTabs=[

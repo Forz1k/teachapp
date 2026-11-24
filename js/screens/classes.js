@@ -6,6 +6,7 @@ import {periodName} from '../assessment.js';
 import * as store from '../store.js';
 import * as ui from '../ui.js';
 
+import {metric,dashboardHeading} from '../dashboard.js';
 const { el, icon } = ui;
 
 export function renderClasses(root, ctx = {}) {
@@ -53,7 +54,7 @@ export function renderClasses(root, ctx = {}) {
     root.append(banner);
   }
 
-  const list = el('div', { class: 'list' });
+  const list = el('div', { class: 'list class-directory' });
 
   if (!store.state.classes.length) {
     list.append(el('div', { class: 'empty' }, [
@@ -82,7 +83,7 @@ export function renderClasses(root, ctx = {}) {
 
   const todayClasses = new Set([...store.scheduleForDate(today).map(row => row.classId),
     ...store.state.lessons.filter(l => l.date === today).map(l => l.classId)]);
-  const todayList = el('section', {class:'card-block'});
+  const todayList = el('section', {class:'card-block class-today'});
   for (const cls of store.state.classes.filter(c => todayClasses.has(c.id))) {
     const lesson = store.lessonsOfClass(cls.id).find(l => l.date === today);
     todayList.append(el('h3',{text:cls.name}),warning(lesson || {classId:cls.id,date:today}));
@@ -91,6 +92,8 @@ export function renderClasses(root, ctx = {}) {
     todayList.prepend(el('h2',{text:'Сегодня'}));
     list.append(todayList);
   }
+  const directory=el('div',{class:'class-grid'}),search=el('input',{type:'search',placeholder:'Найти класс','aria-label':'Найти класс'}),empty=el('p',{class:'empty',text:'Классы не найдены',hidden:true});
+  list.append(el('div',{class:'dashboard-metrics'},[metric('Классов',store.state.classes.length,'classes'),metric('Учеников',store.state.students.length,'journal')]),dashboardHeading('Все классы'),search,directory,empty);
   for (const cls of store.state.classes) {
     const students = store.studentsOfClass(cls.id);
     const lessons = store.lessonsInRange(cls.id, tr.from, tr.to);
@@ -119,9 +122,10 @@ export function renderClasses(root, ctx = {}) {
       ctx.onOpenJournal?.(cls.id);
     });
 
-    list.append(card, el('button', {class:'btn', type:'button',text:'Состав класса ' + cls.name, onclick:() => openRoster(cls.id)}));
+    const item=el('article',{class:'class-entry','data-name':cls.name.toLocaleLowerCase('ru')},[card,el('button',{class:'btn wide class-roster',type:'button',text:'Состав класса '+cls.name,onclick:()=>openRoster(cls.id)})]);directory.append(item);
   }
 
+  search.oninput=()=>{const query=search.value.trim().toLocaleLowerCase('ru');let count=0;for(const item of directory.children){item.hidden=!item.dataset.name.includes(query);if(!item.hidden)count++;}empty.hidden=count!==0;};
   root.append(list);
 }
 
