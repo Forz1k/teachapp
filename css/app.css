@@ -936,3 +936,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .norm-list .card-block {display:grid;gap:8px;}
 .norm-list .card-block + .card-block {margin-top:0;}
 .attendance-details {font-size:12px;color:var(--text-2);grid-column:1/-1;}
+
+/* Автономный тренерский режим */
+.coach-body,.coach-form,.coach-stack {display:grid;gap:12px;min-width:0;}
+.coach-body {padding:12px 16px 28px;}
+.coach-card {display:grid;gap:8px;padding:12px;min-width:0;}
+.coach-card h2,.coach-form h2 {margin:0;font-size:18px;}
+.coach-card p,.coach-form p {margin:0;overflow-wrap:anywhere;}
+.coach-card + .coach-card {margin-top:0;}
+.coach-sections,.coach-actions,.coach-columns {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+.coach-metrics {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin:0;}
+.coach-metrics dd {margin:0;font-variant-numeric:tabular-nums;text-align:right;}
+.coach-warning {padding:12px;border:1px solid var(--sep);border-radius:12px;display:grid;gap:8px;}
+.coach-roster-row {border-bottom:1px solid var(--sep);padding:8px 0;}
+.coach-roster-row input[type=checkbox],.coach-form input[type=checkbox],.coach-body input[type=checkbox] {width:24px;height:24px;}
+.coach-body .btn,.coach-form .btn,.coach-form summary {min-height:44px;white-space:normal;}
+.coach-form summary {padding:12px 0;cursor:pointer;}
