@@ -4,7 +4,7 @@
    Индексы: по classId, studentId, lessonId, date — чтобы выборки были без полного скана. */
 
 const DB_NAME = 'teachapp';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 /** Список хранилищ и их индексы. Единственное место, где описана схема. */
 const STORES = {
@@ -54,6 +54,7 @@ const STORES = {
   coachPlayers: {keyPath:'id',indexes:[['teamId','teamId']]},
   coachTrainings: {keyPath:'id',indexes:[['teamId','teamId'],['date','date']]},
   coachMatches: {keyPath:'id',indexes:[['teamId','teamId'],['date','date']]},
+  finalGrades: {keyPath:'id',indexes:[['studentId','studentId'],['studentPeriod',['studentId','from','to'],{unique:true}]]},
   monthly:   { keyPath: 'id', indexes: [
                  ['studentId', 'studentId'],
                  ['studentId_period', ['studentId', 'year', 'month'], { unique: true }],
@@ -80,6 +81,7 @@ function ensureSchema(db, transaction, schema) {
 // Следующие миграции выполняются внутри той же versionchange-транзакции.
 const migrations = {
   1() {}, // чистая установка продолжится миграцией 2
+  7(db, transaction) { ensureSchema(db, transaction, STORES); },
   6(db, transaction) { ensureSchema(db, transaction, STORES); },
   5(db, transaction) { ensureSchema(db, transaction, STORES); },
   4(db, transaction) { ensureSchema(db, transaction, STORES); },

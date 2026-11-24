@@ -29,6 +29,7 @@ export const state = {
   participation: [],
   norms: [],
   normResults: [],
+  finalGrades: [],
   // выбор пользователя
   currentClassId: null,
   currentTrimesterId: 't1',
@@ -58,7 +59,7 @@ export function notify(studentId = null) {
     const changedStudents = pendingStudents === null ? null : [...pendingStudents];
     pendingStudents = new Set();
     for (const fn of subs) {
-      try { fn(state, changedStudents); } catch (e) { console.error('[store] подписчик упал:', e); }
+      try { fn(state, changedStudents); } catch (e) { console.error('[store] ошибка обновления интерфейса'); }
     }
   };
   // В среде без window (тесты, worker) просто откладываем таймером.
@@ -75,7 +76,7 @@ export async function load() {
 }
 
 function applySnapshot({ meta: settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides,
-  marks, exemptions, studentHealthProfiles, activityRestrictions, activityCategories, monthly, participation, norms, normResults }) {
+  marks, exemptions, studentHealthProfiles, activityRestrictions, activityCategories, monthly, participation, norms, normResults, finalGrades }) {
   state.settings = { ...M.defaultSettings(), ...(settingsArr.find((s) => s.id === 'settings') || {}) };
   state.settings.trimesters = (settingsArr.find((s) => s.id === 'settings')?.trimesters) || M.defaultSettings().trimesters;
   state.settings.rules = { ...M.defaultSettings().rules, ...(settingsArr.find((s) => s.id === 'settings')?.rules || {}) };
@@ -98,6 +99,7 @@ function applySnapshot({ meta: settingsArr, classes, students, lessons, topics, 
   state.participation = participation;
   state.norms=norms || [];
   state.normResults=normResults || [];
+  state.finalGrades=finalGrades || [];
   state.lastBackupAt = state.settings.lastBackupAt || null;
 
   if (!state.classes.length) state.currentClassId = null;
@@ -239,13 +241,14 @@ export async function deleteClass(id) {
 
   const records = state.participation.filter(p => studentIds.has(p.studentId) || lessonIds.has(p.lessonId));
   const results=state.normResults.filter(r=>studentIds.has(r.studentId)||lessonIds.has(r.lessonId));
+  const finals=state.finalGrades.filter(r=>studentIds.has(r.studentId));
   const removedStudents = studentIds;
   const restricted = state.activityRestrictions.filter(r => removedStudents.has(r.studentId));
   const schedules = state.schedule.filter(r => r.classId === id);
   const scheduleIds = new Set(schedules.map(r => r.id));
   const overrides = state.scheduleOverrides.filter(r => r.classId === id || scheduleIds.has(r.ruleId));
   const plans = state.ktp.filter(p => p.classIds.includes(id)).map(p => ({...p,classIds:p.classIds.filter(c => c !== id)}));
-  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','schedule','scheduleOverrides','ktp','normResults'], 'readwrite', (s) => {
+  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','schedule','scheduleOverrides','ktp','normResults','finalGrades'], 'readwrite', (s) => {
     for (const r of schedules) s.schedule.delete(r.id);
     for (const r of overrides) s.scheduleOverrides.delete(r.id);
     for (const p of plans) s.ktp.put(p);
@@ -253,6 +256,7 @@ export async function deleteClass(id) {
     for (const r of restricted) s.activityRestrictions.delete(r.id);
     for (const p of records) s.participation.delete(p.id);
     for (const r of results) s.normResults.delete(r.id);
+    for (const r of finals) s.finalGrades.delete(r.id);
     for (const m of marks) s.marks.delete(m.id);
     for (const l of lessons) s.lessons.delete(l.id);
     for (const st of students) s.students.delete(st.id);
@@ -277,6 +281,7 @@ export async function deleteClass(id) {
   if (state.currentClassId === id) state.currentClassId = state.classes[0]?.id || null;
   state.participation = state.participation.filter(p => !records.includes(p));
   state.normResults=state.normResults.filter(r=>!results.includes(r));
+  state.finalGrades=state.finalGrades.filter(r=>!finals.includes(r));
   state.studentHealthProfiles = state.studentHealthProfiles.filter(p => !removedStudents.has(p.id));
   state.activityRestrictions = state.activityRestrictions.filter(r => !removedStudents.has(r.studentId));
   notify();
@@ -312,13 +317,15 @@ export async function deleteStudent(id) {
   const monthly = state.monthly.filter((m) => m.studentId === id);
   const records = state.participation.filter(p => p.studentId === id);
   const results=state.normResults.filter(r=>r.studentId===id);
+  const finals=state.finalGrades.filter(r=>r.studentId===id);
   const removedStudents = new Set([id]);
   const restricted = state.activityRestrictions.filter(r => removedStudents.has(r.studentId));
-  await db.transaction(['students', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','normResults'], 'readwrite', (s) => {
+  await db.transaction(['students', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','normResults','finalGrades'], 'readwrite', (s) => {
     for (const key of removedStudents) s.studentHealthProfiles.delete(key);
     for (const r of restricted) s.activityRestrictions.delete(r.id);
     for (const p of records) s.participation.delete(p.id);
     for (const r of results) s.normResults.delete(r.id);
+    for (const r of finals) s.finalGrades.delete(r.id);
     for (const m of marks) s.marks.delete(m.id);
     for (const e of exemptions) s.exemptions.delete(e.id);
     for (const mm of monthly) s.monthly.delete(mm.id);
@@ -331,6 +338,7 @@ export async function deleteStudent(id) {
   state.monthly = state.monthly.filter((m) => !monthly.some((x) => x.id === m.id));
   state.participation = state.participation.filter(p => !records.includes(p));
   state.normResults=state.normResults.filter(r=>!results.includes(r));
+  state.finalGrades=state.finalGrades.filter(r=>!finals.includes(r));
   state.studentHealthProfiles = state.studentHealthProfiles.filter(p => !removedStudents.has(p.id));
   state.activityRestrictions = state.activityRestrictions.filter(r => !removedStudents.has(r.studentId));
   notify();
@@ -1099,4 +1107,20 @@ export async function transferNormGrade(id,confirmed=false){
     if(previous)throw Error('В журнале уже есть отметка; автоматическая замена запрещена');
     return {id:M.uid('mk'),studentId:r.studentId,lessonId:r.lessonId,value:r.grade,flag:null,source:'manual'};
   });
+}
+
+/* Итоговая оценка сохраняется отдельно. Границы периода — исторический снимок. */
+export async function saveFinalGrade(studentId,periodId,value,confirmed=false){
+  if(!confirmed)throw Error('Подтвердите изменение итоговой отметки');
+  const p=state.settings.trimesters.find(t=>t.id===periodId);
+  if(!p||!H.validPeriod(p.from,p.to)||!p.to||p.to>M.todayIso()||!(value===null||['1','2','3','4','5'].includes(value)))throw Error('Выберите завершённый период и отметку 1–5');
+  const result=await db.transaction(['students','finalGrades'],'readwrite',async s=>{
+    if(!await s.students.get(studentId))throw Error('Ученик недоступен');
+    const previous=await s.finalGrades.index('studentPeriod').get([studentId,p.from,p.to]);
+    const next=value===null?null:{id:previous?.id||M.uid('final'),studentId,from:p.from,to:p.to,periodName:A.periodName(p),value,updatedAt:new Date().toISOString()};
+    if(next)await s.finalGrades.put(next);else if(previous)await s.finalGrades.delete(previous.id);
+    return {previous,next};
+  });
+  state.finalGrades=state.finalGrades.filter(r=>r.id!==result.previous?.id).concat(result.next||[]);
+  notify();return result.next;
 }
