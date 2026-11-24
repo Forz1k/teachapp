@@ -25,3 +25,9 @@ test('Доска: снимок в конспекте, независимость
  const backup=await S.makeBackup();assert.equal(backup.version,BACKUP_VERSION);await S.restoreBackup(backup);assert.equal((await W.listWork('plan'))[0].tactics.length,1);
  const broken=structuredClone(backup);broken.data.workRecords.find(r=>r.id===plan.id).tactics[0].arrows[0].to.x=999;await assert.rejects(S.restoreBackup(broken));
 });
+
+test('Lineup opponent filter changes history coverage, not available players',()=>{
+ const players=['setter','outside','middle','opposite','outside','middle'].map((position,i)=>({id:'p'+i,name:'Игрок '+i,position,restrictions:[]}));
+ const view={players,tests:[],matches:[{opponent:'А',date:'2026-11-01',sets:[{ours:25,theirs:10}]},{opponent:'Б',date:'2026-11-02',sets:[{ours:20,theirs:25}]}]};
+ const r=lineupOptions(view,{date:'2026-11-24',opponent:'а'});assert.equal(r.matchEvidence.total,1);assert.equal(r.matchEvidence.detailed,0);assert.equal(r.available,6);assert.equal(r.options.length,1);
+});

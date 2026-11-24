@@ -63,3 +63,14 @@ test('Карточка игрока: период и парные знамена
  assert.deepEqual(s.rates.attack,{total:0,success:0});
  assert.equal(s.summary.sums.aces,null);
 });
+
+test('Training load validates actual attendance and preserves missing values across backup',async()=>{
+ const {team,p}=await seed();const base={teamId:team.id,date:'2025-09-01',time:'16:00',title:'Тренировка',minutes:90,exercises:[],roster:[p.id],held:true,attendance:{[p.id]:'present'}};
+ const t=await C.saveTraining({...base,effort:{[p.id]:{minutes:45,rpe:6}}});
+ const unknown=await C.saveTraining(base);
+ await assert.rejects(C.saveTraining({...base,attendance:{[p.id]:'absent'},effort:t.effort}),/Нагрузка/);
+ await assert.rejects(C.saveTraining({...base,effort:{[p.id]:{minutes:45,rpe:11}}}),/Нагрузка/);
+ const result=C.playerTrainingLoad(p.id,[t,unknown],{today:'2026-11-24'});
+ assert.equal(result.total,270);assert.equal(result.known,1);assert.equal(result.unknown,1);assert.equal(C.playerTrainingLoad(p.id,[unknown],{today:'2026-11-24'}).total,null);
+ const copy=await S.makeBackup();await S.restoreBackup(copy);assert.deepEqual((await C.loadCoach()).coachTrainings.find(x=>x.id===t.id).effort,t.effort);
+});
