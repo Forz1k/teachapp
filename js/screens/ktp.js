@@ -198,6 +198,15 @@ export function openKtpDetail(ktpId, opts = {}) {
       el('div', { class: 'sub', text: `${topics.length} тем · ${classNames.length ? classNames.join(', ') : 'классы не выбраны'}` }),
     );
 
+    const topicIds = new Set(topics.map(t => t.id));
+    for (const classId of current.classIds || []) {
+      const cls = store.state.classes.find(c => c.id === classId);
+      const lessons = store.lessonsOfClass(classId).filter(l => topicIds.has(l.topicId));
+      const held = lessons.filter(store.lessonHeld);
+      sheet.append(el('p',{text:(cls?.name || '') + ' · Запланировано: ' + lessons.length
+        + ' уч. ч. · Проведено: ' + held.length + ' уч. ч. · Пройдено тем: '
+        + new Set(held.map(l => l.topicId)).size + ' из ' + topics.length}));
+    }
     // Классы
     const clsChips = el('div', { class: 'preset-chips' },
       store.state.classes.length

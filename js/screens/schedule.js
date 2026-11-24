@@ -398,7 +398,8 @@ function openDayEditSheet(dateIso, item, onDone) {
       el('button', {
         class: 'btn wide danger', type: 'button', text: 'Отменить урок в этот день',
         onclick: async () => {
-          await store.setScheduleOverride({
+          if (item.override?.action === 'add') await store.deleteScheduleOverride(item.override.id);
+          else await store.setScheduleOverride({
             date: dateIso,
             ruleId: item.override?.ruleId || item.id,
             action: 'cancel',
@@ -439,15 +440,16 @@ function openDayFieldSheet(dateIso, item, field, onDone) {
           const override = item.override;
           const base = {
             date: dateIso,
-            ruleId: override?.ruleId || item.id,
-            action: 'move',
+            ruleId: override?.action === 'add' ? null : item.id,
+            action: override?.action === 'add' ? 'add' : 'move',
           };
           if (field === 'time') base.time = input.value;
           if (field === 'slot') base.slot = Number(input.value);
           if (field === 'class') base.classId = input.value;
 
           // Если правка уже существует — обновляем её, а не плодим дубликаты
-          await store.setScheduleOverride({ id: override?.id || null, ...base });
+          try { await store.setScheduleOverride({ id: override?.id || null, ...base }); }
+          catch (err) { ui.toast(err.message); return; }
           ui.closeSheet();
           ui.toast('Изменено на этот день');
           onDone();

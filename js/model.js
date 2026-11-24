@@ -295,7 +295,7 @@ export function scheduleForDate(rules, overrides, dateIso) {
       byRule.delete(ov.ruleId);
     } else if (ov.action === 'move' && ov.ruleId && byRule.has(ov.ruleId)) {
       const item = byRule.get(ov.ruleId);
-      if (ov.time) item.time = ov.time;
+      if (ov.time != null) item.time = ov.time;
       if (ov.classId) item.classId = ov.classId;
       if (ov.slot) item.slot = ov.slot;
       item.override = ov;
@@ -570,4 +570,19 @@ export function initialsName(fullName) {
 /** Сортировка уроков по дате. */
 export function sortLessons(list) {
   return [...list].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+/** Один урок журнала на класс и дату, даже если в расписании несколько слотов. */
+export function planLessonDates({classId,from,to,rules,overrides,holidays,days}) {
+  if (!from || !to || from > to) return [];
+  const dates = [];
+  for (let d = parseIso(from), end = parseIso(to); d <= end; d.setDate(d.getDate()+1)) {
+    const date = iso(d);
+    if (holidays.some(h => inRange(date,h.from,h.to))) continue;
+    const effective = scheduleForDate(rules,overrides,date);
+    const scheduled = effective.some(r => r.classId === classId);
+    const templateDay = rules.some(r => r.classId === classId && r.weekday === weekdayOf(date));
+    if (scheduled || (days?.has(d.getDay()) && !templateDay)) dates.push(date);
+  }
+  return dates;
 }

@@ -79,6 +79,7 @@ export function validateBackup(payload) {
       && index.marks.get(r.markId)?.lessonId === r.lessonId)));
   check('meta', r => r.id !== 'settings' || ((!r.year || (date(r.year.to) && validPeriod(r.year.from,r.year.to)))
     && (r.trimesters === undefined || (Array.isArray(r.trimesters) && r.trimesters.length && r.trimesters.every(t => t && text(t.id) && date(t.to) && validPeriod(t.from,t.to))))
+    && (r.holidays === undefined || (Array.isArray(r.holidays) && r.holidays.every(h => h && date(h.to) && validPeriod(h.from,h.to))))
     && (!r.healthGroups || (Array.isArray(r.healthGroups) && r.healthGroups.every(text)))
     && (!r.lastBackupAt || typeof r.lastBackupAt === 'string')));
   return tables;

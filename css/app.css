@@ -899,3 +899,17 @@ table.journal {
   .topbar h1 { font-size: 22px; }
   .journal tbody td { height: 40px; }
 }
+
+.update-banner {
+  position: fixed;
+  z-index: 120;
+  inset: auto 12px calc(var(--tabbar) + var(--safe-b) + 8px);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow-2);
+  border-radius: 14px;
+}

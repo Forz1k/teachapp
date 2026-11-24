@@ -1,11 +1,6 @@
-/* sw.js — service worker: offline-first, cache-first для статики.
-   Стратегия:
-     • навигационные запросы — cache-first со свежей копией в фоне (offline открывается моментально);
-     • статика — cache-first, сеть только при промахе;
-     • чужие домены игнорируем полностью (никаких сетевых вызовов у приложения нет). */
-
-const VERSION = 'v1.5.2';
-const CACHE = `teachapp-${VERSION}`;
+const VERSION = 'v1.6.0';
+const PREFIX = `teachapp:${self.registration.scope}:`;
+const CACHE = PREFIX + VERSION;
 
 /* Всё, что нужно для запуска. Пути относительные — работает и на GitHub Pages из подпапки. */
 const PRECACHE = [
@@ -38,79 +33,41 @@ const PRECACHE = [
   './icons/icon-maskable-512.png',
 ];
 
-self.addEventListener('install', (event) => {
+self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    // addAll падает целиком при одном 404 — добавляем по одному, чтобы частичный сбой не ломал установку.
-    await Promise.all(PRECACHE.map(async (url) => {
-      try {
-        await cache.add(new Request(url, { cache: 'reload' }));
-      } catch (err) {
-        console.warn('[sw] не удалось закэшировать', url, err.message);
-      }
-    }));
-    self.skipWaiting();
+    await cache.addAll(PRECACHE.map(path => new Request(new URL(path,self.registration.scope), {cache:'reload'})));
   })());
 });
 
-self.addEventListener('activate', (event) => {
+self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+    for (const key of keys) {
+      if (key === CACHE) continue;
+      // Старые версии использовали имя без scope. Проверяем принадлежность по адресу index.html.
+      if (key.startsWith(PREFIX) || (/^teachapp-v\d+\.\d+\.\d+$/.test(key)
+          && await (await caches.open(key)).match(new URL('index.html',self.registration.scope).href))) {
+        await caches.delete(key);
+      }
+    }
     await self.clients.claim();
   })());
 });
 
-self.addEventListener('fetch', (event) => {
-  const { request } = event;
-
-  // Только GET и только свой источник.
-  if (request.method !== 'GET') return;
-  const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
-
-  // Навигация: сначала кэш (offline-first), затем сеть с обновлением кэша.
-  if (request.mode === 'navigate') {
-    event.respondWith((async () => {
-      const cache = await caches.open(CACHE);
-      const cached = await cache.match('./index.html');
-      const network = fetch(request).then((resp) => {
-        if (resp && resp.ok) cache.put('./index.html', resp.clone());
-        return resp;
-      }).catch(() => null);
-
-      if (cached) {
-        event.waitUntil(network);
-        return cached;
-      }
-      const resp = await network;
-      return resp || new Response('Приложение недоступно офлайн', {
-        status: 503,
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-      });
-    })());
-    return;
-  }
-
-  // Статика: cache-first.
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  if (request.method !== 'GET' || !request.url.startsWith(self.registration.scope)) return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
-    const cached = await cache.match(request, { ignoreSearch: true });
+    const key = request.mode === 'navigate' ? new URL('index.html',self.registration.scope).href : request;
+    const cached = await cache.match(key,{ignoreSearch:true});
     if (cached) return cached;
-
-    try {
-      const resp = await fetch(request);
-      if (resp && resp.ok && resp.type === 'basic') {
-        cache.put(request, resp.clone());
-      }
-      return resp;
-    } catch (err) {
-      return new Response('', { status: 504, statusText: 'offline' });
-    }
+    try { return await fetch(request); }
+    catch { return new Response('',{status:503}); }
   })());
 });
 
-/* Сообщение из страницы: принудительно обновить кэш (кнопка «Проверить обновления»). */
-self.addEventListener('message', (event) => {
-  if (event.data === 'skipWaiting') self.skipWaiting();
+self.addEventListener('message', event => {
+  if (event.data === 'skipWaiting') event.waitUntil(self.skipWaiting());
 });

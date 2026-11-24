@@ -319,7 +319,9 @@ export async function addLesson(classId, dateIso, topicId = null, note = '') {
   const existing = state.lessons.find((l) => l.classId === classId && l.date === dateIso);
   if (existing) return existing;
   const lesson = { id: M.uid('les'), classId, date: dateIso, topicId, note };
-  const changes = await db.transaction(['lessons','students','exemptions','marks'],'readwrite',async s => {
+  const result = await db.transaction(['lessons','students','exemptions','marks'],'readwrite',async s => {
+    const found = await s.lessons.index('classId_date').get([classId,dateIso]);
+    if (found) return {lesson:found,changes:[]};
     await s.lessons.put(lesson);
     const students = await s.students.index('classId').getAll(classId);
     const exemptions = await s.exemptions.getAll();
@@ -328,13 +330,13 @@ export async function addLesson(classId, dateIso, topicId = null, note = '') {
       const mark = withCoverage(null,null,lesson,student.id,exemptions,null);
       if (mark) { await s.marks.put(mark); changes.push({id:mark.id,next:mark}); }
     }
-    return changes;
+    return {lesson,changes};
   });
-  state.lessons.push(lesson);
+  if (!state.lessons.some(l => l.id === result.lesson.id)) state.lessons.push(result.lesson);
   state.lessons = M.sortLessons(state.lessons);
-  cacheMarks(changes);
+  cacheMarks(result.changes);
   notify();
-  return lesson;
+  return result.lesson;
 }
 
 export async function updateLesson(id, patch) {
@@ -848,33 +850,25 @@ export async function replaceSchedule(items) {
  * Переопределение расписания на дату.
  * action: 'cancel' | 'move' | 'add'
  */
-export async function setScheduleOverride({ id = null, date, ruleId = null, action, classId = null, slot = null, time = null }) {
-  // Ищем существующую правку только для той же записи расписания.
-  // Для action='add' ruleId пустой — там каждая добавка самостоятельная,
-  // поэтому дедупликацию делаем по (дата + номер урока + класс).
-  let existing = null;
-  if (id) {
-    existing = state.scheduleOverrides.find((o) => o.id === id) || null;
-  } else if (action === 'add') {
-    existing = state.scheduleOverrides.find((o) =>
-      o.date === date && o.action === 'add' && o.slot === slot && o.classId === classId) || null;
-  } else {
-    existing = state.scheduleOverrides.find((o) =>
-      o.date === date && o.ruleId === ruleId && o.action === action) || null;
-  }
-
-  const record = {
-    id: existing?.id || M.uid('sov'),
-    date,
-    ruleId,
-    action,
-    classId,
-    slot,
-    time: time ? M.normalizeTime(time) : null,
-  };
-  await db.put('scheduleOverrides', record);
-  if (existing) Object.assign(existing, record);
-  else state.scheduleOverrides.push(record);
+export async function setScheduleOverride(patch) {
+  const {date,action,ruleId = null} = patch;
+  const record = await db.transaction(['scheduleOverrides'],'readwrite',async s => {
+    const table = s.scheduleOverrides;
+    const rows = await table.index('date').getAll(date);
+    const existing = patch.id ? rows.find(r => r.id === patch.id) : rows.find(r =>
+      action === 'add' ? r.action === 'add' && r.slot === patch.slot && r.classId === patch.classId
+        : r.ruleId === ruleId && r.action === action);
+    if (patch.id && !existing) throw new Error('Запись расписания изменилась');
+    const next = {ruleId:null,classId:null,slot:null,time:null,...existing,...patch,id:existing?.id || M.uid('sov')};
+    if (patch.time != null) {
+      next.time = M.normalizeTime(patch.time);
+      if (patch.time && !next.time) throw new Error('Проверьте время урока');
+    }
+    if (next.slot != null && (!Number.isInteger(next.slot) || next.slot < 1)) throw new Error('Проверьте номер урока');
+    await table.put(next);
+    return next;
+  });
+  state.scheduleOverrides = state.scheduleOverrides.filter(r => r.id !== record.id).concat(record);
   notify();
   return record;
 }
@@ -1020,4 +1014,28 @@ export async function addActivity(name, parents) {
   state.activityCategories.push(record);
   notify();
   return record;
+}
+
+export function lessonHeld(lesson) {
+  return lesson.date <= M.todayIso() && (lesson.held || state.participation.some(p => p.lessonId === lesson.id)
+    || state.marks.some(m => m.lessonId === lesson.id && (m.source === 'manual' || m.baseMark?.source === 'manual')));
+}
+
+/** Перенос содержания между запланированными уроками. Записи журнала остаются на своих датах. */
+export async function transferTopic(sourceId,targetId) {
+  const records = await db.transaction(['lessons','marks','participation'],'readwrite',async s => {
+    const [source,target] = await Promise.all([s.lessons.get(sourceId),s.lessons.get(targetId)]);
+    if (!source?.topicId || !target || source.classId !== target.classId || sourceId === targetId) throw new Error('Выберите другой урок этого класса');
+    for (const lesson of [source,target]) {
+      const marks = await s.marks.index('lessonId').getAll(lesson.id);
+      if (lesson.held || marks.some(m => m.source === 'manual' || m.baseMark?.source === 'manual')
+          || await s.participation.index('lessonId').count(lesson.id)) throw new Error('Урок уже проведён или заполнен');
+    }
+    const updated = [{...source,topicId:target.topicId,activityIds:target.activityIds ?? null},
+      {...target,topicId:source.topicId,activityIds:source.activityIds ?? null}];
+    for (const lesson of updated) await s.lessons.put(lesson);
+    return updated;
+  });
+  for (const lesson of records) Object.assign(state.lessons.find(l => l.id === lesson.id),lesson);
+  notify();
 }

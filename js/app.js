@@ -200,11 +200,31 @@ function registerServiceWorker() {
     console.info('[teachapp] file:// — service worker не регистрируется');
     return;
   }
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch((err) => {
-      console.warn('[teachapp] service worker не зарегистрирован:', err.message);
-    });
+  const sw = navigator.serviceWorker;
+  let controlled = Boolean(sw.controller);
+  sw.addEventListener('controllerchange', () => {
+    if (controlled) location.reload();
+    controlled = true;
   });
+  async function register() {
+    try {
+      const reg = await sw.register('./sw.js');
+      let banner;
+      const offer = () => {
+        if (!reg.waiting || !sw.controller || banner?.isConnected) return;
+        banner = el('div',{class:'update-banner',role:'status'},[
+          el('span',{text:'Доступна новая версия TeachApp'}),
+          el('button',{class:'btn',type:'button',text:'Обновить',onclick:() => reg.waiting?.postMessage('skipWaiting')}),
+        ]);
+        document.body.append(banner);
+      };
+      const watch = () => reg.installing?.addEventListener('statechange', offer);
+      reg.addEventListener('updatefound', watch);
+      watch(); offer();
+    } catch { /* Уже установленная версия доступна офлайн. */ }
+  }
+  if (document.readyState === 'complete') register();
+  else window.addEventListener('load', register, {once:true});
 }
 
 boot().catch((err) => {

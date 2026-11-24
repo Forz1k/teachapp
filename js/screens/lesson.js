@@ -54,6 +54,8 @@ export function openLessonSheet(lessonId, classId) {
     topicSelect.append(el('option', { value: '', text: '— тем нет, загрузите КТП —', disabled: true }));
   }
 
+  const held = el('input',{type:'checkbox'}); held.checked = Boolean(lesson.held);
+  held.disabled = lesson.date > M.todayIso();
   const noteInput = el('textarea', { placeholder: 'заметка к уроку (необязательно)' });
   noteInput.value = lesson.note || '';
 
@@ -63,6 +65,7 @@ export function openLessonSheet(lessonId, classId) {
     el('label', { class: 'field' }, [el('span', { text: 'Дата' }), dateInput]),
     el('label', { class: 'field' }, [el('span', { text: 'Тема по КТП' }), topicSelect]),
     el('label', { class: 'field' }, [el('span', { text: 'Заметка' }), noteInput]),
+    el('label',{class:'field'},[el('span',{text:'Проведение урока подтверждено'}),held]),
     el('div', { class: 'actions' }, [
       el('button', {
         class: 'btn primary wide', type: 'button', text: 'Сохранить',
@@ -75,7 +78,7 @@ export function openLessonSheet(lessonId, classId) {
             return;
           }
           await store.updateLesson(lessonId, {
-            date: newDate,
+            date: newDate, held: held.checked && newDate <= M.todayIso(),
             topicId: topicSelect.value || null,
             note: noteInput.value.trim(),
           });
@@ -110,11 +113,28 @@ export function openLessonSheet(lessonId, classId) {
     if (lesson.activityIds != null) ui.toast('У урока вручную заданы теги нагрузки. Они сохранятся при смене темы.');
     refresh();
   };
-  dateInput.onchange = refresh;
+  dateInput.onchange = () => {
+    held.disabled = dateInput.value > M.todayIso();
+    if (held.disabled) held.checked = false;
+    refresh();
+  };
   sheet.insertBefore(checks,sheet.querySelector('.actions'));
   checks.before(el('button',{class:'btn',type:'button',text:'Виды физической нагрузки',onclick:() =>
     editTags(draft(),false,() => { refresh(); ui.openSheet(sheet); })}),
     el('button',{class:'btn',type:'button',text:'Подготовка норматива',onclick:() => prepareTest(draft())}));
+  if (lesson.topicId) {
+    const target = el('select',{},[el('option',{value:'',text:'Выберите дату переноса'})]);
+    for (const l of store.lessonsOfClass(classId).filter(l => l.id !== lesson.id && !store.lessonHeld(l))) {
+      const topic = store.state.topics.find(t => t.id === l.topicId);
+      target.append(el('option',{value:l.id,text:M.fmtFull(l.date) + ' · ' + (topic?.name || 'без темы')}));
+    }
+    sheet.append(target,el('button',{type:'button',class:'btn',text:'Перенести тему и теги',onclick:async () => {
+      if (!target.value) return ui.toast('Выберите дату переноса');
+      if (!window.confirm('Обменять сохранённые темы и теги двух уроков?')) return;
+      try { await store.transferTopic(lesson.id,target.value); openLessonSheet(target.value,classId); }
+      catch (error) { ui.toast(error.message); }
+    }}));
+  }
   refresh();
   ui.openSheet(sheet);
 }
@@ -132,7 +152,8 @@ export function openLessonPlanner(classId) {
   const toInput = el('input', { type: 'date', value: tr.to });
 
   const DOW = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-  const selectedDays = new Set([2, 4]); // вт, чт
+  const hasSchedule = store.state.schedule.some(r => r.classId === classId);
+  const selectedDays = new Set(hasSchedule ? [] : [2,4]);
   const dayChips = el('div', { class: 'preset-chips' },
     DOW.map((label, i) => {
       const dow = i + 1;
@@ -161,17 +182,8 @@ export function openLessonPlanner(classId) {
   const previewLine = el('div', { class: 'compare-line' });
 
   function plannedDates() {
-    const from = fromInput.value, to = toInput.value;
-    if (!from || !to || from > to) return [];
-    const out = [];
-    const d = M.parseIso(from);
-    const end = M.parseIso(to);
-    let guard = 0;
-    while (d <= end && guard++ < 400) {
-      if (selectedDays.has(d.getDay())) out.push(M.iso(d));
-      d.setDate(d.getDate() + 1);
-    }
-    return out;
+    return M.planLessonDates({classId,from:fromInput.value,to:toInput.value,rules:store.state.schedule,
+      overrides:store.state.scheduleOverrides,holidays:settings.holidays || [],days:selectedDays});
   }
 
   function updatePreview() {
@@ -187,13 +199,31 @@ export function openLessonPlanner(classId) {
   fromInput.addEventListener('change', updatePreview);
   toInput.addEventListener('change', updatePreview);
 
+  const vacations = el('div',{class:'card-block'});
+  const holidayFrom = el('input',{type:'date'}), holidayTo = el('input',{type:'date'});
+  function showHolidays() {
+    vacations.replaceChildren(el('h3',{text:'Каникулы для всех классов'}));
+    for (const h of settings.holidays || []) vacations.append(el('button',{class:'btn',type:'button',
+      text:M.fmtFull(h.from) + ' — ' + M.fmtFull(h.to) + ' · удалить',onclick:() => saveHolidays(settings.holidays.filter(x => x !== h))}));
+    vacations.append(el('label',{class:'field'},['Начало каникул',holidayFrom]),el('label',{class:'field'},['Окончание каникул',holidayTo]),
+      el('button',{type:'button',class:'btn',text:'Добавить каникулы',onclick:() => {
+        const from = holidayFrom.value, to = holidayTo.value;
+        if (!from || !to || from > to) return ui.toast('Проверьте даты каникул');
+        saveHolidays([...(settings.holidays || []),{from,to}]);
+      }}));
+  }
+  async function saveHolidays(holidays) {
+    try { await store.saveSettings({holidays}); settings.holidays = holidays; showHolidays(); updatePreview(); }
+    catch (error) { ui.toast(error.message); }
+  }
+  showHolidays();
   const sheet = el('div', {}, [
     el('h2', { text: 'Уроки по расписанию' }),
     el('div', { class: 'sub', text: cls ? cls.name : '' }),
     el('label', { class: 'field' }, [el('span', { text: 'С даты' }), fromInput]),
     el('label', { class: 'field' }, [el('span', { text: 'По дату' }), toInput]),
-    el('div', { class: 'sub', style: 'margin-bottom:0', text: 'Дни недели' }),
-    dayChips,
+    el('div', { class: 'sub', style: 'margin-bottom:0', text: hasSchedule ? 'Учитывается расписание класса и изменения на дату' : 'Дни недели без недельного расписания' }),
+    hasSchedule ? null : dayChips, vacations,
     el('div', { class: 'row-item', style: 'padding-left:0;padding-right:0;border:0' }, [
       el('div', { class: 'label', text: 'Распределить темы КТП по порядку' }),
       autoTopics,
@@ -202,7 +232,7 @@ export function openLessonPlanner(classId) {
     el('div', { class: 'actions' }, [
       el('button', {
         class: 'btn primary wide', type: 'button', text: 'Создать',
-        onclick: async () => {
+        onclick: async event => {
           const dates = plannedDates();
           if (!dates.length) { ui.toast('Выберите дни недели'); return; }
           const existing = new Set(store.lessonsOfClass(classId).map((l) => l.date));
@@ -215,16 +245,14 @@ export function openLessonPlanner(classId) {
           const usedTopicIds = new Set(existingLessons.map((l) => l.topicId).filter(Boolean));
           const classTopics = store.topicsForClass(classId);
 
-          let topicCursor = classTopics.findIndex((t) => !usedTopicIds.has(t.id));
-          if (topicCursor < 0) topicCursor = 0;
-
-          for (const date of fresh) {
-            let topicId = null;
-            if (withTopics && classTopics.length) {
-              topicId = classTopics[topicCursor % classTopics.length].id;
-              topicCursor += 1;
+          const remaining = classTopics.filter(t => !usedTopicIds.has(t.id));
+          const button = event.currentTarget; button.disabled = true;
+          try {
+            for (const [i,date] of fresh.entries()) {
+              await store.addLesson(classId,date,withTopics ? remaining[i]?.id || null : null);
             }
-            await store.addLesson(classId, date, topicId);
+          } catch (error) {
+            button.disabled = false; updatePreview(); ui.toast(error.message); return;
           }
           ui.closeSheet();
           ui.toast(`Создано ${fresh.length} уроков`);
