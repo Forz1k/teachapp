@@ -10,3 +10,12 @@ export function applyAccent(value,root=document.documentElement,storage){
  return accent;
 }
 export function initializeDesign(root=document.documentElement,storage){return applyAccent(readAccent(storage),root,storage);}
+
+export const schoolRoutes=['today','classes','journal','schedule','norms','analytics','settings'];
+export const coachRoutes=['home','roster','trainings','matches','analytics'];
+const routeKey='teachapp.design.navigation';
+export function normalizeNavigation(v={}){
+ return {workspace:v?.workspace==='coach'?'coach':'school',school:schoolRoutes.includes(v?.school)?v.school:'today',coach:coachRoutes.includes(v?.coach)?v.coach:'home'};
+}
+export function readNavigation(storage){try{return normalizeNavigation(JSON.parse((storage??globalThis.localStorage).getItem(routeKey)||'{}'));}catch{return normalizeNavigation();}}
+export function saveNavigation(v,storage){const next=normalizeNavigation(v);try{(storage??globalThis.localStorage).setItem(routeKey,JSON.stringify(next));}catch{}return next;}
