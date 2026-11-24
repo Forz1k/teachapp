@@ -8,6 +8,7 @@ import { warning } from './health.js';
 import {openTournaments} from './tournaments.js';
 import {calendarShortcut} from './work-calendar.js';
 import {openLibrary} from './library.js';
+import {metric,actionTile,dashboardHeading,lessonOverview} from '../dashboard.js';
 const {el} = ui;
 
 export function todayEntries(date = M.todayIso()) {
@@ -33,7 +34,10 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
     el('div',{class:'subtitle',text:M.weekdayFull(M.weekdayOf(date))+' · '+M.fmtFull(date)})
   ]));
   const rows = todayEntries(date);
-  const body = el('div',{class:'today-list'});
+  const body = el('div',{class:'today-list dashboard'});
+  const summary=lessonOverview(rows,S.lessonHeld);
+  body.append(el('div',{class:'dashboard-metrics'},[metric('Уроков в плане',summary.total,'calendar'),metric('Проведено',summary.done+' / '+summary.total,'check')]));
+  body.append(dashboardHeading('Уроки дня',summary.next?'Первый незавершённый урок выделен':'Все уроки завершены или нет расписания'));
   if (!rows.length) body.append(el('div',{class:'empty',text:'На сегодня нет запланированных уроков.'}));
   const topics = new Map(S.state.topics.map(t => [t.id,t]));
   const marks = new Map();
@@ -56,8 +60,8 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
         await openLessonSession(classId,date);
       } finally { button.disabled = false; }
     }});
-    body.append(el('article',{class:'card-block today-card'},[
-      el('div',{class:'today-meta',text:row.slot ? 'Урок '+row.slot+' · '+(row.time || 'время не указано') : 'Вне расписания'}),
+    body.append(el('article',{class:'card-block today-card lesson-card'+(row===summary.next?' lesson-card-next':'')+(lesson&&S.lessonHeld(lesson)?' lesson-card-done':'')},[
+      el('div',{class:'lesson-card-meta'},[el('span',{text:row.slot?'Урок '+row.slot+' · '+(row.time||'без времени'):'Вне расписания'}),el('span',{class:'status-pill',text:lesson&&S.lessonHeld(lesson)?'Проведён':row===summary.next?'К работе':'Запланирован'})]),
       el('h2',{text:cls.name}),
       el('div',{text:topics.get(lesson?.topicId)?.name || 'Тема КТП не указана'}),
       el('div',{class:'today-meta',text:'Отметки: '+filled+' из '+students.length+' · ОСВ: '+exempt}),
@@ -65,9 +69,14 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
       button
     ]));
   }
-  if (ctx.onSchedule) body.append(el('button',{type:'button',class:'btn wide',text:'Открыть расписание',onclick:ctx.onSchedule}));
-  body.append(el('button',{type:'button',class:'btn wide',text:'Библиотека и конспекты',onclick:()=>openLibrary('school')}));
+  body.append(dashboardHeading('Быстрые действия'),el('div',{class:'dashboard-actions'},[
+    ctx.onSchedule?actionTile('Расписание','calendar',ctx.onSchedule):null,
+    ctx.onJournal?actionTile('Журнал','journal',ctx.onJournal):null,
+    ctx.onNorms?actionTile('Нормативы','quick',ctx.onNorms):null,
+    actionTile('Конспекты','classes',()=>openLibrary('school')),
+    actionTile('Соревнования','trophy',openTournaments),
+    ctx.onAnalytics?actionTile('Аналитика','chart',ctx.onAnalytics):null
+  ]));
   calendarShortcut(body);
-  body.append(el('button',{type:'button',class:'btn wide',text:'Соревнования',onclick:openTournaments}));
   root.append(body);
 }

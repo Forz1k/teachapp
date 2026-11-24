@@ -11,6 +11,7 @@ import {openTestForm,testList,playerTestCards} from './coach-tests.js';
 import {openSeasonAnalytics,playerInsightCard} from './coach-season.js';
 import {openTournaments} from './tournaments.js';
 import {openLibrary,chooseTrainingPlan} from './library.js';
+import {metric,actionTile,dashboardHeading} from '../dashboard.js';
 const {el,openSheet,closeSheet,toast}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
 const field=(text,input)=>el('label',{class:'field'},[el('span',{text}),input]);
@@ -206,7 +207,12 @@ export async function renderCoach(root,ctx={}){
       const sections={home:'Главная',roster:'Состав',trainings:'Тренировки',matches:'Матчи',analytics:'Аналитика'};
       if(!ctx.onSection)body.append(el('div',{class:'coach-sections',role:'group','aria-label':'Разделы тренера'},entries(sections).map(([id,name])=>btn(name,()=>{selectedSection=id;refresh();},selectedSection===id?'primary':''))));
       if(selectedSection==='home'){
-        body.append(card('Команда · '+team.name,[p('Игроков: '+view.players.filter(p=>!p.archived).length+' · матчей: '+view.matches.length),...entries(sections).filter(([id])=>id!=='home').map(([id,name])=>btn(name,()=>{selectedSection=id;ctx.onSection?.(id);refresh();},'wide'))]));
+        const active=view.players.filter(p=>!p.archived),wins=view.matches.filter(m=>{const s=C.matchScore(m);return s.ours>s.theirs;}).length;
+        const upcoming=view.trainings.filter(t=>!t.held&&t.date>=todayIso()).sort(dateSort),next=upcoming[0];
+        const go=id=>{selectedSection=id;ctx.onSection?.(id);refresh();};
+        body.append(dashboardHeading(team.name,'Рабочая панель команды'),el('div',{class:'dashboard-metrics'},[metric('Игроков',active.length,'classes'),metric('Матчей',view.matches.length,'trophy'),metric('Побед',wins,'check'),metric('Тренировки впереди',upcoming.length,'calendar')]));
+        body.append(el('article',{class:'card-block today-card lesson-card lesson-card-next'},[el('div',{class:'today-meta',text:'Ближайшая тренировка'}),el('h2',{text:next?next.title:'Нет запланированных тренировок'}),next?p(fmtFull(next.date)+' · '+next.time+' · '+next.minutes+' мин'):null,team.archived?null:btn(next?'Открыть тренировку':'Запланировать',()=>trainingForm(team,view,next||null,refresh),'primary wide')]));
+        body.append(dashboardHeading('Быстрые действия'),el('div',{class:'dashboard-actions'},[actionTile('Состав','classes',()=>go('roster')),actionTile('Тренировки','calendar',()=>go('trainings')),actionTile('Матчи','trophy',()=>go('matches')),actionTile('Аналитика','chart',()=>go('analytics')),team.archived?null:actionTile('Live-матч','quick',()=>openMatchCenter(team,refresh)),actionTile('Конспекты','journal',()=>openLibrary('coach'))]));
       }else if(selectedSection==='roster'){
         const active=view.players.filter(p=>!p.archived),arch=view.players.filter(p=>p.archived);
         body.append(card('Состав · '+active.length,[team.archived?null:btn('+ Игрок',()=>playerForm(team,null,refresh),'primary wide'),
