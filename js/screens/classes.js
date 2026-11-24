@@ -86,7 +86,7 @@ export function renderClasses(root, ctx = {}) {
   const todayList = el('section', {class:'card-block class-today'});
   for (const cls of store.state.classes.filter(c => todayClasses.has(c.id))) {
     const lesson = store.lessonsOfClass(cls.id).find(l => l.date === today);
-    todayList.append(el('h3',{text:cls.name}),warning(lesson || {classId:cls.id,date:today}));
+    todayList.append(el('h3',{text:M.displayClassName(cls.name)}),warning(lesson || {classId:cls.id,date:today}));
   }
   if (todayList.childElementCount) {
     todayList.prepend(el('h2',{text:'Сегодня'}));
@@ -102,7 +102,7 @@ export function renderClasses(root, ctx = {}) {
     const att=store.attendanceFor(lessons,students,cls.id);
 
     const card = el('button', { class: 'class-card', type: 'button' }, [
-      el('div', { class: 'name', text: cls.name }),
+      el('div', { class: 'name', text: M.displayClassName(cls.name) }),
       el('div', { class: 'meta' }, [
         el('span', { text: `${students.length} уч.` }),
         el('span', { class: 'dotsep' }),
@@ -122,7 +122,7 @@ export function renderClasses(root, ctx = {}) {
       ctx.onOpenJournal?.(cls.id);
     });
 
-    const item=el('article',{class:'class-entry','data-name':cls.name.toLocaleLowerCase('ru')},[card,el('button',{class:'btn wide class-roster',type:'button',text:'Состав класса '+cls.name,onclick:()=>openRoster(cls.id)})]);directory.append(item);
+    const item=el('article',{class:'class-entry','data-name':(cls.name+' '+M.displayClassName(cls.name)).toLocaleLowerCase('ru')},[card,el('button',{class:'btn wide class-roster',type:'button',text:'Состав класса '+M.displayClassName(cls.name),onclick:()=>openRoster(cls.id)})]);directory.append(item);
   }
 
   search.oninput=()=>{const query=search.value.trim().toLocaleLowerCase('ru');let count=0;for(const item of directory.children){item.hidden=!item.dataset.name.includes(query);if(!item.hidden)count++;}empty.hidden=count!==0;};

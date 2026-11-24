@@ -71,6 +71,7 @@ export function openLessonSheet(lessonId, classId) {
         class: 'btn primary wide', type: 'button', text: 'Сохранить',
         onclick: async () => {
           const newDate = dateInput.value;
+          if(!newDate)return ui.toast('Укажите дату урока');
           // Смена даты на уже занятую — конфликт
           const clash = store.lessonsOfClass(classId).find((l) => l.date === newDate && l.id !== lesson.id);
           if (clash) {
@@ -92,9 +93,7 @@ export function openLessonSheet(lessonId, classId) {
           const marksCount = store.state.marks.filter((m) => m.lessonId === lessonId).length;
           const ok = await ui.confirmDialog({
             title: 'Удалить урок?',
-            text: marksCount
-              ? `Вместе с уроком удалятся ${marksCount} отметок учеников. Это необратимо.`
-              : 'Урок будет удалён. Это необратимо.',
+            text: 'Отметки: '+marksCount+'; участие: '+store.state.participation.filter(p=>p.lessonId===lessonId).length+'; нормативы: '+store.state.normResults.filter(r=>r.lessonId===lessonId).length+'. Эти записи и история оценок будут удалены. Остальные темы не изменятся. Это необратимо.',
             ok: 'Удалить', danger: true,
           });
           if (!ok) return;
@@ -263,4 +262,81 @@ export function openLessonPlanner(classId) {
 
   updatePreview();
   ui.openSheet(sheet);
+}
+
+
+export function openTrimesterLessons(classId) {
+  const period=store.currentTrimester(), cls=store.state.classes.find(c=>c.id===classId);
+  if(!period||!cls)return;
+  const lessons=store.lessonsInRange(classId,period.from,period.to), topics=store.topicsForClass(classId);
+  const title=id=>store.state.topics.find(t=>t.id===id)?.name||'Без темы';
+  const date=el('input',{type:'date',min:period.from,max:period.to,value:period.from});
+  const topic=el('select',{},[el('option',{value:'',text:'Без темы (назначить позже)'})]);
+  for(const t of topics)topic.append(el('option',{value:t.id,text:t.ktpOrder+'. '+t.name}));
+  const sheet=el('div',{class:'trimester-editor'},[
+    el('h2',{text:'Уроки триместра'}),
+    el('div',{class:'sub',text:M.displayClassName(cls.name)+' · '+M.fmtFull(period.from)+' — '+M.fmtFull(period.to)+' · '+lessons.length+' уроков'}),
+    el('div',{class:'card-block'},[
+      el('h3',{text:'Добавить пропущенный урок'}),
+      el('label',{class:'field'},['Дата',date]),el('label',{class:'field'},['Тема КТП',topic]),
+      el('button',{class:'btn primary wide',type:'button',text:'+ Добавить урок',onclick:async e=>{
+        const value=date.value;
+        if(!value||value<period.from||value>period.to)return ui.toast('Выберите дату внутри триместра');
+        if(store.lessonsOfClass(classId).some(l=>l.date===value))return ui.toast('На эту дату урок уже существует');
+        const button=e.currentTarget;button.disabled=true;
+        try{await store.addLesson(classId,value,topic.value||null);ui.toast('Урок добавлен');openTrimesterLessons(classId);}
+        catch(err){button.disabled=false;ui.toast(err.message);}
+      }}),
+    ]),
+    el('button',{class:'btn wide',type:'button',text:'Создать уроки по расписанию',onclick:()=>openLessonPlanner(classId)}),
+    el('button',{class:'btn wide',type:'button',text:'Исправить последовательность тем КТП',onclick:()=>openTopicRepair(classId,period)}),
+    el('p',{class:'sub',text:'Измените дату или тему отдельного урока. При удалении темы остальных уроков не сдвигаются.'}),
+  ]);
+  const list=el('div',{class:'trimester-lesson-list'});
+  for(const lesson of lessons){
+    const count=store.state.marks.filter(m=>m.lessonId===lesson.id).length;
+    list.append(el('div',{class:'trimester-lesson-row'},[
+      el('span',{class:'class-name-pill',text:M.fmtShort(lesson.date)}),
+      el('div',{class:'trimester-lesson-copy'},[el('strong',{text:title(lesson.topicId)}),el('small',{text:store.lessonHeld(lesson)?'Проведён · '+count+' отметок':count?count+' отметок':'Запланирован'})]),
+      el('button',{class:'icon-btn plain',type:'button','aria-label':'Изменить урок '+M.fmtFull(lesson.date),title:'Изменить урок',onclick:()=>openLessonSheet(lesson.id,classId)},[icon('chevron')]),
+      el('button',{class:'icon-btn plain',type:'button','aria-label':'Удалить урок '+M.fmtFull(lesson.date),title:'Удалить урок',onclick:async e=>{
+        const button=e.currentTarget, marks=store.state.marks.filter(m=>m.lessonId===lesson.id).length, parts=store.state.participation.filter(p=>p.lessonId===lesson.id).length, results=store.state.normResults.filter(r=>r.lessonId===lesson.id).length;
+        if(!await ui.confirmDialog({title:'Удалить урок '+M.fmtFull(lesson.date)+'?',text:'Отметки: '+marks+'; участие: '+parts+'; нормативы: '+results+'. Эти записи и история оценок будут удалены. Остальные темы останутся прежними.',ok:'Удалить',danger:true}))return;
+        button.disabled=true;
+        try{await store.deleteLesson(lesson.id);ui.toast('Урок удалён');openTrimesterLessons(classId);}
+        catch(err){button.disabled=false;ui.toast(err.message);}
+      }},[icon('trash')]),
+    ]));
+  }
+  sheet.append(list);ui.openSheet(sheet);
+}
+function openTopicRepair(classId,period){
+  const topics=store.topicsForClass(classId), planIds=new Set(topics.map(t=>t.ktpId||''));
+  const start=el('input',{type:'date',min:period.from,max:period.to,value:period.from});
+  const preview=el('div',{class:'trimester-lesson-list'});
+  const apply=el('button',{type:'button',class:'btn primary wide',text:'Применить изменения',disabled:true});
+  let changes=[];
+  const title=id=>store.state.topics.find(t=>t.id===id)?.name||'Без темы';
+  const refresh=()=>{
+    preview.replaceChildren();changes=[];apply.disabled=true;
+    if(!start.value||start.value<period.from||start.value>period.to)return;
+    if(!topics.length||planIds.size!==1){preview.append(el('p',{text:'Для автоматической правки нужен один однозначный набор тем КТП. Измените темы вручную.'}));return;}
+    const all=store.lessonsOfClass(classId);
+    const eligible=all.filter(l=>l.date>=start.value&&l.date<=period.to&&M.canRepairLessonTopic(l,store.state.marks,store.state.participation,store.state.normResults));
+    changes=M.planLessonTopicRepair(all,topics,eligible.map(l=>l.id));
+    preview.append(el('p',{class:'sub',text:changes.length?'Изменится тем: '+changes.length+'. Заполненные уроки и ручные теги не изменятся.':'Нет тем, требующих изменения.'}));
+    for(const c of changes)preview.append(el('div',{class:'trimester-lesson-row'},[
+      el('span',{class:'class-name-pill',text:M.fmtShort(c.date)}),el('div',{class:'trimester-lesson-copy'},[el('small',{text:title(c.previous)}),el('strong',{text:'→ '+title(c.topicId)})]),
+    ]));
+    apply.disabled=!changes.length;
+  };
+  start.onchange=refresh;
+  apply.onclick=async()=>{if(!changes.length)return;apply.disabled=true;try{await store.repairLessonTopics(classId,changes);ui.toast('Темы КТП обновлены');openTrimesterLessons(classId);}catch(err){ui.toast(err.message);refresh();}};
+  const sheet=el('div',{class:'trimester-editor'},[
+    el('h2',{text:'Исправление последовательности КТП'}),
+    el('div',{class:'sub',text:'Выберите первую ошибочную дату. Свободные темы КТП распределятся по незаполненным урокам до конца триместра. Проверьте каждую строку.'}),
+    el('label',{class:'field'},['Начать с даты',start]),preview,apply,
+    el('button',{class:'btn wide',type:'button',text:'Назад без изменений',onclick:()=>openTrimesterLessons(classId)}),
+  ]);
+  refresh();ui.openSheet(sheet);
 }
