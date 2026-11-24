@@ -1,3 +1,6 @@
+import {materialKinds,ktpMaterial,tacticMaterial,documentMaterial,saveMaterial,instantiateMaterial} from '../library-materials.js';
+import {readPresets} from '../document-presets.js';
+import {documentTypes} from '../documents.js';
 import {exportLocalLibrary,parseLibrary,importLocalLibrary,MAX_LIBRARY_BYTES} from '../portable-library.js';
 import {openGymBoards,openGymView} from './methodical.js';
 import * as W from '../workbench.js';
@@ -58,7 +61,7 @@ export async function openLibrary(context='school'){
    }else{
     const plans=await W.listWork('plan');body.append(btn('+ Конспект',()=>planForm(null,draw,context),'primary'),...plans.map(r=>card(r.name,[el('div',{class:'work-tags'},[el('span',{class:'status-pill',text:W.contexts[r.context]}),el('span',{class:'status-pill',text:r.minutes+' мин'}),el('span',{class:'status-pill',text:r.items.length+' упражнений'})]),p(r.goal),el('div',{class:'phase-summary'},Object.entries(W.phases).map(([id,label])=>el('div',{},[el('small',{text:label}),el('strong',{text:r.items.filter(i=>i.phase===id).reduce((n,i)=>n+i.minutes,0)+' мин'})]))),btn('Открыть / редактировать',()=>planForm(r,draw,context)),btn('Копировать',()=>planForm({...r,id:undefined,name:r.name+' (копия)'},draw,context)),...(r.tactics||[]).map(b=>btn('Схема · '+b.name,()=>openBoardView(b,draw))),...(r.gymBoards||[]).map(b=>btn('Схема зала · '+b.name,()=>openGymView(b,draw))),btn('Экспорт текста',()=>exportPlan(r)),btn('Удалить',()=>remove(r))])));
    }
-   body.append(btn('Конструктор спортивного зала',openGymBoards),btn('Импорт / экспорт библиотеки',()=>openPortableLibrary(draw)),btn('Закрыть',closeSheet));openSheet(body);
+   body.append(btn('Конструктор спортивного зала',openGymBoards),btn('КТП, тактика и шаблоны документов',()=>openMaterials(draw)),btn('Импорт / экспорт библиотеки',()=>openPortableLibrary(draw)),btn('Закрыть',closeSheet));openSheet(body);
   }catch(e){toast(e.message);}
  }
  await draw();
@@ -71,5 +74,21 @@ async function openPortableLibrary(back){
  const file=el('input',{type:'file',accept:'.json,application/json'}),preview=el('div',{class:'coach-stack'});let raw=null;
  const save=btn('Импортировать копии',async()=>{if(!raw)return;save.disabled=true;try{if(!await confirmDialog({title:'Импортировать материалы?',text:'Добавятся новые независимые копии. Существующие записи не изменятся.',ok:'Импортировать'}))return;const r=await importLocalLibrary(raw,true);toast('Импортировано: '+r.count);back();}catch(e){toast(e.message);}finally{save.disabled=!raw;}},'primary');save.disabled=true;
  file.onchange=async()=>{raw=null;save.disabled=true;preview.replaceChildren();try{const f=file.files?.[0];if(!f)return;if(f.size>MAX_LIBRARY_BYTES)throw Error('Файл больше 2 МБ');const input=await f.text(),b=parseLibrary(input);raw=input;preview.replaceChildren(p('Версия '+b.version+' · материалов '+b.records.length),...b.records.slice(0,80).map(r=>p(r.kind+' · '+r.name)),b.records.length>80?p('Ещё '+(b.records.length-80)+' материалов'):null);save.disabled=!b.records.length;}catch(e){preview.replaceChildren(p(e.message));}};
- openSheet(stack([el('h2',{text:'TeachApp Library'}),p('Локальный версионированный JSON. Экспортируются упражнения, конспекты и схемы зала. Списки учеников, оценки, ключи синхронизации, привязки к складу и тактические схемы команд не включаются. Перед отправкой проверьте свободный текст на персональные сведения.'),btn('Экспортировать материалы',async()=>{try{if(!await confirmDialog({title:'Экспорт библиотеки?',text:'Проверьте, что в названиях, заметках и описаниях нет персональных сведений.',ok:'Экспорт'}))return;const b=await exportLocalLibrary();downloadBlob(new Blob([JSON.stringify(b,null,2)],{type:'application/json'}),'teachapp-library-v1.json');}catch(e){toast(e.message);}}),field('Файл материалов',file),preview,save,btn('Назад',back)]),{fullHeight:true});
+ openSheet(stack([el('h2',{text:'TeachApp Library'}),p('Локальный версионированный JSON. Экспортируются упражнения, конспекты, схемы зала и отдельно подготовленные материалы КТП, тактики и шаблонов. Списки учеников, оценки, ключи синхронизации и привязки к классам или командам не включаются. Перед отправкой проверьте свободный текст на персональные сведения.'),btn('Экспортировать материалы',async()=>{try{if(!await confirmDialog({title:'Экспорт библиотеки?',text:'Проверьте, что в названиях, заметках и описаниях нет персональных сведений.',ok:'Экспорт'}))return;const b=await exportLocalLibrary();downloadBlob(new Blob([JSON.stringify(b,null,2)],{type:'application/json'}),'teachapp-library-v1.json');}catch(e){toast(e.message);}}),field('Файл материалов',file),preview,save,btn('Назад',back)]),{fullHeight:true});
+}
+
+async function openMaterials(back){
+ try{
+  const S=await import('../store.js'),C=await import('../coach.js'),data=await C.loadCoach();
+  const rows=(await Promise.all(materialKinds.map(W.listWork))).flat();
+  const kinds={ktpMaterial:'КТП · версия',tacticMaterial:'Тактический шаблон',documentMaterial:'Реквизиты документа'};
+  const choose=async()=>{
+   const list=stack([el('h2',{text:'Добавить материал'}),p('Создаётся независимый снимок. Проверьте названия и реквизиты на отсутствие персональных данных. Пользовательские категории нагрузок из КТП не переносятся; нагрузки требуют повторной проверки.'),...S.state.ktp.map(k=>btn('КТП · '+k.name,async()=>{try{await saveMaterial(ktpMaterial(k,S.state.topics));await openMaterials(back);}catch(e){toast(e.message);}})),...(await W.listWork('tacticBoard')).map(b=>btn('Тактика · '+b.name,async()=>{try{await saveMaterial(tacticMaterial(b));await openMaterials(back);}catch(e){toast(e.message);}})),...Object.entries(readPresets()).map(([type,preset])=>btn('Документ · '+documentTypes[type],async()=>{try{await saveMaterial(documentMaterial(type,preset));await openMaterials(back);}catch(e){toast(e.message);}})),btn('Назад',()=>openMaterials(back))]);openSheet(list);
+  };
+  const apply=async r=>{
+   const target=r.kind==='tacticMaterial'?select(data.coachTeams.filter(t=>!t.archived).map(t=>[t.id,t.name])):null,name=inp(r.name);
+   const body=stack([el('h2',{text:r.name}),p(kinds[r.kind]+' · версия '+r.version),r.kind==='ktpMaterial'?p(r.topics.length+' тем. Новый план не привязан к классам.'):r.kind==='tacticMaterial'?p('Новая схема, без персональных заметок.'):p('Реквизиты заменят только шаблон выбранного типа на этом устройстве, не готовые документы.'),r.kind!=='documentMaterial'?field('Название копии',name):null,target?field('Команда',target):null,...(r.topics||[]).slice(0,40).map(t=>p(t.name)),btn('Применить',async()=>{if(!await confirmDialog({title:'Применить материал?',text:r.kind==='documentMaterial'?'Заменить локальные реквизиты этого типа документа?':'Создать независимую копию, не изменяя исходные записи.',ok:'Применить'}))return;try{await instantiateMaterial(r,{name:name.value.trim(),teamId:target?.value,confirmed:true});if(r.kind==='ktpMaterial')await S.load();toast('Материал применён');await openMaterials(back);}catch(e){toast(e.message);}},'primary'),btn('Назад',()=>openMaterials(back))]);openSheet(body);
+  };
+  openSheet(stack([el('h2',{text:'Шаблоны и версии материалов'}),btn('+ Сохранить материал',choose,'primary'),...rows.map(r=>card(r.name,[p(kinds[r.kind]+' · v'+r.version),btn('Предпросмотр и применение',()=>apply(r)),btn('Удалить копию материала',async()=>{if(!await confirmDialog({title:'Удалить материал?',text:'Уже созданные КТП, схемы и документы сохранятся.',ok:'Удалить',danger:true}))return;await W.deleteWork(r.id,r.kind);await openMaterials(back);})])),!rows.length?p('Нет сохранённых версий и шаблонов.'):null,btn('Назад',back)]));
+ }catch(e){toast(e.message);}
 }

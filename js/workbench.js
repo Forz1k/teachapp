@@ -1,3 +1,4 @@
+import {validateMaterial,materialKinds} from './library-materials.js';
 import {validateOpponentNote} from './coach-opponents.js';
 import {validateVideoReview} from './video-review.js';
 import {validateBriefing,validateGymBoard} from './methodical.js';
@@ -32,6 +33,7 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(materialKinds.includes(r.kind)){validateMaterial(r);return;}
  if(r.kind==='opponentNote'){validateOpponentNote(r);return;}
  if(r.kind==='videoReview'){validateVideoReview(r);return;}
  if(r.kind==='briefing'){validateBriefing(r);return;}

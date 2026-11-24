@@ -1,8 +1,9 @@
 import * as db from './db.js';
 import {uid} from './model.js';
+import {materialKinds} from './library-materials.js';
 import {validateWorkRecord,listWork} from './workbench.js';
 const check=(v,m)=>{if(!v)throw Error(m)};
-const kinds=['exercise','plan','gymBoard'];
+const kinds=['exercise','plan','gymBoard',...materialKinds];
 export const LIBRARY_VERSION=1,MAX_LIBRARY_BYTES=2*1024*1024;
 export function portableRecord(record){
  check(record&&kinds.includes(record.kind),'Неподдерживаемый материал');const r=structuredClone(record);validateWorkRecord(r);

@@ -1,3 +1,4 @@
+import {ktpMaterial,saveMaterial} from '../library-materials.js';
 import { editTags, warning } from './health.js';
 /* screens/ktp.js — управление КТП: отдельный список на класс (или несколько классов).
    Каждое КТП — своя нумерация тем. Один и тот же КТП можно привязать к нескольким классам:
@@ -277,6 +278,7 @@ export function openKtpDetail(ktpId, opts = {}) {
       }),
     ]), list);
 
+    sheet.append(el('button',{class:'btn wide',type:'button',text:'Сохранить версию в библиотеку',onclick:async()=>{const name=await ui.promptDialog({title:'Название версии КТП',value:current.name+' · '+M.todayIso()});if(!name?.trim())return;try{await saveMaterial(ktpMaterial(current,topics,name.trim()));ui.toast('Версия сохранена. Уроки и исходные темы не изменены.');}catch(e){ui.toast(e.message);}}}));
     const newTopic = el('input', { type: 'text', placeholder: 'Название новой темы' });
     sheet.append(
       el('label', { class: 'field', style: 'margin-top:12px' }, [newTopic]),
