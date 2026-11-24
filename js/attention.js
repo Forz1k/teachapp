@@ -67,3 +67,10 @@ export function goalTasks(goals,teamId,today=M.todayIso()){
  const until=M.addDays(today,7);
  return orderTasks(goals.filter(g=>g.teamId===teamId&&g.status==='active'&&g.to<=until).map(g=>item('goal-'+g.id,'goal',g.name,g.to<today?'Срок цели истёк. Проверьте прогресс.':'Срок проверки цели в ближайшие 7 дней',g.to,g.to<today?3:2,{playerId:g.playerId})));
 }
+
+/** Search only display text; preserve the existing priority order. */
+export function filterTasks(tasks,{kind='all',priority='all',query=''}={}){
+ const normalize=s=>String(s||'').normalize('NFKC').toLocaleLowerCase('ru').trim().replace(/\s+/g,' ');
+ const terms=normalize(query).split(' ').filter(Boolean);
+ return tasks.filter(t=>(kind==='all'||t.kind===kind)&&(priority==='all'||t.priority>=Number(priority))&&terms.every(term=>normalize(t.title+' '+t.detail+' '+t.date).includes(term)));
+}
