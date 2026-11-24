@@ -7,6 +7,21 @@ const add=(a,b)=>{for(const k of Object.keys(blank()))a[k]+=b[k];};
 const pairKey=(a,b)=>JSON.stringify([a,b].sort());
 const sortedRows=(map,min)=>[...map.values()].map(r=>({...finish(r),eligible:r.rallies>=min})).sort((a,b)=>Number(b.eligible)-Number(a.eligible)||(b.rate??-1)-(a.rate??-1)||b.rallies-a.rallies);
 const nameKey=s=>String(s||'').trim().replace(/\s+/g,' ').toLocaleLowerCase('ru');
+/** Momentum uses actual consecutive rally scores, not inferred scores from summaries. */
+export function scoreMomentum(score,target){
+ let ties=0,leadChanges=0,leader=0,oursRun=0,theirsRun=0,maxOurRun=0,maxTheirRun=0,closeWon=0,closeTotal=0;
+ for(let i=1;i<score.length;i++){
+  const before=score[i-1],after=score[i],a=after.ours-before.ours,b=after.theirs-before.theirs;
+  if(!((a===1&&b===0)||(a===0&&b===1)))throw Error('Некорректная последовательность счёта');
+  if(a){oursRun++;theirsRun=0;maxOurRun=Math.max(maxOurRun,oursRun);}
+  else{theirsRun++;oursRun=0;maxTheirRun=Math.max(maxTheirRun,theirsRun);}
+  const sign=Math.sign(after.ours-after.theirs);
+  if(!sign)ties++;
+  else{if(leader&&leader!==sign)leadChanges++;leader=sign;}
+  if(Math.max(before.ours,before.theirs)>=target-5&&Math.abs(before.ours-before.theirs)<=2){closeTotal++;closeWon+=a;}
+ }
+ return {ties,leadChanges,maxOurRun,maxTheirRun,closeWon,closeTotal,closeRate:pct(closeWon,closeTotal)};
+}
 export function matchTactics(d,windowSize=5){
  if(!Number.isInteger(windowSize)||windowSize<1||windowSize>10)throw Error('Проверьте окно анализа');
  const s=replayDetailed(d),bySet=new Map(),rotations=Array.from({length:6},(_,i)=>({...blank(),position:i+1})),pairs=new Map(),six=new Map(),all=blank(),timeouts=[];
@@ -37,7 +52,7 @@ export function matchTactics(d,windowSize=5){
    timeouts.push({set:set.set,side:e.side,score:e.score,before:a,after:b,delta:a.total===windowSize&&b.total===windowSize?b.rate-a.rate:null});
   }
   const {events,rallyEvents,run,...summary}=set;
-  return finish(summary);
+  return {...finish(summary),momentum:scoreMomentum(summary.score,summary.set===d.bestOf?d.decider:d.target)};
  });
  return {sets,overall:finish(all),rotations:rotations.map(finish),pairs:sortedRows(pairs,30),six:sortedRows(six,30),timeouts};
 }
