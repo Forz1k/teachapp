@@ -2,6 +2,7 @@ import * as C from '../coach.js';
 import * as V from '../match-protocol.js';
 import {todayIso,uid} from '../model.js';
 import * as ui from '../ui.js';
+import {lineupPicker} from './lineup-picker.js';
 const {el,openSheet,toast}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
 const p=text=>el('p',{text});
@@ -16,11 +17,7 @@ const score=x=>x.ours+' : '+x.theirs;
 const sides=['ours','theirs'];
 const errors=['serveError','attackError','receiveError','otherError'];
 function playerLabel(p){return (p.number==null?'':'№'+p.number+' · ')+p.name;}
-function six(players,initial=[]){
- const options=[['','Выберите игрока'],...players.map(p=>[p.id,playerLabel(p)])];
- const selects=Array.from({length:6},(_,i)=>select(options,initial[i]||''));
- return {node:el('div',{class:'vp-six'},selects.map((n,i)=>field('P'+(i+1),n))),get:()=>selects.map(n=>n.value)};
-}
+function six(players,initial=[],options={}){return lineupPicker(players,initial,options);}
 function parseAway(text){
  const rows=text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
  if(!rows.length)return [];
@@ -45,18 +42,19 @@ export function openDetailedSetup(team,players,back,refresh,preset=null){
   const warnings=C.trainingWarnings({date:date.value,roster:players.map(p=>p.id),exercises:[{name:'Волейбол',activityId:'volley'},{name:'Прыжки',activityId:'jump'},{name:'Соревнование',activityId:'competition'}]},players);
   const restricted=new Set(warnings.map(x=>x.player.id));
   eligible=players.filter(p=>!p.archived&&!restricted.has(p.id)&&checked.has(p.id));
-  ownFields=six(eligible,previous.map(id=>eligible.some(p=>p.id===id)?id:''));
   libero=select([['','Без либеро'],...eligible.map(p=>[p.id,playerLabel(p)])],eligible.some(p=>p.id===previousLib)?previousLib:'');
+  ownFields=six(eligible,previous,{excluded:libero.value?[libero.value]:[]});
+  libero.onchange=()=>ownFields.setExcluded(libero.value?[libero.value]:[]);
   const rows=players.map(p=>{
    const check=el('input',{type:'checkbox'});check.checked=checked.has(p.id)&&!restricted.has(p.id);check.disabled=restricted.has(p.id);
    check.onchange=()=>{if(check.checked)checked.add(p.id);else checked.delete(p.id);refreshOwn();};
    return field(playerLabel(p)+(restricted.has(p.id)?' · ограничение нагрузки':''),check);
   });
-  ownArea.replaceChildren(p('Выберите фактический состав. Совпадения с внесёнными ограничениями исключены; отсутствие совпадений не является допуском.'),el('details',{},[el('summary',{text:'Заявка · '+eligible.length}),...rows]),ownFields.node,field('Либеро нашей команды',libero));
+  ownArea.replaceChildren(p('Выберите фактический состав. Совпадения с внесёнными ограничениями исключены; отсутствие совпадений не является допуском.'),el('details',{},[el('summary',{text:'Заявка · '+eligible.length}),...rows]),ownFields.node,field('Либеро нашей команды (не входит в стартовую шестёрку)',libero));
  }
  function parse(){
   awayPlayers=parseAway(awayInput.value);parsedText=awayInput.value;
-  awayFields=six(awayPlayers,awayPlayers.slice(0,6).map(p=>p.id));
+  awayFields=six(awayPlayers,[],{side:'theirs'});
   awayArea.replaceChildren(awayPlayers.length?awayFields.node:p('Соперник без состава: счёт и причины очков доступны, авторы и расстановка неизвестны.'));
  }
  date.onchange=refreshOwn;refreshOwn();parse();
@@ -91,7 +89,7 @@ function court(d,lineups,serve,selected,choose){
 }
 function shown(d,s){return {ours:s.lineup.map(id=>s.liberoFor===id?d.libero:id),theirs:s.awayLineup};}
 export function openDetailedMatch(initial,back,refresh){
- let d=initial,busy=false,selected=null,attributing=false,section='match';
+ let d=initial,busy=false,selected=null,attributing=false,section='match',nextDraft=null;
  const body=el('div',{class:'vp-stack vp-live'});
  const perform=async(event,after)=>{
   if(busy)return;busy=true;
@@ -126,8 +124,15 @@ export function openDetailedMatch(initial,back,refresh){
      busy=true;try{const m=await C.finishLiveMatch(d.id,d.revision);await refresh();openMatchReport(m,back);}catch(e){toast(e.message);}finally{busy=false;}
     },'primary wide'));
    }else if(s.setEnded){
-    const own=six(d.ourPlayers.filter(p=>p.id!==d.libero),s.lineup),away=six(d.awayPlayers,s.awayLineup),first=select(sides.map(side=>[side,sideName(d,side)]),s.sets.length%2?d.firstServe==='ours'?'theirs':'ours':d.firstServe);
-    body.append(el('h3',{text:'Старт следующей партии'}),p(d.teamName),own.node,...(d.awayPlayers.length?[p(d.opponent),away.node]:[]),field('Первая подача',first),btn('Начать партию',()=>perform({type:'next',lineup:own.get(),awayLineup:d.awayPlayers.length?away.get():[],serve:first.value},()=>selected=null),'primary wide'));
+    if(!nextDraft||nextDraft.revision!==d.revision){
+     const prev=s.setDetails.at(-1).lineups;
+     nextDraft={revision:d.revision,
+      own:six(d.ourPlayers.filter(p=>p.id!==d.libero),prev.ours,{previous:prev.ours,final:s.lineup}),
+      away:six(d.awayPlayers,prev.theirs,{previous:prev.theirs,final:s.awayLineup,side:'theirs'}),
+      first:select(sides.map(side=>[side,sideName(d,side)]),s.sets.length%2?d.firstServe==='ours'?'theirs':'ours':d.firstServe)};
+    }
+    const {own,away,first}=nextDraft;
+    body.append(el('h3',{text:'Старт следующей партии'}),p('Старт предыдущей партии скопирован. Измените нужные зоны или очистите расстановку.'),p(d.teamName),own.node,...(d.awayPlayers.length?[p(d.opponent),away.node]:[]),field('Первая подача',first),btn('Начать партию',()=>perform({type:'next',lineup:own.get(),awayLineup:d.awayPlayers.length?away.get():[],serve:first.value},()=>{selected=null;nextDraft=null;}),'primary wide'));
    }else{
     const add=side=>perform({type:'rally',side,kind:'point',player:null},()=>{selected=null;attributing=true;});
     body.append(el('div',{class:'vp-actions vp-points'},[btn('+1 '+d.teamName,()=>add('ours'),'vp-ours'),btn('+1 '+d.opponent,()=>add('theirs'),'vp-theirs')]),
