@@ -2,6 +2,7 @@
 
 import * as store from './store.js';
 import * as ui from './ui.js';
+import { renderNorms } from './screens/norms.js';
 import { renderToday } from './screens/today.js';
 import { renderClasses } from './screens/classes.js';
 import { renderJournal } from './screens/journal.js';
@@ -17,6 +18,7 @@ const TABS = [
   { id: 'classes', label: 'Классы', icon: 'classes' },
   { id: 'journal', label: 'Журнал', icon: 'journal' },
   { id: 'schedule', label: 'Расписание', icon: 'calendar' },
+  { id: 'norms', label: 'Нормативы', icon: 'quick' },
   { id: 'settings', label: 'Настройки', icon: 'settings' },
 ];
 
@@ -57,6 +59,8 @@ function render() {
     renderJournalScreen(screen);
   } else if (tab === 'schedule') {
     renderSchedule(screen, { onChanged: render });
+  } else if (tab === 'norms') {
+    renderNorms(screen);
   } else if (tab === 'settings') {
     renderSettings(screen, { onChanged: render });
   }

@@ -3,6 +3,7 @@ import { openHealth, warning, checkGrade } from './health.js';
    Здесь же шторка отметки с трёхрежимной постановкой ОСВ. */
 
 import * as M from '../model.js';
+import {periodName} from '../assessment.js';
 import * as store from '../store.js';
 import * as ui from '../ui.js';
 
@@ -78,7 +79,7 @@ export function renderJournal(root, ctx) {
     settings.trimesters.map((t) => el('button', {
       type: 'button',
       class: t.id === store.state.currentTrimesterId ? 'active' : '',
-      text: `Т${t.index}`,
+      text: periodName(t),
       onclick: () => {
         store.state.currentTrimesterId = t.id;
         store.notify();
@@ -92,7 +93,7 @@ export function renderJournal(root, ctx) {
 
   if (!lessons.length) {
     wrap.append(el('div', { class: 'empty' }, [
-      el('div', { text: `В ${tr.index}-м триместре (${M.fmtFull(tr.from)} – ${M.fmtFull(tr.to)}) уроков пока нет.` }),
+      el('div', { text: `В периоде «${periodName(tr)}» (${M.fmtFull(tr.from)} – ${M.fmtFull(tr.to)}) уроков пока нет.` }),
       el('div', { style: 'margin-top:16px' }, [
         el('button', {
           class: 'btn primary', type: 'button', text: 'Добавить уроки',
@@ -138,6 +139,8 @@ export function renderJournal(root, ctx) {
   const tbody = el('tbody');
 
   const rowByStudent = new Map();
+  const studentById=new Map(students.map(s=>[s.id,s]));
+  const attTitle=a=>'Проведено: '+a.held+'; будущих: '+a.future+'; не подтверждено уроков: '+a.unconfirmed+'; не отмечено: '+a.unknown+'; Н: '+a.absent+'; ОСВ: '+a.exempt;
   for (const st of students) {
     const tr_ = el('tr');
     rowByStudent.set(st.id,tr_);
@@ -174,11 +177,12 @@ export function renderJournal(root, ctx) {
     }
 
     const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
-    const att = M.attendance(lessons.length, absent);
+    const att = store.attendanceFor(lessons,[st],classId);
 
     tr_.append(el('td', { class: 'col-sum', text: avg === null ? '—' : M.fmtAvg(avg) }));
     tr_.append(el('td', {
       class: 'col-sum',
+      title:attTitle(att),
       text: att.pct === null ? '—' : `${String(att.pct).replace('.', ',')}%`,
       style: att.pct !== null && att.pct < 80 ? `color: var(--mark-2)` : '',
     }));
@@ -206,9 +210,18 @@ export function renderJournal(root, ctx) {
       });
       const [avg,attendance] = row.querySelectorAll('.col-sum');
       avg.textContent = count ? M.fmtAvg(sum/count) : '—';
-      const att = M.attendance(lessons.length,absent);
+      const att = store.attendanceFor(lessons,[studentById.get(id)],classId);
+      attendance.title=attTitle(att);
       attendance.textContent = att.pct === null ? '—' : String(att.pct).replace('.',',') + '%';
       attendance.style.color = att.pct !== null && att.pct < 80 ? 'var(--mark-2)' : '';
+    }
+    for(const st of students){
+      if(changedStudents.includes(st.id))continue;
+      const attendance=rowByStudent.get(st.id).querySelectorAll('.col-sum')[1];
+      const att=store.attendanceFor(lessons,[st],classId);
+      attendance.title=attTitle(att);
+      attendance.textContent=att.pct===null?'—':String(att.pct).replace('.',',')+'%';
+      attendance.style.color=att.pct!==null&&att.pct<80?'var(--mark-2)':'';
     }
   };
 }
