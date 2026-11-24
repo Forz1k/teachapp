@@ -111,6 +111,16 @@ export function mergeScopes(base,local,remote,area,choices={}){
  if(area==='school'&&!conflicts.length){assertGradePairs(result,local,remote);assertCoveragePairs(result,local,remote);}
  return {snapshot:result,conflicts};
 }
+// Explain the existing whole-record conflict without changing merge semantics.
+export function describeSyncConflict({base,local,remote}){
+ const kind=base===null?'created':local===null||remote===null?'deleted':'changed';
+ const keys=[...new Set([base,local,remote].flatMap(x=>Object.keys(x||{})))].filter(k=>k!=='id').sort();
+ const fields=keys.filter(k=>!same(local?.[k],remote?.[k])).map(key=>({
+  key,local:local?.[key],remote:remote?.[key],
+  localChanged:!same(base?.[key],local?.[key]),remoteChanged:!same(base?.[key],remote?.[key])
+ }));
+ return {kind,fields};
+}
 function gradePairs(snapshot){
  const history=byId(snapshot.workRecords.filter(r=>r.kind==='gradeHistory'));
  const marks=new Map(snapshot.marks.map(r=>[JSON.stringify([r.studentId,r.lessonId]),r]));
