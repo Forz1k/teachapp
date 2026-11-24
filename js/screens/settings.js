@@ -1,3 +1,4 @@
+import {openBriefings,openGymBoards} from './methodical.js';
 import {isEncryptedBackup,decryptBackup} from '../privacy.js';
 import {retentionPreview,purgeExpired} from '../retention.js';
 import { validateBackup } from '../backup.js';
@@ -38,6 +39,7 @@ export function renderSettings(root, ctx = {}) {
   if(ctx.onCoach)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Режим тренера'}),el('button',{class:'btn wide',type:'button',text:'Волейбол · команды и тренировки',onclick:ctx.onCoach})]));
 
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Методические материалы'}),el('button',{class:'btn wide',type:'button',text:'Библиотека упражнений и конспекты',onclick:()=>openLibrary('school')}),el('button',{class:'btn wide',type:'button',text:'Конструктор оценивания техники',onclick:openRubrics})]));
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Инструктажи и организация занятий'}),el('button',{class:'btn wide',type:'button',text:'Журнал инструктажей',onclick:openBriefings}),el('button',{class:'btn wide',type:'button',text:'Конструктор спортивного зала',onclick:openGymBoards})]));
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Рабочий календарь'}),el('button',{class:'btn wide',type:'button',text:'Календарь и напоминания',onclick:openWorkCalendar})]));
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Соревнования'}),el('button',{class:'btn wide',type:'button',text:'Организация соревнований',onclick:openTournaments})]));
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Генератор документов'}),el('button',{class:'btn wide',type:'button',text:'Word, Excel и PDF',onclick:()=>openDocuments()})]));

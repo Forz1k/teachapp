@@ -1,3 +1,4 @@
+import {openBriefings,openGymBoards} from './methodical.js';
 /* Дневной обзор. Не создаёт записи журнала до явного начала урока. */
 import * as M from '../model.js';
 import * as S from '../store.js';
@@ -114,7 +115,7 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
     ctx.onJournal?actionTile('Журнал','journal',ctx.onJournal):null,
     ctx.onNorms?actionTile('Нормативы','quick',ctx.onNorms):null,
     actionTile('Конспекты','classes',()=>openLibrary('school')),actionTile('Документы','journal',()=>openDocuments()),actionTile('Инвентарь','classes',openInventory),actionTile('Достижения','trophy',()=>openAchievements({area:'school'})),
-    actionTile('Соревнования','trophy',openTournaments),actionTile('Педагогическая нагрузка','calendar',openSchoolWorkload),actionTile('Закрытие периода','journal',()=>openPeriodReview()),
+    actionTile('Соревнования','trophy',openTournaments),actionTile('Инструктажи','journal',openBriefings),actionTile('Схемы зала','classes',openGymBoards),actionTile('Педагогическая нагрузка','calendar',openSchoolWorkload),actionTile('Закрытие периода','journal',()=>openPeriodReview()),
     ctx.onAnalytics?actionTile('Аналитика','chart',ctx.onAnalytics):null
   ]));
   calendarShortcut(body);

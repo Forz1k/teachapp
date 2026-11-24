@@ -1,3 +1,4 @@
+import {validateBriefing,validateGymBoard} from './methodical.js';
 import * as db from './db.js';
 import {uid,exemptionCovers} from './model.js';
 import {validateGradeHistory} from './grade-history.js';
@@ -29,6 +30,8 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='briefing'){validateBriefing(r);return;}
+ if(r.kind==='gymBoard'){validateGymBoard(r);return;}
  if(r.kind==='gradeHistory'){validateGradeHistory(r);return;}
  if(r.kind==='inventory'){validateInventory(r);return;}
  if(r.kind==='achievement'){validateAchievement(r);return;}
@@ -41,7 +44,8 @@ export function validateWorkRecord(r){
  if(r.kind==='event'){validateEvent(r);return;}
  if(r.kind==='exercise'){validateExercise(r);require(!r.id.startsWith('builtin-'),'Системное упражнение нельзя перезаписать');return;}
  if(r.kind==='plan'){
-  require(only(r,['id','kind','name','context','minutes','goal','equipment','audience','items','tactics','resources'])&&txt(r.name)&&Object.hasOwn(contexts,r.context)&&minutes(r.minutes)&&opt(r.goal,4000)&&opt(r.equipment,1000)&&opt(r.audience,200)&&Array.isArray(r.items)&&r.items.length>0&&r.items.length<=100,'Проверьте конспект');
+  require(only(r,['id','kind','name','context','minutes','goal','equipment','audience','items','tactics','resources','gymBoards'])&&txt(r.name)&&Object.hasOwn(contexts,r.context)&&minutes(r.minutes)&&opt(r.goal,4000)&&opt(r.equipment,1000)&&opt(r.audience,200)&&Array.isArray(r.items)&&r.items.length>0&&r.items.length<=100,'Проверьте конспект');
+  if(r.gymBoards!==undefined){require(Array.isArray(r.gymBoards)&&r.gymBoards.length<=10,'Проверьте схемы зала');for(const b of r.gymBoards)validateGymBoard(b);}
   if(r.tactics!==undefined){require(r.context==='coach'&&Array.isArray(r.tactics)&&r.tactics.length<=10,'Проверьте схемы тренировки');for(const b of r.tactics)validateBoard(b);}
   if(r.resources!==undefined)require(Array.isArray(r.resources)&&r.resources.length<=50&&r.resources.every(x=>only(x,['itemId','name','unit','qty'])&&txt(x.itemId)&&txt(x.name)&&txt(x.unit,30)&&Number.isInteger(x.qty)&&x.qty>0&&x.qty<=1000000)&&new Set(r.resources.map(x=>x.itemId)).size===r.resources.length,'Проверьте потребность в инвентаре');
   let last=-1,total=0;

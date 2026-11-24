@@ -14,6 +14,7 @@ export function buildDocument(type,input={}){
   check(p&&Array.isArray(p.items)&&p.items.length,'Выберите готовый конспект');
   sections.push(section(type==='event'?'Цель и организация мероприятия':'Цель и задачи',[p.name,p.goal,'Продолжительность: '+p.minutes+' мин','Инвентарь: '+(p.equipment||'не указан'),p.audience?'Группа: '+p.audience:'',input.additional||'']));
   sections.push(section(type==='event'?'Ход мероприятия':'Ход занятия',[],[['Часть','Время, мин','Содержание','Методические указания','Инвентарь'],...p.items.map(i=>[phase[i.phase],i.minutes,i.exercise.name+'\n'+i.exercise.description,i.notes,i.exercise.equipment])]));
+  if(p.gymBoards?.length)sections.push(section('Схемы занятия (описание)',p.gymBoards.map(b=>b.name+(b.note?' — '+b.note:''))));
   if(p.tactics?.length)sections.push(section('Тактические схемы (описание)',p.tactics.map(b=>b.name+(b.note?' — '+b.note:''))));
   if(type==='event')sections.push(section('Организационные условия',[input.rules||'Правила, состав команд, меры безопасности и порядок подведения итогов уточняет организатор.']));
  }else if(['classReport','ktp','norms'].includes(type)){

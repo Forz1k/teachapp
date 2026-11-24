@@ -24,7 +24,7 @@ export const isSyncCheckpoint=r=>typeof r?.id==='string'&&r.id.startsWith('sync-
 const validArea=a=>Object.hasOwn(syncAreas,a);
 const keysFor=area=>area==='school'?[...school,'workRecords','meta']:[...coach,'workRecords'];
 function recordArea(r){
- if(['archive','gradeHistory','rubric','normAssignment'].includes(r.kind))return 'school';
+ if(['archive','gradeHistory','rubric','normAssignment','briefing','gymBoard'].includes(r.kind))return 'school';
  if(['coachGoal','tacticBoard','seasonPlan'].includes(r.kind))return 'coach';
  if(r.kind==='plan')return r.context;
  if(r.kind==='achievement')return ['class','student'].includes(r.subjectType)?'school':['team','player'].includes(r.subjectType)?'coach':null;
