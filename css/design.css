@@ -208,3 +208,30 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .lineup-player-list .btn{justify-content:flex-start;text-align:left}
 @media(max-width:390px){.vp-player{min-height:60px;padding:3px;gap:2px}.vp-player strong{min-width:31px;height:31px;font-size:16px}.vp-player span{font-size:10px}.sheet-match{padding-inline:9px}}
 @media(min-width:700px){.vp-court{display:grid;grid-template-columns:1fr 24px 1fr;align-items:stretch}.vp-net{writing-mode:vertical-rl;display:grid;place-items:center;margin:0;border:0}.vp-half{grid-template-columns:repeat(3,minmax(0,1fr))}.vp-player{min-height:88px}}
+
+/* Player cards and seasonal analytics */
+.player-profile-head{display:flex;align-items:center;gap:12px;padding:16px;background:var(--accent-soft);border-radius:18px;}
+.player-profile-head>div:last-child{min-width:0;flex:1}.player-profile-head h2{overflow-wrap:anywhere}
+.player-profile-head .profile-avatar{background:var(--accent);color:white;flex:none;width:60px;height:60px}
+.player-directory{display:grid;gap:6px}
+.player-directory-row{display:flex;align-items:center;gap:12px;min-height:68px;text-align:left;border:1px solid var(--sep);border-radius:12px;padding:10px;background:var(--card-2);min-width:0}
+.player-number{width:40px;height:40px;border-radius:12px;background:var(--accent-soft);color:var(--accent-ink);display:grid;place-items:center;font-weight:800;flex:none}
+.player-directory-info{display:grid;gap:3px;min-width:0;flex:1}.player-directory-info strong{overflow-wrap:anywhere;font-size:15px}.player-directory-info small{color:var(--text-2);font-size:12px}
+.player-directory-row>svg{width:18px;height:18px;color:var(--text-3);flex:none}
+.trend-chart{display:grid;gap:4px;background:var(--card-2);border-radius:12px;padding:10px;border:1px solid var(--sep)}
+.trend-chart svg{width:100%;height:auto;display:block;overflow:visible}
+.trend-grid{stroke:var(--sep-strong);stroke-width:1;stroke-dasharray:3 4}
+.trend-tick{fill:var(--text-2);font-size:10px;font-variant-numeric:tabular-nums}
+.trend-line{stroke:var(--accent-ink);stroke-width:2.6;stroke-linejoin:round;stroke-linecap:round}
+.trend-dot{fill:var(--accent-ink);stroke:var(--card);stroke-width:1.5}
+.trend-caption{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--text-2)}
+.trend-chart small{color:var(--text-2);font-size:11px}
+.rank-card{padding:12px;display:grid;gap:8px}
+.rank-row{display:flex;align-items:center;gap:10px;min-width:0}
+.rank-place{display:grid;place-items:center;min-width:34px;height:34px;border-radius:10px;background:var(--card-2);color:var(--text-2);font-size:15px;font-weight:750}
+.rank-place.first{background:var(--accent-soft);color:var(--accent-ink)}
+.rank-name{min-width:0;flex:1}.rank-name strong{font-size:14px;overflow-wrap:anywhere}.rank-name p{font-size:11px;color:var(--text-2);margin:3px 0}
+.rank-value{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+.insight-note{border-left:3px solid var(--sep-strong);background:var(--card-2);padding:12px;border-radius:10px;display:grid;gap:5px}
+.insight-note.strength{border-color:var(--mark-5)}.insight-note.focus{border-color:var(--mark-3)}
+.insight-note strong{font-size:13px}.insight-note p{font-size:14px;line-height:1.5}
