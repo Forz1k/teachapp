@@ -159,7 +159,10 @@ export function openSync(){
   if(busy)return;
   busy=true;controls(true);
   try{
-   if(!await confirmDialog({title:'Подключить другое устройство?',text:'Одноразовый код действует 10 минут и предоставляет полный доступ к личному пространству. Создание нового кода отменяет предыдущий. Передайте его только на свой компьютер.',ok:'Создать'}))return;
+   if(!await confirmDialog({title:'Подключить другое устройство?',text:'Сначала проверим и синхронизируем школу и тренера, без перезаписи отличающихся данных. Сохраните защищённую копию; используйте только тестовые записи до согласования. Затем создадим одноразовый код на 10 минут, предоставляющий полный доступ к личному пространству. Передайте его только на свой компьютер.',ok:'Создать'}))return;
+   clear();
+   if(!await exchangeBoth()){toast('Сначала устраните замечания синхронизации. Код пока не создан.');return;}
+   if(!active())return;
    const code=await createDeviceInvite(readPersonalCode());
    if(!active())return;
    await promptDialog({title:'Код для компьютера',text:'Скопируйте код и введите его на другом устройстве. Действует 10 минут, только один раз.',value:code,multiline:true,ok:'Закрыть'});
@@ -192,7 +195,7 @@ export function openSync(){
    if(!active())return;
    if(!await confirmDialog({title:'Сохранить личный код?',text:'Сервер: '+parsed.endpoint+'. Код будет храниться в браузере этого устройства без дополнительного пароля. Любой, кто имеет доступ к профилю браузера, может получить код. Только на личном защищённом устройстве. Пока данные не отправляются.',ok:'Сохранить'}))return;
    if(!active())return;
-   if(await saveConnection(parsed.code))toast('Код сохранён. Нажмите «Синхронизировать школу и тренера».');
+   if(await saveConnection(parsed.code))toast('Код сохранён. Нажмите «Создать код для компьютера».');
   }catch(e){if(active())toast(e.message,null,8000);}
   finally{busy=false;controls(false);if(plan&&active())await drawSummary();}
  },'primary');
