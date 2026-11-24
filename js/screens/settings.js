@@ -3,6 +3,7 @@ import { validateBackup } from '../backup.js';
 
 import { APP_VERSION } from '../version.js';
 import * as M from '../model.js';
+import {periodName,periodKinds,periodDraft} from '../assessment.js';
 import * as store from '../store.js';
 import * as ui from '../ui.js';
 import * as exporter from '../export.js';
@@ -32,19 +33,28 @@ export function renderSettings(root, ctx = {}) {
   ]));
   body.append(yearBlock);
 
-  /* ---------- триместры ---------- */
-  const trBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Триместры' })]);
-  for (const t of settings.trimesters) {
-    const f = el('input', { type: 'date', value: t.from });
-    const to = el('input', { type: 'date', value: t.to });
-    f.addEventListener('change', () => store.setTrimesterRange(t.id, f.value, to.value));
-    to.addEventListener('change', () => store.setTrimesterRange(t.id, f.value, to.value));
-    trBlock.append(el('div', { style: 'padding:12px 16px;border-bottom:.5px solid var(--sep)' }, [
-      el('div', { style: 'font-weight:600;margin-bottom:8px', text: `${t.index}-й триместр` }),
-      el('label', { class: 'field' }, [el('span', { text: 'С' }), f]),
-      el('label', { class: 'field', style: 'margin-bottom:0' }, [el('span', { text: 'По' }), to]),
-    ]));
+  const trBlock=el('div',{class:'card-block'},[el('div',{class:'head',text:'Учебные периоды · Триместры / Четверти / Полугодия'})]);
+  const kind=el('select',{},Object.entries(periodKinds).map(([value,text])=>el('option',{value,text})));
+  kind.value=settings.trimesters[0]?.kind||'trimester';
+  let draft=settings.trimesters.map(t=>({...t,kind:t.kind||'trimester',name:periodName(t)}));
+  const list=el('div');
+  function draw(){
+    list.replaceChildren();
+    for(const p of draft){
+      const name=el('input',{value:p.name,'aria-label':'Название периода'});
+      const from=el('input',{type:'date',value:p.from,'aria-label':'Начало периода'});
+      const to=el('input',{type:'date',value:p.to,'aria-label':'Конец периода'});
+      name.oninput=()=>p.name=name.value;from.oninput=()=>p.from=from.value;to.oninput=()=>p.to=to.value;
+      list.append(el('div',{class:'card-block'},[name,el('label',{class:'field'},['С',from]),el('label',{class:'field'},['По',to]),
+        el('button',{class:'btn',type:'button',text:'Убрать период из черновика',onclick:()=>{draft=draft.filter(x=>x!==p);draw();}})]));
+    }
   }
+  draw();
+  trBlock.append(el('label',{class:'field'},['Тип шаблона',kind]),
+    el('button',{class:'btn',type:'button',text:'Создать черновик периодов',onclick:()=>{try{draft=periodDraft(kind.value,settings.year);draw();}catch(err){ui.toast(err.message);}}}),
+    el('p',{text:'Границы шаблона примерные. Укажите даты вашей школы и сохраните.'}),list,
+    el('button',{class:'btn',type:'button',text:'Добавить свой период',onclick:()=>{draft.push({id:M.uid('period'),kind:'custom',name:'Новый период',from:'',to:''});draw();}}),
+    el('button',{class:'btn primary wide',type:'button',text:'Сохранить периоды',onclick:async()=>{try{await store.savePeriods(draft);ui.toast('Периоды сохранены');}catch(err){ui.toast(err.message);}}}));
   body.append(trBlock);
 
   /* ---------- классы ---------- */
@@ -458,7 +468,7 @@ export function openExportSheet(presetClassId = null) {
 
   const rangeChips = el('div', { class: 'preset-chips' },
     store.state.settings.trimesters.map((t) => el('button', {
-      type: 'button', class: t.id === store.state.currentTrimesterId ? 'active' : '', text: `${t.index}-й триместр`,
+      type: 'button', class: t.id === store.state.currentTrimesterId ? 'active' : '', text: periodName(t),
       onclick: (e) => {
         fromInput.value = t.from;
         toInput.value = t.to;

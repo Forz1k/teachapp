@@ -40,7 +40,7 @@ export function buildSummary({ classId, from, to, settings }) {
     }
 
     const avg = values.length ? (values.reduce((a, b) => a + b, 0) / values.length) : null;
-    const att = M.attendance(lessons.length, absent);
+    const att=store.attendanceFor(lessons,[st],classId);
 
     return [
       st.number ?? '',

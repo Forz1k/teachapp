@@ -2,6 +2,7 @@ import { openRoster, warning } from './health.js';
 /* screens/classes.js — стартовый экран: 9 карточек классов. */
 
 import * as M from '../model.js';
+import {periodName} from '../assessment.js';
 import * as store from '../store.js';
 import * as ui from '../ui.js';
 
@@ -25,7 +26,7 @@ export function renderClasses(root, ctx = {}) {
         },
       }, [icon(store.state.settings.theme === 'dark' ? 'moon' : 'sun')]),
     ]),
-    el('div', { class: 'subtitle', text: `${tr.index}-й триместр · ${M.fmtFull(tr.from)} – ${M.fmtFull(tr.to)}` }),
+    el('div', { class: 'subtitle', text: `${periodName(tr)} · ${M.fmtFull(tr.from)} – ${M.fmtFull(tr.to)}` }),
   ]));
 
   // Баннер о резервной копии: показываем, если копии не было больше 7 дней
@@ -95,15 +96,7 @@ export function renderClasses(root, ctx = {}) {
     const lessons = store.lessonsInRange(cls.id, tr.from, tr.to);
     const lastLesson = lessons.length ? lessons[lessons.length - 1] : null;
 
-    // посещаемость за триместр
-    let absent = 0;
-    const lessonIds = new Set(lessons.map((l) => l.id));
-    const studentIds = new Set(students.map((s) => s.id));
-    for (const m of store.state.marks) {
-      if (m.flag === 'Н' && lessonIds.has(m.lessonId) && studentIds.has(m.studentId)) absent += 1;
-    }
-    const totalCells = lessons.length * students.length;
-    const att = M.attendance(totalCells, absent);
+    const att=store.attendanceFor(lessons,students,cls.id);
 
     const card = el('button', { class: 'class-card', type: 'button' }, [
       el('div', { class: 'name', text: cls.name }),
@@ -118,7 +111,7 @@ export function renderClasses(root, ctx = {}) {
       class: `ring ${att.pct === null ? 'none' : ''}`,
       style: att.pct === null ? '' : `--ring-pct:${att.pct};--ring-color:${ringColor(att.pct)}`,
     }, [el('span', { text: att.pct === null ? '—' : `${Math.round(att.pct)}%` })]);
-    card.append(ring);
+    card.append(ring,el('div',{class:'attendance-details',text:'Проведено: '+att.held+' · будущих: '+att.future+' · не подтверждено: '+att.unconfirmed+' · не отмечено: '+att.unknown+' · Н: '+att.absent+' · ОСВ: '+att.exempt}));
 
     card.addEventListener('click', () => {
       ui.haptic(8);

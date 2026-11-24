@@ -7,6 +7,7 @@ import { BACKUP_VERSION, validateBackup } from './backup.js';
 import * as db from './db.js';
 import * as H from './health.js';
 import * as M from './model.js';
+import * as A from './assessment.js';
 
 /** Кэш в памяти. Грузим один раз при старте — база маленькая (сотни записей). */
 export const state = {
@@ -26,6 +27,8 @@ export const state = {
   activityRestrictions: [],
   activityCategories: [],
   participation: [],
+  norms: [],
+  normResults: [],
   // выбор пользователя
   currentClassId: null,
   currentTrimesterId: 't1',
@@ -72,7 +75,7 @@ export async function load() {
 }
 
 function applySnapshot({ meta: settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides,
-  marks, exemptions, studentHealthProfiles, activityRestrictions, activityCategories, monthly, participation }) {
+  marks, exemptions, studentHealthProfiles, activityRestrictions, activityCategories, monthly, participation, norms, normResults }) {
   state.settings = { ...M.defaultSettings(), ...(settingsArr.find((s) => s.id === 'settings') || {}) };
   state.settings.trimesters = (settingsArr.find((s) => s.id === 'settings')?.trimesters) || M.defaultSettings().trimesters;
   state.settings.rules = { ...M.defaultSettings().rules, ...(settingsArr.find((s) => s.id === 'settings')?.rules || {}) };
@@ -93,6 +96,8 @@ function applySnapshot({ meta: settingsArr, classes, students, lessons, topics, 
   state.activityCategories = activityCategories;
   state.monthly = monthly;
   state.participation = participation;
+  state.norms=norms || [];
+  state.normResults=normResults || [];
   state.lastBackupAt = state.settings.lastBackupAt || null;
 
   if (!state.classes.length) state.currentClassId = null;
@@ -102,6 +107,7 @@ function applySnapshot({ meta: settingsArr, classes, students, lessons, topics, 
   if (state.classes.length && !state.classes.some((c) => c.id === state.currentClassId)) {
     state.currentClassId = state.classes[0].id;
   }
+  if(!state.settings.trimesters.some(t=>t.id===state.currentTrimesterId))state.currentTrimesterId=(state.settings.trimesters.find(t=>M.inRange(M.todayIso(),t.from,t.to))||state.settings.trimesters[0]).id;
   state.ready = true;
   notify();
   return state;
@@ -179,8 +185,13 @@ export async function saveSettings(patch) {
     return next;
   });
   state.settings = settings;
+  if(!settings.trimesters.some(t=>t.id===state.currentTrimesterId))state.currentTrimesterId=(settings.trimesters.find(t=>M.inRange(M.todayIso(),t.from,t.to))||settings.trimesters[0]).id;
   state.lastBackupAt = settings.lastBackupAt || null;
   notify();
+}
+
+export async function savePeriods(periods) {
+  await saveSettings({trimesters:A.validatePeriods(periods,state.settings.year)});
 }
 
 export async function setTrimesterRange(id, from, to) {
@@ -227,19 +238,21 @@ export async function deleteClass(id) {
   const monthly = state.monthly.filter((m) => studentIds.has(m.studentId));
 
   const records = state.participation.filter(p => studentIds.has(p.studentId) || lessonIds.has(p.lessonId));
+  const results=state.normResults.filter(r=>studentIds.has(r.studentId)||lessonIds.has(r.lessonId));
   const removedStudents = studentIds;
   const restricted = state.activityRestrictions.filter(r => removedStudents.has(r.studentId));
   const schedules = state.schedule.filter(r => r.classId === id);
   const scheduleIds = new Set(schedules.map(r => r.id));
   const overrides = state.scheduleOverrides.filter(r => r.classId === id || scheduleIds.has(r.ruleId));
   const plans = state.ktp.filter(p => p.classIds.includes(id)).map(p => ({...p,classIds:p.classIds.filter(c => c !== id)}));
-  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','schedule','scheduleOverrides','ktp'], 'readwrite', (s) => {
+  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','schedule','scheduleOverrides','ktp','normResults'], 'readwrite', (s) => {
     for (const r of schedules) s.schedule.delete(r.id);
     for (const r of overrides) s.scheduleOverrides.delete(r.id);
     for (const p of plans) s.ktp.put(p);
     for (const key of removedStudents) s.studentHealthProfiles.delete(key);
     for (const r of restricted) s.activityRestrictions.delete(r.id);
     for (const p of records) s.participation.delete(p.id);
+    for (const r of results) s.normResults.delete(r.id);
     for (const m of marks) s.marks.delete(m.id);
     for (const l of lessons) s.lessons.delete(l.id);
     for (const st of students) s.students.delete(st.id);
@@ -263,6 +276,7 @@ export async function deleteClass(id) {
 
   if (state.currentClassId === id) state.currentClassId = state.classes[0]?.id || null;
   state.participation = state.participation.filter(p => !records.includes(p));
+  state.normResults=state.normResults.filter(r=>!results.includes(r));
   state.studentHealthProfiles = state.studentHealthProfiles.filter(p => !removedStudents.has(p.id));
   state.activityRestrictions = state.activityRestrictions.filter(r => !removedStudents.has(r.studentId));
   notify();
@@ -297,12 +311,14 @@ export async function deleteStudent(id) {
   const exemptions = state.exemptions.filter((e) => e.studentId === id);
   const monthly = state.monthly.filter((m) => m.studentId === id);
   const records = state.participation.filter(p => p.studentId === id);
+  const results=state.normResults.filter(r=>r.studentId===id);
   const removedStudents = new Set([id]);
   const restricted = state.activityRestrictions.filter(r => removedStudents.has(r.studentId));
-  await db.transaction(['students', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions'], 'readwrite', (s) => {
+  await db.transaction(['students', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','normResults'], 'readwrite', (s) => {
     for (const key of removedStudents) s.studentHealthProfiles.delete(key);
     for (const r of restricted) s.activityRestrictions.delete(r.id);
     for (const p of records) s.participation.delete(p.id);
+    for (const r of results) s.normResults.delete(r.id);
     for (const m of marks) s.marks.delete(m.id);
     for (const e of exemptions) s.exemptions.delete(e.id);
     for (const mm of monthly) s.monthly.delete(mm.id);
@@ -314,6 +330,7 @@ export async function deleteStudent(id) {
   state.exemptions = state.exemptions.filter((e) => !exemptions.some((x) => x.id === e.id));
   state.monthly = state.monthly.filter((m) => !monthly.some((x) => x.id === m.id));
   state.participation = state.participation.filter(p => !records.includes(p));
+  state.normResults=state.normResults.filter(r=>!results.includes(r));
   state.studentHealthProfiles = state.studentHealthProfiles.filter(p => !removedStudents.has(p.id));
   state.activityRestrictions = state.activityRestrictions.filter(r => !removedStudents.has(r.studentId));
   notify();
@@ -384,8 +401,10 @@ export async function updateLesson(id, patch) {
 export async function deleteLesson(id) {
   const marks = state.marks.filter((m) => m.lessonId === id);
   const records = state.participation.filter(p => p.lessonId === id);
-  await db.transaction(['lessons', 'marks', 'participation'], 'readwrite', (s) => {
+  const results=state.normResults.filter(r=>r.lessonId===id);
+  await db.transaction(['lessons', 'marks', 'participation','normResults'], 'readwrite', (s) => {
     for (const p of records) s.participation.delete(p.id);
+    for (const r of results) s.normResults.delete(r.id);
     for (const m of marks) s.marks.delete(m.id);
     s.lessons.delete(id);
   });
@@ -393,6 +412,7 @@ export async function deleteLesson(id) {
   const ids = new Set(marks.map((m) => m.id));
   state.marks = state.marks.filter((m) => !ids.has(m.id));
   state.participation = state.participation.filter(p => !records.includes(p));
+  state.normResults=state.normResults.filter(r=>!results.includes(r));
   notify();
 }
 
@@ -1044,4 +1064,39 @@ export async function transferTopic(sourceId,targetId) {
   });
   for (const lesson of records) Object.assign(state.lessons.find(l => l.id === lesson.id),lesson);
   notify();
+}
+
+export function attendanceFor(lessons,students,classId){
+  const parts=new Map(state.participation.map(p=>[p.lessonId+'|'+p.studentId,p]));
+  return A.attendanceDetails(lessons.map(l=>({...l,held:lessonHeld(l)})),students,markMap(classId),parts);
+}
+export async function saveNorm(input){
+  const n={...input,id:input.id||M.uid('norm'),name:input.name.trim(),scale:[...input.scale]};
+  A.validateNorm(n,new Set(activities().map(a=>a.id)));
+  await db.put('norms',n);state.norms=state.norms.filter(x=>x.id!==n.id).concat(n);notify();return n;
+}
+export function normCheck(norm,lesson,studentId){
+  return lessonCheck({...lesson,activityIds:[norm.activityId,'test'],activitiesConfirmed:true}).matches.filter(m=>m.studentId===studentId);
+}
+export async function saveNormResult({normId,studentId,lessonId,status,value=null,basis=''}){
+  const norm=state.norms.find(n=>n.id===normId),lesson=state.lessons.find(l=>l.id===lessonId),student=state.students.find(s=>s.id===studentId);
+  if(!norm||!lesson||!student||student.classId!==lesson.classId||lesson.date>M.todayIso())throw Error('Проверьте ученика и дату урока');
+  const matches=normCheck(norm,lesson,studentId),mark=markMap(lesson.classId).get(lessonId+'|'+studentId),full=activeExemption(studentId,lesson.date)||M.hasOsv(mark);
+  if(!['done','restricted'].includes(status))throw Error('Выберите результат');
+  if(status==='restricted'&&!matches.length&&!full)throw Error('Нет внесённого основания ограничения');
+  if(status==='done'&&(full||mark?.flag==='Н'||matches.some(m=>['avoid','no_test'].includes(m.restriction.type))))throw Error('Обычная сдача не разрешена по внесённым сведениям');
+  if(status==='done'&&matches.length&&!basis.trim())throw Error('Укажите подтверждённое основание допуска');
+  const record={id:M.uid('result'),normId,studentId,lessonId,date:lesson.date,status,value:status==='done'?value:null,grade:status==='done'?A.gradeNorm(norm,value):null,basis:basis.trim(),definition:{...norm,scale:[...norm.scale]},createdAt:new Date().toISOString()};
+  await db.put('normResults',record);state.normResults.push(record);notify();return record;
+}
+export async function deleteNormResult(id){await db.del('normResults',id);state.normResults=state.normResults.filter(r=>r.id!==id);notify();}
+export async function transferNormGrade(id,confirmed=false){
+  if(!confirmed)throw Error('Подтвердите перенос оценки');
+  const r=state.normResults.find(x=>x.id===id),lesson=state.lessons.find(l=>l.id===r?.lessonId);
+  if(!r||!lesson||r.status!=='done'||!r.grade||lesson.date!==r.date||lesson.date>M.todayIso())throw Error('Оценка недоступна для переноса');
+  if(normCheck(r.definition,lesson,r.studentId).length||activeExemption(r.studentId,lesson.date))throw Error('Сначала проверьте действующие ограничения');
+  return editMark(r.studentId,r.lessonId,(base,previous)=>{
+    if(previous)throw Error('В журнале уже есть отметка; автоматическая замена запрещена');
+    return {id:M.uid('mk'),studentId:r.studentId,lessonId:r.lessonId,value:r.grade,flag:null,source:'manual'};
+  });
 }

@@ -16,7 +16,7 @@ if (!read('CHANGELOG.md').split(/\r?\n/).includes('## ' + version)) {
 }
 for (const [path, content] of Object.entries(files)) {
   if (!check) writeFileSync(path, content);
-  else if (read(path) !== content) throw new Error('Версия не совпадает: ' + path);
+  else if (read(path).replace(/\r\n/g,'\n') !== content.replace(/\r\n/g,'\n')) throw new Error('Версия не совпадает: ' + path);
 }
 const lock = JSON.parse(read('package-lock.json'));
 if ([lock.version, lock.packages[''].version].some(v => v !== version)) {
