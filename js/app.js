@@ -57,8 +57,7 @@ function render() {
   const tab = store.state.currentTab;
 
   if (tab === 'today') {
-    renderToday(screen, { onSchedule: () => setTab('schedule'),onCoach:()=>setTab('coach') });
-    screen.append(el('div',{class:'analytics-shortcut'},[el('button',{class:'btn wide',type:'button',text:'Аналитика и отчёты',onclick:()=>setTab('analytics')})]));
+    renderToday(screen,{onSchedule:()=>setTab('schedule'),onCoach:()=>setTab('coach'),onJournal:()=>setTab('journal'),onNorms:()=>setTab('norms'),onAnalytics:()=>setTab('analytics')});
   } else if (tab === 'classes') {
     renderClasses(screen, {
       onOpenJournal: () => { setTab('journal'); },
