@@ -1,6 +1,6 @@
 import * as C from '../coach.js';
 import * as V from '../volleyball.js';
-import {openDetailedSetup,openDetailedMatch} from './match-protocol.js';
+import {openDetailedSetup,openDetailedMatch,six} from './match-protocol.js';
 import {todayIso} from '../model.js';
 import * as ui from '../ui.js';
 const {el,openSheet,toast}=ui;
@@ -18,13 +18,11 @@ function court(players,lineup,libero,liberoFor,serve,onPick){
       el('strong',{text:'Зона '+z}),el('span',{text:name(players,id)}),id===libero?el('small',{text:'Либеро'}):null,z===1&&serve==='ours'?el('small',{text:'Подача'}):null]);
    })]);
 }
-function lineupFields(players,initial=[],libero=null){
- const options=[['','Выберите игрока'],...players.map(p=>[p.id,name(players,p.id)])];
- const fields=Array.from({length:6},(_,i)=>select(options,initial[i]||''));
+function lineupFields(players,initial=[],libero=null,withLibero=true){
  const lib=select([['','Без либеро'],...players.map(p=>[p.id,name(players,p.id)])],libero||'');
- const preview=el('div'),draw=()=>preview.replaceChildren(court(players,fields.map(x=>x.value),lib.value||null,null,null,null));
- for(const x of [...fields,lib])x.onchange=draw;draw();
- return {fields,lib,node:el('div',{class:'vb-stack'},[preview,...fields.map((x,i)=>field('Зона '+(i+1),x)),field('Либеро',lib)]),values:()=>({lineup:fields.map(x=>x.value),libero:lib.value||null})};
+ const editor=six(players,initial,()=>lib.value);
+ lib.onchange=()=>{if(lib.value&&editor.get().includes(lib.value)){toast('Либеро должен быть вне стартовой шестёрки');lib.value='';}editor.refresh();};
+ return {node:el('div',{class:'vb-stack'},[editor.node,withLibero?field('Либеро',lib):null]),values:()=>({lineup:editor.get(),libero:lib.value||null})};
 }
 export async function openMatchCenter(team,refresh){
  try{
@@ -84,7 +82,8 @@ function live(team,players,initial,refresh){
     busy=true;try{await C.finishLiveMatch(d.id,d.revision);ui.closeSheet();await refresh();}catch(e){toast(e.message);}finally{busy=false;}
   },'primary wide'));
   else if(s.setEnded){
-    const l=lineupFields(players.filter(p=>d.roster.includes(p.id)&&p.id!==d.libero),s.lineup),serve=select([['ours','Наши'],['theirs','Соперник']],s.sets.length%2===0?d.firstServe:d.firstServe==='ours'?'theirs':'ours');
+    const previous=[...d.events].reverse().find(e=>e.type==='next')?.lineup||d.lineup;
+    const l=lineupFields(players.filter(p=>d.roster.includes(p.id)&&p.id!==d.libero),previous,null,false),serve=select([['ours','Наши'],['theirs','Соперник']],s.sets.length%2===0?d.firstServe:d.firstServe==='ours'?'theirs':'ours');
     body.append(p('Партия завершена'),l.node,field('Подача в следующей партии',serve),btn('Начать следующую партию',()=>perform({type:'next',lineup:l.values().lineup,serve:serve.value}),'primary wide'));
   }else{
     const rally=(side,kind,player=null)=>perform({type:'rally',side,kind,player});
