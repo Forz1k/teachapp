@@ -1,3 +1,4 @@
+import {animateOnce} from '../motion.js';
 import { openHealth, warning, checkGrade } from './health.js';
 /* screens/journal.js — сетка журнала класса: ученики × даты уроков.
    Здесь же шторка отметки с трёхрежимной постановкой ОСВ. */
@@ -216,9 +217,11 @@ export function renderJournal(root, ctx) {
         const mark = latest.get(lesson.id + '|' + id);
         if (mark?.flag === 'Н') absent++;
         if (mark?.value) { sum += Number(mark.value); count++; }
+        const old=cells[i].getAttribute('aria-label');
         cells[i].classList.toggle('filled',Boolean(mark));
         cells[i].firstChild.replaceChildren(badgeFor(mark));
         cells[i].setAttribute('aria-label',studentById.get(id).fullName+' · '+M.fmtFull(lesson.date)+' · '+(mark?.value||mark?.flag||'нет отметки'));
+        if(old!==cells[i].getAttribute('aria-label'))animateOnce(cells[i].firstChild,'pulse',{duration:180});
       });
       const [avg,attendance] = row.querySelectorAll('.col-sum');
       avg.textContent = count ? M.fmtAvg(sum/count) : '—';
