@@ -1,3 +1,4 @@
+import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,6 +23,6 @@ test('Цели: связи, ревизии, копия и защита от по
  await db.clearAll();await S.load();const team=await C.saveTeam({name:'Команда'}),player=await C.savePlayer({teamId:team.id,name:'Игрок',position:'setter'});
  const g=await saveGoal({...goal,id:undefined,teamId:team.id,playerId:player.id});
  const next=await saveGoal({...g,status:'completed'});assert.equal(next.revision,1);await assert.rejects(saveGoal({...g,name:'Старая'}),/изменена/);
- const backup=await S.makeBackup();assert.equal(backup.version,16);await S.restoreBackup(backup);assert.equal((await W.listWork('coachGoal'))[0].status,'completed');
+ const backup=await S.makeBackup();assert.equal(backup.version,BACKUP_VERSION);await S.restoreBackup(backup);assert.equal((await W.listWork('coachGoal'))[0].status,'completed');
  const broken=structuredClone(backup);broken.data.workRecords[0].playerId='missing';await assert.rejects(S.restoreBackup(broken));assert.equal((await W.listWork('coachGoal')).length,1);
 });

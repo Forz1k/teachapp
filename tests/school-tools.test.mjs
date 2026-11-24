@@ -1,3 +1,4 @@
+import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,6 +26,6 @@ test('Критерии: явные баллы, без автоматически
  assert.deepEqual(scoreRubric(rubric,[3,5]),{sum:8,max:10,percent:80,grade:'4'});
  assert.throws(()=>scoreRubric(rubric,[null,5]));assert.throws(()=>scoreRubric(rubric,[5,5]));
  assert.equal(S.state.marks.length,0);
- const b=await S.makeBackup();assert.equal(b.version,16);await S.restoreBackup(b);assert.equal((await W.listWork('rubric')).length,1);
+ const b=await S.makeBackup();assert.equal(b.version,BACKUP_VERSION);await S.restoreBackup(b);assert.equal((await W.listWork('rubric')).length,1);
  const bad=structuredClone(b);bad.data.workRecords[0].thresholds=[0,0,60,75,90];await assert.rejects(S.restoreBackup(bad));
 });

@@ -8,6 +8,7 @@ import {openMatchReport} from './match-protocol.js';
 import {openVolleyImport,openImportedReport} from './volleypoint-import.js';
 import {openCoachTeams} from './team-generator.js';
 import {openTestForm,testList,playerTestCards} from './coach-tests.js';
+import {openTacticBoards,openLineupAssistant} from './tactics.js';
 import {openPlayerGoals} from './coach-goals.js';
 import {openMatchTactics,openTeamTactics} from './match-tactics.js';
 import {openSeasonAnalytics,playerInsightCard} from './coach-season.js';
@@ -226,14 +227,14 @@ export async function renderCoach(root,ctx={}){
         taskHolder.append(attentionPanel(tasks.concat(commonTasks(School.state.settings,[])),onTask));body.append(taskHolder);
         Promise.all([listWork('event'),listWork('coachGoal')]).then(([events,goals])=>{if(seq===sequence&&taskHolder.isConnected)taskHolder.replaceChildren(attentionPanel(tasks.concat(commonTasks(School.state.settings,events),goalTasks(goals,team.id)),onTask));}).catch(()=>{});
         body.append(el('article',{class:'card-block today-card lesson-card lesson-card-next'},[el('div',{class:'today-meta',text:'Ближайшая тренировка'}),el('h2',{text:next?next.title:'Нет запланированных тренировок'}),next?p(fmtFull(next.date)+' · '+next.time+' · '+next.minutes+' мин'):null,team.archived?null:btn(next?'Открыть тренировку':'Запланировать',()=>trainingForm(team,view,next||null,refresh),'primary wide')]));
-        body.append(dashboardHeading('Быстрые действия'),el('div',{class:'dashboard-actions'},[actionTile('Состав','classes',()=>go('roster')),actionTile('Тренировки','calendar',()=>go('trainings')),actionTile('Матчи','trophy',()=>go('matches')),actionTile('Аналитика','chart',()=>go('analytics')),team.archived?null:actionTile('Live-матч','quick',()=>openMatchCenter(team,refresh)),actionTile('Конспекты','journal',()=>openLibrary('coach'))]));
+        body.append(dashboardHeading('Быстрые действия'),el('div',{class:'dashboard-actions'},[actionTile('Состав','classes',()=>go('roster')),actionTile('Тренировки','calendar',()=>go('trainings')),actionTile('Матчи','trophy',()=>go('matches')),actionTile('Аналитика','chart',()=>go('analytics')),team.archived?null:actionTile('Live-матч','quick',()=>openMatchCenter(team,refresh)),actionTile('Конспекты','journal',()=>openLibrary('coach')),actionTile('Тактическая доска','classes',()=>openTacticBoards(team)),team.archived?null:actionTile('Помощник состава','quick',()=>openLineupAssistant(team,view))]));
       }else if(selectedSection==='roster'){
         const active=view.players.filter(p=>!p.archived),arch=view.players.filter(p=>p.archived);
         const search=el('input',{type:'search',placeholder:'Найти игрока','aria-label':'Найти игрока'}),list=el('div',{class:'player-directory'});
         for(const player of active)list.append(el('button',{class:'player-directory-row',type:'button','data-name':(player.name+' '+(player.number??'')).toLocaleLowerCase('ru'),onclick:()=>playerCard(team,player,view,refresh)},[el('span',{class:'player-number',text:player.number??'—'}),el('span',{class:'player-directory-info'},[el('strong',{text:player.name}),el('small',{text:C.positions[player.position]})]),ui.icon('chevron')]));
         search.oninput=()=>{const q=search.value.trim().toLocaleLowerCase('ru');for(const row of list.children)row.hidden=!row.dataset.name.includes(q);};
         body.append(card('Состав · '+active.length,[team.archived?null:btn('+ Игрок',()=>playerForm(team,null,refresh),'primary wide'),
-          team.archived?null:btn('Генератор команд',()=>openCoachTeams(team,active,closeSheet),'wide'),search,list,
+          team.archived?null:btn('Помощник стартового состава',()=>openLineupAssistant(team,view),'wide'),team.archived?null:btn('Генератор команд',()=>openCoachTeams(team,active,closeSheet),'wide'),search,list,
           !active.length?p('Нет действующих игроков'):null,
           arch.length?el('details',{},[el('summary',{text:'Архив игроков ('+arch.length+')'}),...arch.map(player=>btn(label(player),()=>playerCard(team,player,view,refresh),'wide'))]):null]));
       }else if(selectedSection==='trainings'){

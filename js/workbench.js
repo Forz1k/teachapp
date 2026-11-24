@@ -1,5 +1,6 @@
 import * as db from './db.js';
 import {uid} from './model.js';
+import {validateBoard} from './tactics.js';
 import {validateGoal} from './coach-goals.js';
 import {validateRubric} from './school-tools.js';
 import {validateTournament} from './tournaments.js';
@@ -25,13 +26,15 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='tacticBoard'){validateBoard(r);return;}
  if(r.kind==='coachGoal'){validateGoal(r);return;}
  if(r.kind==='rubric'){validateRubric(r);return;}
  if(r.kind==='tournament'){validateTournament(r);return;}
  if(r.kind==='event'){validateEvent(r);return;}
  if(r.kind==='exercise'){validateExercise(r);require(!r.id.startsWith('builtin-'),'Системное упражнение нельзя перезаписать');return;}
  if(r.kind==='plan'){
-  require(only(r,['id','kind','name','context','minutes','goal','equipment','audience','items'])&&txt(r.name)&&Object.hasOwn(contexts,r.context)&&minutes(r.minutes)&&opt(r.goal,4000)&&opt(r.equipment,1000)&&opt(r.audience,200)&&Array.isArray(r.items)&&r.items.length>0&&r.items.length<=100,'Проверьте конспект');
+  require(only(r,['id','kind','name','context','minutes','goal','equipment','audience','items','tactics'])&&txt(r.name)&&Object.hasOwn(contexts,r.context)&&minutes(r.minutes)&&opt(r.goal,4000)&&opt(r.equipment,1000)&&opt(r.audience,200)&&Array.isArray(r.items)&&r.items.length>0&&r.items.length<=100,'Проверьте конспект');
+  if(r.tactics!==undefined){require(r.context==='coach'&&Array.isArray(r.tactics)&&r.tactics.length<=10,'Проверьте схемы тренировки');for(const b of r.tactics)validateBoard(b);}
   let last=-1,total=0;
   for(const i of r.items){require(only(i,['phase','exercise','minutes','notes'])&&Object.hasOwn(phases,i.phase)&&minutes(i.minutes)&&opt(i.notes,2000),'Проверьте этап конспекта');validateExercise(i.exercise);const n=Object.keys(phases).indexOf(i.phase);require(n>=last,'Этапы должны идти по порядку');last=n;total+=i.minutes;}
   require(total<=r.minutes,'Сумма времени упражнений больше длительности занятия');return;

@@ -1,3 +1,4 @@
+import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,7 +28,7 @@ test('Нормативы: история, ограничения, перенос
  await assert.rejects(S.saveNormResult({normId:n.id,studentId:s.id,lessonId:l.id,status:'done',value:7}),/не разрешена/);
  const skipped=await S.saveNormResult({normId:n.id,studentId:s.id,lessonId:l.id,status:'restricted'});
  assert.equal(skipped.grade,null);assert.equal(S.state.marks[0].value,'4');
- const backup=await S.makeBackup();assert.equal(backup.version,16);await S.restoreBackup(backup);
+ const backup=await S.makeBackup();assert.equal(backup.version,BACKUP_VERSION);await S.restoreBackup(backup);
  assert.equal(S.state.normResults.length,2);
  await S.deleteStudent(s.id);assert.equal(S.state.normResults.length,0);
  await S.restoreBackup(backup);await S.deleteClass(c.id);assert.equal(S.state.normResults.length,0);
