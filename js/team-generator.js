@@ -1,10 +1,20 @@
 /* Временное распределение, не меняет журнал и тренерский состав. */
 import * as H from './health.js';
 import {hasOsv,exemptionCovers} from './model.js';
+// A broad activity can include a restricted narrower activity. Treat it as a
+// potential conflict, not a medical decision or permission to participate.
+function potentialConflict(r,activityId,byId,date){
+  if(!H.active(r,date))return false;
+  const selected=H.ancestorIds(activityId,byId),restricted=H.ancestorIds(r.activityId,byId);
+  if(selected.unknown||restricted.unknown)return true;
+  if(r.type==='no_test'&&!selected.ancestors.has('test')&&!restricted.ancestors.has('test'))return false;
+  return selected.ancestors.has(r.activityId)||restricted.ancestors.has(activityId);
+}
 export function schoolCandidates({lesson,students,marks,parts,exemptions,activities,restrictions,activityId}){
   if(!activities.some(a=>a.id===activityId))throw Error('Выберите вид нагрузки');
   const matches=H.checkLessonRestrictions({lesson:{...lesson,activityIds:[activityId],activitiesConfirmed:true},students,activities,restrictions}).matches;
-  const restricted=new Set(matches.map(m=>m.studentId));
+  const byId=new Map(activities.map(a=>[a.id,a]));
+  const restricted=new Set([...matches.map(m=>m.studentId),...restrictions.filter(r=>potentialConflict(r,activityId,byId,lesson.date)).map(r=>r.studentId)]);
   const byMark=new Map(marks.filter(m=>m.lessonId===lesson.id).map(m=>[m.studentId,m]));
   const byPart=new Map(parts.filter(p=>p.lessonId===lesson.id).map(p=>[p.studentId,p]));
   return students.filter(s=>s.classId===lesson.classId).map(s=>{
@@ -22,7 +32,7 @@ export function coachCandidates(players,activityId,date,activities=H.catalog){
   const {ancestors,unknown}=H.ancestorIds(activityId,byId);
   if(unknown)throw Error('Проверьте каталог нагрузки');
   return players.filter(p=>!p.archived).map(p=>({id:p.id,name:p.name,confirmed:false,
-    reason:p.restrictions.some(r=>H.active(r,date)&&ancestors.has(r.activityId))?'Есть ограничение на выбранную нагрузку':''}));
+    reason:p.restrictions.some(r=>potentialConflict(r,activityId,byId,date))?'Есть ограничение на выбранную нагрузку':''}));
 }
 function shuffle(a,rng){
   const out=[...a];

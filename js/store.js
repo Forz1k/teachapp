@@ -1109,33 +1109,40 @@ export async function saveNorm(input){
 export function normCheck(norm,lesson,studentId){
   return lessonCheck({...lesson,activityIds:[norm.activityId,'test'],activitiesConfirmed:true}).matches.filter(m=>m.studentId===studentId);
 }
-function buildNormResult({normId,studentId,lessonId,status,value=null,basis=''}){
-  const norm=state.norms.find(n=>n.id===normId),lesson=state.lessons.find(l=>l.id===lessonId),student=state.students.find(s=>s.id===studentId);
-  if(!norm||!lesson||!student||student.classId!==lesson.classId||lesson.date>M.todayIso())throw Error('Проверьте ученика и дату урока');
-  const matches=normCheck(norm,lesson,studentId),mark=markMap(lesson.classId).get(lessonId+'|'+studentId),full=activeExemption(studentId,lesson.date)||M.hasOsv(mark);
-  if(!['done','restricted'].includes(status))throw Error('Выберите результат');
+function buildNormResult({normId,studentId,lessonId,status,value=null,basis=''},data){
+  const {norm,lesson,cls,students,marks,exemptions,restrictions,custom,parts}=data;
+  const student=students.find(s=>s.id===studentId);
+  if(!norm||!lesson||!cls||!student||student.classId!==lesson.classId||lesson.date>M.todayIso())throw Error('Проверьте ученика и дату урока');
+  const matches=H.checkLessonRestrictions({lesson:{...lesson,activityIds:[norm.activityId,'test'],activitiesConfirmed:true},students,activities:[...H.catalog,...custom],restrictions}).matches.filter(m=>m.studentId===studentId);
+  const mark=marks.find(m=>m.studentId===studentId),full=exemptions.some(e=>e.studentId===studentId&&M.exemptionCovers(e,lesson.date))||M.hasOsv(mark),part=parts.find(p=>p.studentId===studentId);
+  if(!['done','restricted'].includes(status)||typeof basis!=='string'||basis.length>2000)throw Error('Проверьте результат и основание');
   if(status==='restricted'&&!matches.length&&!full)throw Error('Нет внесённого основания ограничения');
-  if(status==='done'&&(full||mark?.flag==='Н'||matches.some(m=>['avoid','no_test'].includes(m.restriction.type))))throw Error('Обычная сдача не разрешена по внесённым сведениям');
-  if(status==='done'&&matches.length&&!basis.trim())throw Error('Укажите подтверждённое основание допуска');
-  const definition=A.normSnapshot(norm,state.classes.find(c=>c.id===student.classId),student);
-  const record={id:M.uid('result'),normId,studentId,lessonId,date:lesson.date,status,value:status==='done'?value:null,grade:status==='done'?A.gradeNorm(definition,value):null,basis:basis.trim(),definition,createdAt:new Date().toISOString()};
-  return record;
+  if(status==='done'&&(full||mark?.flag==='Н'||part?.mode==='paused'||matches.some(m=>['avoid','no_test'].includes(m.restriction.type))))throw Error('Обычная сдача не разрешена по внесённым сведениям');
+  if(status==='done'&&(matches.length||part?.mode==='adapted')&&!basis.trim())throw Error('Укажите подтверждённое основание допуска');
+  const definition=A.normSnapshot(norm,cls,student);
+  return {id:M.uid('result'),normId,studentId,lessonId,date:lesson.date,status,value:status==='done'?value:null,grade:status==='done'?A.gradeNorm(definition,value):null,basis:basis.trim(),definition,createdAt:new Date().toISOString()};
 }
-export async function saveNormResult(input){
-  const record=buildNormResult(input);await db.put('normResults',record);state.normResults.push(record);notify();return record;
-}
-// Массовая запись: не создаём второй результат того же норматива за урок.
-export async function saveNormResultsBatch(normId,lessonId,entries,confirmed=false){
-  if(!confirmed)throw Error('Подтвердите сохранение результатов');
-  if(!Array.isArray(entries)||!entries.length||entries.length>500||new Set(entries.map(r=>r.studentId)).size!==entries.length)throw Error('Проверьте список учеников');
-  const records=entries.map(r=>buildNormResult({...r,normId,lessonId}));
-  await db.transaction(['normResults'],'readwrite',async s=>{
-    const existing=await s.normResults.index('lessonId').getAll(lessonId);
-    if(records.some(r=>existing.some(x=>x.normId===normId&&x.studentId===r.studentId)))throw Error('Один из результатов уже существует. Откройте список заново');
+async function writeNormResults(normId,lessonId,entries,batch){
+  const records=await db.transaction(['normResults','norms','lessons','classes','students','marks','exemptions','activityRestrictions','activityCategories','participation'],'readwrite',async s=>{
+    const [norm,lesson]=await Promise.all([s.norms.get(normId),s.lessons.get(lessonId)]);
+    if(!norm||!lesson)throw Error('Норматив или урок удалён. Откройте список заново');
+    const [cls,students,marks,exemptions,restrictions,custom,parts,existing]=await Promise.all([s.classes.get(lesson.classId),s.students.index('classId').getAll(lesson.classId),s.marks.index('lessonId').getAll(lessonId),s.exemptions.getAll(),s.activityRestrictions.getAll(),s.activityCategories.getAll(),s.participation.index('lessonId').getAll(lessonId),s.normResults.index('lessonId').getAll(lessonId)]);
+    if(batch&&entries.some(r=>existing.some(x=>x.normId===normId&&x.studentId===r.studentId)))throw Error('Один из результатов уже существует. Откройте список заново');
+    const records=entries.map(r=>buildNormResult({...r,normId,lessonId},{norm,lesson,cls,students,marks,exemptions,restrictions,custom,parts}));
     for(const r of records)await s.normResults.add(r);
+    return records;
   });
   state.normResults.push(...records);notify();return records;
 }
+export async function saveNormResult(input){
+  return (await writeNormResults(input.normId,input.lessonId,[input],false))[0];
+}
+export async function saveNormResultsBatch(normId,lessonId,entries,confirmed=false){
+  if(!confirmed)throw Error('Подтвердите сохранение результатов');
+  if(!Array.isArray(entries)||!entries.length||entries.length>500||new Set(entries.map(r=>r.studentId)).size!==entries.length)throw Error('Проверьте список учеников');
+  return writeNormResults(normId,lessonId,entries,true);
+}
+
 export async function importNormScales(rows,{replace=false,confirmed=false,expected=null}={}){
   if(!confirmed)throw Error('Подтвердите импорт');
   const result=await db.transaction(['norms'],'readwrite',async s=>{

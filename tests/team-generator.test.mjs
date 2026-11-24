@@ -31,3 +31,11 @@ test('Тренерский состав: архив, ограничения по
  {id:'c',name:'В',archived:true,restrictions:[]}];
  const rows=coachCandidates(players,'volley','2026-01-01');assert.equal(rows.length,2);assert.ok(rows[0].reason);assert.equal(rows[1].reason,'');assert.equal(rows[1].confirmed,false);
 });
+
+test('Общая нагрузка учитывает ограничения на более узкое упражнение',()=>{
+ const restriction={studentId:'a',activityId:'pass',type:'avoid',dateFrom:'2025-01-01',dateTo:null};
+ const rows=schoolCandidates({lesson:{id:'l',classId:'c',date:'2026-01-01'},students:[{id:'a',classId:'c',fullName:'А'}],activities:catalog,activityId:'volley',marks:[],parts:[],exemptions:[],restrictions:[restriction]});
+ assert.ok(rows[0].reason);
+ assert.ok(coachCandidates([{id:'a',name:'А',restrictions:[restriction]}],'games','2026-01-01')[0].reason);
+ assert.equal(coachCandidates([{id:'a',name:'А',restrictions:[restriction]}],'run','2026-01-01')[0].reason,'');
+});

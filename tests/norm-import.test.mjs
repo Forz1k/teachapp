@@ -32,3 +32,14 @@ test('Массовая запись: ограничения, без оценки
  await assert.rejects(S.saveNormResultsBatch(n.id,l.id,[good],true),/уже существует/);
  await S.load();assert.equal(S.state.normResults.length,2);
 });
+
+test('Нормативы: свежая запись ограничения из другой вкладки блокирует всю транзакцию',async()=>{
+ await db.clearAll();await S.load();
+ const c=await S.addClass('7А'),a=await S.addStudent(c.id,'Первый',1,'boys'),b=await S.addStudent(c.id,'Второй',2,'boys'),l=await S.addLesson(c.id,'2026-01-01');
+ const n=await S.saveNorm({name:'Прыжок',activityId:'standing',unit:'см',direction:'max',scales:[{gradeLevel:7,group:'boys',scale:[120,130,140,150,165]}]});
+ await db.put('activityRestrictions',{id:'external',studentId:b.id,activityId:'jump',type:'avoid',dateFrom:'2025-01-01',dateTo:null,enabled:true,instruction:''});
+ assert.equal(S.state.activityRestrictions.length,0);
+ await assert.rejects(S.saveNormResultsBatch(n.id,l.id,[{studentId:a.id,status:'done',value:165},{studentId:b.id,status:'done',value:165}],true),/не разрешена/);
+ assert.equal(await db.count('normResults'),0);
+ await assert.rejects(S.saveNormResult({normId:n.id,lessonId:l.id,studentId:b.id,status:'done',value:165}),/не разрешена/);
+});
