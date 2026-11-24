@@ -21,7 +21,7 @@ import {openCoachSearchResult} from './screens/coach.js';
 import {readNavigation,saveNavigation,coachRoutes,schoolRoutes} from './design.js';
 import {animateOnce} from './motion.js';
 import {readPersonalCode} from './personal-sync.js';
-import {openSyncSession,runPersonalSync,autoSyncStatus} from './auto-sync.js';
+import {openSyncSession,runPersonalSync,autoSyncStatus,syncRetryDelay} from './auto-sync.js';
 const { el, icon } = ui;
 
 const TABS = [
@@ -36,29 +36,38 @@ const TABS = [
 const appRoot = document.getElementById('app');
 let tabbarEl = null;
 let syncSession=null,autoBusy=false,autoAttempt=0;
-let syncHint='';
+let syncHint='',autoRetryTimer=null,autoRetryCount=0;
+function clearAutoRetry(reset=false){if(autoRetryTimer!==null)clearTimeout(autoRetryTimer);autoRetryTimer=null;if(reset)autoRetryCount=0;}
 function updateSyncIndicator(){
  const node=appRoot.querySelector('.personal-sync-action');if(!node)return;
  const report=autoSyncStatus(),problem=report.phase==='interrupted'||report.areas.some(x=>!['synced','setup'].includes(x.status)),setup=report.areas.some(x=>x.status==='setup');
- const label=syncHint||(navigator.onLine===false?'Нет сети · данные сохранены локально':problem?'Требуется проверка синхронизации':setup?'Нужно подтвердить первое подключение':report.at?'Последняя проверка: '+new Date(report.at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'Синхронизировать сейчас');
+ const label=navigator.onLine===false?'Нет сети · данные сохранены локально':syncHint||(problem?'Требуется проверка синхронизации':setup?'Нужно подтвердить первое подключение':report.at?'Последняя проверка: '+new Date(report.at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'Синхронизировать сейчас');
  node.title=label;node.setAttribute('aria-label','Синхронизировать сейчас. '+label);node.dataset.status=navigator.onLine===false?'offline':problem?'review':report.at&&!setup?'ok':'idle';
 }
 function safeAutoRoute(){
  return store.state.currentTab==='today'||store.state.currentTab==='coach'&&navigation.coach==='home';
 }
-async function maybeAutoSync(initial=false,manual=false){
+async function maybeAutoSync(initial=false,manual=false,retry=false){
  if(!readPersonalCode()||autoBusy)return;
  if(!syncSession||navigator.onLine===false||document.visibilityState==='hidden'){
   if(manual)ui.toast(navigator.onLine===false?'Нет интернета. Изменения сохранены на устройстве.':'Откройте синхронизацию в настройках для ручного обмена.');return;
  }
- if(!initial&&(ui.isSheetOpen()||document.querySelector('.dialog-backdrop,.privacy-cover')||document.activeElement?.matches('input,textarea,select,[contenteditable=true]')||!manual&&(!safeAutoRoute()||Date.now()-autoAttempt<55000)))return;
- autoBusy=true;autoAttempt=Date.now();syncHint='Синхронизация…';updateSyncIndicator();
+ if(!initial&&(ui.isSheetOpen()||document.querySelector('.dialog-backdrop,.privacy-cover')||document.activeElement?.matches('input,textarea,select,[contenteditable=true]')||!manual&&(!safeAutoRoute()||!retry&&Date.now()-autoAttempt<55000)))return;
+ clearAutoRetry(manual);autoBusy=true;autoAttempt=Date.now();syncHint='Синхронизация…';updateSyncIndicator();
  const oldTabbar=tabbarEl;
  appRoot.inert=true;if(oldTabbar)oldTabbar.inert=true;
  try{
   const result=await syncSession.exclusive(()=>runPersonalSync());
   if(result?.areas.some(x=>x.changed))await store.load();
   syncHint=result?'':'Другая вкладка открыта · обмен отложен';
+   const delay=syncRetryDelay(result,autoRetryCount),code=readPersonalCode();
+   if(delay!==null&&code&&navigator.onLine!==false){
+    autoRetryCount++;syncHint='Временная ошибка · повторная проверка через '+(delay/1000)+' с';
+    autoRetryTimer=setTimeout(()=>{
+     autoRetryTimer=null;syncHint='';updateSyncIndicator();
+     if(readPersonalCode()===code)void maybeAutoSync(false,false,true);
+    },delay);
+   }else if(result&&!result.areas.some(x=>x.retryable===true))autoRetryCount=0;
   if(manual){const needsReview=result&&(result.phase!=='finished'||result.areas.some(x=>!['synced','setup'].includes(x.status))),hasSetup=result?.areas.some(x=>x.status==='setup');ui.toast(!result?'Закройте другие вкладки TeachApp.':needsReview?'Проверьте синхронизацию в настройках.':hasSetup?'Проверьте первичное подключение контуров в настройках.':'Синхронизация завершена.');}
  }catch{syncHint='Обмен не завершён';if(manual)ui.toast(syncHint);}
  finally{appRoot.inert=false;if(oldTabbar)oldTabbar.inert=false;if(tabbarEl)tabbarEl.inert=false;autoBusy=false;updateSyncIndicator();}
@@ -294,8 +303,8 @@ async function boot() {
     else render();
   });
   render();
-  window.addEventListener('online',()=>{autoAttempt=0;syncHint='';updateSyncIndicator();void maybeAutoSync();});
-  window.addEventListener('offline',updateSyncIndicator);
+  window.addEventListener('online',()=>{clearAutoRetry(true);autoAttempt=0;syncHint='';updateSyncIndicator();void maybeAutoSync();});
+  window.addEventListener('offline',()=>{clearAutoRetry(true);syncHint='';updateSyncIndicator();});
   const refreshPeriod=()=>{if(store.refreshSchoolPeriod())store.notify();};
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){refreshPeriod();autoAttempt=0;void maybeAutoSync();}});
   window.addEventListener('focus',refreshPeriod);
