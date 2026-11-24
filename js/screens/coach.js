@@ -59,11 +59,27 @@ function playerForm(team,player,refresh){
     ()=>C.savePlayer({...player,teamId:team.id,name:name.value,number:number(num),position:position.value,restrictions:limits}),refresh);
 }
 function playerCard(team,player,view,refresh){
-  const a=C.playerAttendance(player.id,view.trainings),s=C.summarizeStats(view.matches,[player.id]);
-  const played=view.matches.filter(m=>m.roster.includes(player.id)).length;
-  openSheet(el('div',{class:'coach-form'},[el('h2',{text:label(player)}),p(C.positions[player.position]),
-    p('Посещаемость: '+format(a.pct)+(a.pct==null?'':'%')+' · посещено '+(a.present+a.limited)+' · пропущено '+a.absent+' · не отмечено '+a.unknown),
-    p('Матчей в составе: '+played),metricTable(s),p('Ограничений внесено: '+player.restrictions.length),
+  const now=todayIso(),year=Number(now.slice(0,4))-(Number(now.slice(5,7))<9?1:0);
+  const from=input(year+'-09-01','date'),to=input((year+1)+'-08-31','date');
+  const content=el('div',{class:'coach-stack'});
+  const ratio=(a,b)=>b?Math.round(a/b*1000)/10+'% · '+a+'/'+b:'—';
+  function draw(){
+    if(from.value&&to.value&&from.value>to.value){content.replaceChildren(p('Начало периода позже окончания'));return;}
+    const range={from:from.value,to:to.value};
+    const a=C.playerAttendance(player.id,view.trainings.filter(t=>(!range.from||t.date>=range.from)&&(!range.to||t.date<=range.to)));
+    const s=C.playerSeasonStats(view.matches,player.id,range);
+    const n=s.errors;
+    content.replaceChildren(
+      card('Матчи · выбранный период',[p('В заявке: '+s.rosterMatches+' · подробных протоколов: '+s.detailedMatches),p('Розыгрышей на площадке по подробным протоколам: '+s.rallies),p('Личные очки (зафиксировано): '+format(s.summary.sums.points)+' · Эйсы: '+format(s.summary.sums.aces)),p('Результативные атаки: '+format(s.summary.sums.attackKills)+' · Блоки: '+format(s.summary.sums.blocks))]),
+      card('Подача · подробные матчи',[p('Розыгрышей на своей подаче: '+(s.detailedMatches?s.serviceRallies:'—')),p('Выиграно командой на подаче: '+ratio(s.serviceWins,s.serviceRallies)),p('Эйсы: '+(s.detailedMatches?s.serviceAces:'—')+' · отмеченные ошибки подачи: '+(s.detailedMatches?s.serviceErrors:'—')),p('Проигрыши на подаче без указанной причины: '+s.unclassifiedServiceLosses),p('Выигрыш розыгрыша на подаче — командный показатель, не личная точность подачи.')]),
+      card('Ошибки · подробные матчи',[p(s.detailedMatches?'Подача '+n.serve+' · атака '+n.attack+' · приём '+n.receive+' · прочие '+n.other:'Нет подробных протоколов'),p('Розыгрыши без полной атрибуции на площадке: '+s.unknownOnCourt),p('Ноль отмеченных ошибок не доказывает отсутствие ошибок.')]),
+      card('Данные прежних и ручных матчей',[p('Доля успешных среди записанных действий (не гарантирует полноту):'),p('Подача '+ratio(s.rates.serve.success,s.rates.serve.total)),p('Приём '+ratio(s.rates.receive.success,s.rates.receive.total)),p('Атака '+ratio(s.rates.attack.success,s.rates.attack.total)),p('Событийные протоколы не содержат все попытки атаки и приёма; их проценты здесь не вычисляются.')]),
+      card('Тренировки · посещаемость',[p(format(a.pct)+(a.pct==null?'':'%')+' · посещено '+(a.present+a.limited)+' · пропущено '+a.absent+' · не отмечено '+a.unknown)]),
+      card('История матчей',s.chosen.length?s.chosen.map(m=>p(fmtFull(m.date)+' · '+m.opponent+' · личные очки: '+format(m.stats[player.id]?.points))):[p('Матчей за период нет')]));
+  }
+  from.onchange=draw;to.onchange=draw;draw();
+  openSheet(el('div',{class:'coach-form'},[el('h2',{text:label(player)}),p(C.positions[player.position]),field('Период с',from),field('По',to),btn('Весь архив',()=>{from.value='';to.value='';draw();},'wide'),content,
+    p('Ограничений внесено: '+player.restrictions.length),
     ...player.restrictions.map(r=>p(activityName(r.activityId)+' · '+(r.type==='avoid'?'не выполнять':'адаптировать')+' · '+r.dateFrom+' — '+(r.dateTo||'бессрочно'))),
     btn('Редактировать карточку',()=>playerForm(team,player,refresh),'wide'),
     btn(player.archived?'Вернуть в состав':'В архив',()=>confirm('Изменить состав?', 'История тренировок и матчей сохранится.',()=>C.savePlayer({...player,archived:!player.archived}),refresh),'wide')]));
