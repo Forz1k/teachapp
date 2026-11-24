@@ -61,6 +61,7 @@ try{
  await evalJs('(()=>{const n=[...document.querySelectorAll(".sheet select")].find(s=>[...s.options].some(o=>o.value==="month"));n.value="month";n.dispatchEvent(new Event("change"));return true})()');
  await ready('.month-grid');await capture('390-calendar');await closeSheet();
  await nav('Ещё');await ready('.sheet.show');await clickText('.sheet button','Настройки');await ready('.settings-group');await sleep(350);await capture('390-settings');
+ await clickText('button','Синхронизация устройств · бета');await ready('select[aria-label="Контур синхронизации"]');await capture('390-sync-settings');await closeSheet();
  await clickText('.workspace-option','Тренер');await ready('.coach-body .dashboard-metrics');await capture('390-coach-light');
  await clickText('button','Тактическая доска');await ready('.tactic-board');await capture('390-tactics');await closeSheet();
  await nav('Команда');await ready('.player-directory-row');await click('.player-directory-row');await ready('.player-profile');await sleep(320);await capture('390-player');await closeSheet();
