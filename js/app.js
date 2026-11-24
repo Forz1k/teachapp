@@ -13,6 +13,10 @@ import { renderExemptionsInto } from './screens/exemptions.js';
 import { renderSchedule } from './screens/schedule.js';
 import { renderSettings, applyTheme, openExportSheet } from './screens/settings.js';
 
+import {openWorkspaceSearch} from './screens/search.js';
+import {openStudentSheet} from './screens/journal.js';
+import * as C from './coach.js';
+import {openCoachSearchResult} from './screens/coach.js';
 import {readNavigation,saveNavigation,coachRoutes,schoolRoutes} from './design.js';
 const { el, icon } = ui;
 
@@ -52,7 +56,7 @@ function render() {
   const switcher=el('div',{class:'workspace-switch',role:'group','aria-label':'Рабочее пространство'},[
     ...[['school','Учитель'],['coach','Тренер']].map(([id,label])=>el('button',{type:'button',class:'workspace-option'+(workspace===id?' selected':''),'aria-pressed':String(workspace===id),text:label,onclick:()=>switchWorkspace(id)}))
   ]);
-  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('img',{class:'brand-mark',src:'./icons/brand.svg',alt:'',width:32,height:32}),el('span',{text:'TeachApp'})]),switcher,el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':'Скрыть данные',title:'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
+  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('img',{class:'brand-mark',src:'./icons/brand.svg',alt:'',width:32,height:32}),el('span',{text:'TeachApp'})]),switcher,el('button',{class:'icon-btn plain',type:'button','aria-label':'Поиск',title:'Поиск',text:'⌕',onclick:()=>openSearch(workspace)}),el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':'Скрыть данные',title:'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
 
   const tab = store.state.currentTab;
 
@@ -153,6 +157,14 @@ function renderTabbar(){
   return el('button',{type:'button',class:'tab'+(current?' active':''),'aria-label':t.label,'aria-current':current?'page':null,onclick:()=>{if(coach)setCoachSection(t.id);else if(t.id==='more')openMore();else setTab(t.id);ui.haptic(6);}},[icon(t.icon),el('span',{text:t.label})]);
  }));
  document.body.append(tabbarEl);
+}
+async function openSearch(area){
+ try{const data=area==='coach'?await C.loadCoach():store.state;if(document.body.classList.contains('privacy-covered')||(store.state.currentTab==='coach'?'coach':'school')!==area)return;
+ openWorkspaceSearch(area,data,r=>{
+  if(area==='coach'){openCoachSearchResult(data,r,render);return;}
+  if(r.kind==='student'){openStudentSheet(r.id,r.classId);return;}
+  ui.closeSheet();if(r.kind==='class'){store.state.currentClassId=r.id;store.state.classSubtab='journal';setTab('journal');}else setTab(r.kind==='norm'?'norms':'schedule');
+ });}catch(e){ui.toast(e.message);}
 }
 function openMore(){
  ui.openSheet(el('div',{class:'coach-form'},[el('h2',{text:'Ещё'}),...TABS.filter(t=>['norms','settings'].includes(t.id)).concat({id:'analytics',label:'Аналитика и отчёты',icon:'chart'}).map(t=>el('button',{class:'btn wide menu-action',type:'button',onclick:()=>{ui.closeSheet();setTab(t.id);}},[icon(t.icon),el('span',{text:t.label}),icon('chevron')])),el('button',{class:'btn wide',type:'button',text:'Закрыть',onclick:ui.closeSheet})]));

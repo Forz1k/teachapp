@@ -204,6 +204,14 @@ function matchForm(team,view,m,refresh){
 function download(text,name){
   try{ui.downloadBlob(new Blob([text],{type:'text/csv;charset=utf-8'}),name+'-'+todayIso()+'.csv');toast('Проверьте файл в загрузках');}catch(e){toast(e.message);}
 }
+export function openCoachSearchResult(data,r,refresh){
+ const team=data.coachTeams.find(t=>t.id===r.teamId&&!t.archived);if(!team)return;
+ const view=C.teamView(data,team.id);selectedTeam=team.id;
+ if(r.kind==='player'){const player=view.players.find(p=>p.id===r.id&&!p.archived);if(player)playerCard(team,player,view,refresh);}
+ else if(r.kind==='training'){const training=view.trainings.find(t=>t.id===r.id);if(training)trainingForm(team,view,training,refresh);}
+ else if(r.kind==='match'){const match=view.matches.find(m=>m.id===r.id);if(match){if(match.imported)openImportedReport(match,view);else if(match.detail)openMatchReport(match,ui.closeSheet);else matchForm(team,view,match,refresh);}}
+ else{ui.closeSheet();refresh();}
+}
 export async function renderCoach(root,ctx={}){
   root.replaceChildren();
   if(['home','roster','trainings','matches','analytics'].includes(ctx.section))selectedSection=ctx.section;
