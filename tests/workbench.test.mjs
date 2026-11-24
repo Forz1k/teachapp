@@ -16,3 +16,14 @@ test('Библиотека: поиск, независимые снимки уп
  const backup=await S.makeBackup();await S.restoreBackup(backup);assert.equal((await W.listWork('plan')).length,1);
  const old=structuredClone(backup);old.version=10;delete old.data.workRecords;await S.restoreBackup(old);assert.equal((await W.listWork('plan')).length,0);
 });
+
+test('lesson plan preview uses per-exercise restrictions and lesson date without writes',async()=>{
+ const {catalog}=await import('../js/health.js');
+ const students=[{id:'a',classId:'c'},{id:'b',classId:'c'},{id:'foreign',classId:'other'}];
+ const plan={context:'school',items:[{phase:'intro',exercise:{activityId:'run'},minutes:5},{phase:'main',exercise:{activityId:'standing'},minutes:20}]};
+ const lesson={classId:'c',date:'2026-11-24'};
+ const restrictions=[{studentId:'a',activityId:'jump',type:'avoid',dateFrom:'2026-11-01',dateTo:'2026-11-30'},{studentId:'b',activityId:'run',type:'avoid',dateFrom:'2026-11-25',dateTo:null},{studentId:'foreign',activityId:'run',type:'avoid',dateFrom:'2026-11-01',dateTo:null}];
+ const result=W.lessonPlanReview(plan,lesson,{students,activities:catalog,restrictions,exemptions:[{studentId:'b',dateFrom:'2026-11-23',dateTo:'2026-11-25'}]});
+ assert.equal(result.minutes,25);assert.deepEqual(result.full,['b']);assert.equal(result.items[0].matches.length,0);assert.deepEqual(result.items[1].matches.map(m=>m.studentId),['a']);
+ assert.equal(result.total,2);assert.deepEqual(lesson,{classId:'c',date:'2026-11-24'});
+});

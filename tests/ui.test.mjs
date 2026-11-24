@@ -606,3 +606,14 @@ test('student profile switches periods locally and shows recorded attempts separ
  assert.equal(store.state.currentTrimesterId,old);
  ui.closeSheet();
 });
+
+test('lesson preparation opens school plans and does not change the lesson',async()=>{
+ const {l1}=await seed();const W=await import('../js/workbench.js');
+ const {openLessonPlanReview}=await import('../js/screens/session.js');
+ const plan=await W.saveWork({kind:'plan',name:'Тестовый конспект',context:'school',minutes:45,goal:'Цель',equipment:'Мячи',audience:'9 класс',items:[{phase:'intro',exercise:W.builtinExercises[0],minutes:5,notes:''}]});
+ const before=structuredClone(store.state.lessons.find(l=>l.id===l1.id));
+ await openLessonPlanReview(l1.id);const sheet=doc.querySelector('.sheet');
+ const choice=sheet.querySelector('select');choice.value=plan.id;choice.dispatchEvent(new window.Event('change'));
+ assert.match(sheet.textContent,/Суставная разминка/);assert.match(sheet.textContent,/Мячи/);
+ assert.deepEqual(store.state.lessons.find(l=>l.id===l1.id),before);ui.closeSheet();
+});

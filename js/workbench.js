@@ -1,5 +1,5 @@
 import * as db from './db.js';
-import {uid} from './model.js';
+import {uid,exemptionCovers} from './model.js';
 import {validateGradeHistory} from './grade-history.js';
 import {validateInventory,validateAchievement} from './resources.js';
 import {validateBoard} from './tactics.js';
@@ -7,7 +7,7 @@ import {validateGoal} from './coach-goals.js';
 import {validateRubric} from './school-tools.js';
 import {validateTournament} from './tournaments.js';
 import {validateEvent} from './work-calendar.js';
-import {catalog} from './health.js';
+import {catalog,checkLessonRestrictions} from './health.js';
 export const exerciseCategories={warmup:'Разминка',athletics:'Лёгкая атлетика',gymnastics:'Гимнастика',volleyball:'Волейбол',games:'Игры',fitness:'ОФП / СФП',cooldown:'Заминка',other:'Другое'};
 export const phases={intro:'Подготовительная',main:'Основная',end:'Заключительная'};
 export const contexts={school:'Урок',coach:'Тренировка'};
@@ -58,3 +58,15 @@ export async function saveWork(input){
 export async function deleteWork(id,kind){return db.transaction(kind==='archive'?['workRecords','students','lessons']:['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');if(kind==='archive'){const pupils=new Set(old.snapshot.students.map(p=>p.id)),lessons=new Set(old.snapshot.lessons.map(l=>l.id));for(const p of await s.students.getAll())pupils.delete(p.id);for(const l of await s.lessons.getAll())lessons.delete(l.id);for(const r of await s.workRecords.index('kind').getAll('gradeHistory'))if(pupils.has(r.studentId)||lessons.has(r.lessonId))await s.workRecords.delete(r.id);}await s.workRecords.delete(id);});}
 export function planExercises(plan){return plan.items.map(i=>({name:i.exercise.name,activityId:i.exercise.activityId,minutes:i.minutes}));}
 export function librarySearch(exercises,query='',category=''){const q=query.trim().toLowerCase();return exercises.filter(e=>(!category||e.category===category)&&(!q||[e.name,e.description,e.equipment].some(x=>x.toLowerCase().includes(q))));}
+
+/** Read-only preview. Each exercise is checked independently against records on the lesson date. */
+export function lessonPlanReview(plan,lesson,{students,activities,restrictions,exemptions}){
+ require(plan?.context==='school'&&lesson?.classId&&lesson?.date,'Выберите школьный конспект и урок');
+ const pupils=students.filter(s=>s.classId===lesson.classId),ids=new Set(pupils.map(s=>s.id));
+ const full=new Set(exemptions.filter(e=>ids.has(e.studentId)&&exemptionCovers(e,lesson.date)).map(e=>e.studentId));
+ const items=plan.items.map(item=>{
+  const check=checkLessonRestrictions({lesson:{...lesson,activityIds:[item.exercise.activityId],activitiesConfirmed:true},activities,students:pupils,restrictions});
+  return {item,matches:check.matches,needsReview:check.needsReview};
+ });
+ return {items,full:[...full],minutes:items.reduce((n,x)=>n+x.item.minutes,0),total:pupils.length};
+}
