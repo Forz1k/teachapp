@@ -30,7 +30,7 @@ export function viewerTarget(input){
  const u=new URL(input),q=u.searchParams,keys=['db','owner','team'],explicit=keys.some(k=>q.has(k));
  const origin=explicit?q.get('db'):primaryPortal.origin,owner=explicit?q.get('owner'):primaryPortal.owner,slug=explicit?q.get('team'):primaryPortal.slug;
  const address=portalAddress(origin,owner,slug),primary=isPrimaryPortal(origin,owner,slug);
- if(primary){u.search='';u.hash='';if(u.pathname.endsWith('/index.html'))u.pathname=u.pathname.slice(0,-'index.html'.length);}
+ if(primary){const match=q.get('match'),archive=q.get('archive');u.search='';if(match&&validId(match))u.searchParams.set('match',match);if(archive&&/^\d{16}_[A-Za-z0-9_-]{1,100}$/.test(archive))u.searchParams.set('archive',archive);u.hash='';if(u.pathname.endsWith('/index.html'))u.pathname=u.pathname.slice(0,-'index.html'.length);}
  return {address,primary,share:u.href};
 }
 export function shareUrl(base,origin,owner,slug){

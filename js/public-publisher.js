@@ -1,3 +1,4 @@
+import {archiveTarget,archiveKey,readArchiveVersion,writeArchiveRecord} from './public-archive.js';
 /* Team portal state is separate from school/coach records. Opt-in publishing only. */
 import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures} from './public-portal.js';
 import {firebaseSignIn,firebasePublisher,samePortalContent} from './firebase-portal.js';
@@ -164,3 +165,5 @@ export function unpublishResult(id,resultId){
  if(d.match?.id===resultId&&d.match.status==='finished')d.match=null;
  save(e);enqueue(e);
 }
+
+export async function publishExtendedResult(id,result,{confirm,fetcher=fetch}={}){const e=entry(id),d=e.data;if(!e.session||!d.enabled||e.conflict||e.dirty||e.running)throw Error('Сначала завершите синхронизацию публичной страницы');const session=e.session,epoch=e.epoch,target=archiveTarget(portalAddress(d.origin,d.owner,d.slug)),k=archiveKey(result),version=await readArchiveVersion(target,k,fetcher);if(!await confirm?.(version.value))return false;if(e.session!==session||e.epoch!==epoch||!d.enabled||e.conflict)throw Error('Состояние публикации изменилось');await writeArchiveRecord(target,k,result,await session.getToken(),version.etag,fetcher);return true;}

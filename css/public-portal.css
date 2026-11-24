@@ -29,3 +29,5 @@ body{background:radial-gradient(ellipse at 85% 0%,#5578c119,transparent 44%),var
 @media(max-width:340px){.top-actions{flex:1;justify-content:flex-end}.brand{flex-basis:100%}.result-card{grid-template-columns:minmax(0,1fr) 62px}.result-date{font-size:10px}.result-sets{gap:4px}}
 
 :root[data-theme=light] .record-streak .flame{color:#a6500d;fill:#e78f3a38}.record-streak small{line-height:1.35}.record-stat strong{font-variant-numeric:tabular-nums}
+
+.result-link{color:inherit;text-decoration:underline;text-underline-offset:4px}.fan-fullscreen .site-header,.fan-fullscreen nav,.fan-fullscreen footer{display:none}.fan-fullscreen #portal{max-width:none}.fan-fullscreen #portal>.hero{min-height:90vh;justify-content:center}.fan-fullscreen #portal>.card:not(.hero){display:none}
