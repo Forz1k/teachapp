@@ -300,7 +300,7 @@ export async function parseScheduleFile(file) {
   const entries = [];
   const warnings = [];
   const unknownClasses = new Set();
-  const byName = new Map(store.state.classes.map((c) => [M.displayClassName(c.name).toLocaleLowerCase('ru'), c]));
+  const byName = new Map(store.state.classes.map(c=>[c.name.toLocaleLowerCase('ru').trim(),c]));
 
   for (const sheetName of wb.SheetNames) {
     const ws = wb.Sheets[sheetName];
@@ -363,7 +363,8 @@ export async function parseScheduleFile(file) {
         continue;
       }
 
-      const cls = byName.get(M.displayClassName(className).toLocaleLowerCase('ru'));
+      const aliases=store.state.classes.filter(c=>M.displayClassName(c.name).toLocaleLowerCase('ru')===M.displayClassName(className).toLocaleLowerCase('ru'));
+      const cls=byName.get(className.toLocaleLowerCase('ru').trim()) || (aliases.length===1?aliases[0]:null);
       if (!cls) {
         unknownClasses.add(className);
         continue;
@@ -621,9 +622,14 @@ export async function applyRoster(parsed) {
   const report = { classes: 0, added: 0, updated: 0, skipped: 0 };
 
   for (const { className, students } of parsed) {
-    let cls = store.state.classes.find((c) => rosterKey(M.displayClassName(c.name)) === rosterKey(M.displayClassName(className)));
+    let cls = store.state.classes.find(c=>rosterKey(c.name)===rosterKey(className));
+    if(!cls){
+      const matches=store.state.classes.filter(c=>rosterKey(M.displayClassName(c.name))===rosterKey(M.displayClassName(className)));
+      if(matches.length===1)cls=matches[0];
+      if(matches.length>1)throw Error('Неоднозначное название класса: '+className);
+    }
     if (!cls) {
-      cls = await store.addClass(M.displayClassName(className));
+      cls = await store.addClass(className);
       report.classes += 1;
     }
 

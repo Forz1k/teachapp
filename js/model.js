@@ -590,14 +590,14 @@ export function planLessonDates({classId,from,to,rules,overrides,holidays,days})
 
 export function displayClassName(name) {
   const raw=String(name??'').trim();
-  const m=raw.match(/^(\d{1,2})[\s_.\-–—]*([0-9]+|[а-яёa-z])$/iu);
-  return m ? m[1]+(/^\d+$/.test(m[2])?'-'+m[2]:m[2].toLocaleUpperCase('ru')) : raw;
+  const m=raw.match(/^(\d{1,2})(?:[\s_.\-–—]+([0-9]+)|[\s_.\-–—]*([а-яёa-z]))$/iu);
+  return m ? m[1]+(m[2]?'-'+m[2]:m[3].toLocaleUpperCase('ru')) : raw;
 }
 export function surnameAndName(name) {
   return String(name??'').trim().split(/\s+/).slice(0,2).join(' ');
 }
 export function canRepairLessonTopic(l,marks,parts,results) {
-  return !l.held && l.activityIds==null && !marks.some(m=>m.lessonId===l.id&&(m.value||m.source!=='auto'||m.baseMark))
+  return !l.held && l.activityIds==null && !marks.some(m=>m.lessonId===l.id&&(m.value||m.source!=='auto-osv'||m.flag!=='ОСВ'||m.baseMark||m.previousFlag))
     && !parts.some(p=>p.lessonId===l.id) && !results.some(r=>r.lessonId===l.id);
 }
 export function planLessonTopicRepair(lessons,topics,ids) {
