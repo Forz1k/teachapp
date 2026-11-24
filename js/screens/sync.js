@@ -1,7 +1,7 @@
 import * as S from '../store.js';
 import * as db from '../db.js';
 import {ktpLinkIssues} from '../backup.js';
-import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,localSyncState,disconnectSync} from '../sync.js';
+import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,localSyncState,describeSyncConflict,disconnectSync} from '../sync.js';
 import {createDeviceInvite,redeemDeviceInvite,parseInvite} from '../device-invite.js';
 import {autoSyncStatus,withSyncSession,runPersonalSync} from '../auto-sync.js';
 import {parsePersonalCode,personalCredentials,readPersonalCode,savePersonalCode,forgetPersonalCode} from '../personal-sync.js';
@@ -12,14 +12,28 @@ const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{type:'butt
 const field=(text,node)=>el('label',{class:'field'},[el('span',{text}),node]);
 const labels={meta:'Учебный год и настройки школы',classes:'Классы',students:'Ученики',lessons:'Уроки',topics:'Темы',ktp:'КТП',schedule:'Расписание',scheduleOverrides:'Замены',marks:'Оценки',exemptions:'Освобождения',studentHealthProfiles:'Группы здоровья',activityRestrictions:'Ограничения нагрузки',activityCategories:'Виды нагрузки',participation:'Участие',norms:'Нормативы',normResults:'Результаты',finalGrades:'Итоговые оценки',monthly:'Архивные отметки',coachTeams:'Команды',coachPlayers:'Состав',coachTrainings:'Тренировки',coachMatches:'Матчи',coachLineups:'Расстановки',coachTests:'Тесты',workRecords:'Рабочая запись / история'};
 const explain=v=>v===null?'Запись отсутствует (удаление)':JSON.stringify(v,null,2);
+const fieldNames={name:'Название / имя',date:'Дата',value:'Значение',mark:'Отметка',weight:'Вес',title:'Тема / заголовок',classId:'Класс (ID)',studentId:'Ученик (ID)',lessonId:'Урок (ID)',from:'Начало',to:'Окончание',status:'Статус',reason:'Причина',note:'Примечание',score:'Счёт',opponent:'Соперник'};
+function conflictValue(value){
+ if(value===undefined)return 'Не задано';
+ if(value===null)return 'Нет значения';
+ if(typeof value==='boolean')return value?'Да':'Нет';
+ if(Array.isArray(value))return 'Список ('+value.length+') — см. полную запись';
+ if(typeof value==='object')return 'Составное поле — см. полную запись';
+ const str=String(value);return str.length>120?str.slice(0,120)+'…':str;
+}
 function blockConflict(c,onChoice){
- const select=el('select',{'aria-label':'Выбор версии '+(labels[c.store]||c.store)},[el('option',{value:'',text:'Не выбрано'}),el('option',{value:'local',text:'Оставить данные этого устройства'}),el('option',{value:'remote',text:'Принять данные с сервера'})]);
+ const select=el('select',{'aria-label':'Выбор версии '+(labels[c.store]||c.store)},[el('option',{value:'',text:'Не выбрано'}),el('option',{value:'local',text:c.local===null?'Удалить запись (как на этом устройстве)':'Оставить данные этого устройства'}),el('option',{value:'remote',text:c.remote===null?'Удалить запись (как на сервере)':'Принять данные с сервера'})]);
  const values=[['Общая ревизия',c.base],['Это устройство',c.local],['Сервер',c.remote]];
  const tooLarge=values.some(([,v])=>explain(v).length>100000);
  select.disabled=tooLarge;
  select.onchange=()=>onChoice(c.key,select.value);
- return el('section',{class:'card-block coach-card'},[el('h3',{text:labels[c.store]||c.store}),p('ID: '+c.id),
-  ...values.map(([name,value])=>el('details',{},[el('summary',{text:name}),tooLarge?p('Слишком большая запись для безопасного сравнения в интерфейсе. Разрешите конфликт штатными инструментами.'):el('pre',{text:explain(value),style:'white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:12px'})])),select]);
+ const summary=describeSyncConflict(c),kind={created:'Разные варианты новой записи',deleted:'Удаление против изменения',changed:'Обе версии изменены'}[summary.kind];
+ const fields=summary.fields.slice(0,12).map(f=>el('p',{style:'white-space:pre-wrap;overflow-wrap:anywhere'},[
+  el('strong',{text:fieldNames[f.key]||f.key}), '\nЭто устройство: '+(c.local===null?'Запись удалена':conflictValue(f.local))+(f.localChanged?' (изменено)':'')+'\nСервер: '+(c.remote===null?'Запись удалена':conflictValue(f.remote))+(f.remoteChanged?' (изменено)':'')
+ ]));
+ return el('section',{class:'card-block coach-card'},[el('h3',{text:labels[c.store]||c.store}),p(kind),p('ID: '+c.id),
+  ...fields,...(summary.fields.length>12?[p('Других отличающихся полей: '+(summary.fields.length-12)+'. Откройте полные записи.')]:[]),
+  ...values.map(([name,value])=>el('details',{},[el('summary',{text:name}),tooLarge?p('Слишком большая запись для безопасного сравнения в интерфейсе. Разрешите конфликт штатными инструментами.'):el('pre',{text:explain(value),style:'white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:12px'})])),p('Выбирается вся запись, а не отдельные поля. Удаление будет применено только после подтверждения.'),select]);
 }
 // Repair only after explicit selection and confirmation; no network requests.
 export async function openKtpDiagnostics(){
