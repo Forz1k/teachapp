@@ -1,5 +1,6 @@
 import * as C from '../coach.js';
 import * as V from '../match-protocol.js';
+import {matchTactics} from '../match-tactics.js';
 import {todayIso,uid} from '../model.js';
 import * as ui from '../ui.js';
 import {lineupPicker} from './lineup-picker.js';
@@ -160,7 +161,7 @@ export function openDetailedMatch(initial,back,refresh){
   }));
   body.replaceChildren(el('div',{class:'vp-match-head'},[el('div',{class:'vp-match-title'},[el('span',{class:'match-live-label',text:s.finished?'ЗАВЕРШЁН':s.setEnded?'ПЕРЕРЫВ':'● LIVE'}),el('strong',{text:'Партия '+set})]),displayScore,el('div',{class:'match-sets'},s.sets.length?s.sets.map((x,i)=>el('span',{class:'match-set',text:(i+1)+' · '+score(x)})):[el('span',{text:'Первая партия'})])]),
    el('div',{class:'vp-tabs',role:'group','aria-label':'Раздел матча'},[['match','Матч'],['stats','Статистика'],['events','События']].map(([id,t])=>btn(t,()=>{section=id;draw();},section===id?'primary':''))));
-  if(section==='stats'){body.append(momentumBlock(d,s),...summaryBlocks(d,s));}
+  if(section==='stats'){body.append(momentumBlock(d,s),liveAnalysis(d,s));}
   else if(section==='events'){
    body.append(p('Событий: '+d.events.length),...s.timeline.slice().reverse().slice(0,100).map(x=>p('Сет '+x.set+' · '+x.score+' · '+eventText(d,x))));
   }else{
@@ -241,8 +242,7 @@ export function openDetailedMatch(initial,back,refresh){
      details.append(field(V.reasons[kind]+' · '+sideName(d,losing),extra),btn('Сохранить дополнительную ошибку',()=>perform({type:'secondary',player:extra.value||null}),'wide'),p('Не меняет счёт и не дублирует причину очка. Указывайте только явно замеченную ошибку.'));
     }
     if(last&&V.canPlace(last.kind)){
-      const zone=select([['','Не указана'],...Array.from({length:6},(_,i)=>[String(i+1),'Зона '+(i+1)])],last.placement??'');
-      details.append(field('Зона завершения на площадке принимающей команды',zone),btn('Сохранить направление последнего очка',()=>perform({type:'placement',zone:zone.value?Number(zone.value):null}),'wide'));
+      details.append(p('Зона завершения на площадке принимающей команды'),el('div',{class:'vp-heat-net',text:'СЕТКА'}),el('div',{class:'vp-heat-grid'},[4,3,2,5,6,1].map(z=>el('button',{type:'button',class:'btn vp-heat-entry'+(last.placement===z?' primary':''),'aria-pressed':String(last.placement===z),'data-zone':z,text:'P'+z,onclick:()=>perform({type:'placement',zone:z})}))),btn('Убрать зону',()=>perform({type:'placement',zone:null}),'wide'));
     }
    }
   }
@@ -278,6 +278,36 @@ function placementBlock(d,s,side,kind){
  return section(sideName(d,side)+' · '+(kind==='ace'?'Направления эйсов':'Направления результативных атак'),
    p('Зона на стороне принимающей команды. Указано '+a.known+' из '+a.total+' · без зоны '+a.unknown+'. Не включает подачи или атаки, продолжившие розыгрыш.'),
    el('div',{class:'tactical-grid'},[4,3,2,5,6,1].map(z=>el('div',{class:'tactical-cell'},[el('small',{text:'Зона '+z}),el('strong',{text:a.zones[z-1]}),el('progress',{max,value:a.zones[z-1],'aria-label':'Зона '+z+' · '+a.zones[z-1]})]))));
+}
+function liveAnalysis(d,s){
+ const current=s.setEnded?s.sets.length:s.sets.length+1;
+ const period=select([[0,'Весь матч'],...Array.from({length:current},(_,i)=>[i+1,'Партия '+(i+1)])],0);
+ const mode=select([['kill','Все результативные атаки'],['power','Атаки без скидок'],['tip','Скидки'],['ace','Эйсы']],'kill');
+ const sidePicker=select(sides.map(x=>[x,sideName(d,x)]),'ours');
+ const player=select([['','Все игроки']],'');
+ const sample=select([[10,'10 розыгрышей'],[20,'20 розыгрышей'],[30,'30 розыгрышей']],10);
+ const output=el('div',{class:'vp-stack'});
+ function playerOptions(){const old=player.value;player.replaceChildren(el('option',{value:'',text:'Все игроки'}),...roster(d,sidePicker.value).map(p=>el('option',{value:p.id,text:playerLabel(p)})));if([...player.options].some(o=>o.value===old))player.value=old;}
+ function draw(){
+  const set=Number(period.value),data=V.rallySummary(s.timeline,set),side=sidePicker.value,kind=mode.value==='power'?'kill':mode.value;
+  const a=V.placementSummary(s.timeline,side,kind,{set,player:player.value||null,includeTips:mode.value!=='power'});
+  const max=Math.max(1,...a.zones),pct=(n,total)=>total?Math.round(n*100/total)+'%':'—';
+  const heat=section('Карта завершений',p('Зоны на стороне принимающей команды. Указано '+a.known+' из '+a.total+' · неизвестно '+a.unknown+'.'),el('div',{class:'vp-heat-net',text:'СЕТКА'}),el('div',{class:'vp-heat-grid'},[4,3,2,5,6,1].map(z=>{
+   const n=a.zones[z-1],intensity=n/max;
+   return el('div',{class:'vp-heat-cell',style:'--heat:'+intensity,'aria-label':'Зона '+z+': '+n},[el('small',{text:'P'+z}),el('strong',{text:String(n)}),el('small',{text:pct(n,a.known)})]);
+  })),p('Доли рассчитаны среди завершений с известной зоной, а не среди всех атак. Без отмеченной зоны точка не предполагается.'));
+  const rows=sides.flatMap(side=>{
+   const r=data[side];return [section(sideName(d,side)+' · '+r.points+' очков',p('На подаче: '+r.onServe+'/'+r.serve+' ('+pct(r.onServe,r.serve)+') · на приёме: '+r.receiveWon+'/'+r.receive+' ('+pct(r.receiveWon,r.receive)+')'),
+    table(['Игрок','Атаки*','Скидки','Блок','Эйс','Ошибки','Очки'],roster(d,side).map(p=>{const x=r.stats[p.id]||{};return [playerLabel(p),x.attackKills??'—',x.tipKills??'—',x.blocks??'—',x.aces??'—',x.errors??'—',x.points??'—'];})),
+    p('* Результативные атаки включают скидки. Процент успешности всех атак не рассчитывается без записи всех попыток.'),
+    table(['Причина очка','Количество'],Object.entries(V.reasons).map(([k,t])=>[t,r.reasons[k]||0])))];
+  });
+  const tactical=matchTactics(d,5,{set,min:Number(sample.value)});
+  const combo=(title,items)=>section(title,p('Выигранные розыгрыши в присутствии игроков. Сочетание не доказывает индивидуальный вклад.'),table(['Игроки','Розыгрыши','Победы','+/−','Доля'],items.slice(0,20).map(x=>[x.players.map(id=>name(d,'ours',id)).join(' · '),x.rallies,x.won,x.plusMinus,x.eligible?pct(x.won,x.rallies):'Мало данных'])),!items.length?p('Нет записанных сочетаний.'):null);
+  output.replaceChildren(...rows,heat,combo('Сочетания двух игроков',tactical.pairs),combo('Фактические шестёрки',tactical.six));
+ }
+ playerOptions();sidePicker.addEventListener('change',()=>{playerOptions();draw();});for(const control of [period,mode,player,sample])control.addEventListener('change',draw);draw();
+ return section('Аналитика розыгрышей',field('Период',period),field('Команда для карты',sidePicker),field('Вид завершения',mode),field('Игрок для карты',player),field('Минимум для сравнения сочетаний',sample),output);
 }
 function momentumBlock(d,s){
  const current=s.setEnded?s.sets.length:s.sets.length+1;

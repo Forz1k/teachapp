@@ -22,10 +22,12 @@ export function scoreMomentum(score,target){
  }
  return {ties,leadChanges,maxOurRun,maxTheirRun,closeWon,closeTotal,closeRate:pct(closeWon,closeTotal)};
 }
-export function matchTactics(d,windowSize=5){
+export function matchTactics(d,windowSize=5,{set:onlySet=0,min=30}={}){
  if(!Number.isInteger(windowSize)||windowSize<1||windowSize>10)throw Error('Проверьте окно анализа');
+ if(!Number.isInteger(onlySet)||onlySet<0||onlySet>d.bestOf||!Number.isInteger(min)||min<1||min>500)throw Error('Проверьте фильтр анализа');
  const s=replayDetailed(d),bySet=new Map(),rotations=Array.from({length:6},(_,i)=>({...blank(),position:i+1})),pairs=new Map(),six=new Map(),all=blank(),timeouts=[];
  for(const e of s.timeline){
+  if(onlySet&&e.set!==onlySet)continue;
   if(!bySet.has(e.set))bySet.set(e.set,{set:e.set,events:[],rallyEvents:[],score:[{rally:0,ours:0,theirs:0}],...blank(),maxLead:0,maxDeficit:0,maxRun:0,run:0});
   const set=bySet.get(e.set);set.events.push(e);
   if(e.type!=='rally')continue;
@@ -54,7 +56,7 @@ export function matchTactics(d,windowSize=5){
   const {events,rallyEvents,run,...summary}=set;
   return {...finish(summary),momentum:scoreMomentum(summary.score,summary.set===d.bestOf?d.decider:d.target)};
  });
- return {sets,overall:finish(all),rotations:rotations.map(finish),pairs:sortedRows(pairs,30),six:sortedRows(six,30),timeouts};
+ return {sets,overall:finish(all),rotations:rotations.map(finish),pairs:sortedRows(pairs,min),six:sortedRows(six,min),timeouts};
 }
 export function opponentHistory(matches){
  const groups=new Map();

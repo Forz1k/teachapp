@@ -2,7 +2,7 @@ import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates,setMomentum,validBoardColors,opponentHistory} from '../js/match-protocol.js';
+import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates,setMomentum,validBoardColors,opponentHistory,rallySummary} from '../js/match-protocol.js';
 import * as C from '../js/coach.js';
 import * as S from '../js/store.js';
 import * as db from '../js/db.js';
@@ -102,4 +102,22 @@ test('Цвета проверяются, старый матч остаётся 
  assert.equal(replayDetailed(base).ours,0);assert.equal(replayDetailed({...base,boardColors:{ours:'green',theirs:'purple'}}).ours,0);
  const matches=[{id:'old',teamId:'t',date:'2026-01-01',opponent:'Гости',detail:base},{id:'new',teamId:'t',date:'2026-02-01',opponent:' гости ',detail:base},{id:'other',teamId:'x',date:'2026-03-01',opponent:'Гости',detail:base}];
  assert.deepEqual(opponentHistory(matches,'t').map(m=>m.id),['new']);
+});
+
+test('Фильтр карты различает скидки и атаки, автора и партию, неизвестные зоны',()=>{
+ const events=[{type:'rally',set:1,side:'ours',kind:'tip',player:'a1',placement:4},{type:'rally',set:1,side:'ours',kind:'kill',player:'a2'},{type:'rally',set:2,side:'ours',kind:'kill',player:'a1',placement:6},{type:'rally',set:1,side:'theirs',kind:'tip',player:'b1',placement:1}];
+ assert.equal(placementSummary(events,'ours','kill').total,3);assert.equal(placementSummary(events,'ours','kill',{includeTips:false}).total,2);
+ assert.deepEqual(placementSummary(events,'ours','tip',{set:1,player:'a1'}),{zones:[0,0,0,1,0,0],total:1,known:1,unknown:0});
+ assert.equal(placementSummary(events,'ours','kill',{set:1,includeTips:false}).unknown,1);
+});
+test('Статистика партии учитывает дополнительную ошибку, не удваивает очко и соответствует движку',()=>{
+ let d=detailEvent(base,{type:'rally',side:'ours',kind:'tip',player:'a2',secondary:{kind:'defenseError',player:'b2'}});
+ for(let i=1;i<15;i++)d=detailEvent(d,{type:'rally',side:'ours',kind:'point'});
+ d=detailEvent(d,{type:'next',lineup:base.lineup,awayLineup:base.awayLineup,serve:'ours'});
+ d=detailEvent(d,{type:'rally',side:'theirs',kind:'kill',player:'b2'});
+ const s=replayDetailed(d),a=rallySummary(s.timeline,1),b=rallySummary(s.timeline,2),all=rallySummary(s.timeline);
+ assert.equal(a.ours.points,15);assert.equal(a.theirs.points,0);assert.equal(a.ours.stats.a2.tipKills,1);assert.equal(a.theirs.stats.b2.defenseErrors,1);
+ assert.equal(b.theirs.points,1);assert.equal(b.theirs.stats.b2.attackKills,1);assert.equal(b.theirs.stats.b2.defenseErrors,undefined);
+ assert.equal(all.ours.points,s.sides.ours.points);assert.equal(all.theirs.stats.b2.errors,s.sides.theirs.stats.b2.errors);
+ assert.equal(a.ours.serve,14);assert.equal(a.ours.receiveWon,1);
 });

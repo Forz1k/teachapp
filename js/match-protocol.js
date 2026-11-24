@@ -35,6 +35,7 @@ export function rallyCandidates(d,lineups,serve,winner,kind){
   return player?[{...player,zone:i+1}]:[];
  });
 }
+const rallyStatKeys={ace:['serves','aces','points'],kill:['attacks','attackKills','points'],tip:['attacks','attackKills','tipKills','points'],block:['blocks','points'],serveError:['serves','serveErrors','errors'],attackError:['attacks','errors','attackErrors'],receiveError:['receptions','errors','receiveErrors'],defenseError:['errors','otherErrors','defenseErrors'],setError:['errors','otherErrors','setErrors'],netError:['errors','otherErrors','netErrors'],otherError:['errors','otherErrors']};
 const emptyRotations=()=>Array.from({length:6},(_,i)=>({position:i+1,rallies:0,won:0,lost:0}));
 const sideData=()=>({stats:{},points:0,opponentErrors:0,onServe:0,maxRun:0,run:0,rotations:emptyRotations(),runs:[],activeRun:null,unknown:0});
 const validRoster=arr=>Array.isArray(arr)&&arr.length<=100&&arr.every(p=>text(p.id)&&text(p.name)&&integer(p.number??0,0,99))&&uniq(arr.map(p=>p.id));
@@ -120,7 +121,7 @@ export function replayDetailed(d){
   if(['ace','serveError'].includes(ev.kind))fail(s.serve===actor&&(player===null||server(actor)===player),'Эйс или ошибка подачи относится к подающей команде и игроку');
   if(ev.kind==='block'&&player!==null)fail([2,3,4].includes(lineupFor(actor).indexOf(player)+1)&&!(actor==='ours'&&player===d.libero),'Блок — игрок передней линии');
   if(['kill','tip'].includes(ev.kind)&&actor==='ours'&&player!==null)fail(player!==d.libero,'Проверьте действие либеро');
-  const keys={ace:['serves','aces','points'],kill:['attacks','attackKills','points'],tip:['attacks','attackKills','tipKills','points'],block:['blocks','points'],serveError:['serves','serveErrors','errors'],attackError:['attacks','errors','attackErrors'],receiveError:['receptions','errors','receiveErrors'],defenseError:['errors','otherErrors','defenseErrors'],setError:['errors','otherErrors','setErrors'],netError:['errors','otherErrors','netErrors'],otherError:['errors','otherErrors']};
+  const keys=rallyStatKeys;
   if(keys[ev.kind])stat(actor,player,keys[ev.kind]);
   if(ev.secondary!=null){
    fail(ev.secondary&&typeof ev.secondary==='object'&&secondaryKind(ev.kind)!==null&&ev.secondary.kind===secondaryKind(ev.kind)&&typeof ev.secondary.player==='string','Дополнительная ошибка: приём для эйса, защита для атаки или скидки');
@@ -193,10 +194,10 @@ export function reportData(d){
 }
 
 /** Only explicitly located terminal actions; unknown locations stay unknown. */
-export function placementSummary(timeline,side,kind){
+export function placementSummary(timeline,side,kind,{set=0,player=null,includeTips=true}={}){
  fail(sides.includes(side)&&canPlace(kind),'Выберите сторону и вид завершения');
  const zones=Array(6).fill(0);let total=0,known=0;
- for(const e of timeline)if(e.type==='rally'&&e.side===side&&(e.kind===kind||kind==='kill'&&e.kind==='tip')){total++;if(integer(e.placement,1,6)){zones[e.placement-1]++;known++;}}
+ for(const e of timeline)if(e.type==='rally'&&e.side===side&&(!set||e.set===set)&&(!player||e.player===player)&&(e.kind===kind||includeTips&&kind==='kill'&&e.kind==='tip')){total++;if(integer(e.placement,1,6)){zones[e.placement-1]++;known++;}}
  return {zones,total,known,unknown:total-known};
 }
 
@@ -217,4 +218,17 @@ export function setMomentum(timeline,set){
   lastLeader=leader;
  }
  return {points,maxRun,maxLead,changes,ties,runSide,run};
+}
+
+/** Filtered analysis derives from the same terminal action definitions as replay. */
+export function rallySummary(timeline,set=0){
+ const result={ours:{points:0,stats:Object.create(null),reasons:{},onServe:0,serve:0,receive:0,receiveWon:0,unknown:0},theirs:{points:0,stats:Object.create(null),reasons:{},onServe:0,serve:0,receive:0,receiveWon:0,unknown:0}};
+ function stat(side,id,kind){if(id==null||!rallyStatKeys[kind])return;const r=result[side].stats[id]??={};for(const k of rallyStatKeys[kind])r[k]=(r[k]||0)+1;}
+ for(const e of timeline){
+  if(e.type!=='rally'||(set&&e.set!==set))continue;
+  const a=result[e.side];a.points++;a.reasons[e.kind]=(a.reasons[e.kind]||0)+1;if(e.kind==='point')a.unknown++;
+  stat(e.actor,e.player,e.kind);if(e.secondary)stat(other(e.side),e.secondary.player,e.secondary.kind);
+  for(const side of sides){const row=result[side],serving=e.before.serve===side;if(serving){row.serve++;if(e.side===side)row.onServe++;}else{row.receive++;if(e.side===side)row.receiveWon++;}}
+ }
+ return result;
 }

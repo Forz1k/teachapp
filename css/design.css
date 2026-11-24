@@ -405,3 +405,11 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .vp-live .vp-points .vp-ours{background:var(--vp-ours-end,#123C79)}.vp-live .vp-points .vp-theirs{background:var(--vp-theirs-end,#812238)}
 .vp-live .vp-score-side.ours{background:var(--vp-ours-end,#123C79)}.vp-live .vp-score-side.theirs{background:var(--vp-theirs-end,#812238)}
 .vp-color-preview{display:grid;grid-template-columns:1fr 1fr;gap:6px}.vp-color-preview span{padding:12px;border-radius:10px;text-align:center;color:#fff;font-weight:700;font-size:13px}
+
+/* Terminal placement map: never infer unrecorded zones. */
+.vp-heat-net{text-align:center;background:#25455B;color:white;font-size:10px;font-weight:800;letter-spacing:.12em;padding:4px;border-radius:5px}
+.vp-heat-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;background:#fff;border:2px solid #fff;border-radius:8px;overflow:hidden}
+.vp-heat-cell{min-height:78px;display:grid;place-items:center;align-content:center;gap:4px;background:rgba(176,42,49,calc(.07 + var(--heat)*.42));color:#341923;padding:8px}
+.vp-heat-cell strong{font-size:25px;font-variant-numeric:tabular-nums}.vp-heat-cell small{font-size:12px}
+.vp-heat-grid .vp-heat-entry{min-height:52px;border-radius:4px}
+@media print{.vp-heat-cell{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
