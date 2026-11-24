@@ -2,7 +2,7 @@ import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {replayDetailed,detailEvent,reportData} from '../js/match-protocol.js';
+import {replayDetailed,detailEvent,reportData,placementSummary} from '../js/match-protocol.js';
 import * as C from '../js/coach.js';
 import * as S from '../js/store.js';
 import * as db from '../js/db.js';
@@ -41,4 +41,17 @@ test('Подробный матч переносит историю и обе к
  const b=await S.makeBackup();assert.equal(b.version,BACKUP_VERSION);await S.restoreBackup(b);
  assert.equal((await C.loadCoach()).coachMatches[0].detail.awayPlayers.length,7);
  await assert.rejects(C.saveMatch(m),/нельзя редактировать/);
+});
+
+test('terminal placements are optional metadata, never another point or inferred location',()=>{
+ let d=detailEvent(base,{type:'rally',side:'theirs',kind:'ace',player:'b0'});
+ d=detailEvent(d,{type:'placement',zone:5});let s=replayDetailed(d);
+ assert.equal(s.theirs,1);assert.equal(d.events.length,1);assert.equal(s.timeline[0].placement,5);
+ assert.throws(()=>detailEvent(d,{type:'placement',zone:7}),/зону/);
+ d=detailEvent(d,{type:'rally',side:'theirs',kind:'ace',player:'b0'});s=replayDetailed(d);
+ assert.deepEqual(placementSummary(s.timeline,'theirs','ace'),{zones:[0,0,0,0,1,0],total:2,known:1,unknown:1});
+ d=detailEvent(d,{type:'placement',zone:2});d=detailEvent(d,{type:'attribute',kind:'point',player:null});
+ assert.equal(d.events.at(-1).placement,undefined);assert.equal(replayDetailed(d).theirs,2);
+ assert.throws(()=>detailEvent(d,{type:'placement',zone:1}),/направление/);
+ d=detailEvent(d,null);assert.equal(replayDetailed(d).theirs,1);
 });
