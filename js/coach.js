@@ -44,10 +44,14 @@ export function validateCoachData(data){
       (t.held||!Object.keys(t.attendance).length),'Проверьте тренировку, план и посещаемость');
   }
   for(const m of matches){
-    assert(only(m,['id','teamId','date','opponent','competition','sets','roster','stats'])&&str(m.id)&&teamIds.has(m.teamId)&&date(m.date)&&str(m.opponent)&&typeof m.competition==='string'&&m.competition.length<=200&&
+    assert(only(m,['id','teamId','date','opponent','competition','sets','roster','stats','detail'])&&str(m.id)&&teamIds.has(m.teamId)&&date(m.date)&&str(m.opponent)&&typeof m.competition==='string'&&m.competition.length<=200&&
       Array.isArray(m.sets)&&m.sets.length>=1&&m.sets.length<=5&&m.sets.every(s=>only(s,['ours','theirs'])&&count(s.ours)&&count(s.theirs)&&s.ours!==s.theirs)&&
       roster(m,m.roster)&&only(m.stats,m.roster),'Проверьте матч, партии и состав');
     for(const s of Object.values(m.stats))validateStats(s);
+    if(m.detail){
+      const d=m.detail,st=replay(d);
+      assert(d.mode==='dual'&&d.teamId===m.teamId&&d.date===m.date&&d.opponent===m.opponent&&d.competition===m.competition&&JSON.stringify(d.roster)===JSON.stringify(m.roster)&&st.finished&&JSON.stringify(st.sets)===JSON.stringify(m.sets)&&JSON.stringify(st.stats)===JSON.stringify(m.stats),'Протокол не соответствует результату матча');
+    }
   }
   validateLiveData(data);
   return data;
@@ -84,7 +88,7 @@ export async function saveMatch(input){
   const r={id:input.id||uid('match'),teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),
     sets:input.sets.map(x=>({ours:x.ours,theirs:x.theirs})),roster:[...input.roster],stats:Object.fromEntries(Object.entries(input.stats||{}).map(([id,s])=>[id,{...s}]))};
   assert(r.date<=todayIso(),'Результат будущего матча недоступен');
-  return write('coachMatches',r,(d,old)=>teamGuard(d,old,r));
+  return write('coachMatches',r,(d,old)=>{teamGuard(d,old,r);assert(!old?.detail,'Матч с протоколом нельзя редактировать вручную');});
 }
 export async function removeEvent(name,id){
   assert(['coachTrainings','coachMatches'].includes(name),'Нельзя удалить состав этой командой');
@@ -158,6 +162,13 @@ export async function startLiveMatch(input){
  assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
  return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&!p.archived)),'Состав изменился');});
 }
+export async function startDetailedMatch(input){
+ const d={id:uid('live'),mode:'dual',teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),venue:String(input.venue||'').trim(),
+   teamName:String(input.teamName||'').trim(),roster:[...input.roster],ourPlayers:input.ourPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),awayPlayers:input.awayPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),
+   lineup:[...input.lineup],awayLineup:[...input.awayLineup],libero:input.libero||null,scheme:input.scheme,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,startedAt:new Date().toISOString(),events:[],revision:0};
+ assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
+ return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&p.teamId===d.teamId&&!p.archived)),'Состав изменился');});
+}
 export async function changeLiveMatch(id,revision,event){
  return db.transaction(['coachLive'],'readwrite',async s=>{
   const d=await s.coachLive.get(id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');
@@ -175,7 +186,7 @@ export async function finishLiveMatch(id,revision){
   const data=Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()])));
   const d=data.coachLive.find(x=>x.id===id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');
   const state=replay(d);assert(state.finished,'Сначала завершите матч по партиям');
-  const m={id:uid('match'),teamId:d.teamId,date:d.date,opponent:d.opponent,competition:d.competition,sets:state.sets,roster:d.roster,stats:state.stats};
+  const m={id:uid('match'),teamId:d.teamId,date:d.date,opponent:d.opponent,competition:d.competition,sets:state.sets,roster:d.roster,stats:state.stats,...(d.mode==='dual'?{detail:d}:{})};
   data.coachMatches.push(m);data.coachLive=data.coachLive.filter(x=>x.id!==id);validateCoachData(data);
   await s.coachMatches.add(m);await s.coachLive.delete(id);return m;
  });

@@ -1,3 +1,4 @@
+import {replayDetailed,detailEvent} from './match-protocol.js';
 /* Pure match engine. Zones array is ordered 1..6. Recorded actions are partial statistics. */
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const unique=a=>new Set(a).size===a.length;
@@ -10,6 +11,7 @@ export function validLineup(lineup,roster){
 }
 export function rotate(lineup){return [...lineup.slice(1),lineup[0]];}
 export function replay(d){
+  if(d?.mode==='dual')return replayDetailed(d);
   assert(d&&Array.isArray(d.roster)&&unique(d.roster)&&d.roster.length>=6&&d.roster.length<=100&&validLineup(d.lineup,d.roster)&&
     [3,5].includes(d.bestOf)&&[15,21,25].includes(d.target)&&[15,21,25].includes(d.decider)&&sides.includes(d.firstServe)&&Object.hasOwn(schemes,d.scheme)&&
     (d.libero===null||d.roster.includes(d.libero)&&!d.lineup.includes(d.libero))&&Array.isArray(d.events)&&d.events.length<=5000,'Проверьте параметры матча');
@@ -64,8 +66,8 @@ export function replay(d){
   }
   return s;
 }
-export function appendEvent(d,event){const next={...d,events:[...d.events,event]};replay(next);return next;}
-export function undoEvent(d){return {...d,events:d.events.slice(0,-1)};}
+export function appendEvent(d,event){if(d.mode==='dual')return detailEvent(d,event);const next={...d,events:[...d.events,event]};replay(next);return next;}
+export function undoEvent(d){if(d.mode==='dual')return detailEvent(d,null);return {...d,events:d.events.slice(0,-1)};}
 export function validateLiveData(data){
  const players=new Map(data.coachPlayers.map(p=>[p.id,p])),teams=new Set(data.coachTeams.map(t=>t.id));
  const linked=r=>typeof r.id==='string'&&teams.has(r.teamId)&&Array.isArray(r.roster)&&r.roster.every(id=>players.get(id)?.teamId===r.teamId);
