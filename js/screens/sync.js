@@ -1,6 +1,7 @@
 import * as S from '../store.js';
 import * as db from '../db.js';
 import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,disconnectSync} from '../sync.js';
+import {parsePersonalCode,personalCredentials,readPersonalCode,savePersonalCode,forgetPersonalCode} from '../personal-sync.js';
 import {createPairingCode,readPairingCode} from '../sync-pairing.js';
 import {el,openSheet,closeSheet,isSheetOpen,confirmDialog,promptDialog,toast} from '../ui.js';
 
@@ -26,12 +27,18 @@ export function openSync(){
  let plan=null,client=null,secret=null,choices={},busy=false,seq=0,closed=false;
  const active=()=>!closed&&root.isConnected&&isSheetOpen();
  function clear(){plan=null;client=null;secret=null;choices={};token.value='';password.value='';results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}
- function controls(disabled){area.disabled=endpoint.disabled=token.disabled=password.disabled=preview.disabled=detach.disabled=pairCreate.disabled=pairImport.disabled=disabled;}
+ function controls(disabled){area.disabled=endpoint.disabled=token.disabled=password.disabled=preview.disabled=detach.disabled=pairCreate.disabled=pairImport.disabled=personalConnect.disabled=personalForget.disabled=disabled;}
  async function refresh(){
   const n=++seq,selected=area.value;
   try{
    const cp=await syncStatus(selected);if(n!==seq||closed)return;
    endpoint.value=cp?.endpoint||'';
+   const saved=readPersonalCode();
+   if(saved){const credentials=await personalCredentials(saved,selected);if(n!==seq||closed)return;
+    if(!cp||cp.endpoint===credentials.endpoint){endpoint.value=credentials.endpoint;token.value=credentials.token;password.value=credentials.password;}
+   }
+   personalStatus.textContent=saved?'Личный код сохранён на этом устройстве.':'Личный код не сохранён.';
+   personalForget.hidden=!saved;
    status.textContent=cp?'Последняя подтверждённая ревизия: '+cp.revision:'Контур пока не подключён.';
    detach.hidden=!cp;detach.style.display=cp?'':'none';
   }catch{if(n===seq)status.textContent='Не удалось прочитать состояние.';}
@@ -85,6 +92,31 @@ export function openSync(){
   if(!await confirmDialog({title:'Отключить контур?',text:'Локальные записи и серверная копия останутся. Удаляется только общая ревизия на этом устройстве. Если данные отличаются, повторное подключение потребует отдельного согласования. Для отзыва ключа обратитесь к администратору сервера.',ok:'Отключить',danger:true}))return;
   clear();try{await disconnectSync(area.value,true);await refresh();}catch(e){toast(e.message);}
  });
+ const personalStatus=el('p',{class:'profile-note','aria-live':'polite'});
+ const personalConnect=btn('Ввести личный код',async()=>{
+  if(busy)return;
+  busy=true;controls(true);apply.disabled=true;
+  try{
+   const value=await promptDialog({title:'Личный код TeachApp',text:'Вставьте один и тот же секретный код на iPhone и ПК.',password:true,ok:'Продолжить'});
+   if(value===null||!active())return;
+   const parsed=parsePersonalCode(value);
+   for(const scope of Object.keys(syncAreas)){
+    const cp=await syncStatus(scope);
+    if(cp&&cp.endpoint!==parsed.endpoint)throw Error('Есть подключение к другому серверу. Сначала согласуйте данные и отключите старый контур.');
+   }
+   if(!active())return;
+   if(!await confirmDialog({title:'Сохранить личный код?',text:'Сервер: '+parsed.endpoint+'. Код будет храниться в браузере этого устройства без дополнительного пароля. Любой, кто имеет доступ к профилю браузера, может получить код. Только на личном защищённом устройстве. Пока данные не отправляются.',ok:'Сохранить'}))return;
+   if(!active())return;
+   savePersonalCode(parsed.code);clear();await refresh();
+   toast('Код сохранён. Выполните первое сравнение для каждого нужного контура.');
+  }catch(e){if(active())toast(e.message,null,8000);}
+  finally{busy=false;controls(false);if(plan&&active())await drawSummary();}
+ },'primary');
+ const personalForget=btn('Забыть личный код',async()=>{
+  if(busy)return;
+  if(!await confirmDialog({title:'Забыть личный код?',text:'Код удалится только из этого браузера. Локальные записи, ревизии и серверная копия останутся. Код на другом устройстве продолжит работать.',ok:'Забыть',danger:true}))return;
+  try{forgetPersonalCode();clear();await refresh();}catch(e){toast(e.message);}
+ });
  const pairCreate=btn('Создать код для другого устройства',async()=>{
   if(busy)return;
   const selected=area.value;
@@ -127,7 +159,7 @@ export function openSync(){
  });
  area.onchange=()=>{clear();refresh();};
  for(const input of [endpoint,token,password])input.oninput=()=>{if(plan){plan=null;client=null;secret=null;choices={};results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}};
- const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Явная двусторонняя синхронизация через ваш сервер. Приложение остаётся автономным; фоновой отправки нет. Токен и пароль не сохраняются. В рабочую базу запись выполняется только после предпросмотра и подтверждения.'),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach,btn('Закрыть',closeSheet)]);
+ const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную.'),personalStatus,personalConnect,personalForget,p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach,btn('Закрыть',closeSheet)]);
  openSheet(root,{fullHeight:true,onClose:()=>{closed=true;clear();}});
  refresh();
 }
