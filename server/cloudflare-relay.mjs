@@ -74,11 +74,11 @@ export default {async fetch(request,env){
   return json(config(env)?200:503,{status:config(env)?'ready':'not-configured'});
  }
  const match=/^\/v1\/snapshot\/(school|coach)$/.exec(url.pathname),pair=/^\/v1\/pairing\/(create|redeem)$/.exec(url.pathname);
- const v2Snapshot=/^\/v2\/snapshot\/(school|coach)$/.exec(url.pathname),devices=/^\/v2\/devices\/(school|coach)(\/revoke)?$/.exec(url.pathname);
- if((!match&&!pair&&!v2Snapshot&&!devices)||url.search)return json(404,{error:'route'});
+ const v2Snapshot=/^\/v2\/snapshot\/(school|coach)$/.exec(url.pathname),devices=/^\/v2\/devices\/(school|coach)(\/revoke)?$/.exec(url.pathname),pairV2=/^\/v2\/pairing\/(create|redeem)$/.exec(url.pathname);
+ if((!match&&!pair&&!pairV2&&!v2Snapshot&&!devices)||url.search)return json(404,{error:'route'});
  const settings=config(env);
  if(!settings)return json(503,{error:'not-configured'});
- if((v2Snapshot||devices)&&!settings.adminHash)return json(404,{error:'route'});
+ if((v2Snapshot||devices||pairV2)&&!settings.adminHash)return json(404,{error:'route'});
  const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};
  if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
  if(request.method==='OPTIONS'){
@@ -121,12 +121,12 @@ export default {async fetch(request,env){
    const result=await stub.fetch(new Request('https://internal/snapshot-v2',init));
    return new Response(result.body,{status:result.status,headers:{...headers,...cors,'Content-Type':'application/json; charset=utf-8'}});
   }
-  if(pair){
+  if(pair||pairV2){
    if(request.method!=='POST')return json(405,{error:'method'},cors);
    if(!/^application\/json(?:;|$)/i.test(request.headers.get('Content-Type')||''))return json(415,{error:'content-type'},cors);
-   const op=pair[1],auth=/^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(request.headers.get('Authorization')||'');
+   const op=(pairV2||pair)[1],auth=/^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(request.headers.get('Authorization')||'');
    if(!auth)return json(401,{error:'unauthorized'},cors);
-   if(op==='create'&&!await authorized(request,settings.hashes.school))return json(401,{error:'unauthorized'},cors);
+   if(op==='create'&&!await authorized(request,pairV2?[settings.adminHash]:settings.hashes.school))return json(401,{error:'unauthorized'},cors);
    const rawLength=request.headers.get('Content-Length');
    if(rawLength!==null&&(!/^\d+$/.test(rawLength)||Number(rawLength)>4096))return json(413,{error:'too-large'},cors);
    if(!request.body)return json(400,{error:'packet'},cors);
@@ -143,7 +143,7 @@ export default {async fetch(request,env){
     if(Object.keys(payload).length)return json(400,{error:'packet'},cors);
     body={verifier:await digestToken(auth[1])};
    }
-   const stub=env.SNAPSHOTS.get(env.SNAPSHOTS.idFromName('device-invite-v1'));
+   const stub=env.SNAPSHOTS.get(env.SNAPSHOTS.idFromName(pairV2?'device-invite-v2':'device-invite-v1'));
    const result=await stub.fetch(new Request('https://internal/pairing/'+op,{method:'POST',body:JSON.stringify(body)}));
    return new Response(result.body,{status:result.status,headers:{...headers,...cors,'Content-Type':'application/json; charset=utf-8'}});
   }

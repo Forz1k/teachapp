@@ -196,10 +196,11 @@ async function readPacket(envelope,password,area,rev){
  return p;
 }
 const snapshotLimit=90*1024*1024;
-export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeoutMs=45000}={}){
+export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeoutMs=45000,protocolVersion=1}={}){
  endpoint=normalizeEndpoint(endpoint);
  check(validArea(area)&&typeof token==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(token),'Проверьте индивидуальный ключ доступа сервера');
- const url=endpoint+'/v1/snapshot/'+area;
+ check(protocolVersion===1||protocolVersion===2,'Неподдерживаемая версия синхронизации');
+ const url=endpoint+'/v'+protocolVersion+'/snapshot/'+area;
  async function request(method,body){
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),timeoutMs);
   try{

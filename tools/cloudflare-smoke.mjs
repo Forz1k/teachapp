@@ -127,4 +127,27 @@ try{
  assert.deepEqual(await (await get('school',device2)).json(),newSnapshot);
  assert.equal((await get('coach',coachDevice)).status,200);
  console.log('CLOUDFLARE V2 PASS: independent scoped device keys, real server revocation, legacy disable, persistent revisions, no exposed token hashes');
+ const {createTrustedInvite,redeemTrustedInvite,parseTrustedInvite,parseTrustedProfile,trustedCredentials,trustedRelayClient,listTrustedDevices,revokeTrustedDevice}=await import('../js/device-trust.js');
+ const v2Invite=await createTrustedInvite({personalCode,adminToken:admin,name:'Synthetic paired device',fetcher:route});
+ assert.equal(parseTrustedInvite(v2Invite.code).endpoint,'https://synthetic-worker.example');
+ const redemptions=await Promise.allSettled([redeemTrustedInvite(v2Invite.code,route),redeemTrustedInvite(v2Invite.code,route)]);
+ assert.equal(redemptions.filter(x=>x.status==='fulfilled').length,1);
+ const profile=redemptions.find(x=>x.status==='fulfilled').value;
+ assert.deepEqual(parseTrustedProfile(profile),profile);
+ assert.equal(profile.deviceId,v2Invite.deviceId);
+ assert.equal(trustedCredentials(profile,'school').password,personalSchool.password);
+ assert.notEqual(trustedCredentials(profile,'school').token,personalSchool.token);
+ assert.notEqual(trustedCredentials(profile,'school').token,trustedCredentials(profile,'coach').token);
+ assert.ok(!JSON.stringify(profile).includes(personalCode));
+ const pairedSchool=trustedRelayClient(profile,'school',{fetcher:route}),pairedCoach=trustedRelayClient(profile,'coach',{fetcher:route});
+ assert.deepEqual(await pairedSchool.get(),newSnapshot);
+ assert.deepEqual(await pairedCoach.get(),{revision:0,envelope:null});
+ const pairedList=await listTrustedDevices(profile.endpoint,admin,'school',route);
+ assert.ok(pairedList.some(d=>d.id===profile.deviceId&&d.lastSeen>0));
+ await revokeTrustedDevice(profile.endpoint,admin,'school',profile.deviceId,route);
+ await assert.rejects(pairedSchool.get(),/отказал в доступе/);
+ assert.deepEqual(await pairedCoach.get(),{revision:0,envelope:null});
+ await revokeTrustedDevice(profile.endpoint,admin,'coach',profile.deviceId,route);
+ await assert.rejects(pairedCoach.get(),/отказал в доступе/);
+ console.log('CLOUDFLARE V2 INVITE PASS: one-time encrypted pairing without shared access token, independent contour revocation');
 }finally{await stop();await rm(state,{recursive:true,force:true});}
