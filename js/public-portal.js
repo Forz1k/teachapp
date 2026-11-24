@@ -1,6 +1,12 @@
 /* Public portal: explicit, bounded projection. Never serialize private match objects. */
 import {replayDetailed,reasons,defaultBoardColors,validBoardColors,validBoardLogos} from './match-protocol.js';
 export const PORTAL_SCHEMA=1;
+export const primaryPortal=Object.freeze({
+ origin:'https://teachapp-96626-default-rtdb.europe-west1.firebasedatabase.app',
+ apiKey:'AIzaSyCcATw9MlETq3SUM9idORH4Us4zMyqkyTs',
+ owner:'FBEno7EO8LMKRV1sfSAEFLJbliM2',
+ slug:'volleyball'
+});
 export const MAX_SCHEDULE=20,MAX_ARCHIVE=20,MAX_EVENTS=30;
 const sides=['ours','theirs'];
 const clean=(v,max=100)=>typeof v==='string'?v.trim().slice(0,max):'';
@@ -25,7 +31,8 @@ export function shareUrl(base,origin,owner,slug){
 }
 export function scheduleItem(x){
  if(!x||!validId(x.id)||!clean(x.opponent)||!dateMs(x.startAt)||x.startAt===0)throw Error('Проверьте соперника и дату матча');
- return {id:x.id,opponent:clean(x.opponent),startAt:x.startAt};
+ const logos={ours:x.logos?.ours??null,theirs:x.logos?.theirs??null};
+ return {id:x.id,opponent:clean(x.opponent),startAt:x.startAt,...((logos.ours||logos.theirs)&&validBoardLogos(logos)?{logos}:{})};
 }
 export function sortedSchedule(items){return items.map(scheduleItem).sort((a,b)=>a.startAt-b.startAt||a.id.localeCompare(b.id)).slice(0,MAX_SCHEDULE);}
 export function localDay(t){const d=new Date(t);return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');}

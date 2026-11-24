@@ -21,6 +21,10 @@ export async function firebaseSignIn(apiKey,email,password,fetcher=globalThis.fe
  }
  return {uid:auth.localId,getToken,close(){closed=true;token='';refresh='';}};
 }
+export async function resetPortalPassword(apiKey,email){
+ assert(email.includes('@'),'Введите почту тренера');
+ await request(fetch,'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key='+encodeURIComponent(apiKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestType:'PASSWORD_RESET',email})});
+}
 export function firebasePublisher(origin,slug,session,fetcher=globalThis.fetch){
  const url=portalAddress(firebaseOrigin(origin),session.uid,slug);
  let previous=null;

@@ -19,16 +19,6 @@ const score=x=>x.ours+' : '+x.theirs;
 const sides=['ours','theirs'];
 function playerLabel(p){return (p.number==null?'':'№'+p.number+' · ')+p.name;}
 function six(players,initial=[],options={}){return lineupPicker(players,initial,options);}
-async function prepareLogo(file){
- if(!file||!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>5000000)throw Error('Выберите PNG, JPEG или WebP до 5 МБ');
- const url=URL.createObjectURL(file);
- try{const image=new Image();await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(Error('Изображение не удалось открыть'));image.src=url;});
- if(!image.naturalWidth||!image.naturalHeight||image.naturalWidth*image.naturalHeight>32000000)throw Error('Изображение слишком большое');
- const canvas=document.createElement('canvas');canvas.width=96;canvas.height=96;const scale=96/Math.max(image.naturalWidth,image.naturalHeight),w=image.naturalWidth*scale,h=image.naturalHeight*scale;
- canvas.getContext('2d').drawImage(image,(96-w)/2,(96-h)/2,w,h);const data=canvas.toDataURL('image/png');
- if(!V.validBoardLogos({ours:data,theirs:null}))throw Error('Не удалось подготовить эмблему');return data;
- }finally{URL.revokeObjectURL(url);}
-}
 function teamEmblem(d,side){const src=d.boardLogos?.[side];return src?el('img',{class:'vp-team-emblem',src,alt:'Эмблема '+sideName(d,side)}):null;}
 function colorFields(initial=V.defaultBoardColors,initialLogos={ours:null,theirs:null}){
  const rows=Object.entries(V.boardPalette).map(([id,c])=>[id,c.label]);
@@ -37,7 +27,7 @@ function colorFields(initial=V.defaultBoardColors,initialLogos={ours:null,theirs
  function draw(){preview.replaceChildren(...[ours,theirs].map((n,i)=>{const c=V.boardPalette[n.value];return el('span',{style:'background:'+c.end},[logos[sides[i]]?el('img',{class:'vp-team-emblem',src:logos[sides[i]],alt:'Эмблема'}):null,el('span',{text:i?'Соперник':'Наши'})]);}));}
  for(const side of sides){
   const file=el('input',{type:'file',accept:'image/png,image/jpeg,image/webp'});let revision=0;
-  file.onchange=async()=>{const current=++revision;try{const data=await prepareLogo(file.files[0]);if(current===revision){logos[side]=data;draw();}}catch(e){if(current===revision)toast(e.message);}finally{file.value='';}};
+  file.onchange=async()=>{const current=++revision;try{const data=await V.prepareLogo(file.files[0]);if(current===revision){logos[side]=data;draw();}}catch(e){if(current===revision)toast(e.message);}finally{file.value='';}};
   logoRows.push(field(side==='ours'?'Эмблема нашей команды':'Эмблема соперника',file),btn('Убрать эмблему '+(side==='ours'?'нашей команды':'соперника'),()=>{revision++;logos[side]=null;draw();},'wide'));
  }
  ours.addEventListener('change',draw);theirs.addEventListener('change',draw);draw();

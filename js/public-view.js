@@ -1,12 +1,12 @@
-import {portalAddress,readPortal,portalState,countdown} from './public-portal.js';
+import {primaryPortal,portalAddress,readPortal,portalState,countdown} from './public-portal.js';
 import {reasons,boardPalette} from './match-protocol.js';
 const root=document.getElementById('portal'),connection=document.getElementById('connection');
 const el=(tag,cls,text,...children)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=String(text);n.append(...children.filter(Boolean));return n;};
 const p=(t,c='muted')=>el('p',c,t),card=(...children)=>el('section','card',null,...children);
 const date=t=>new Intl.DateTimeFormat('ru-RU',{dateStyle:'long',timeStyle:'short'}).format(t)+' · местное время';
 let data=null,connected=false,received=false,problem='',lastMode='',lastStale=false;
-function teams(team,opponent,match){
- const item=(name,side)=>{const icon=el('div','team-icon',name.slice(0,1).toUpperCase());if(match?.logos?.[side]){const image=el('img');image.src=match.logos[side];image.alt='';icon.replaceChildren(image);}if(match)icon.style.background=boardPalette[match.colors[side]].end;return el('div','team',null,icon,el('span','',name),match?el('strong','team-score',match.status==='finished'?match.setsWon[side]:match.score[side]):null,match&&match.status==='live'?p(match.serve===side?'● Подача':'Приём'):null);};
+function teams(team,opponent,match,logos=match?.logos){
+ const item=(name,side)=>{const icon=el('div','team-icon',name.slice(0,1).toUpperCase());if(logos?.[side]){const image=el('img');image.src=logos[side];image.alt='';icon.replaceChildren(image);}if(match)icon.style.background=boardPalette[match.colors[side]].end;return el('div','team',null,icon,el('span','',name),match?el('strong','team-score',match.status==='finished'?match.setsWon[side]:match.score[side]):null,match&&match.status==='live'?p(match.serve===side?'● Подача':'Приём'):null);};
  return el('div','teams',null,item(team,'ours'),el('span','vs',match?':':'VS'),item(opponent,'theirs'));
 }
 function sets(m){return el('div','sets',null,...m.sets.map((x,i)=>el('span','',(i+1)+' · '+x.ours+':'+x.theirs)),m.status==='live'?el('span','',m.set+' · '+m.score.ours+':'+m.score.theirs):null);}
@@ -16,7 +16,7 @@ function draw(){
  connection.textContent=connected?'● Подключено':received?'Нет связи · последний счёт':'Подключение…';
  if(!data){root.replaceChildren(card(el('h1','',received?'Страница пока не опубликована':'TeachApp Volleyball'),p(problem||(received?'Попросите тренера опубликовать расписание.':'Ожидание данных…'))));return;}
  const hero=el('section','card hero');const m=state.match;
- if(state.next){hero.append(el('h1','',state.mode==='waiting'?'Ожидаем начала матча':'Следующий матч'),teams(data.team,state.next.opponent),p(date(state.next.startAt)));
+ if(state.next){hero.append(el('h1','',state.mode==='waiting'?'Ожидаем начала матча':'Следующий матч'),teams(data.team,state.next.opponent,null,state.next.logos),p(date(state.next.startAt)));
  if(state.mode==='upcoming'){const labels=['дней','часов','мин','сек'];hero.append(el('div','clock',null,...countdown(state.remaining).map((n,i)=>el('div','',null,el('strong','',String(n).padStart(2,'0')),el('span','',labels[i])))));}else hero.append(p('Счёт появится после фактического запуска тренером.'));
  }else if(m){hero.append(el('h1',m.status==='live'?'live':'',m.status==='finished'?'Матч завершён':m.status==='break'?'Перерыв · партия '+m.set:'● LIVE · партия '+m.set),teams(data.team,m.opponent,m),p('Партии '+m.setsWon.ours+':'+m.setsWon.theirs),sets(m));}
  else hero.append(el('h1','',data.team),p('Предстоящих матчей пока нет.'));
@@ -28,7 +28,7 @@ function draw(){
  root.replaceChildren(...parts);
 }
 try{
- const q=new URLSearchParams(location.search),url=portalAddress(q.get('db'),q.get('owner'),q.get('team'));
+ const q=new URLSearchParams(location.search),url=q.size?portalAddress(q.get('db'),q.get('owner'),q.get('team')):portalAddress(primaryPortal.origin,primaryPortal.owner,primaryPortal.slug);
  const stream=new EventSource(url);
  stream.onopen=()=>{connected=true;problem='';draw();};
  let current=null;
