@@ -1,14 +1,6 @@
 name: TeachApp Cloudflare
+# Temporarily manual-only until the Cloudflare account is connected.
 on:
-  pull_request:
-  push:
-    branches: [main]
-    paths:
-      - 'server/cloudflare-relay.mjs'
-      - 'server/cloudflare-protocol.mjs'
-      - 'wrangler.jsonc'
-      - 'tools/cloudflare-smoke.mjs'
-      - '.github/workflows/cloudflare.yml'
   workflow_dispatch:
 permissions:
   contents: read
