@@ -11,7 +11,8 @@ import {openGradeHistory} from './grade-history.js';
 import {openAchievements} from './resources.js';
 import {lineageOf} from '../school-tools.js';
 import {openPassport} from './school-tools.js';
-import {metric,dashboardHeading} from '../dashboard.js';
+import {metric,dashboardHeading,trendChart} from '../dashboard.js';
+import {schoolAnalytics} from '../analytics.js';
 const { el, icon } = ui;
 
 /** Цвет класса бейджа по значению. */
@@ -489,22 +490,52 @@ function nextLessonDate(afterIso) {
 
 /* ---------- шторка ученика ---------- */
 
-async function openStudentSheet(studentId, classId) {
+export async function openStudentSheet(studentId, classId, periodId) {
   const student = store.state.students.find((s) => s.id === studentId);
-  if (!student) return;
+  if (!student || student.classId!==classId) return;
   const exs = store.exemptionsOfStudent(studentId).sort((a, b) => a.dateFrom.localeCompare(b.dateFrom));
 
-  const period=store.currentTrimester(),lessons=store.lessonsInRange(classId,period.from,period.to),lessonIds=new Set(lessons.map(l=>l.id)),marks=store.state.marks.filter(m=>m.studentId===studentId&&lessonIds.has(m.lessonId)),grades=marks.filter(m=>m.value).map(m=>Number(m.value)),att=store.attendanceFor(lessons,[student],classId),results=store.state.normResults.filter(r=>r.studentId===studentId&&M.inRange(r.date,period.from,period.to));
+  const period=store.state.settings.trimesters.find(t=>t.id===periodId)||store.currentTrimester();
+  const today=M.todayIso();
+  const analytics=schoolAnalytics(classId,period.from,period.to,studentId,today);
+  const row=analytics.rows[0],att=row.att;
+  const results=store.state.normResults.filter(r=>r.studentId===studentId&&M.inRange(r.date,period.from,period.to)&&r.date<=today);
+  const completed=results.filter(r=>r.status==='done'),restricted=results.filter(r=>r.status==='restricted');
+  const changePeriod=el('select',{'aria-label':'Учебный период ученика'},store.state.settings.trimesters.map(t=>el('option',{value:t.id,text:periodName(t)+' · '+M.fmtFull(t.from)+' — '+M.fmtFull(t.to)})));
+  changePeriod.value=period.id;
+  changePeriod.onchange=()=>openStudentSheet(studentId,classId,changePeriod.value);
+  const back=()=>openStudentSheet(studentId,classId,period.id);
+  const cls=store.state.classes.find(c=>c.id===classId);
   const sheet = el('div', {class:'student-profile coach-stack'}, [
     el('div',{class:'profile-avatar',text:student.number??'—','aria-hidden':'true'}),
     el('h2', { text: student.fullName }),
-    el('div', { class: 'sub', text: `№ ${student.number ?? '—'} в списке` }),
+    el('div', { class: 'sub', text: (cls?.name||'')+' · № '+(student.number??'—')+' в списке' }),
+    el('label',{class:'field'},[el('span',{text:'Учебный период'}),changePeriod]),
   ]);
 
-  sheet.append(dashboardHeading(periodName(period)),el('div',{class:'dashboard-metrics'},[metric('Средняя оценка',grades.length?M.fmtAvg(grades.reduce((a,b)=>a+b,0)/grades.length):'—','journal'),metric('Посещаемость',att.pct==null?'—':att.pct+'%','check'),metric('Оценок',grades.length,'chart'),metric('Нормативов',results.length,'quick')]),el('div',{class:'profile-note',text:'Не отмечено: '+att.unknown+' · отсутствия: '+att.absent+' · ОСВ: '+att.exempt}),dashboardHeading('Нормативы за период'),...results.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10).map(r=>el('div',{class:'profile-result'},[el('strong',{text:r.definition?.name||'Норматив'}),el('span',{text:M.fmtFull(r.date)+' · '+(r.value??'—')+' '+(r.definition?.unit||'')+' · оценка '+(r.grade??'—')})])),...(!results.length?[el('p',{text:'Нет результатов за выбранный период.'})]:[]),dashboardHeading('Участие и ограничения'));
-  sheet.append(el('button',{class:'btn wide',type:'button',text:'История оценок',onclick:()=>openGradeHistory(studentId,{},()=>openStudentSheet(studentId,classId))}));
-  sheet.append(el('button',{class:'btn wide',type:'button',text:'Паспорт физической подготовки',onclick:()=>openPassport(studentId,()=>openStudentSheet(studentId,classId))}));
-  sheet.append(el('button',{class:'btn wide',type:'button',text:'Спортивные достижения',onclick:()=>openAchievements({area:'school',subjectType:'student',subjectId:lineageOf(student)},()=>openStudentSheet(studentId,classId))}));
+  sheet.append(dashboardHeading(periodName(period)),
+    el('div',{class:'dashboard-metrics'},[
+      metric('Средняя оценка',row.mean==null?'—':M.fmtAvg(row.mean),'journal'),
+      metric('Посещаемость',att.pct==null?'—':att.pct+'%','check'),
+      metric('Оценок',row.count,'chart'),
+      metric('Попыток нормативов',completed.length,'quick'),
+      metric('Итоговая оценка',row.final??'—','journal')]),
+    el('div',{class:'profile-note',text:'Проведено уроков: '+att.held+' · не отмечено: '+att.unknown+' · отсутствия: '+att.absent+' · ОСВ: '+att.exempt}),
+    dashboardHeading('Динамика оценок','Среднее по месяцам; месяцы без оценок не считаются нулём.'),
+    trendChart(analytics.trend.map(r=>({date:r.month,value:r.mean})),{min:1,max:5,label:'Средняя оценка',unit:'балл'}),
+    ...analytics.trend.filter(r=>r.count>0).map(r=>el('p',{class:'profile-note',text:r.month+' · '+M.fmtAvg(r.mean)+' · оценок '+r.count})),
+    dashboardHeading('Нормативы за период','Записанные попытки, не список обязательных нормативов.'),
+    el('p',{class:'profile-note',text:'Выполненных попыток: '+completed.length+' · не выполнялись по ограничениям: '+restricted.length}));
+  const normRows=results.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(r=>el('div',{class:'profile-result'},[
+    el('strong',{text:r.definition?.name||'Норматив'}),
+    el('span',{text:M.fmtFull(r.date)+' · '+(r.status==='restricted'?'Не выполнялся по ограничению':(r.value??'—')+' '+(r.definition?.unit||'')+' · оценка '+(r.grade??'—'))})]));
+  sheet.append(...normRows.slice(0,10));
+  if(normRows.length>10)sheet.append(el('details',{},[el('summary',{text:'Ещё попыток: '+(normRows.length-10)}),...normRows.slice(10)]));
+  if(!normRows.length)sheet.append(el('p',{text:'Нет результатов за выбранный период.'}));
+  sheet.append(dashboardHeading('Участие и ограничения'));
+  sheet.append(el('button',{class:'btn wide',type:'button',text:'История оценок',onclick:()=>openGradeHistory(studentId,{},back)}));
+  sheet.append(el('button',{class:'btn wide',type:'button',text:'Паспорт физической подготовки',onclick:()=>openPassport(studentId,back)}));
+  sheet.append(el('button',{class:'btn wide',type:'button',text:'Спортивные достижения',onclick:()=>openAchievements({area:'school',subjectType:'student',subjectId:lineageOf(student)},back)}));
   sheet.append(el('button',{class:'btn',type:'button',text:'Группа здоровья и ограничения',onclick:() => openHealth(studentId)}));
   if (exs.length) {
     const block = el('div', { class: 'card-block', style: 'margin-top:8px' }, [

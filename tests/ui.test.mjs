@@ -585,3 +585,24 @@ test('expiry warning opens a fresh record list instead of analytics',async()=>{
   assert.match(sheet.textContent,/Нет актуальных записей/);
  }finally{store.state.exemptions=old;ui.closeSheet();}
 });
+
+test('student profile switches periods locally and shows recorded attempts separately',async()=>{
+ const {cls,a}=await seed();
+ const {openStudentSheet}=await import('../js/screens/journal.js');
+ const periods=store.state.settings.trimesters;
+ const selected=periods.find(t=>t.from<='2026-11-10'&&t.to>='2026-11-10');
+ assert.ok(selected);
+ const old=store.state.currentTrimesterId;
+ await openStudentSheet(a.id,cls.id,selected.id);
+ const sheet=doc.querySelector('.sheet');
+ assert.match(sheet.textContent,/Иванов Иван Иванович/);
+ assert.match(sheet.textContent,/Динамика оценок/);
+ assert.match(sheet.textContent,/Итоговая оценка/);
+ assert.match(sheet.textContent,/Выполненных попыток: 0/);
+ const select=sheet.querySelector('select[aria-label="Учебный период ученика"]');
+ assert.equal(select.value,selected.id);
+ const other=periods.find(t=>t.id!==selected.id);
+ if(other){select.value=other.id;select.dispatchEvent(new window.Event('change'));await tick();assert.equal(sheet.querySelector('select[aria-label="Учебный период ученика"]').value,other.id);assert.match(sheet.textContent,/Нет результатов за выбранный период/);}
+ assert.equal(store.state.currentTrimesterId,old);
+ ui.closeSheet();
+});
