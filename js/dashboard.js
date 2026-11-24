@@ -1,8 +1,9 @@
-import {el,icon} from './ui.js';
+import {el,icon,openSheet,closeSheet,toast} from './ui.js';
+import {readHidden,saveHidden} from './dashboard-preferences.js';
 export function metric(label,value,glyph,detail=''){
  return el('div',{class:'dashboard-metric'},[el('span',{class:'metric-icon','aria-hidden':'true'},[icon(glyph)]),el('span',{class:'metric-value',text:String(value)}),el('span',{class:'metric-label',text:label}),detail?el('small',{text:detail}):null]);
 }
-export function actionTile(label,glyph,onclick){return el('button',{class:'dashboard-action',type:'button',onclick},[el('span',{class:'metric-icon','aria-hidden':'true'},[icon(glyph)]),el('span',{text:label}),icon('chevron')]);}
+export function actionTile(label,glyph,onclick){return el('button',{class:'dashboard-action',type:'button','data-action-label':label,onclick},[el('span',{class:'metric-icon','aria-hidden':'true'},[icon(glyph)]),el('span',{text:label}),icon('chevron')]);}
 export function dashboardHeading(title,description=''){return el('div',{class:'dashboard-heading'},[el('h2',{text:title}),description?el('p',{text:description}):null]);}
 export function lessonOverview(rows,held){return {total:rows.length,done:rows.filter(r=>r.lesson&&held(r.lesson)).length,next:rows.find(r=>!r.lesson||!held(r.lesson))||null};}
 
@@ -39,4 +40,13 @@ export function calendarMonth(date){
  if(!Number.isInteger(y)||y<1000||y>9999||!Number.isInteger(m)||m<1||m>12)throw Error('Выберите дату');
  const count=new Date(y,m,0).getDate(),prefix=y+'-'+String(m).padStart(2,'0')+'-';
  return {from:prefix+'01',to:prefix+count,offset:(new Date(y,m-1,1).getDay()+6)%7,days:Array.from({length:count},(_,i)=>prefix+String(i+1).padStart(2,'0'))};
+}
+
+/** Keep every action reachable via the customization panel; only hide home shortcuts. */
+export function personalizedActions(area,nodes){
+ const actions=nodes.filter(Boolean),grid=el('div',{class:'dashboard-actions'}),root=el('div',{},[grid]);
+ function draw(){const hidden=new Set(readHidden(area));grid.replaceChildren(...actions.filter(n=>!hidden.has(n.dataset.actionLabel)));}
+ const edit=()=>{const hidden=new Set(readHidden(area)),rows=actions.map(n=>{const name=n.dataset.actionLabel,c=el('input',{type:'checkbox'});c.checked=!hidden.has(name);return {name,c,node:el('label',{class:'field'},[el('span',{text:name}),c])};});
+ openSheet(el('div',{class:'coach-form'},[el('h2',{text:'Быстрые действия'}),el('p',{text:'Настройте ярлыки главной страницы. Скрытые действия остаются доступны здесь и в основных разделах.'}),...rows.map(r=>r.node),el('button',{type:'button',class:'btn primary wide',text:'Сохранить',onclick:()=>{try{saveHidden(area,rows.filter(r=>!r.c.checked).map(r=>r.name));draw();closeSheet();}catch(e){toast('Не удалось сохранить настройки');}}}),el('button',{type:'button',class:'btn wide',text:'Показать все',onclick:()=>{try{saveHidden(area,[]);draw();closeSheet();}catch(e){toast('Не удалось сохранить настройки');}}}),el('button',{type:'button',class:'btn wide',text:'Закрыть',onclick:closeSheet}),...actions.filter(n=>hidden.has(n.dataset.actionLabel)).map(n=>el('button',{type:'button',class:'btn wide',text:'Открыть: '+n.dataset.actionLabel,onclick:()=>{closeSheet();n.click();}}))]));};
+ root.prepend(el('button',{type:'button',class:'btn small',text:'Настроить быстрые действия',onclick:edit}));draw();return root;
 }
