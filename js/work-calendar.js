@@ -15,7 +15,7 @@ export function calendarEntries(school,coach,events,from,to,tournaments=[],porta
   if(M.inRange(date,school.settings.year.from,school.settings.year.to)&&!(school.settings.holidays||[]).some(h=>M.inRange(date,h.from,h.to))){
    for(const l of M.scheduleForDate(school.schedule,school.scheduleOverrides,date)){
     if(!classes.has(l.classId))continue;
-    out.push({id:'lesson-'+l.id+'-'+date,source:'school',date,time:timeOK(l.time)?l.time:'',minutes:0,title:'Урок '+l.slot+' · '+classes.get(l.classId),exportTitle:'Урок физкультуры',done:!!school.lessons?.some(x=>x.classId===l.classId&&x.date===date&&x.held),remind:15});
+    out.push({id:'lesson-'+l.id+'-'+date,source:'school',date,time:timeOK(l.time)?l.time:'',minutes:0,title:'Урок '+l.slot+' · '+classes.get(l.classId),exportTitle:'Урок физкультуры',done:!!M.matchScheduledLessons(M.scheduleForDate(school.schedule,school.scheduleOverrides,date),school.lessons?.filter(x=>x.date===date)||[]).get(l.id)?.held,remind:15});
    }
   }
   const checks=[['exemptions','Заканчиваются освобождения'],['activityRestrictions','Заканчиваются ограничения'],['studentHealthProfiles','Проверка группы здоровья']];

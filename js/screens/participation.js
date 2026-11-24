@@ -42,7 +42,7 @@ export function openParticipation(studentId, lessonId, activityId, onReturn) {
     } catch (e) { toast(e.message); }
   }
   const body = el('div', {}, [el('h2', { text: 'Самочувствие и нагрузка' }),
-    el('p', { text: student.fullName + ' · ' + M.fmtFull(lesson.date) }),
+    el('p', { text: student.fullName + ' · ' + M.lessonLabel(lesson) }),
     el('p',{text:activity?.name || ''}), field('Фактическое участие', mode), field('Основание', basis), field('Вариант участия по выбору преподавателя',alternative), confirmation,
     button('Сохранить', () => commit({ mode: mode.value, basis: basis.value, activityId: activity?.id, alternative: alternative.value, full: full.checked }))]);
   if (previous) body.append(button('Снять запись', () => commit(null)));

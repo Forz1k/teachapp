@@ -6,7 +6,7 @@ const dates=(a,b)=>a&&a>=b;
 export function orderTasks(tasks){return tasks.slice().sort((a,b)=>b.priority-a.priority||a.date.localeCompare(b.date)||a.title.localeCompare(b.title,'ru')||a.id.localeCompare(b.id));}
 export function schoolTasks(s,today=M.todayIso(),days=30){
  const from=M.addDays(today,-Math.min(90,Math.max(1,days))),until=M.addDays(today,7),year=s.settings.year;
- const classes=new Map(s.classes.map(c=>[c.id,c])),students=new Map(),marks=new Map(),parts=new Map(),existing=new Set(),tasks=[];
+ const classes=new Map(s.classes.map(c=>[c.id,c])),students=new Map(),marks=new Map(),parts=new Map(),existing=new Map(),tasks=[];
  for(const p of s.students){if(!students.has(p.classId))students.set(p.classId,[]);students.get(p.classId).push(p);}
  // Index only lessons in the review window, not the whole school year.
  const recent=new Set(s.lessons.filter(l=>M.inRange(l.date,from,today)&&M.inRange(l.date,year.from,year.to)&&classes.has(l.classId)).map(l=>l.id));
@@ -18,7 +18,8 @@ export function schoolTasks(s,today=M.todayIso(),days=30){
   overridesByDate.get(o.date).push(o);
  }
  for(const l of s.lessons){
-  existing.add(l.classId+'|'+l.date);
+  if(!M.inRange(l.date,from,today))continue;
+  if(!existing.has(l.date))existing.set(l.date,[]);existing.get(l.date).push(l);
   if(!M.inRange(l.date,from,today)||!M.inRange(l.date,year.from,year.to)||!classes.has(l.classId))continue;
   const pupils=students.get(l.classId)||[];if(!pupils.length)continue;
   const a=attendanceDetails([l],pupils,marks,parts,today);
@@ -28,9 +29,10 @@ export function schoolTasks(s,today=M.todayIso(),days=30){
  // Only past scheduled days, respecting cancellations and holidays.
  for(let date=from;date<today;date=M.addDays(date,1)){
   if(!M.inRange(date,year.from,year.to)||(s.settings.holidays||[]).some(h=>M.inRange(date,h.from,h.to)))continue;
-  for(const r of M.scheduleForDate(s.schedule,overridesByDate.get(date)||[],date)){
-   const key=r.classId+'|'+date;if(existing.has(key)||!classes.has(r.classId)||!(students.get(r.classId)||[]).length)continue;
-   existing.add(key);tasks.push(item('planned-'+key,'lesson',classes.get(r.classId).name+' · урок без записи','Урок был в расписании. Проверьте, состоялся ли он.',date,2,{classId:r.classId,date}));
+  const rows=M.scheduleForDate(s.schedule,overridesByDate.get(date)||[],date),matched=M.matchScheduledLessons(rows,existing.get(date)||[]);
+  for(const r of rows){
+   const key=r.classId+'|'+date+'|'+r.slot;if(matched.has(r.id)||!classes.has(r.classId)||!(students.get(r.classId)||[]).length)continue;
+   tasks.push(item('planned-'+key,'lesson',classes.get(r.classId).name+' · урок '+r.slot+' без записи','Урок был в расписании. Проверьте, состоялся ли он.',date,2,{classId:r.classId,date,slot:r.slot,time:r.time||''}));
   }
  }
  const pupilClass=new Map(s.students.map(p=>[p.id,p.classId]));

@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import 'fake-indexeddb/auto';
+import * as db from '../js/db.js';
+import * as S from '../js/store.js';
+import * as M from '../js/model.js';
+import {validateBackup,BACKUP_VERSION} from '../js/backup.js';
+test('double lessons preserve legacy IDs, separate marks and reject duplicate slots',async()=>{
+ await db.replaceAll(Object.fromEntries(Object.keys(db.SCHEMA).map(k=>[k,[]])));await db.put('meta',M.defaultSettings());await db.put('classes',{id:'c',name:'7А'});await db.put('students',{id:'s',classId:'c',fullName:'Synthetic student',number:1});await S.load();
+ const date='2026-09-01',first=await S.addLesson('c',date);
+ await S.setMark('s',first.id,{value:'5'});
+ const rows=[{id:'r1',classId:'c',slot:2,time:'09:00'},{id:'r2',classId:'c',slot:3,time:'10:00'}];
+ assert.equal(M.matchScheduledLessons(rows,[first]).get('r1').id,first.id);
+ const second=await S.addLesson('c',date,null,'',{slot:3,time:'10:00'});
+ assert.notEqual(second.id,first.id);
+ assert.equal((await S.addLesson('c',date,null,'',{slot:3})).id,second.id);
+ await assert.rejects(S.addLesson('c',date),/несколько уроков/);
+ await S.setMark('s',second.id,{value:'3'});
+ assert.equal(S.markMap('c').get(first.id+'|s').value,'5');
+ assert.equal(S.markMap('c').get(second.id+'|s').value,'3');
+ await S.updateLesson(first.id,{slot:2});
+ await assert.rejects(S.updateLesson(second.id,{slot:2}),/таким номером/);
+ await S.load();assert.deepEqual(S.lessonsOfClass('c').map(l=>l.id),[first.id,second.id]);
+ assert.equal(M.matchScheduledLessons(rows,S.lessonsOfClass('c')).get('r2').id,second.id);
+ const data=await db.dumpAll();validateBackup({app:'teachapp',version:BACKUP_VERSION,data});
+ data.lessons.push({...data.lessons[1],id:'dup'});assert.throws(()=>validateBackup({app:'teachapp',version:BACKUP_VERSION,data}),/Повтор номера/);
+ await S.updateLesson(second.id,{date:'2026-09-02'});assert.equal(S.markMap('c').get(second.id+'|s').value,'3');
+});
+test('planner creates only the missing scheduled slot without duplicating legacy lesson',()=>{
+ const date='2026-09-01',rules=[{id:'a',classId:'c',weekday:M.weekdayOf(date),slot:2,time:'09:00'},{id:'b',classId:'c',weekday:M.weekdayOf(date),slot:3,time:'10:00'}];
+ const entries=M.planLessonEntries({classId:'c',from:date,to:date,rules,overrides:[],holidays:[],days:new Set()});
+ assert.deepEqual(entries.map(r=>r.slot),[2,3]);
+ assert.deepEqual(M.missingLessonEntries(entries,[{id:'legacy',classId:'c',date}]).map(r=>r.slot),[3]);
+ assert.deepEqual(M.missingLessonEntries(entries,[{id:'legacy',classId:'c',date},{id:'explicit',classId:'c',date,slot:3}]),[]);
+});

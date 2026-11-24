@@ -4,6 +4,7 @@ import { validateCoachData, coachStores } from './coach.js';
 import {validateArchive} from './school-archive.js';
 import {validateWorkRecord} from './workbench.js';
 import { SCHEMA } from './db.js';
+import {validLessonSlot,validLessonTime} from './model.js';
 
 export const BACKUP_VERSION = 21;
 const legacyCore = ['meta','classes','students','lessons','topics','marks','exemptions','monthly'];
@@ -78,7 +79,8 @@ export function validateBackup(payload) {
   if(new Set(tables.students.map(s=>s.lineageId||s.id)).size!==tables.students.length)throw Error('Повтор связи истории ученика');
   if(ktpLinkIssues(tables).length)throw Error('Проверьте поля и связи в разделе ktp. Откройте диагностику КТП для подробностей.');
   check('topics', r => text(r.name) && (!r.ktpId || index.ktp.has(r.ktpId)) && tags(r.activityIds));
-  check('lessons', r => index.classes.has(r.classId) && date(r.date) && (!r.topicId || index.topics.has(r.topicId)) && tags(r.activityIds));
+  check('lessons', r => index.classes.has(r.classId) && date(r.date) && (!r.topicId || index.topics.has(r.topicId)) && tags(r.activityIds)&&validLessonSlot(r.slot)&&validLessonTime(r.time));
+  const lessonSlots=new Set();for(const r of tables.lessons){if(r.slot==null)continue;const key=JSON.stringify([r.classId,r.date,r.slot]);if(lessonSlots.has(key))throw Error('Повтор номера урока в одном классе на дату');lessonSlots.add(key);}
   check('marks', r => pair(r) && (!r.participationId || index.participation.get(r.participationId)?.studentId === r.studentId
     && index.participation.get(r.participationId)?.lessonId === r.lessonId)
     && (!r.baseMark || (r.baseMark.id === r.id && r.baseMark.studentId === r.studentId && r.baseMark.lessonId === r.lessonId)));
