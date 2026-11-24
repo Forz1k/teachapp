@@ -7,6 +7,7 @@ const timestamp=x=>typeof x==='string'&&Number.isFinite(Date.parse(x));
 const uniq=a=>new Set(a).size===a.length;
 export const reasons={point:'Без детализации',kill:'Атака',block:'Блок',ace:'Эйс',serveError:'Ошибка подачи',attackError:'Ошибка атаки',receiveError:'Ошибка приёма',otherError:'Другая ошибка'};
 const errors=['serveError','attackError','receiveError','otherError'];
+const canPlace=kind=>kind==='ace'||kind==='kill';
 const isError=k=>errors.includes(k);
 const emptyRotations=()=>Array.from({length:6},(_,i)=>({position:i+1,rallies:0,won:0,lost:0}));
 const sideData=()=>({stats:{},points:0,opponentErrors:0,onServe:0,maxRun:0,run:0,rotations:emptyRotations(),runs:[],activeRun:null,unknown:0});
@@ -88,6 +89,7 @@ export function replayDetailed(d){
   fail(ev.type==='rally'&&sides.includes(ev.side)&&Object.hasOwn(reasons,ev.kind),'Неизвестное действие');
   const winner=ev.side,loser=other(winner),actor=isError(ev.kind)?loser:winner,player=ev.player??null,before={lineups:{ours:visible('ours'),theirs:visible('theirs')},serve:s.serve};
   fail(ev.kind!=='point'||player===null,'Для неуточнённого очка не указывайте игрока');
+  fail(ev.placement==null||canPlace(ev.kind)&&integer(ev.placement,1,6),'Зона завершения — 1–6 только для эйса или результативной атаки');
   if(player!==null)fail(visible(actor).includes(player),'Выберите игрока до перехода');
   if(['ace','serveError'].includes(ev.kind))fail(s.serve===actor&&(player===null||server(actor)===player),'Эйс или ошибка подачи относится к подающей команде и игроку');
   if(ev.kind==='block'&&player!==null)fail([2,3,4].includes(lineupFor(actor).indexOf(player)+1)&&!(actor==='ours'&&player===d.libero),'Блок — игрок передней линии');
@@ -135,6 +137,12 @@ export function detailEvent(d,event,now=new Date().toISOString()){
  if(event.type==='attribute'){
   const last=events.at(-1);fail(last?.type==='rally','Можно уточнить только последнее очко');
   events[events.length-1]={...last,kind:event.kind,player:event.player??null};
+  if(last.kind!==event.kind)delete events[events.length-1].placement;
+ }else if(event.type==='placement'){
+  const last=events.at(-1);fail(last?.type==='rally'&&canPlace(last.kind),'Укажите направление последнего эйса или результативной атаки');
+  fail(event.zone===null||integer(event.zone,1,6),'Выберите зону 1–6');
+  events[events.length-1]={...last};
+  if(event.zone===null)delete events[events.length-1].placement;else events[events.length-1].placement=event.zone;
  }else{
   const last=events.at(-1)?.at||d.startedAt;
   const at=Date.parse(now)<Date.parse(last)?last:now;
@@ -147,4 +155,12 @@ export function reportData(d){
  const duration=(a,b)=>Math.max(0,Math.floor((Date.parse(b)-Date.parse(a))/1000));
  return {state:s,duration:d.events.length?duration(d.startedAt,d.events.at(-1).at):0,
   sets:s.setDetails.map((x,i)=>({...x,...s.sets[i],seconds:duration(x.startedAt,x.endedAt)}))};
+}
+
+/** Only explicitly located terminal actions; unknown locations stay unknown. */
+export function placementSummary(timeline,side,kind){
+ fail(sides.includes(side)&&canPlace(kind),'Выберите сторону и вид завершения');
+ const zones=Array(6).fill(0);let total=0,known=0;
+ for(const e of timeline)if(e.type==='rally'&&e.side===side&&e.kind===kind){total++;if(integer(e.placement,1,6)){zones[e.placement-1]++;known++;}}
+ return {zones,total,known,unknown:total-known};
 }
