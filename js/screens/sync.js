@@ -1,6 +1,7 @@
 import * as S from '../store.js';
 import * as db from '../db.js';
 import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,disconnectSync} from '../sync.js';
+import {createPairingCode,readPairingCode} from '../sync-pairing.js';
 import {el,openSheet,closeSheet,isSheetOpen,confirmDialog,promptDialog,toast} from '../ui.js';
 
 const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
@@ -25,7 +26,7 @@ export function openSync(){
  let plan=null,client=null,secret=null,choices={},busy=false,seq=0,closed=false;
  const active=()=>!closed&&root.isConnected&&isSheetOpen();
  function clear(){plan=null;client=null;secret=null;choices={};token.value='';password.value='';results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}
- function controls(disabled){area.disabled=endpoint.disabled=token.disabled=password.disabled=preview.disabled=detach.disabled=disabled;}
+ function controls(disabled){area.disabled=endpoint.disabled=token.disabled=password.disabled=preview.disabled=detach.disabled=pairCreate.disabled=pairImport.disabled=disabled;}
  async function refresh(){
   const n=++seq,selected=area.value;
   try{
@@ -84,9 +85,49 @@ export function openSync(){
   if(!await confirmDialog({title:'Отключить контур?',text:'Локальные записи и серверная копия останутся. Удаляется только общая ревизия на этом устройстве. Если данные отличаются, повторное подключение потребует отдельного согласования. Для отзыва ключа обратитесь к администратору сервера.',ok:'Отключить',danger:true}))return;
   clear();try{await disconnectSync(area.value,true);await refresh();}catch(e){toast(e.message);}
  });
+ const pairCreate=btn('Создать код для другого устройства',async()=>{
+  if(busy)return;
+  const selected=area.value;
+  let address;
+  try{address=normalizeEndpoint(endpoint.value);}catch(e){toast(e.message);return;}
+  busy=true;controls(true);apply.disabled=true;
+  try{
+   const newToken=await promptDialog({title:'Ключ второго устройства',text:'Введите отдельный ключ, уже разрешённый администратором сервера для этого контура. Не используйте ключ текущего устройства.',password:true,ok:'Далее'});
+   if(newToken===null||!active())return;
+   if(newToken===token.value)throw Error('Нужен другой ключ устройства');
+   const pw=await promptDialog({title:'Защитите код подключения',text:'Введите общий пароль шифрования контура. На втором устройстве потребуется тот же пароль. Не передавайте пароль вместе с кодом.',password:true,ok:'Создать код'});
+   if(pw===null||!active())return;
+   const code=await createPairingCode({endpoint:address,area:selected,token:newToken},pw);
+   if(!active())return;
+   await promptDialog({title:'Код подключения',text:'Скопируйте код на доверенное устройство. Он зашифрован, но не одноразовый; храните его как секрет. Код не создаёт новый серверный ключ.',value:code,multiline:true,ok:'Закрыть'});
+  }catch(e){if(active())toast(e.message,null,8000);}
+  finally{busy=false;controls(false);if(plan&&active())await drawSummary();}
+ });
+ const pairImport=btn('Подключить по коду',async()=>{
+  if(busy)return;
+  busy=true;controls(true);apply.disabled=true;
+  try{
+   const code=await promptDialog({title:'Подключить устройство',text:'Вставьте код с доверенного устройства. До явного сравнения сетевых запросов и изменений базы не будет.',password:true,ok:'Далее'});
+   if(code===null||!active())return;
+   const pw=await promptDialog({title:'Пароль контура',text:'Введите общий пароль шифрования, которым защищён код.',password:true,ok:'Открыть'});
+   if(pw===null||!active())return;
+   const profile=await readPairingCode(code,pw);
+   if(!active())return;
+   const cp=await syncStatus(profile.area);
+   if(!active())return;
+   if(cp&&cp.endpoint!==profile.endpoint)throw Error('Этот контур уже подключён к другому серверу. Сначала согласуйте существующее подключение.');
+   if(!await confirmDialog({title:'Применить параметры подключения?',text:'Контур: '+syncAreas[profile.area]+'. Сервер: '+profile.endpoint+'. Продолжайте только если узнаёте этот адрес. Данные пока не отправляются.',ok:'Применить'}))return;
+   if(!active())return;
+   ++seq;clear();
+   area.value=profile.area;endpoint.value=profile.endpoint;token.value=profile.token;password.value=pw;
+   status.textContent=cp?'Последняя подтверждённая ревизия: '+cp.revision:'Код принят. Нажмите «Получить и сравнить ревизии».';
+   detach.hidden=!cp;detach.style.display=cp?'':'none';
+  }catch(e){if(active())toast(e.message,null,8000);}
+  finally{busy=false;controls(false);if(plan&&active())await drawSummary();}
+ });
  area.onchange=()=>{clear();refresh();};
  for(const input of [endpoint,token,password])input.oninput=()=>{if(plan){plan=null;client=null;secret=null;choices={};results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}};
- const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Явная двусторонняя синхронизация через ваш сервер. Приложение остаётся автономным; фоновой отправки нет. Токен и пароль не сохраняются. В рабочую базу запись выполняется только после предпросмотра и подтверждения.'),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),preview,results,choicesStatus,apply,detach,btn('Закрыть',closeSheet)]);
+ const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Явная двусторонняя синхронизация через ваш сервер. Приложение остаётся автономным; фоновой отправки нет. Токен и пароль не сохраняются. В рабочую базу запись выполняется только после предпросмотра и подтверждения.'),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach,btn('Закрыть',closeSheet)]);
  openSheet(root,{fullHeight:true,onClose:()=>{closed=true;clear();}});
  refresh();
 }
