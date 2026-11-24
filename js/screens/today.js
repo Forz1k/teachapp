@@ -107,7 +107,7 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
       el('div',{class:'lesson-card-meta'},[el('span',{text:row.slot?'Урок '+row.slot+' · '+(row.time||'без времени'):'Вне расписания'}),el('span',{class:'status-pill',text:({planned:'Запланирован',unfinished:'Не подтверждён',review:'Проверить явку',done:'Проведён'})[status]})]),
       el('h2',{text:cls.name}),
       el('div',{text:topics.get(lesson?.topicId)?.name || 'Тема КТП не указана'}),
-      el('div',{class:'today-meta',text:'Записей: '+filled+' из '+students.length+' · ОСВ: '+exempt+(lesson&&attendance.held?' · явка неизвестна: '+attendance.unknown:'')}),
+      el('div',{class:'today-meta',text:'Отметки: '+filled+' из '+students.length+' · ОСВ: '+exempt+(lesson&&attendance.held?' · явка неизвестна: '+attendance.unknown:'')}),
       warning(planned),
       button
     ]));
