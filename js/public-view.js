@@ -1,5 +1,5 @@
 import {animateOnce,scoreChanges,enterGroup,normalizeMotion,motionModes,motionAllowed} from './motion.js';
-import {primaryPortal,portalAddress,readPortal,portalState,countdown} from './public-portal.js';
+import {viewerTarget,readPortal,portalState,countdown} from './public-portal.js';
 import {reasons,boardPalette} from './match-protocol.js';
 const root=document.getElementById('portal'),connection=document.getElementById('connection'),nav=document.getElementById('portal-nav');
 const el=(tag,cls,text,...children)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=String(text);n.append(...children.filter(Boolean));return n;};
@@ -48,7 +48,8 @@ function draw(){
  mount(parts);
  if(!tabChanged&&m&&m.status!=='finished'){for(const [side,kind] of Object.entries(changes)){const n=root.querySelector('[data-score-side="'+side+'"]');if(n){animateOnce(n,kind,{duration:320});if(kind==='score'){animateOnce(n.parentElement,'pulse',{duration:250});animateOnce(root.querySelector('.event'),'slide',{duration:220});}}}}
 }
-const brand=document.querySelector('.brand');if(brand)brand.href=location.href;
+let shareLink=location.href;
+const brand=document.querySelector('.brand');if(brand)brand.href=shareLink;
 const motionControl=document.getElementById('fan-motion');
 function viewerMotion(value){const v=normalizeMotion(value);document.documentElement.dataset.motion=v;if(motionControl){motionControl.textContent='Анимации: '+motionModes[v];motionControl.setAttribute('aria-label','Анимации: '+motionModes[v]+'; нажмите для смены режима');}try{window.localStorage.setItem('teachapp:viewer-motion',v);}catch{}}
 try{viewerMotion(window.localStorage.getItem('teachapp:viewer-motion'));}catch{viewerMotion('full');}
@@ -58,10 +59,11 @@ function setTheme(value){document.documentElement.dataset.theme=value;if(theme){
 try{setTheme(window.localStorage.getItem('teachapp:viewer-theme')==='light'?'light':'dark');}catch{setTheme('dark');}
 if(theme)theme.onclick=()=>setTheme(document.documentElement.dataset.theme==='light'?'dark':'light');
 const share=document.getElementById('share');
-if(share)share.onclick=async()=>{try{if(window.navigator.share){await window.navigator.share({title:'TeachApp Volleyball',url:location.href});return;}await window.navigator.clipboard.writeText(location.href);share.textContent='✓';setTimeout(()=>{share.textContent='↗';},1500);}catch(e){if(e.name==='AbortError')return;let input=document.querySelector('.share-fallback');if(!input){input=el('input','share-fallback');input.readOnly=true;input.setAttribute('aria-label','Ссылка для копирования');root.before(input);}input.value=location.href;input.focus();input.select();}};
+if(share)share.onclick=async()=>{try{if(window.navigator.share){await window.navigator.share({title:'TeachApp Volleyball',url:shareLink});return;}await window.navigator.clipboard.writeText(shareLink);share.textContent='✓';setTimeout(()=>{share.textContent='↗';},1500);}catch(e){if(e.name==='AbortError')return;let input=document.querySelector('.share-fallback');if(!input){input=el('input','share-fallback');input.readOnly=true;input.setAttribute('aria-label','Ссылка для копирования');root.before(input);}input.value=shareLink;input.focus();input.select();}};
 try{
- const q=new URLSearchParams(location.search),url=q.size?portalAddress(q.get('db'),q.get('owner'),q.get('team')):portalAddress(primaryPortal.origin,primaryPortal.owner,primaryPortal.slug);
- const stream=new EventSource(url);
+ const target=viewerTarget(location.href);shareLink=target.share;if(brand)brand.href=shareLink;
+ if(target.primary&&shareLink!==location.href){try{window.history.replaceState(window.history.state,'',shareLink);}catch{}}
+ const stream=new EventSource(target.address);
  stream.onopen=()=>{connected=true;problem='';draw();};
  let current=null;
  function receive(event){

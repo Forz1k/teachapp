@@ -4,8 +4,8 @@ export const PORTAL_SCHEMA=1;
 export const primaryPortal=Object.freeze({
  origin:'https://teachapp-96626-default-rtdb.europe-west1.firebasedatabase.app',
  apiKey:'AIzaSyCcATw9MlETq3SUM9idORH4Us4zMyqkyTs',
- owner:'FBEno7EO8LMKRV1sfSAEFLJbliM2',
- slug:'volleyball'
+ owner:'nVMf7mGnsQgdjjAEjnuoJlbXhOY2',
+ slug:'b7d0cf3a3e88b316d6766f5929f5696e'
 });
 export const MAX_SCHEDULE=20,MAX_ARCHIVE=20,MAX_EVENTS=30;
 const sides=['ours','theirs'];
@@ -25,9 +25,17 @@ export function portalAddress(origin,owner,slug){
  if(!validId(owner)||!validId(slug))throw Error('Некорректный адрес страницы');
  return firebaseOrigin(origin)+'/publicTeams/'+owner+'/'+slug+'.json';
 }
+export function isPrimaryPortal(origin,owner,slug){return firebaseOrigin(origin)===primaryPortal.origin&&owner===primaryPortal.owner&&slug===primaryPortal.slug;}
+export function viewerTarget(input){
+ const u=new URL(input),q=u.searchParams,keys=['db','owner','team'],explicit=keys.some(k=>q.has(k));
+ const origin=explicit?q.get('db'):primaryPortal.origin,owner=explicit?q.get('owner'):primaryPortal.owner,slug=explicit?q.get('team'):primaryPortal.slug;
+ const address=portalAddress(origin,owner,slug),primary=isPrimaryPortal(origin,owner,slug);
+ if(primary){u.search='';u.hash='';if(u.pathname.endsWith('/index.html'))u.pathname=u.pathname.slice(0,-'index.html'.length);}
+ return {address,primary,share:u.href};
+}
 export function shareUrl(base,origin,owner,slug){
  portalAddress(origin,owner,slug);
- const u=new URL('live/',base);if(firebaseOrigin(origin)===primaryPortal.origin&&owner===primaryPortal.owner&&slug===primaryPortal.slug)return u.href;u.searchParams.set('db',firebaseOrigin(origin));u.searchParams.set('owner',owner);u.searchParams.set('team',slug);return u.href;
+ const u=new URL('live/',base);if(isPrimaryPortal(origin,owner,slug))return u.href;u.searchParams.set('db',firebaseOrigin(origin));u.searchParams.set('owner',owner);u.searchParams.set('team',slug);return u.href;
 }
 export function scheduleItem(x){
  if(!x||!validId(x.id)||!clean(x.opponent)||!dateMs(x.startAt)||x.startAt===0)throw Error('Проверьте соперника и дату матча');
