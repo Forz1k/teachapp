@@ -544,3 +544,12 @@ test('Расстановка по зонам: последовательный �
  picker.setExcluded(['p0']);assert.equal(picker.get()[0],'');assert.ok(!choices().some(b=>b.textContent.includes('Игрок 0')));
  [...node.querySelectorAll('button')].find(b=>b.textContent==='Очистить расстановку').click();assert.deepEqual(picker.get(),Array(6).fill(''));
 });
+
+test('Редизайн: поиск класса не удаляет данные и сохраняет карточки',async()=>{
+ await seed();const screen=doc.createElement('div');renderClasses(screen,{});
+ const input=screen.querySelector('input[type=search]');assert.ok(input);
+ input.value='не существующий класс';input.dispatchEvent(new window.Event('input'));
+ assert.ok([...screen.querySelectorAll('.class-entry')].every(n=>n.hidden));
+ input.value='';input.dispatchEvent(new window.Event('input'));
+ assert.ok([...screen.querySelectorAll('.class-entry')].every(n=>!n.hidden));
+});

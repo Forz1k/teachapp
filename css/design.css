@@ -100,3 +100,36 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .lesson-card h2{font-size:26px;letter-spacing:-.03em}
 @media(min-width:760px){.dashboard-metrics{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.dashboard-actions{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:360px){.dashboard-action{padding:8px;gap:6px}.dashboard-action>svg{display:none}.metric-icon{width:30px;height:30px}}
+
+/* Classes, journal, student profile */
+.class-directory{max-width:1100px}
+.class-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:12px}
+.class-entry{border:1px solid var(--sep);background:var(--card);border-radius:var(--radius-lg);overflow:hidden;display:grid;align-content:start}
+.class-entry .class-card{border:0;border-radius:0;box-shadow:none;padding:16px}
+.class-entry .class-roster{margin:0 12px 12px;width:calc(100% - 24px);background:var(--card-2)}
+.class-card .name{font-size:28px;letter-spacing:-.04em}
+.class-card .attendance-details{font-size:12px;line-height:1.5;color:var(--text-2)}
+.class-today{padding:14px}
+.class-today h2{font-size:18px;margin:0 0 6px}.class-today h3{font-size:15px;margin:8px 0}
+.journal-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.journal-tools input{flex:1;min-width:130px}.journal-count{font-size:12px;color:var(--text-2)}
+.journal-subnav{display:flex;gap:4px;padding:8px 12px 4px;overflow-x:auto;background:var(--bg)}
+.journal-subnav-button{flex:1;min-height:44px;padding:8px 10px;border-radius:12px;color:var(--text-2);font-size:13px;font-weight:650;white-space:nowrap}
+.journal-subnav-button.active{background:var(--accent-soft);color:var(--accent-ink)}
+.journal-grid{margin:12px 8px;border:1px solid var(--sep);border-radius:14px;background:var(--card);max-height:calc(100dvh - 320px);min-height:150px}
+.journal th.col-name,.journal td.col-name{left:32px}
+.journal thead th{background:var(--card-2);height:64px}
+.journal .col-lesson{min-width:62px;width:62px}
+.journal tbody td{height:49px}
+.journal tbody td.cell{border-right:1px solid var(--sep)}
+.journal tbody tr:nth-child(even) td:not(.col-sum){background:var(--card-2)}
+.journal .name-cell{width:100%;min-height:44px;text-align:left;font-weight:650}
+.journal .cell:focus-visible{outline-offset:-3px;position:relative;z-index:1}
+.journal .badge{border-radius:9px;font-weight:750}
+.profile-avatar{width:64px;height:64px;border-radius:20px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent-ink);font-size:28px;font-weight:800}
+.student-profile h2{overflow-wrap:anywhere}
+.profile-note,.profile-result{padding:12px;background:var(--card-2);border-radius:12px;border:1px solid var(--sep);font-size:13px;color:var(--text-2)}
+.profile-result{display:grid;gap:3px}
+.profile-result strong{font-size:14px;color:var(--text)}
+@media(min-width:1000px){.journal-grid{margin:14px 24px;max-height:calc(100dvh - 260px)}.journal th.col-name,.journal td.col-name{width:220px;min-width:220px;max-width:220px}}
+@media(max-width:360px){.journal th.col-name,.journal td.col-name{width:120px;min-width:120px;max-width:120px}.journal-subnav-button{font-size:12px;padding-inline:7px}}
