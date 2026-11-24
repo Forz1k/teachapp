@@ -189,6 +189,7 @@ export function buildMatchReport(m){
   section('Детали очка',table(['Сет','Счёт','Команда','Причина','Автор'],s.timeline.filter(x=>x.type==='rally').map(x=>[x.set,x.score,sideName(d,x.side),V.reasons[x.kind],name(d,x.actor,x.player)]))),
   section('Подписи',p('Первый судья __________________________'),p('Капитан '+d.teamName+' __________________________'),p('Капитан '+d.opponent+' __________________________'))]);
 }
+import {openMatchTactics} from './match-tactics.js';
 export function openMatchReport(m,back){
  try{
   const report=buildMatchReport(m);
@@ -197,6 +198,6 @@ export function openMatchReport(m,back){
    const node=el('div',{id:'teachapp-print-report'},[buildMatchReport(m)]);document.body.append(node);
    const cleanup=()=>node.remove();window.addEventListener('afterprint',cleanup,{once:true});
    try{window.print();}catch{cleanup();toast('Печать недоступна');}
-  },'primary wide'),report,btn('Назад',back||ui.closeSheet,'wide')]));
+  },'primary wide'),btn('Тактический разбор',()=>openMatchTactics(m,()=>openMatchReport(m,back)),'wide'),report,btn('Назад',back||ui.closeSheet,'wide')]));
  }catch(e){toast(e.message);}
 }
