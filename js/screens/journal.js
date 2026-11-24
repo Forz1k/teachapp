@@ -96,6 +96,23 @@ export function renderJournal(root, ctx) {
   const search=el('input',{type:'search',placeholder:'Найти ученика','aria-label':'Найти ученика в журнале'});
   topbar.append(row1,trChips,el('div',{class:'journal-tools'},[search,el('span',{class:'journal-count',text:students.length+' учеников · '+lessons.length+' уроков'})]));
 
+  const viewMode=(()=>{try{return localStorage.getItem('teachapp.journal.view')==='cards'?'cards':'table';}catch{return 'table';}})();
+  const viewToggle=el('button',{type:'button',class:'btn small',text:viewMode==='cards'?'Таблица':'Карточки',onclick:()=>{try{localStorage.setItem('teachapp.journal.view',viewMode==='cards'?'table':'cards');}catch{}store.notify();}});
+  const tools=el('div',{class:'journal-tools'},[viewToggle]);topbar.append(tools);
+  if(viewMode==='cards'&&lessons.length&&students.length){
+   const lessonSelect=el('select',{'aria-label':'Выберите урок'},lessons.map(l=>el('option',{value:l.id,text:M.lessonLabel(l)+' · '+(topicsById.get(l.topicId)?.name||'Без темы')})));
+   const storageKey='teachapp.journal.lesson.'+classId+'.'+tr.id;let chosen=lessons.find(l=>l.date===today)||lessons.filter(l=>l.date<=today).at(-1)||lessons[0];
+   try{const id=sessionStorage.getItem(storageKey);chosen=lessons.find(l=>l.id===id)||chosen;}catch{}
+   lessonSelect.value=chosen.id;let studentIndex=0;
+   const cards=el('div',{class:'journal-mobile-cards'}),filtered=()=>students.filter(st=>st.fullName.toLocaleLowerCase('ru').includes(search.value.trim().toLocaleLowerCase('ru')));
+   const nav=delta=>{const list=filtered();studentIndex=Math.max(0,Math.min(list.length-1,studentIndex+delta));draw();};
+   function draw(){const list=filtered();studentIndex=Math.max(0,Math.min(list.length-1,studentIndex));const st=list[studentIndex],l=lessons.find(x=>x.id===lessonSelect.value)||chosen;cards.replaceChildren();if(!st){cards.append(el('p',{class:'empty',text:'Ученики не найдены'}));return;}const mark=store.markMap(classId).get(l.id+'|'+st.id),head=el('article',{class:'card-block journal-pupil-card'},[el('p',{class:'profile-note',text:'Ученик '+(studentIndex+1)+' из '+list.length}),el('h2',{text:st.fullName}),el('p',{text:M.lessonLabel(l)+' · '+(topicsById.get(l.topicId)?.name||'Без темы')}),badgeFor(mark),warning(l,st.id),el('button',{type:'button',class:'btn primary wide',text:'Поставить или изменить отметку',onclick:()=>openMarkSheet(st.id,l.id,classId)}),el('button',{type:'button',class:'btn wide',text:'Карточка ученика',onclick:()=>openStudentSheet(st.id,classId)})]);
+    const prev=el('button',{type:'button',class:'btn',text:'← Предыдущий',disabled:studentIndex===0,onclick:()=>nav(-1)}),next=el('button',{type:'button',class:'btn primary',text:'Следующий →',disabled:studentIndex===list.length-1,onclick:()=>nav(1)});
+    cards.append(head,el('div',{class:'journal-card-nav'},[prev,next]),el('div',{class:'journal-card-list'},list.map((p,i)=>el('button',{type:'button',class:'btn wide'+(i===studentIndex?' primary':''),text:p.fullName+' · '+(store.markMap(classId).get(l.id+'|'+p.id)?.value||store.markMap(classId).get(l.id+'|'+p.id)?.flag||'—'),onclick:()=>{studentIndex=i;draw();}}))));
+   }
+   lessonSelect.onchange=()=>{try{sessionStorage.setItem(storageKey,lessonSelect.value);}catch{}draw();};search.oninput=()=>{studentIndex=0;draw();};root.append(topbar,el('div',{class:'journal-card-select'},[lessonSelect]),cards);draw();return ()=>draw();
+  }
+
   /* ---- сетка ---- */
   const wrap = el('div', { class: 'grid-wrap journal-grid',tabindex:'0','aria-label':'Таблица журнала. Прокрутите для просмотра дат.' });
 
@@ -129,7 +146,7 @@ export function renderJournal(root, ctx) {
   for (const lesson of lessons) {
     const topic = topicsById.get(lesson.topicId);
     headRow.append(el('th', {
-      class: 'col-lesson',
+      class: 'col-lesson'+(lesson.date===today?' journal-today':''),
       title: topic ? topic.name : 'Тема не указана',
     }, [
       el('button',{type:'button',class:'journal-lesson-head','aria-label':'Изменить урок '+M.lessonLabel(lesson),title:topic?.name||'Без темы',onclick:()=>import('./lesson.js').then(m=>m.openLessonSheet(lesson.id,classId))},[
@@ -172,7 +189,7 @@ export function renderJournal(root, ctx) {
       if (mark?.value) values.push(Number(mark.value));
 
       const cell = el('td', {
-        class: `cell ${mark ? 'filled' : ''}`,
+        class: `cell ${mark ? 'filled' : ''}${lesson.date===today?' journal-today':''}`,
         'data-student': st.id,
         'data-lesson': lesson.id,
         tabindex:'0','aria-label':st.fullName+' · '+M.lessonLabel(lesson)+' · '+(mark?.value||mark?.flag||'нет отметки'),
@@ -204,6 +221,9 @@ export function renderJournal(root, ctx) {
   const filterStatus=el('p',{class:'empty',text:'Ученики не найдены',hidden:true});
   search.oninput=()=>{const q=search.value.trim().toLocaleLowerCase('ru');let count=0;for(const row of tbody.rows){row.hidden=!row.dataset.name.includes(q);if(!row.hidden)count++;}filterStatus.hidden=count!==0;};
   wrap.append(table,filterStatus);
+  wrap.addEventListener('keydown',e=>{if(e.key==='Escape'&&wrap.classList.contains('journal-expanded')){wrap.querySelector('.journal-close-expanded')?.click();return;}const cell=e.target.closest?.('.cell');if(!cell||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;const row=cell.parentElement,col=cell.cellIndex;let target=null;if(e.key==='ArrowLeft'||e.key==='ArrowRight')target=row.cells[col+(e.key==='ArrowLeft'?-1:1)];else{let r=e.key==='ArrowUp'?row.previousElementSibling:row.nextElementSibling;while(r?.hidden)r=e.key==='ArrowUp'?r.previousElementSibling:r.nextElementSibling;target=r?.cells[col];}if(target?.classList.contains('cell')){e.preventDefault();target.focus();}});
+  tools.append(el('button',{type:'button',class:'btn small',text:'Сегодня',onclick:()=>{const th=table.querySelector('th.journal-today');if(!th)return ui.toast('Сегодня нет урока в выбранном периоде');const left=th.getBoundingClientRect().left-wrap.getBoundingClientRect().left;wrap.scrollLeft+=left-(table.querySelector('.col-num').offsetWidth+table.querySelector('.col-name').offsetWidth);syncScroll();}}));
+  const full=el('button',{type:'button',class:'btn small',text:'Развернуть',onclick:()=>{wrap.classList.toggle('journal-expanded');if(wrap.classList.contains('journal-expanded')){const close=el('button',{type:'button',class:'btn wide journal-close-expanded',text:'Свернуть журнал',onclick:()=>{wrap.classList.remove('journal-expanded');close.remove();full.textContent='Развернуть';syncScroll();}});wrap.prepend(close);close.focus();}else wrap.querySelector('.journal-close-expanded')?.remove();full.textContent=wrap.classList.contains('journal-expanded')?'Свернуть':'Развернуть';syncScroll();}});tools.append(full);
   // Horizontal navigation is visible even when native scrollbars are hidden by the OS.
   const range=el('input',{type:'range',min:'0',max:'1000',step:'1',value:'0','aria-label':'Горизонтальная прокрутка журнала'});
   const left=el('button',{class:'icon-btn plain journal-scroll-prev',type:'button',title:'Предыдущие даты','aria-label':'Предыдущие даты'},[icon('back')]);
