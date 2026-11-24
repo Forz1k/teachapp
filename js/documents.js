@@ -119,6 +119,7 @@ export function zipStored(entries){
  return concat([...local,...central,end]);
 }
 export const makeDocx=report=>zipStored(docxEntries(report));
+export function previewRows(matrix,limit=150){if(!Array.isArray(matrix)||!Number.isInteger(limit)||limit<1)throw Error('Некорректный предпросмотр');return {rows:matrix.slice(1,limit+1),omitted:Math.max(0,matrix.length-1-limit)};}
 export function documentWorkbook(report,XLSX){
  validateDocument(report);check(XLSX?.utils&&XLSX.write,'Локальный модуль Excel не загружен');
  const wb=XLSX.utils.book_new();

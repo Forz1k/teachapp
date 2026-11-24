@@ -1,4 +1,6 @@
 import {el,icon,openSheet,closeSheet,toast} from './ui.js';
+import {attendanceDetails} from './assessment.js';
+import {exemptionCovers,todayIso} from './model.js';
 import {readHidden,saveHidden} from './dashboard-preferences.js';
 export function metric(label,value,glyph,detail=''){
  return el('div',{class:'dashboard-metric'},[el('span',{class:'metric-icon','aria-hidden':'true'},[icon(glyph)]),el('span',{class:'metric-value',text:String(value)}),el('span',{class:'metric-label',text:label}),detail?el('small',{text:detail}):null]);
@@ -60,4 +62,14 @@ export function lessonDayStatus(row,attendance){
 export function dayReview(rows,attendanceFor){
  const items=rows.map(row=>{const attendance=row.lesson?attendanceFor(row):{unknown:0,present:0,absent:0,exempt:0};return {row,attendance,status:lessonDayStatus(row,attendance)};});
  return {items,confirmed:items.filter(x=>['review','done'].includes(x.status)).length,review:items.filter(x=>x.status==='review').length,next:items.find(x=>['unfinished','planned'].includes(x.status))||null};
+}
+
+/** Index only the lessons shown, once per day view. */
+export function dayDataIndex(state,rows,date=todayIso()){
+ const ids=new Set(rows.flatMap(r=>r.lesson?[r.lesson.id]:[])),classes=new Set(rows.map(r=>r.classId)),students=new Map(),marks=new Map(),byLesson=new Map(),parts=new Map();
+ for(const p of state.students)if(classes.has(p.classId)){if(!students.has(p.classId))students.set(p.classId,[]);students.get(p.classId).push(p);}
+ for(const m of state.marks)if(ids.has(m.lessonId)){marks.set(m.lessonId+'|'+m.studentId,m);if(!byLesson.has(m.lessonId))byLesson.set(m.lessonId,new Map());byLesson.get(m.lessonId).set(m.studentId,m);}
+ for(const p of state.participation)if(ids.has(p.lessonId))parts.set(p.lessonId+'|'+p.studentId,p);
+ const exempt=new Set(state.exemptions.filter(e=>exemptionCovers(e,date)).map(e=>e.studentId));
+ return {students,byLesson,exempt,attendance:row=>attendanceDetails([row.lesson],students.get(row.classId)||[],marks,parts)};
 }

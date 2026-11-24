@@ -364,10 +364,11 @@ export function renderSettings(root, ctx = {}) {
   const aboutBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'О приложении' })]);
   aboutBlock.append(el('div', {
     style: 'padding:14px 16px;font-size:13px;color:var(--text-2);line-height:1.55',
-    html: 'Журнал учителя физкультуры. Все данные хранятся <b>только на этом устройстве</b> (IndexedDB), '
-      + 'без сервера, аккаунтов и телеметрии. Приложение работает офлайн.<br><br>'
+    html: 'Учитель физкультуры и волейбольный тренер. Основные данные хранятся локально (IndexedDB). '
+      + 'Публичный портал и бета-синхронизация подключаются отдельно; публикация выключена по умолчанию. Основной кабинет работает офлайн.<br><br>'
       + `Версия ${APP_VERSION} · записей в базе: ${store.state.students.length + store.state.marks.length + store.state.lessons.length}`,
   }));
+  aboutBlock.append(el('div',{class:'about-credit'},[el('span',{text:'Разработано Forzik'}),el('a',{href:'https://github.com/Forz1k/teachapp',target:'_blank',rel:'noopener noreferrer',text:'GitHub проекта ↗'})]));
   body.append(aboutBlock);
 
   organizeSettings(body);
