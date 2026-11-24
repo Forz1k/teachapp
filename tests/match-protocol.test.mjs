@@ -1,0 +1,43 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {replayDetailed,detailEvent,reportData} from '../js/match-protocol.js';
+import * as C from '../js/coach.js';
+import * as S from '../js/store.js';
+import * as db from '../js/db.js';
+const players=Array.from({length:7},(_,i)=>({id:'a'+i,name:'Игрок '+i,number:i}));
+const away=Array.from({length:7},(_,i)=>({id:'b'+i,name:'Игрок '+i,number:i}));
+const base={mode:'dual',teamName:'Наши',opponent:'Гости',competition:'',venue:'',startedAt:'2026-01-01T12:00:00Z',ourPlayers:players,awayPlayers:away,roster:players.map(p=>p.id),lineup:players.slice(0,6).map(p=>p.id),awayLineup:away.slice(0,6).map(p=>p.id),libero:'a6',scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'theirs',events:[]};
+test('Очко фиксируется первым, автор выбирается до перехода, без второго очка',()=>{
+ let d=detailEvent(base,{type:'rally',side:'ours',kind:'point'});let s=replayDetailed(d);assert.equal(s.ours,1);assert.equal(s.lineup[0],'a1');
+ d=detailEvent(d,{type:'attribute',kind:'serveError',player:'b0'});s=replayDetailed(d);
+ assert.equal(s.ours,1);assert.equal(d.events.length,1);assert.equal(s.sides.theirs.stats.b0.errors,1);assert.equal(s.sides.ours.opponentErrors,1);
+ assert.equal(s.timeline[0].before.lineups.ours[0],'a0');
+ assert.throws(()=>detailEvent(d,{type:'attribute',kind:'ace',player:'a1'}),/подающей/);
+ d=detailEvent(d,{type:'rally',side:'theirs',kind:'point'});s=replayDetailed(d);assert.equal(s.awayLineup[0],'b1');
+ d=detailEvent(d,null);assert.equal(replayDetailed(d).theirs,0);
+});
+test('Расстановки и серии учитывают розыгрыш до перехода, неизвестные очки отдельно',()=>{
+ let d=detailEvent(base,{type:'rally',side:'ours',kind:'point'});
+ d=detailEvent(d,{type:'rally',side:'ours',kind:'ace',player:'a1'});
+ d=detailEvent(d,{type:'rally',side:'theirs',kind:'receiveError',player:'a2'});
+ const s=replayDetailed(d);assert.equal(s.sides.ours.onServe,1);assert.equal(s.sides.ours.rotations[0].won,1);
+ assert.equal(s.sides.ours.rotations[1].rallies,2);assert.equal(s.sides.ours.runs[0].won,1);
+ assert.equal(s.sides.ours.unknown,1);assert.equal(s.stats.a1.aces,1);
+ assert.equal(s.sides.theirs.opponentErrors,1);
+});
+test('Подробный матч переносит историю и обе команды в копию, последний розыгрыш уточняется и после окончания',async()=>{
+ await db.clearAll();await S.load();const team=await C.saveTeam({name:'Наши'}),ps=[];
+ for(let i=0;i<6;i++)ps.push(await C.savePlayer({teamId:team.id,name:'Игрок '+i,number:i,position:'universal'}));
+ const roster=ps.map(p=>p.id),lineup=[...roster];
+ let d=await C.startDetailedMatch({...base,teamId:team.id,date:'2026-01-01',ourPlayers:ps,roster,lineup,libero:null});
+ for(let i=0;i<15;i++)d=await C.changeLiveMatch(d.id,d.revision,{type:'rally',side:'ours',kind:'point'});
+ d=await C.changeLiveMatch(d.id,d.revision,{type:'next',lineup,awayLineup:base.awayLineup,serve:'ours'});
+ for(let i=0;i<15;i++)d=await C.changeLiveMatch(d.id,d.revision,{type:'rally',side:'ours',kind:'point'});
+ d=await C.changeLiveMatch(d.id,d.revision,{type:'attribute',kind:'kill',player:lineup[0]});
+ const m=await C.finishLiveMatch(d.id,d.revision);assert.equal(m.detail.events.length,31);assert.equal(reportData(m.detail).sets.length,2);
+ assert.equal(m.stats[lineup[0]].attackKills,1);
+ const b=await S.makeBackup();assert.equal(b.version,8);await S.restoreBackup(b);
+ assert.equal((await C.loadCoach()).coachMatches[0].detail.awayPlayers.length,7);
+ await assert.rejects(C.saveMatch(m),/нельзя редактировать/);
+});
