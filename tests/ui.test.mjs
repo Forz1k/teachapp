@@ -656,4 +656,5 @@ test('Зрительское табло безопасно отображает 
  const a={teamName:'<img src=x>',opponent:'Гости',score:{ours:7,theirs:5},sets:[],setsWon:{ours:0,theirs:0},set:1,serve:'ours',status:'live',colors:{ours:'blue',theirs:'red'}};
  renderSpectatorBoard(target,a);assert.equal(target.querySelector('.team').textContent,'<img src=x>');assert.equal(target.querySelector('img'),null);assert.equal(target.querySelector('.score').textContent,'7');
  renderSpectatorBoard(target,{...a,score:{ours:8,theirs:5}},false);assert.match(target.body.textContent,/НЕТ СВЯЗИ/);assert.equal(target.querySelector('.score').textContent,'8');assert.equal(target.querySelectorAll('#teachapp-score-style').length,1);
+ [...target.querySelectorAll('button')].find(b=>b.textContent==='Компактное табло').click();assert.ok(target.documentElement.classList.contains('obs-compact'));renderSpectatorBoard(target,a);assert.ok(target.documentElement.classList.contains('obs-compact'));assert.ok([...target.querySelectorAll('button')].some(b=>b.textContent==='Полное табло'));
 });
