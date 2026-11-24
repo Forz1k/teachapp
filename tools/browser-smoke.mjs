@@ -80,6 +80,12 @@ try{
  await click('.vp-points .vp-ours');await ready('.match-attribution');await click('[data-reason="tip"]');await ready('.vp-author-grid [data-player]');await capture('390-live-author');
  await click('.vp-author-grid [data-player]');await ready('.vp-points');
  assert.equal(await evalJs('document.querySelector(".vp-score-side.ours strong").textContent'),'1');
+ await clickText('.sheet summary','Детали последнего очка');await click('[data-zone="4"]');
+ await wait(()=>evalJs('document.querySelector(".vp-last-event")?.textContent.includes("зона 4")'),'placement saved');
+ await clickText('.vp-tabs button','Статистика');await ready('.vp-heat-grid');
+ assert.equal(await evalJs('document.querySelector(".vp-heat-cell[aria-label=\\"Зона 4: 1\\"]")!==null'),true);
+ await capture('390-live-analytics');
+ await clickText('.vp-tabs button','Матч');await ready('.vp-undo');
  await click('.vp-undo');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="0"'),'undo score');
  await closeSheet();
  await nav('Главная');await ready('.coach-body .dashboard-metrics');await theme('dark');await ready('.coach-body .dashboard-metrics');await capture('390-coach-dark');

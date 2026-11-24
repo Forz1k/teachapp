@@ -304,7 +304,14 @@ function liveAnalysis(d,s){
   });
   const tactical=matchTactics(d,5,{set,min:Number(sample.value)});
   const combo=(title,items)=>section(title,p('Выигранные розыгрыши в присутствии игроков. Сочетание не доказывает индивидуальный вклад.'),table(['Игроки','Розыгрыши','Победы','+/−','Доля'],items.slice(0,20).map(x=>[x.players.map(id=>name(d,'ours',id)).join(' · '),x.rallies,x.won,x.plusMinus,x.eligible?pct(x.won,x.rallies):'Мало данных'])),!items.length?p('Нет записанных сочетаний.'):null);
-  output.replaceChildren(...rows,heat,combo('Сочетания двух игроков',tactical.pairs),combo('Фактические шестёрки',tactical.six));
+  const rotationRows=sides.flatMap(side=>{
+   const r=Array.from({length:6},(_,i)=>({position:i+1,won:0,lost:0}));
+   for(const e of s.timeline)if(e.type==='rally'&&(!set||e.set===set))r[e.rotation[side]][e.side===side?'won':'lost']++;
+   const runs=[...s.sides[side].runs,...(s.sides[side].activeRun?[s.sides[side].activeRun]:[])].filter(x=>!set||x.set===set);
+   return [section('Переходы · '+sideName(d,side),p('P1–P6 — циклы относительно стартового состава партии.'),table(['Цикл','Розыгрыши','Выиграно','Проиграно','+/−'],r.map(x=>['P'+x.position,x.won+x.lost,x.won,x.lost,x.won-x.lost]))),
+    section('Серии подач · '+sideName(d,side),table(['Сет','Подающая','Очки','Эйсы','Ошибки'],runs.map(x=>[x.set,name(d,side,x.player),x.won,x.aces,x.errors])))];
+  });
+  output.replaceChildren(...rows,heat,...rotationRows,combo('Сочетания двух игроков',tactical.pairs),combo('Фактические шестёрки',tactical.six));
  }
  playerOptions();sidePicker.addEventListener('change',()=>{playerOptions();draw();});for(const control of [period,mode,player,sample])control.addEventListener('change',draw);draw();
  return section('Аналитика розыгрышей',field('Период',period),field('Команда для карты',sidePicker),field('Вид завершения',mode),field('Игрок для карты',player),field('Минимум для сравнения сочетаний',sample),output);
