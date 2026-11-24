@@ -71,12 +71,20 @@ let sheetEl = null;
 let backdropEl = null;
 let onCloseCb = null;
 let sheetRevision = 0;
+let sheetReturnFocus=null;
 
 function ensureSheet() {
   if (sheetEl) return;
   backdropEl = el('div', { class: 'sheet-backdrop' });
   backdropEl.addEventListener('click', closeSheet);
-  sheetEl = el('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true' });
+  sheetEl = el('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true',tabindex:'-1' });
+  sheetEl.addEventListener('keydown',e=>{
+    if(e.key!=='Tab'||!sheetEl.classList.contains('show'))return;
+    const nodes=[...sheetEl.querySelectorAll('button,input,select,textarea,a[href],summary,[tabindex="0"]')].filter(n=>!n.disabled&&!n.closest('[hidden]')&&n.getClientRects().length);
+    if(!nodes.length){e.preventDefault();sheetEl.focus();return;}
+    if(e.shiftKey&&(document.activeElement===nodes[0]||document.activeElement===sheetEl)){e.preventDefault();nodes.at(-1).focus();}
+    else if(!e.shiftKey&&document.activeElement===nodes.at(-1)){e.preventDefault();nodes[0].focus();}
+  });
   document.body.append(backdropEl, sheetEl);
 }
 
@@ -88,6 +96,7 @@ function ensureSheet() {
 export function openSheet(content, opts = {}) {
   ensureSheet();
   const revision = ++sheetRevision;
+  if(!sheetEl.classList.contains('show')&&!sheetEl.contains(document.activeElement))sheetReturnFocus=document.activeElement;
   onCloseCb = opts.onClose || null;
   sheetEl.classList.toggle('sheet-full',opts.fullHeight===true);
   sheetEl.classList.toggle('sheet-match',opts.match===true);
@@ -96,11 +105,13 @@ export function openSheet(content, opts = {}) {
   sheetEl.append(el('div', { class: 'grabber' }));
   if (typeof content === 'string') sheetEl.append(el('div', { html: content }));
   else sheetEl.append(content);
+  sheetEl.setAttribute('aria-label',sheetEl.querySelector('h1,h2,h3')?.textContent||'Окно TeachApp');
 
   requestAnimationFrame(() => {
     if (revision !== sheetRevision) return;
     backdropEl.classList.add('show');
     sheetEl.classList.add('show');
+    if(!sheetEl.contains(document.activeElement))sheetEl.focus({preventScroll:true});
   });
   return sheetEl;
 }
@@ -115,6 +126,8 @@ export function closeSheet() {
   setTimeout(() => {
     if (revision !== sheetRevision) return;
     if (sheetEl && !sheetEl.classList.contains('show')) sheetEl.innerHTML = '';
+    const previous=sheetReturnFocus;sheetReturnFocus=null;
+    if(previous?.isConnected&&!previous.closest('[inert]'))previous.focus?.({preventScroll:true});
     if (cb) cb();
   }, 300);
 }

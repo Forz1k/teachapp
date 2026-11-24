@@ -1,6 +1,6 @@
 {
   "name": "teachapp",
-  "version": "2.9.4",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "description": "Электронный журнал учителя физической культуры — офлайн PWA на чистом HTML/CSS/JS",
@@ -14,7 +14,8 @@
     "snapshot": "node tools/prepare-snapshot.mjs",
     "shots": "node tools/shot.mjs",
     "offline": "node tools/offline-verify.mjs --clean",
-    "icons": "node tools/make-icons.mjs"
+    "icons": "node tools/make-icons.mjs",
+    "test:browser": "node tools/browser-smoke.mjs"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.5",

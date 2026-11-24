@@ -1,0 +1,91 @@
+/* Real Chromium smoke: synthetic data in a temporary profile, no external network. */
+import {createServer} from 'node:http';
+import {readFile,mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {existsSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,resolve,extname,sep} from 'node:path';
+import {spawn,spawnSync} from 'node:child_process';
+import assert from 'node:assert/strict';
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const root=process.cwd(),dir=resolve('artifacts/ui');await mkdir(dir,{recursive:true});
+const profile=await mkdtemp(join(tmpdir(),'teachapp-browser-'));
+const binaries=[process.env.CHROME_BIN,'google-chrome','google-chrome-stable','chromium','chromium-browser','C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe','C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'].filter(Boolean);
+const binary=binaries.find(p=>existsSync(p)||spawnSync(p,['--version'],{stdio:'ignore'}).status===0);
+if(!binary)throw Error('Chromium / Chrome not found; set CHROME_BIN');
+const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.png':'image/png','.svg':'image/svg+xml'};
+const server=createServer(async(req,res)=>{
+ try{const u=new URL(req.url,'http://localhost'),path=resolve(root,'.'+decodeURIComponent(u.pathname==='/'?'/index.html':u.pathname));
+  if(path!==root&&!path.startsWith(root+sep))throw Error('path');
+  const data=await readFile(path);res.writeHead(200,{'Content-Type':types[extname(path)]||'application/octet-stream','Cache-Control':'no-cache'});res.end(data);
+ }catch{res.writeHead(404);res.end();}
+});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));
+const origin='http://127.0.0.1:'+server.address().port;
+const proc=spawn(binary,['--headless=new','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--no-first-run','--no-default-browser-check','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:'ignore'});
+let ws,closed=false;const pending=new Map(),exceptions=[],report=[];
+const wait=async(fn,label,timeout=20000)=>{const end=Date.now()+timeout;let last;while(Date.now()<end){try{const v=await fn();if(v)return v;}catch(e){last=e.message;}await sleep(100);}throw Error(label+' timed out'+(last?': '+last:''));};
+try{
+ const port=await wait(async()=>Number((await readFile(join(profile,'DevToolsActivePort'),'utf8')).split('\n')[0]),'Chrome port');
+ const page=await wait(async()=>{const a=await fetch('http://127.0.0.1:'+port+'/json/list').then(r=>r.json());return a.find(x=>x.type==='page');},'CDP target');
+ ws=new WebSocket(page.webSocketDebuggerUrl);await new Promise((res,rej)=>{ws.onopen=res;ws.onerror=rej;});
+ let id=0;
+ ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id&&pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);clearTimeout(p.timer);if(m.error)p.reject(Error(JSON.stringify(m.error)));else p.resolve(m.result);}if(m.method==='Runtime.exceptionThrown')exceptions.push(m.params.exceptionDetails.text+' '+(m.params.exceptionDetails.exception?.description||''));};
+ function send(method,params={}){return new Promise((resolve,reject)=>{const key=++id,timer=setTimeout(()=>{pending.delete(key);reject(Error('CDP timeout '+method));},30000);pending.set(key,{resolve,reject,timer});ws.send(JSON.stringify({id:key,method,params}));});}
+ async function evalJs(expression){const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value;}
+ const exists=selector=>evalJs('Boolean(document.querySelector('+JSON.stringify(selector)+'))');
+ const ready=selector=>wait(()=>exists(selector),selector);
+ const click=selector=>evalJs('(()=>{const n=document.querySelector('+JSON.stringify(selector)+');if(!n)throw Error("Missing selector");n.click();return true})()');
+ const clickText=(selector,value)=>evalJs('(()=>{const n=[...document.querySelectorAll('+JSON.stringify(selector)+')].find(n=>n.textContent.trim()==='+JSON.stringify(value)+');if(!n)throw Error("Missing button");n.click();return true})()');
+ async function closeSheet(){await evalJs('(async()=>{const u=await import("./js/ui.js");u.closeSheet();return true})()');await sleep(350);}
+ async function nav(label){await click('.workspace-nav [aria-label="'+label+'"]');await sleep(120);}
+ async function theme(value){await evalJs('(async()=>{const s=await import("./js/store.js"),v=await import("./js/screens/settings.js");await s.saveSettings({theme:'+JSON.stringify(value)+'});v.applyTheme('+JSON.stringify(value)+');return true})()');await sleep(100);}
+ async function viewport(width,height){await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<700});await sleep(100);}
+ async function capture(name){
+  const g=await evalJs('(()=>{const w=innerWidth,doc=document.documentElement,nav=document.querySelector(".workspace-nav"),sheet=document.querySelector(".sheet.show");return {w,scroll:doc.scrollWidth,nav:nav?nav.getBoundingClientRect().toJSON():null,sheet:sheet?sheet.getBoundingClientRect().toJSON():null,theme:doc.dataset.theme}})()');
+  assert.ok(g.scroll<=g.w+3,name+' document overflow '+JSON.stringify(g));
+  if(g.nav)assert.ok(g.nav.left>=-2&&g.nav.right<=g.w+2,name+' navigation outside viewport');
+  if(g.sheet)assert.ok(g.sheet.left>=-2&&g.sheet.right<=g.w+2,name+' sheet outside viewport');
+  const s=await send('Page.captureScreenshot',{format:'png',fromSurface:true});await writeFile(join(dir,name+'.png'),Buffer.from(s.data,'base64'));report.push({name,...g});console.log('UI PASS '+name+' '+g.w+'px '+g.theme);
+ }
+ await send('Page.enable');await send('Runtime.enable');await send('Network.enable');
+ await viewport(390,844);await send('Page.navigate',{url:origin+'/index.html'});await ready('.workspace-nav');
+ await evalJs("(async()=>{const S=await import('./js/store.js'),M=await import('./js/model.js'),C=await import('./js/coach.js'),W=await import('./js/workbench.js'),T=await import('./js/tournaments.js');\n const today=M.todayIso(),y=today.slice(0,4),year={from:y+'-01-01',to:y+'-12-31'};\n await S.saveSettings({year,trimesters:[{id:'t1',kind:'custom',name:'Тестовый период',from:year.from,to:year.to}],theme:'light'});\n const cls=await S.addClass('7А'),other=await S.addClass('8Б');\n const pupils=[];for(let i=1;i<=8;i++)pupils.push(await S.addStudent(cls.id,'Демо Ученик '+i,i,i%2?'girls':'boys'));\n await S.addStudent(other.id,'Демо Ученик 9',1,'girls');\n const lesson=await S.addLesson(cls.id,today);await S.setMark(pupils[0].id,lesson.id,{value:'5'});await S.setScheduleEntry({weekday:M.weekdayOf(today),slot:1,classId:cls.id,time:'10:00'});\n S.state.currentClassId=cls.id;S.notify();\n const team=await C.saveTeam({name:'Демо-команда'}),players=[];for(let i=1;i<=7;i++)players.push(await C.savePlayer({teamId:team.id,name:'Игрок '+i,number:i,position:'setter'}));\n await C.saveTraining({teamId:team.id,date:today,time:'16:00',title:'Демо-тренировка',minutes:60,roster:players.map(p=>p.id),exercises:[],attendance:{},held:false});\n await C.saveMatch({teamId:team.id,date:today,opponent:'Демо-соперник',competition:'Демо',sets:[{ours:25,theirs:19},{ours:25,theirs:21}],roster:players.map(p=>p.id),stats:{[players[0].id]:{points:5,aces:2,serves:10,serveErrors:1}}});\n const away=Array.from({length:6},(_,i)=>({id:'away'+i,name:'Гость '+(i+1),number:i+1}));\n const draft=await C.startDetailedMatch({teamId:team.id,date:today,teamName:team.name,opponent:'Гости',competition:'Демо',venue:'Зал',roster:players.map(p=>p.id),ourPlayers:players,awayPlayers:away,lineup:players.slice(0,6).map(p=>p.id),awayLineup:away.map(p=>p.id),libero:null,scheme:'5-1',bestOf:3,target:25,decider:15,firstServe:'ours'});\n await W.saveWork({kind:'event',name:'Демо-задача',date:today,time:'12:00',minutes:30,eventType:'task',note:'',remind:30,done:false});\n await T.createTournament({name:'Демо-кубок',system:'league',format:'score',bestOf:3,target:25,decider:15,names:['7А','8Б','9В']});\n window.__smoke={draftId:draft.id};return true;})()");
+ await theme('light');await ready('.dashboard');await capture('390-school-light');
+ await nav('Классы');await ready('.class-entry');await capture('390-classes');
+ await click('.class-entry .class-card');await ready('table.journal');await capture('390-journal');
+ await click('.name-cell');await ready('.student-profile');await sleep(320);await capture('390-student');await closeSheet();
+ await nav('Календарь');await clickText('button','Общий рабочий календарь');await ready('.sheet.show');
+ await evalJs('(()=>{const n=[...document.querySelectorAll(".sheet select")].find(s=>[...s.options].some(o=>o.value==="month"));n.value="month";n.dispatchEvent(new Event("change"));return true})()');
+ await ready('.month-grid');await capture('390-calendar');await closeSheet();
+ await nav('Ещё');await ready('.sheet.show');await clickText('.sheet button','Настройки');await ready('.settings-group');await sleep(350);await capture('390-settings');
+ await clickText('.workspace-option','Тренер');await ready('.coach-body .dashboard-metrics');await capture('390-coach-light');
+ await nav('Команда');await ready('.player-directory-row');await click('.player-directory-row');await ready('.player-profile');await sleep(320);await capture('390-player');await closeSheet();
+ await nav('Матчи');await clickText('button','Площадка и live-матч');await ready('.sheet.show');await clickText('.sheet button','Продолжить матч');await ready('.vp-court');await sleep(320);await capture('390-live');
+ await click('.vp-points .vp-ours');await ready('.match-attribution');await clickText('.sheet button','Пропустить / продолжить');await ready('.vp-points');
+ assert.equal(await evalJs('document.querySelector(".vp-score-side.ours strong").textContent'),'1');
+ await clickText('.sheet button','Отменить последнее событие');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="0"'),'undo score');
+ await closeSheet();
+ await nav('Главная');await ready('.coach-body .dashboard-metrics');await theme('dark');await ready('.coach-body .dashboard-metrics');await capture('390-coach-dark');
+ await viewport(320,740);await capture('320-coach-dark');
+ await clickText('.workspace-option','Учитель');await nav('Главная');await ready('.dashboard');await capture('320-school-dark');
+ await viewport(844,390);await capture('844-landscape-dark');
+ await viewport(768,1024);await nav('Журнал');await ready('table.journal');await capture('768-journal-dark');
+ await viewport(1280,900);await capture('1280-journal-dark');await nav('Главная');await capture('1280-school-dark');
+ await theme('light');await capture('1280-school-light');
+ await click('.privacy-action');await ready('.privacy-cover');assert.equal(await evalJs('document.querySelector("#app").inert'),true);await clickText('.privacy-cover button','Показать данные');assert.equal(await evalJs('document.querySelector("#app").inert'),false);
+ await viewport(390,844);
+ await wait(()=>evalJs('(async()=>{const r=await navigator.serviceWorker.getRegistration();return Boolean(r?.active&&navigator.serviceWorker.controller)})()'),'service worker active',30000);
+ const cached=await evalJs('(async()=>{const keys=await caches.keys();return keys.some(k=>k.endsWith("v3.0.0"))})()');assert.equal(cached,true);
+ await send('Network.emulateNetworkConditions',{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
+ server.close();server.closeAllConnections?.();closed=true;
+ await send('Page.reload',{ignoreCache:false});await ready('.workspace-nav');await ready('.dashboard');
+ const count=await evalJs('(async()=>{const S=await import("./js/store.js"),C=await import("./js/coach.js");return {pupils:S.state.students.length,teams:(await C.loadCoach()).coachTeams.length,marks:S.state.marks.length}})()');assert.deepEqual(count,{pupils:9,teams:1,marks:1});
+ await capture('390-offline-reload');
+ await nav('Журнал');await ready('table.journal');await capture('390-offline-journal');
+ assert.deepEqual(exceptions,[],'Unhandled browser exceptions');
+ console.log('BROWSER PASS: '+report.length+' screenshots; real Chromium, offline reload, persistent IndexedDB, score/undo.');
+}finally{
+ await writeFile(join(dir,'report.json'),JSON.stringify({screens:report,exceptions},null,2));
+ ws?.close();proc.kill();if(!closed){server.close();server.closeAllConnections?.();}
+ await sleep(500);await rm(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100}).catch(()=>{});
+}
