@@ -9,6 +9,7 @@ import {openVolleyImport,openImportedReport} from './volleypoint-import.js';
 import {openCoachTeams} from './team-generator.js';
 import {openTestForm,testList,playerTestCards} from './coach-tests.js';
 import {openSeasonAnalytics,playerInsightCard} from './coach-season.js';
+import {openLibrary,chooseTrainingPlan} from './library.js';
 const {el,openSheet,closeSheet,toast}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
 const field=(text,input)=>el('label',{class:'field'},[el('span',{text}),input]);
@@ -93,11 +94,11 @@ function playerCard(team,player,view,refresh){
 function metricTable(summary){
   return el('dl',{class:'coach-metrics'},entries(C.metrics).flatMap(([key,name])=>[el('dt',{text:name}),el('dd',{text:format(summary.sums[key])+(summary.recorded[key]?' ('+summary.recorded[key]+' записей)':'')})]));
 }
-function trainingForm(team,view,t,refresh){
-  const title=input(t?.title||'Тренировка'),date=input(t?.date||todayIso(),'date'),time=input(t?.time||'16:00','time'),minutes=input(t?.minutes??90,'number',{min:1,max:600,step:1});
+function trainingForm(team,view,t,refresh,template=null){
+  const title=input(t?.title||template?.name||'Тренировка'),date=input(t?.date||todayIso(),'date'),time=input(t?.time||'16:00','time'),minutes=input(t?.minutes??template?.minutes??90,'number',{min:1,max:600,step:1});
   const players=view.players.filter(p=>!p.archived||t?.roster.includes(p.id));
   const selected=new Set(t?.roster||players.filter(p=>!p.archived).map(p=>p.id)),attendance={...t?.attendance};
-  let exercises=(t?.exercises||[]).map(x=>({...x}));
+  let exercises=(t?.exercises||template?.exercises||[]).map(x=>({...x}));
   const held=el('input',{type:'checkbox'});held.checked=!!t?.held;
   const plan=el('div',{class:'coach-stack'}),roster=el('div',{class:'coach-stack'}),warnings=el('div',{role:'status',class:'coach-warning'});
   const preview=()=>({date:date.value,exercises,roster:[...selected]});
@@ -210,7 +211,7 @@ export async function renderCoach(root,ctx={}){
           arch.length?el('details',{},[el('summary',{text:'Архив игроков ('+arch.length+')'}),...arch.map(player=>btn(label(player),()=>playerCard(team,player,view,refresh),'wide'))]):null]));
       }else if(selectedSection==='trainings'){
         body.append(card('Тестирования',[testList(team,view,refresh)]));
-        body.append(card('Тренировки',[team.archived?null:btn('+ Тренировка',()=>trainingForm(team,view,null,refresh),'primary wide')]));
+        body.append(card('Тренировки',[btn('Библиотека и конспекты',()=>openLibrary('coach'),'wide'),team.archived?null:btn('+ Тренировка',()=>trainingForm(team,view,null,refresh),'primary wide'),team.archived?null:btn('Из конспекта',()=>chooseTrainingPlan((plan,exercises)=>trainingForm(team,view,null,refresh,{...plan,exercises})),'wide')]));
         const upcoming=view.trainings.filter(t=>!t.held&&t.date>=todayIso()).sort(dateSort);
         const history=view.trainings.filter(t=>!upcoming.includes(t));
         for(const [title,list] of [['Расписание',upcoming],['История / не проведены',history]]){

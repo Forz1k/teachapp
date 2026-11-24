@@ -11,6 +11,7 @@ import * as ui from '../ui.js';
 import * as exporter from '../export.js';
 import { seedDemo } from '../demo.js';
 
+import {openLibrary} from './library.js';
 const { el, icon } = ui;
 
 export function renderSettings(root, ctx = {}) {
@@ -25,6 +26,7 @@ export function renderSettings(root, ctx = {}) {
   if(ctx.onAnalytics)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Аналитика и итоговые оценки'}),el('button',{class:'btn wide',type:'button',text:'Открыть аналитику',onclick:ctx.onAnalytics})]));
   if(ctx.onCoach)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Режим тренера'}),el('button',{class:'btn wide',type:'button',text:'Волейбол · команды и тренировки',onclick:ctx.onCoach})]));
 
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Методические материалы'}),el('button',{class:'btn wide',type:'button',text:'Библиотека упражнений и конспекты',onclick:()=>openLibrary('school')})]));
   /* ---------- учебный год ---------- */
   const yearBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Учебный год' })]);
   const yearFrom = el('input', { type: 'date', value: settings.year.from });

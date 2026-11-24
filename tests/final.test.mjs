@@ -17,7 +17,7 @@ test('Итоговая оценка независима от уроков, со
  await S.saveFinalGrade(s.id,'old','4',true);
  const a=A.schoolAnalytics(c.id,'2025-09-01','2025-12-31');assert.equal(a.rows[0].mean,5);assert.equal(a.rows[0].final,'4');
  assert.equal(S.state.marks[0].value,'5');
- const backup=await S.makeBackup();assert.equal(backup.version,10);await S.restoreBackup(backup);assert.equal(S.state.finalGrades.length,1);
+ const backup=await S.makeBackup();assert.equal(backup.version,11);await S.restoreBackup(backup);assert.equal(S.state.finalGrades.length,1);
  await S.deleteStudent(s.id);assert.equal(S.state.finalGrades.length,0);
  await S.restoreBackup(backup);await S.deleteClass(c.id);assert.equal(S.state.finalGrades.length,0);
  const old=structuredClone(backup);old.version=4;delete old.data.finalGrades;await S.restoreBackup(old);assert.equal(S.state.finalGrades.length,0);

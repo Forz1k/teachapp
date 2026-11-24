@@ -1,9 +1,10 @@
 import { catalog, types, validPeriod } from './health.js';
 import { validateNorm, validateNormSnapshot, validNormGroup, validGradeLevel, gradeNorm } from './assessment.js';
 import { validateCoachData, coachStores } from './coach.js';
+import {validateWorkRecord} from './workbench.js';
 import { SCHEMA } from './db.js';
 
-export const BACKUP_VERSION = 10;
+export const BACKUP_VERSION = 11;
 const legacyCore = ['meta','classes','students','lessons','topics','marks','exemptions','monthly'];
 const text = s => typeof s === 'string' && s.trim().length > 0;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -11,11 +12,12 @@ const date = s => validPeriod(s, null);
 
 export function validateBackup(payload) {
   if (payload?.app !== 'teachapp' || !object(payload.data)) throw new Error('Файл не похож на резервную копию TeachApp');
-  if (![1,2,3,4,5,6,7,8,9,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
+  if (![1,2,3,4,5,6,7,8,9,10,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
   const data = payload.data;
   const names = Object.keys(SCHEMA);
   if (Object.keys(data).some(n => !names.includes(n))) throw new Error('В копии есть неизвестный раздел');
   const required = payload.version === 1 ? [...legacyCore] : payload.version === 2 ? names.filter(n=>!['norms','normResults','finalGrades',...coachStores].includes(n)) : payload.version === 3 ? names.filter(n=>!['finalGrades',...coachStores].includes(n)) : payload.version === 4 ? names.filter(n=>!['finalGrades','coachLive','coachLineups'].includes(n)) : payload.version < 7 ? names.filter(n=>!['coachLive','coachLineups'].includes(n)) : [...names];
+  if(payload.version<11){const i=required.indexOf('workRecords');if(i>=0)required.splice(i,1);}
   if(payload.version<10){const i=required.indexOf('coachTests');if(i>=0)required.splice(i,1);}
   if (payload.version === 1) {
     for (const group of [['ktp','schedule','scheduleOverrides'],['studentHealthProfiles','activityRestrictions','activityCategories']]) {
@@ -92,5 +94,6 @@ export function validateBackup(payload) {
     && (r.retentionDays===undefined || (Number.isInteger(r.retentionDays)&&r.retentionDays>=0&&r.retentionDays<=3650))
     && (!r.lastBackupAt || typeof r.lastBackupAt === 'string')));
   validateCoachData(tables);
+  for(const r of tables.workRecords)validateWorkRecord(r);
   return tables;
 }

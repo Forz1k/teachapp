@@ -5,6 +5,7 @@ import * as ui from '../ui.js';
 import { openLessonSession } from './session.js';
 import { warning } from './health.js';
 
+import {openLibrary} from './library.js';
 const {el} = ui;
 
 export function todayEntries(date = M.todayIso()) {
@@ -63,5 +64,6 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
     ]));
   }
   if (ctx.onSchedule) body.append(el('button',{type:'button',class:'btn wide',text:'Открыть расписание',onclick:ctx.onSchedule}));
+  body.append(el('button',{type:'button',class:'btn wide',text:'Библиотека и конспекты',onclick:()=>openLibrary('school')}));
   root.append(body);
 }
