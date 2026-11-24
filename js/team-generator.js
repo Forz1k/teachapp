@@ -1,6 +1,6 @@
 /* Временное распределение, не меняет журнал и тренерский состав. */
 import * as H from './health.js';
-import {hasOsv} from './model.js';
+import {hasOsv,exemptionCovers} from './model.js';
 export function schoolCandidates({lesson,students,marks,parts,exemptions,activities,restrictions,activityId}){
   if(!activities.some(a=>a.id===activityId))throw Error('Выберите вид нагрузки');
   const matches=H.checkLessonRestrictions({lesson:{...lesson,activityIds:[activityId],activitiesConfirmed:true},students,activities,restrictions}).matches;
@@ -9,7 +9,7 @@ export function schoolCandidates({lesson,students,marks,parts,exemptions,activit
   const byPart=new Map(parts.filter(p=>p.lessonId===lesson.id).map(p=>[p.studentId,p]));
   return students.filter(s=>s.classId===lesson.classId).map(s=>{
     const m=byMark.get(s.id),p=byPart.get(s.id);
-    const reason=m?.flag==='Н'?'Отсутствует':hasOsv(m)||exemptions.some(e=>e.studentId===s.id&&H.active(e,lesson.date))?'ОСВ':
+    const reason=m?.flag==='Н'?'Отсутствует':hasOsv(m)||exemptions.some(e=>e.studentId===s.id&&exemptionCovers(e,lesson.date))?'ОСВ':
       p&&p.mode!=='normal'?'Нагрузка ограничена по записи участия':restricted.has(s.id)?'Есть ограничение на выбранную нагрузку':'';
     const present=!!(p||m?.value||m?.source==='manual'||m?.baseMark?.source==='manual');
     return {id:s.id,name:s.fullName,reason,confirmed:!reason&&present};

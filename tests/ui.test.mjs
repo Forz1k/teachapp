@@ -506,3 +506,9 @@ test('Генератор из урока исключает отсутствую
  const checks=[...sheet.querySelectorAll('input[type=checkbox]')];assert.equal(checks.filter(c=>c.disabled).length,1);assert.equal(checks.filter(c=>c.checked).length,1);
  assert.equal(JSON.stringify(store.state.marks),before);ui.closeSheet();
 });
+
+test('Отложенное закрытие шторки не очищает новую шторку',async()=>{
+ ui.openSheet(ui.el('div',{text:'Старая'}));await tick();ui.closeSheet();
+ await tick(285);ui.openSheet(ui.el('div',{text:'Новая'}));await tick(80);
+ assert.match(doc.querySelector('.sheet').textContent,/Новая/);ui.closeSheet();
+});

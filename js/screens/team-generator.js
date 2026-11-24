@@ -1,5 +1,4 @@
 import * as S from '../store.js';
-import * as C from '../coach.js';
 import * as H from '../health.js';
 import * as M from '../model.js';
 import * as ui from '../ui.js';
@@ -32,7 +31,7 @@ export function openTeamGenerator({title,date,activities,initial='',candidates,o
   const count=el('input',{type:'number',min:2,max:12,step:1,value:2});
   const mode=select([['random','Случайно'],['balanced','По уровню подготовки']],'random');
   const list=el('div',{class:'team-gen-list'}),output=el('div',{class:'team-gen-output'}),info=el('p',{role:'status','aria-live':'polite'});
-  const picked=new Set(),ratings=new Map(),locks=new Map();let rows=[],teams=null,serial=0;
+  const picked=new Set(),ratings=new Map(),locks=new Map();let rows=[],teams=null;
   const clear=()=>{teams=null;output.replaceChildren();};
   function reload(){
     clear();picked.clear();locks.clear();

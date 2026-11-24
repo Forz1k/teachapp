@@ -66,6 +66,7 @@ export function haptic(ms = 8) {
 let sheetEl = null;
 let backdropEl = null;
 let onCloseCb = null;
+let sheetRevision = 0;
 
 function ensureSheet() {
   if (sheetEl) return;
@@ -82,6 +83,7 @@ function ensureSheet() {
  */
 export function openSheet(content, opts = {}) {
   ensureSheet();
+  const revision = ++sheetRevision;
   onCloseCb = opts.onClose || null;
   sheetEl.innerHTML = '';
   sheetEl.append(el('div', { class: 'grabber' }));
@@ -89,6 +91,7 @@ export function openSheet(content, opts = {}) {
   else sheetEl.append(content);
 
   requestAnimationFrame(() => {
+    if (revision !== sheetRevision) return;
     backdropEl.classList.add('show');
     sheetEl.classList.add('show');
   });
@@ -97,11 +100,13 @@ export function openSheet(content, opts = {}) {
 
 export function closeSheet() {
   if (!sheetEl) return;
+  const revision = ++sheetRevision;
   sheetEl.classList.remove('show');
   backdropEl.classList.remove('show');
   const cb = onCloseCb;
   onCloseCb = null;
   setTimeout(() => {
+    if (revision !== sheetRevision) return;
     if (sheetEl && !sheetEl.classList.contains('show')) sheetEl.innerHTML = '';
     if (cb) cb();
   }, 300);
