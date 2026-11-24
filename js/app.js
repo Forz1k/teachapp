@@ -13,6 +13,7 @@ import { renderExemptionsInto } from './screens/exemptions.js';
 import { renderSchedule } from './screens/schedule.js';
 import { renderSettings, applyTheme, openExportSheet } from './screens/settings.js';
 
+import {readNavigation,saveNavigation,coachRoutes,schoolRoutes} from './design.js';
 const { el, icon } = ui;
 
 const TABS = [
@@ -29,7 +30,8 @@ let tabbarEl = null;
 let journalUpdate = null;
 let renderedRoute = '';
 let renderedTab = '';
-const routeKey = () => [store.state.currentTab, store.state.currentTab === 'journal' ? store.state.currentClassId : '', store.state.currentTab === 'journal' ? store.state.classSubtab || 'journal' : '', store.state.currentTab === 'journal' ? store.state.currentTrimesterId : ''].join('|');
+let navigation=readNavigation();
+const routeKey = () => [store.state.currentTab,store.state.currentTab==='coach'?navigation.coach:'', store.state.currentTab === 'journal' ? store.state.currentClassId : '', store.state.currentTab === 'journal' ? store.state.classSubtab || 'journal' : '', store.state.currentTab === 'journal' ? store.state.currentTrimesterId : ''].join('|');
 
 /** Перерисовка текущего таба. Вызывается на любое изменение состояния. */
 function render() {
@@ -45,7 +47,12 @@ function render() {
   journalUpdate = null;
   appRoot.replaceChildren();
   const screen = el('div', { class: 'screen' });
-  appRoot.append(el('div',{class:'privacy-bar'},[el('button',{class:'btn small',type:'button',text:'Скрыть данные',onclick:()=>ui.coverPrivacy()})]),screen);
+  const workspace=store.state.currentTab==='coach'?'coach':'school';
+  document.documentElement.dataset.workspace=workspace;
+  const switcher=el('div',{class:'workspace-switch',role:'group','aria-label':'Рабочее пространство'},[
+    ...[['school','Учитель'],['coach','Тренер']].map(([id,label])=>el('button',{type:'button',class:'workspace-option'+(workspace===id?' selected':''),'aria-pressed':String(workspace===id),text:label,onclick:()=>switchWorkspace(id)}))
+  ]);
+  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('span',{class:'brand-mark',text:'T'}),el('span',{text:'TeachApp'})]),switcher,el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':'Скрыть данные',title:'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
 
   const tab = store.state.currentTab;
 
@@ -67,7 +74,7 @@ function render() {
   } else if (tab === 'analytics') {
     renderAnalytics(screen,{onBack:()=>setTab('settings')});
   } else if (tab === 'coach') {
-    renderCoach(screen,{onBack:()=>setTab('today')});
+    renderCoach(screen,{section:navigation.coach,onBack:()=>switchWorkspace('school'),onSection:id=>{navigation=saveNavigation({...navigation,coach:id});renderTabbar();}});
   } else if (tab === 'settings') {
     renderSettings(screen, { onChanged: render,onCoach:()=>setTab('coach'),onAnalytics:()=>setTab('analytics') });
   }
@@ -77,7 +84,7 @@ function render() {
     if (nextGrid) [nextGrid.scrollLeft, nextGrid.scrollTop] = scrollPos;
   }
   if (page) page.scrollTop = pageTop || 0;
-  if (!tabbarEl || renderedTab !== tab) { renderTabbar(); renderedTab = tab; }
+  if (!tabbarEl || renderedTab !== tab || tab==='coach') { renderTabbar(); renderedTab = tab; }
 }
 
 function renderJournalScreen(screen) {
@@ -132,24 +139,41 @@ function renderJournalScreen(screen) {
   screen.append(switcher);
 }
 
-function renderTabbar() {
-  if (tabbarEl) tabbarEl.remove();
-  tabbarEl = el('nav', { class: 'tabbar' },
-    (store.state.currentTab==='coach'?[{id:'today',label:'Школа',icon:'back'},{id:'coach',label:'Волейбол',icon:'quick'}]:TABS).map((t) => el('button', {
-      type: 'button',
-      class: `tab ${store.state.currentTab === t.id ? 'active' : ''}`,
-      'aria-label': t.label,
-      'aria-current': store.state.currentTab === t.id ? 'page' : null,
-      onclick: () => { setTab(t.id); ui.haptic(6); },
-    }, [icon(t.icon), el('span', { text: t.label })])));
-  if(store.state.currentTab==='coach')tabbarEl.style.gridTemplateColumns='repeat(2,minmax(0,1fr))';
-  document.body.append(tabbarEl);
+const schoolTabs=[
+ {id:'today',label:'Главная',icon:'home'},{id:'classes',label:'Классы',icon:'classes'},{id:'journal',label:'Журнал',icon:'journal'},{id:'schedule',label:'Календарь',icon:'calendar'},{id:'more',label:'Ещё',icon:'menu'}
+];
+const coachTabs=[
+ {id:'home',label:'Главная',icon:'home'},{id:'roster',label:'Команда',icon:'classes'},{id:'trainings',label:'Тренировки',icon:'quick'},{id:'matches',label:'Матчи',icon:'trophy'},{id:'analytics',label:'Аналитика',icon:'chart'}
+];
+function renderTabbar(){
+ if(tabbarEl)tabbarEl.remove();
+ const coach=store.state.currentTab==='coach',active=coach?navigation.coach:store.state.currentTab;
+ const tabs=coach?coachTabs:schoolTabs;
+ tabbarEl=el('nav',{class:'tabbar workspace-nav','aria-label':coach?'Навигация тренера':'Навигация учителя'},tabs.map(t=>{
+  const current=active===t.id||!coach&&t.id==='more'&&!schoolTabs.some(x=>x.id===active);
+  return el('button',{type:'button',class:'tab'+(current?' active':''),'aria-label':t.label,'aria-current':current?'page':null,onclick:()=>{if(coach)setCoachSection(t.id);else if(t.id==='more')openMore();else setTab(t.id);ui.haptic(6);}},[icon(t.icon),el('span',{text:t.label})]);
+ }));
+ document.body.append(tabbarEl);
 }
-
-function setTab(id) {
-  store.state.currentTab = id;
-  if (id === 'journal' && !store.state.classSubtab) store.state.classSubtab = 'journal';
-  render();
+function openMore(){
+ ui.openSheet(el('div',{class:'coach-form'},[el('h2',{text:'Ещё'}),...TABS.filter(t=>['norms','settings'].includes(t.id)).concat({id:'analytics',label:'Аналитика и отчёты',icon:'chart'}).map(t=>el('button',{class:'btn wide menu-action',type:'button',onclick:()=>{ui.closeSheet();setTab(t.id);}},[icon(t.icon),el('span',{text:t.label}),icon('chevron')])),el('button',{class:'btn wide',type:'button',text:'Закрыть',onclick:ui.closeSheet})]));
+}
+function switchWorkspace(id){
+ if(id==='coach')setCoachSection(navigation.coach);
+ else setTab(navigation.school);
+}
+function setCoachSection(id){
+ if(!coachRoutes.includes(id))return;
+ navigation=saveNavigation({...navigation,workspace:'coach',coach:id});
+ store.state.currentTab='coach';render();
+}
+function setTab(id){
+ if(id==='coach'){setCoachSection(navigation.coach);return;}
+ if(!schoolRoutes.includes(id))return;
+ navigation=saveNavigation({...navigation,workspace:'school',school:id});
+ store.state.currentTab=id;
+ if(id==='journal'&&!store.state.classSubtab)store.state.classSubtab='journal';
+ render();
 }
 
 /** Выбор класса в шторке. */
@@ -202,6 +226,7 @@ async function boot() {
     } else {ui.toast('Операция не завершена. Повторите действие.');}
   });
   await store.load();
+  store.state.currentTab=navigation.workspace==='coach'?'coach':navigation.school;
   applyTheme(store.state.settings.theme || 'auto');
 
   store.subscribe((_state, changedStudents) => {

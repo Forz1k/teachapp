@@ -14,3 +14,12 @@ test('Дизайн: локальные ресурсы и доступность'
  assert.match(css,/prefers-reduced-motion/);assert.match(css,/focus-visible/);assert.match(css,/data-theme="dark"/);assert.doesNotMatch(html,/user-scalable=no/);
  assert.ok(sw.includes('./css/design.css')&&sw.includes('./js/design.js'));
 });
+
+test('Навигация: отдельные маршруты и безопасное восстановление',async()=>{
+ const {readNavigation,saveNavigation}=await import('../js/design.js');
+ const values=new Map(),storage={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v)};
+ assert.deepEqual(readNavigation(storage),{workspace:'school',school:'today',coach:'home'});
+ saveNavigation({workspace:'coach',school:'journal',coach:'matches'},storage);
+ assert.deepEqual(readNavigation(storage),{workspace:'coach',school:'journal',coach:'matches'});
+ assert.deepEqual(saveNavigation({workspace:'x',school:'x',coach:'x'},storage),{workspace:'school',school:'today',coach:'home'});
+});

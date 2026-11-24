@@ -184,6 +184,7 @@ function download(text,name){
 }
 export async function renderCoach(root,ctx={}){
   root.replaceChildren();
+  if(['home','roster','trainings','matches','analytics'].includes(ctx.section))selectedSection=ctx.section;
   const header=el('div',{class:'topbar'},[el('div',{class:'topbar-row'},[el('h1',{text:'Волейбол'}),btn('Школа',()=>ctx.onBack?.(),'small')]),el('div',{class:'subtitle',text:'Автономный режим тренера'})]);
   const body=el('div',{class:'coach-body'},[p('Загрузка…')]);root.append(header,body);
   let sequence=0;
@@ -202,9 +203,11 @@ export async function renderCoach(root,ctx={}){
       const team=teams.find(t=>t.id===selectedTeam);if(!team)return;
       const view=C.teamView(data,team.id);
       body.append(el('div',{class:'coach-actions'},[btn('Название',()=>teamForm(team,refresh)),btn(team.archived?'Восстановить команду':'Архивировать',()=>confirm('Изменить статус команды?','Данные сохранятся.',()=>C.saveTeam({...team,archived:!team.archived}),refresh))]));
-      const sections={roster:'Состав',trainings:'Тренировки',matches:'Матчи',analytics:'Аналитика'};
-      body.append(el('div',{class:'coach-sections',role:'group','aria-label':'Разделы тренера'},entries(sections).map(([id,name])=>btn(name,()=>{selectedSection=id;refresh();},selectedSection===id?'primary':''))));
-      if(selectedSection==='roster'){
+      const sections={home:'Главная',roster:'Состав',trainings:'Тренировки',matches:'Матчи',analytics:'Аналитика'};
+      if(!ctx.onSection)body.append(el('div',{class:'coach-sections',role:'group','aria-label':'Разделы тренера'},entries(sections).map(([id,name])=>btn(name,()=>{selectedSection=id;refresh();},selectedSection===id?'primary':''))));
+      if(selectedSection==='home'){
+        body.append(card('Команда · '+team.name,[p('Игроков: '+view.players.filter(p=>!p.archived).length+' · матчей: '+view.matches.length),...entries(sections).filter(([id])=>id!=='home').map(([id,name])=>btn(name,()=>{selectedSection=id;ctx.onSection?.(id);refresh();},'wide'))]));
+      }else if(selectedSection==='roster'){
         const active=view.players.filter(p=>!p.archived),arch=view.players.filter(p=>p.archived);
         body.append(card('Состав · '+active.length,[team.archived?null:btn('+ Игрок',()=>playerForm(team,null,refresh),'primary wide'),
           team.archived?null:btn('Генератор команд',()=>openCoachTeams(team,active,closeSheet),'wide'),
