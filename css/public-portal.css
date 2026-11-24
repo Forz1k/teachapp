@@ -13,3 +13,5 @@
 :root[data-motion=off] *,:root[data-motion=off] *::before,:root[data-motion=off] *::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}:root[data-motion=subtle] .status-pill.live::before{animation:none}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 @media(max-width:360px){.credit{justify-items:start}}
+
+.fan-final.neutral{background:linear-gradient(135deg,#2d3b58,#465b7d)}.fan-final.neutral span{color:#e4eafa}

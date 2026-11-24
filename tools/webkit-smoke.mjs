@@ -56,6 +56,8 @@ try{
  await fan.locator('[data-tab="overview"]').click();
  await fan.locator('#theme').click();assert.equal(await fan.locator('html').getAttribute('data-theme'),'light');
  assert.ok(await fan.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'public viewport overflow');
+ await fan.locator('#fan-motion').click();await fan.locator('#fan-motion').click();assert.equal(await fan.locator('html').getAttribute('data-motion'),'off');
+ await fan.emulateMedia({reducedMotion:'reduce'});assert.equal(await fan.evaluate(()=>getComputedStyle(document.querySelector('.brand img')).animationName),'none');
  await fan.close();
  await context.setOffline(true);
  await page.reload();

@@ -1,3 +1,4 @@
+import {enterGroup} from '../motion.js';
 import * as S from '../store.js';
 import * as C from '../coach.js';
 import * as M from '../model.js';
@@ -22,6 +23,7 @@ function form(existing,date,back){
 export async function openWorkCalendar(options={}){
  const day=inp(options.date||M.todayIso(),'date'),span=select([['1','День'],['7','7 дней'],['14','14 дней'],['month','Месяц']],['1','7','14','month'].includes(options.span)?options.span:'7'),source=select([['all','Все'],['school','Уроки'],['coach','Волейбол'],['tournament','Турниры'],['custom','Свои события'],['review','Проверки'],['backup','Резервные копии']],options.source||'all'),titles=el('input',{type:'checkbox'}),body=el('div',{class:'coach-stack'});
  let sequence=0,visible=[];
+ let paintedRange='';
  async function draw(){
   const seq=++sequence;try{
    visible=[];body.replaceChildren(p('Загрузка…'));
@@ -37,6 +39,7 @@ export async function openWorkCalendar(options={}){
     body.append(el('article',{class:'card-block calendar-event event-'+e.source},[el('div',{class:'calendar-event-head'},[el('span',{class:'calendar-event-time',text:e.time||'Весь день'}),el('span',{class:'status-pill',text:e.done?'Выполнено':'Запланировано'})]),el('h3',{text:e.title}),p((e.done?'Выполнено':'Запланировано')+(e.minutes?' · '+e.minutes+' мин':'')+(e.remind===null?'':' · напоминание')),e.record?btn('Открыть / редактировать',()=>form(e.record,e.date,open)):null,e.record?btn(e.done?'Вернуть в задачи':'Отметить выполненным',async()=>{try{await W.saveWork({...e.record,done:!e.done});await draw();}catch(err){toast(err.message);}}):null,e.record?btn('Удалить событие',async()=>{if(!await confirmDialog({title:'Удалить событие?',text:'Удаляется только эта рабочая запись.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(e.id,'event');await draw();}catch(err){toast(err.message);}}):null]));
    }
    if(!visible.length)body.append(p('Событий за период нет.'));
+   const range=from+'|'+to+'|'+source.value;if(range!==paintedRange){paintedRange=range;enterGroup([...body.children].filter(n=>n.matches('.month-card,.calendar-event')));}
   }catch(e){if(seq===sequence){visible=[];body.replaceChildren(p(e.message));}}
  }
  function move(direction){if(span.value==='month'){const d=M.parseIso(day.value);d.setDate(1);d.setMonth(d.getMonth()+direction);day.value=M.iso(d);}else day.value=M.addDays(day.value,direction*Number(span.value));draw();}

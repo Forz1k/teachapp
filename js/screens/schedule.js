@@ -1,3 +1,4 @@
+import {enterGroup} from '../motion.js';
 import { warning } from './health.js';
 /* screens/schedule.js — раздел «Расписание».
    Два режима: неделя (шаблон по дням недели) и день (конкретная дата с правками).
@@ -15,8 +16,8 @@ export function renderSchedule(root, opts = {}) {
   const state = { mode: opts.mode || 'day', date: opts.date || M.todayIso() };
 
   const topbar = el('div', { class: 'topbar' });
-  const body = el('div');
-  root.append(topbar, body);
+  const body = el('div',{class:'schedule-next'});
+  let painted='';root.append(topbar, body);
 
   const draw = () => {
     topbar.innerHTML = '';
@@ -46,6 +47,7 @@ export function renderSchedule(root, opts = {}) {
 
     if (state.mode === 'day') drawDay();
     else drawWeek();
+    const key=state.mode+'|'+state.date;if(painted!==key){painted=key;enterGroup(body.children);}
   };
 
   /* ---------- режим «День» ---------- */
