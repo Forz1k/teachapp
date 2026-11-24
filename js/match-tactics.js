@@ -1,4 +1,4 @@
-import {replayDetailed} from './match-protocol.js';
+import {replayDetailed,scoutSummary,reasons,isError} from './match-protocol.js';
 const pct=(won,n)=>n?100*won/n:null;
 const blank=()=>({rallies:0,won:0,lost:0,serve:0,serveWon:0,receive:0,receiveWon:0});
 const record=(r,e)=>{r.rallies++;r.won+=Number(e.side==='ours');r.lost+=Number(e.side==='theirs');const k=e.before.serve==='ours'?'serve':'receive';r[k]++;r[k+'Won']+=Number(e.side==='ours');};
@@ -77,4 +77,36 @@ export function teamTactics(matches,{from='',to='',opponent='',min=30}={}){
   timeouts.push(...a.timeouts.map(t=>({...t,date:m.date,opponent:m.opponent})));
  }
  return {total:chosen.length,detailed,overall:finish(all),rotations:rotations.map(r=>({...finish(r),eligible:r.rallies>=min})),pairs:sortedRows(pairs,min),six:sortedRows(six,min),timeouts,opponents:opponentHistory(chosen)};
+}
+
+/** Evidence-based match debrief: no invented attempts or automatic player judgments. */
+export function matchDebrief(d,{min=10}={}){
+ if(!Number.isInteger(min)||min<5||min>100)throw Error('Проверьте минимальную выборку');
+ const s=replayDetailed(d),a=matchTactics(d),events=s.timeline.filter(e=>e.type==='rally'),counts={ours:{},theirs:{}};
+ let detailed=0;
+ for(const e of events){if(e.kind!=='point')detailed++;const c=counts[e.side];c[e.kind]=(c[e.kind]||0)+1;}
+ const top=(side,filter)=>Object.entries(counts[side]).filter(([k])=>filter(k)).map(([kind,count])=>({kind,label:reasons[kind],count})).sort((a,b)=>b.count-a.count||a.kind.localeCompare(b.kind));
+ const observations=side=>scoutSummary(s.timeline,side,{active:[]});
+ const weak=observations('ours'),target=observations('theirs');
+ const notes=[],add=(kind,title,text)=>notes.push({kind,title,text});
+ const o=a.overall;
+ if(o.rallies<min)add('data','Малая выборка','Записано '+o.rallies+' розыгрышей; для устойчивых выводов нужно больше данных.');
+ else{
+  if(o.serve>=min&&o.receive>=min){
+   const diff=o.serveRate-o.receiveRate;
+   if(Math.abs(diff)>=15)add('focus',diff>0?'Работа на приёме':'Работа на своей подаче','Выиграно на подаче '+o.serveWon+'/'+o.serve+'; на приёме '+o.receiveWon+'/'+o.receive+'. Разница '+Math.round(Math.abs(diff))+' п.п. Проверьте видео и характер проигранных розыгрышей.');
+  }
+  const eligible=a.rotations.filter(r=>r.rallies>=min).sort((x,y)=>x.rate-y.rate||x.position-y.position);
+  if(eligible.length>=2&&eligible.at(-1).rate-eligible[0].rate>=20){const x=eligible[0],y=eligible.at(-1);add('focus','Проверить цикл P'+x.position,'Выиграно '+x.won+'/'+x.rallies+' против '+y.won+'/'+y.rallies+' в P'+y.position+'. Сравнение относительных циклов переходов, не оценка отдельного игрока.');}
+  const close=a.sets.reduce((r,x)=>({won:r.won+x.momentum.closeWon,total:r.total+x.momentum.closeTotal}),{won:0,total:0});
+  if(close.total>=min&&close.won/close.total<.4)add('focus','Тренировать концовки','Выиграно '+close.won+'/'+close.total+' близких розыгрышей в концовке. Отработайте игровые ситуации при равном счёте.');
+ }
+ const errors=top('theirs',isError),positive=top('ours',k=>['kill','tip','ace','block'].includes(k));
+ if(errors[0]?.count>=3){const max=errors[0].count,leaders=errors.filter(x=>x.count===max);add('focus','Частые отмеченные причины потери очка',leaders.map(x=>x.label+' — '+x.count).join('; ')+'. Это количество записанных ошибок, не процент от попыток.');}
+ if(positive[0]?.count>=3){const max=positive[0].count;add('strength','Результативные действия',positive.filter(x=>x.count===max).map(x=>x.label+' — '+x.count).join('; ')+'. Это отмеченные выигранные очки.');}
+ for(const [v,title] of [[weak,'Наша защита'],[target,'Зоны соперника']]){
+  const zone=v.topZones[0];if(zone?.count>=3){const top=v.topZones.filter(x=>x.count===zone.count);add('focus',title,top.map(x=>'Зона '+x.zone+' — '+x.count).join('; ')+'. Зона отмечена в '+v.knownZones+' из '+v.total+' подходящих розыгрышей; неизвестные зоны не распределяются.');}
+ }
+ if(events.length&&detailed/events.length<.7)add('data','Неполная детализация','Причина отмечена в '+detailed+' из '+events.length+' розыгрышей. Не сравнивайте частоту элементов без учёта пропусков.');
+ return {rallies:events.length,detailed,overall:o,errors,positive,notes,scout:{ours:weak,theirs:target}};
 }
