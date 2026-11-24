@@ -71,6 +71,16 @@ try{
  assert.equal(oversized.status,413);
  const snapshot=await other.get();assert.equal(snapshot.revision,2);
  assert.ok(!JSON.stringify(snapshot).includes('Synthetic test only'));
+ const {createDeviceInvite,redeemDeviceInvite}=await import('../js/device-invite.js');
+ const route=(url,init)=>fetch(base+new URL(url).pathname,init);
+ const invitation=await createDeviceInvite(personalCode,route);
+ const attempts=await Promise.allSettled([redeemDeviceInvite(invitation,route),redeemDeviceInvite(invitation,route)]);
+ assert.equal(attempts.filter(x=>x.status==='fulfilled').length,1);
+ assert.equal(attempts.find(x=>x.status==='fulfilled').value,personalCode);
+ const prior=await createDeviceInvite(personalCode,route),newer=await createDeviceInvite(personalCode,route);
+ await assert.rejects(redeemDeviceInvite(prior,route),/истёк/);
+ assert.equal(await redeemDeviceInvite(newer,route),personalCode);
+ console.log('CLOUDFLARE INVITE PASS: encrypted single-use redemption and replacement');
  await stop();await start({school:[hashes.school[1]],coach:hashes.coach});
  await assert.rejects(school.get(),/отказал в доступе/);
  assert.deepEqual(await other.get(),snapshot);
