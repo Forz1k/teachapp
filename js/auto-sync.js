@@ -1,10 +1,10 @@
 /* Foreground sync; never runs from service worker or while another updated tab is active. */
 import {syncAreas,relayClient,syncPersonalArea} from './sync.js';
-import {readPersonalCode,personalCredentials} from './personal-sync.js';
+import {readSyncIdentity,identityCredentials,identityAreas} from './device-trust.js';
 let last={phase:'idle',areas:[],at:null},activeSession=null;
 export const withSyncSession=task=>activeSession?activeSession.exclusive(task):task();
 export const autoSyncStatus=()=>({...last,areas:last.areas.map(x=>({...x}))});
-export async function runPersonalSync({getCode=readPersonalCode,online=()=>globalThis.navigator?.onLine!==false,clientFactory=relayClient,runArea=syncPersonalArea,initialize=false}={}){
+export async function runPersonalSync({getCode=readSyncIdentity,online=()=>globalThis.navigator?.onLine!==false,clientFactory=relayClient,runArea=syncPersonalArea,initialize=false}={}){
  // Do not replace an active attempt with a concurrent offline/disconnected request.
  if(last.phase==='running')return autoSyncStatus();
  const code=getCode();
@@ -13,12 +13,12 @@ export async function runPersonalSync({getCode=readPersonalCode,online=()=>globa
  last={phase:'running',areas:[],at:null};
  const areas=[];
  const stillAllowed=()=>getCode()===code&&online();
- for(const area of Object.keys(syncAreas)){
+ for(const area of identityAreas(code)){
   if(!stillAllowed()){areas.push({area,status:'paused'});continue;}
   try{
-   const credentials=await personalCredentials(code,area);
+   const credentials=await identityCredentials(code,area);
    if(!stillAllowed()){areas.push({area,status:'paused'});continue;}
-   const client=clientFactory(credentials.endpoint,area,credentials.token,{timeoutMs:7000});
+   const client=clientFactory(credentials.endpoint,area,credentials.token,{timeoutMs:7000,...(credentials.protocolVersion===2?{protocolVersion:2}:{})});
    const result=await runArea({...credentials,client,initialize,stillAllowed});
    areas.push(result.status==='synced'?{...result,successfulAt:new Date().toISOString()}:result);
   }catch(error){const allowed=stillAllowed();areas.push({area,status:allowed?'error':'paused',...(allowed&&error?.retryable===true?{retryable:true}:{})});}

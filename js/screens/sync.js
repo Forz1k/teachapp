@@ -1,3 +1,5 @@
+import {readSyncIdentity,identityCredentials,identityAreas,readTrustedProfile,forgetTrustedProfile,trustedCredentials} from '../device-trust.js';
+import {openTrustedDevices} from './trusted-devices.js';
 import * as S from '../store.js';
 import * as db from '../db.js';
 import {ktpLinkIssues} from '../backup.js';
@@ -77,14 +79,14 @@ export function openSync(){
   try{
    const cp=await syncStatus(selected);if(n!==seq||closed)return;
    endpoint.value=cp?.endpoint||'';
-   const saved=readPersonalCode();
-   if(saved){const credentials=await personalCredentials(saved,selected);if(n!==seq||closed)return;
+   const saved=readSyncIdentity();
+   if(saved&&identityAreas(saved).includes(selected)){const credentials=await identityCredentials(saved,selected);if(n!==seq||closed)return;
     if(!cp||cp.endpoint===credentials.endpoint){endpoint.value=credentials.endpoint;token.value=credentials.token;password.value=credentials.password;}
    }
    const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)).join(' · ');
    const successes=report.areas.filter(r=>r.status==='synced'&&r.successfulAt).map(r=>syncAreas[r.area]+': '+new Date(r.successfulAt).toLocaleString('ru-RU')).join(' · ');
-   personalStatus.textContent=saved?'Личный код сохранён на этом устройстве.'+(report.phase==='offline'?' Нет сети.':report.phase==='running'?' Обмен выполняется.':report.phase==='interrupted'?' Обмен прерван.':'')+(report.at?' Последняя проверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:'')+(successes?' Успешный обмен в последней попытке: '+successes:''):'Личный код не сохранён.';
-   personalForget.hidden=!saved;inviteCreate.hidden=!saved;both.hidden=!saved;inviteImport.hidden=Boolean(saved);
+   personalStatus.textContent=saved?(readTrustedProfile()?'Индивидуальный профиль v2 сохранён.':'Личный код сохранён на этом устройстве.')+(report.phase==='offline'?' Нет сети.':report.phase==='running'?' Обмен выполняется.':report.phase==='interrupted'?' Обмен прерван.':'')+(report.at?' Последняя проверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:'')+(successes?' Успешный обмен в последней попытке: '+successes:''):'Личный код не сохранён.';
+   personalForget.hidden=!saved;inviteCreate.hidden=!saved||!!readTrustedProfile();both.hidden=!saved;inviteImport.hidden=Boolean(saved);personalConnect.hidden=!!readTrustedProfile();
    status.textContent=cp?'Последняя подтверждённая ревизия: '+cp.revision:'Контур пока не подключён.';
    detach.hidden=!cp;detach.style.display=cp?'':'none';
    localStatus.hidden=!saved;
@@ -92,8 +94,8 @@ export function openSync(){
     localStatus.textContent='Сравнение локальных записей с последней принятой ревизией…';
     try{
      const data=await db.dumpAll();
-     const local=await Promise.all(Object.keys(syncAreas).map(async scope=>localSyncState({...await personalCredentials(saved,scope),data})));
-     if(n!==seq||closed||readPersonalCode()!==saved)return;
+     const local=await Promise.all(identityAreas(saved).map(async scope=>localSyncState({...await identityCredentials(saved,scope),data})));
+     if(n!==seq||closed||readSyncIdentity()!==saved)return;
      const labels={setup:'не подключён',clean:'локальных изменений нет',pending:'есть изменения, ещё не подтверждённые облаком',review:'нужна проверка подключения или данных'};
      localStatus.textContent=local.map(x=>syncAreas[x.area]+': '+labels[x.status]+(x.successfulAt?' · последняя успешная проверка '+new Date(x.successfulAt).toLocaleString('ru-RU'):'')).join('\n');
     }catch{if(n===seq&&!closed)localStatus.textContent='Не удалось сравнить локальные записи.';}
@@ -119,7 +121,7 @@ export function openSync(){
   clear();busy=true;controls(true);
   try{
    if(!await confirmDialog({title:'Подключиться к своему серверу?',text:'Адрес: '+address+'. На этом этапе передаётся ключ доступа и запрашивается только зашифрованная ревизия. Используйте согласованный сервер и закройте другие окна TeachApp. Не используйте реальные данные до отдельной проверки безопасности.',ok:'Сравнить'}))return;
-   client=relayClient(address,selected,t);secret=pw;
+   const profile=readTrustedProfile();if(profile){const v=trustedCredentials(profile,selected);if(v.endpoint!==address||v.token!==t||v.password!==pw)throw Error('Используйте параметры сохранённого индивидуального профиля');}client=relayClient(address,selected,t,{protocolVersion:profile?2:1});secret=pw;
    plan=await prepareSync({area:selected,endpoint:address,password:secret,client});
    if(!active()){clear();return;}
    status.textContent='Ревизия на сервере: '+plan.revision+' · '+syncAreas[selected];
@@ -133,8 +135,8 @@ export function openSync(){
   const selected=plan,selectedClient=client,pw=secret;
   busy=true;controls(true);apply.disabled=true;
   try{
-   const code=readPersonalCode();
-   const saved=code?await personalCredentials(code,selected.area):null;
+   const code=readSyncIdentity();
+   const saved=code&&identityAreas(code).includes(selected.area)?await identityCredentials(code,selected.area):null;
    if(selected.revision===0&&!(saved&&saved.endpoint===selected.endpoint&&saved.password===pw)){
     const repeat=await promptDialog({title:'Подтвердите пароль нового контура',text:'Один пароль шифрования для всех доверенных устройств этого контура; храните отдельно от ключей доступа.',password:true,ok:'Далее'});
     if(repeat!==pw){if(repeat!==null)toast('Пароли не совпадают');return;}
@@ -162,20 +164,20 @@ export function openSync(){
   savePersonalCode(parsed.code);clear();await refresh();S.notify();return true;
  }
  async function exchangeBoth(){
-  if(!readPersonalCode())throw Error('Сначала подключите устройство');
+  if(!readSyncIdentity())throw Error('Сначала подключите устройство');
   const result=await withSyncSession(async()=>{
    const report=await runPersonalSync({initialize:true});await S.load();return report;
   });
   if(!result)throw Error('Закройте другие вкладки TeachApp.');
   const statuses={synced:'готово',setup:'нужно подключение',conflict:'конфликт',review:'подтвердите изменения',error:'нужна проверка данных или подключения',paused:'обмен остановлен'};
-  simpleResult.textContent=Object.keys(syncAreas).map(a=>syncAreas[a]+': '+(statuses[result.areas.find(x=>x.area===a)?.status]||'обмен не выполнен')).join(' · ');
+  simpleResult.textContent=identityAreas(readSyncIdentity()).map(a=>syncAreas[a]+': '+(statuses[result.areas.find(x=>x.area===a)?.status]||'обмен не выполнен')).join(' · ');
   const issues=ktpLinkIssues(await db.dumpAll());
   if(issues.length)simpleResult.textContent+=' · Исправьте КТП через диагностику.';
   await refresh();
-  return result.areas.length===2&&result.areas.every(x=>x.status==='synced');
+  return result.areas.length>0&&result.areas.every(x=>x.status==='synced');
  }
  const simpleResult=el('p',{class:'profile-note','aria-live':'polite'});
- const both=btn('Синхронизировать школу и тренера',async()=>{
+ const both=btn('Синхронизировать доступные области',async()=>{
   if(busy)return;
   if(!await confirmDialog({title:'Синхронизировать обе области?',text:'Будут переданы только зашифрованные записи. Первое подключение не заменяет отличающиеся данные, конфликты и удаления требуют отдельного подтверждения. Сохраните защищённую копию. Только тестовые данные до согласования.',ok:'Синхронизировать'}))return;
   clear();busy=true;controls(true);
@@ -229,7 +231,7 @@ export function openSync(){
  const personalForget=btn('Забыть личный код',async()=>{
   if(busy)return;
   if(!await confirmDialog({title:'Забыть личный код?',text:'Код удалится только из этого браузера. Локальные записи, ревизии и серверная копия останутся. Код на другом устройстве продолжит работать.',ok:'Забыть',danger:true}))return;
-  try{forgetPersonalCode();clear();await refresh();S.notify();}catch(e){toast(e.message);}
+  try{if(readTrustedProfile())forgetTrustedProfile();else forgetPersonalCode();clear();await refresh();S.notify();}catch(e){toast(e.message);}
  });
  const pairCreate=btn('Создать код для другого устройства',async()=>{
   if(busy)return;
@@ -273,7 +275,7 @@ export function openSync(){
  });
  area.onchange=()=>{clear();refresh();};
  for(const input of [endpoint,token,password])input.oninput=()=>{if(plan){plan=null;client=null;secret=null;choices={};results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}};
- const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,localStatus,personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
+ const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,localStatus,btn('Доверенные устройства v2',()=>openTrustedDevices(openSync)),personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
  openSheet(root,{fullHeight:true,onClose:()=>{closed=true;clear();}});
  refresh();
 }

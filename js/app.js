@@ -20,7 +20,7 @@ import * as C from './coach.js';
 import {openCoachSearchResult} from './screens/coach.js';
 import {readNavigation,saveNavigation,coachRoutes,schoolRoutes} from './design.js';
 import {animateOnce} from './motion.js';
-import {readPersonalCode} from './personal-sync.js';
+import {readSyncIdentity} from './device-trust.js';
 import {installPrivacyShield} from './privacy-shield.js';
 import {openSyncSession,runPersonalSync,autoSyncStatus,syncRetryDelay} from './auto-sync.js';
 const { el, icon } = ui;
@@ -49,7 +49,7 @@ function safeAutoRoute(){
  return store.state.currentTab==='today'||store.state.currentTab==='coach'&&navigation.coach==='home';
 }
 async function maybeAutoSync(initial=false,manual=false,retry=false){
- if(!readPersonalCode()||autoBusy||document.body.classList.contains('privacy-covered'))return;
+ if(!readSyncIdentity()||autoBusy||document.body.classList.contains('privacy-covered'))return;
  if(!syncSession||navigator.onLine===false||document.visibilityState==='hidden'){
   if(manual)ui.toast(navigator.onLine===false?'Нет интернета. Изменения сохранены на устройстве.':'Откройте синхронизацию в настройках для ручного обмена.');return;
  }
@@ -61,12 +61,12 @@ async function maybeAutoSync(initial=false,manual=false,retry=false){
   const result=await syncSession.exclusive(()=>runPersonalSync());
   if(result?.areas.some(x=>x.changed))await store.load();
   syncHint=result?'':'Другая вкладка открыта · обмен отложен';
-   const delay=syncRetryDelay(result,autoRetryCount),code=readPersonalCode();
+   const delay=syncRetryDelay(result,autoRetryCount),code=readSyncIdentity();
    if(delay!==null&&code&&navigator.onLine!==false){
     autoRetryCount++;syncHint='Временная ошибка · повторная проверка через '+(delay/1000)+' с';
     autoRetryTimer=setTimeout(()=>{
      autoRetryTimer=null;syncHint='';updateSyncIndicator();
-     if(readPersonalCode()===code)void maybeAutoSync(false,false,true);
+     if(readSyncIdentity()===code)void maybeAutoSync(false,false,true);
     },delay);
    }else if(result&&!result.areas.some(x=>x.retryable===true))autoRetryCount=0;
   if(manual){const needsReview=result&&(result.phase!=='finished'||result.areas.some(x=>!['synced','setup'].includes(x.status))),hasSetup=result?.areas.some(x=>x.status==='setup');ui.toast(!result?'Закройте другие вкладки TeachApp.':needsReview?'Проверьте синхронизацию в настройках.':hasSetup?'Проверьте первичное подключение контуров в настройках.':'Синхронизация завершена.');}
@@ -99,7 +99,7 @@ function render() {
   const switcher=el('div',{class:'workspace-switch',role:'group','aria-label':'Рабочее пространство'},[
     ...[['school','Учитель'],['coach','Тренер']].map(([id,label])=>el('button',{type:'button',class:'workspace-option'+(workspace===id?' selected':''),'aria-pressed':String(workspace===id),text:label,onclick:()=>switchWorkspace(id)}))
   ]);
-  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('img',{class:'brand-mark',src:'./icons/brand.svg',alt:'',width:32,height:32}),el('span',{text:'TeachApp'})]),switcher,readPersonalCode()?el('button',{class:'icon-btn plain personal-sync-action',type:'button','aria-label':'Синхронизировать сейчас',onclick:()=>void maybeAutoSync(false,true)},[icon('refresh')]):null,el('button',{class:'icon-btn plain search-action',type:'button','aria-label':'Поиск',title:'Поиск',onclick:()=>openSearch(workspace)},[icon('search')]),el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':'Скрыть данные',title:'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
+  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('img',{class:'brand-mark',src:'./icons/brand.svg',alt:'',width:32,height:32}),el('span',{text:'TeachApp'})]),switcher,readSyncIdentity()?el('button',{class:'icon-btn plain personal-sync-action',type:'button','aria-label':'Синхронизировать сейчас',onclick:()=>void maybeAutoSync(false,true)},[icon('refresh')]):null,el('button',{class:'icon-btn plain search-action',type:'button','aria-label':'Поиск',title:'Поиск',onclick:()=>openSearch(workspace)},[icon('search')]),el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':'Скрыть данные',title:'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
 
   updateSyncIndicator();
   const tab = store.state.currentTab;
