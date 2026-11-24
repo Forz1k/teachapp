@@ -2,7 +2,7 @@ import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {replayDetailed,detailEvent,reportData,placementSummary} from '../js/match-protocol.js';
+import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates} from '../js/match-protocol.js';
 import * as C from '../js/coach.js';
 import * as S from '../js/store.js';
 import * as db from '../js/db.js';
@@ -54,4 +54,26 @@ test('terminal placements are optional metadata, never another point or inferred
  assert.equal(d.events.at(-1).placement,undefined);assert.equal(replayDetailed(d).theirs,2);
  assert.throws(()=>detailEvent(d,{type:'placement',zone:1}),/направление/);
  d=detailEvent(d,null);assert.equal(replayDetailed(d).theirs,1);
+});
+
+test('Скидка — одна результативная атака и одно очко, ошибка защиты — игрок проигравшей команды',()=>{
+ let d=detailEvent(base,{type:'rally',side:'ours',kind:'tip',player:'a2',placement:4});
+ let s=replayDetailed(d);
+ assert.equal(s.ours,1);assert.equal(s.stats.a2.attackKills,1);assert.equal(s.stats.a2.attacks,1);assert.equal(s.stats.a2.points,1);
+ assert.equal(s.sides.ours.stats.a2.tipKills,1);assert.equal(placementSummary(s.timeline,'ours','kill').zones[3],1);
+ d=detailEvent(d,{type:'rally',side:'ours',kind:'defenseError',player:'b2'});
+ s=replayDetailed(d);assert.equal(s.ours,2);assert.equal(s.sides.theirs.stats.b2.defenseErrors,1);assert.equal(s.sides.theirs.stats.b2.otherErrors,1);assert.equal(s.sides.ours.opponentErrors,1);
+ assert.throws(()=>detailEvent(d,{type:'rally',side:'ours',kind:'defenseError',player:'a2'}),/до перехода/);
+ assert.equal(replayDetailed(detailEvent(d,null)).ours,1);
+});
+test('Причины и авторы фильтруются по подаче, стороне, зоне и либеро до начисления',()=>{
+ const lineups={ours:base.lineup,theirs:base.awayLineup};
+ assert.ok(rallyReasonOptions('ours','theirs').includes('serveError'));
+ assert.ok(!rallyReasonOptions('ours','theirs').includes('ace'));
+ assert.ok(!rallyReasonOptions('ours','theirs').includes('receiveError'));
+ assert.ok(rallyReasonOptions('theirs','theirs').includes('receiveError'));
+ assert.deepEqual(rallyCandidates(base,lineups,'theirs','ours','serveError').map(p=>p.id),['b0']);
+ assert.deepEqual(rallyCandidates(base,lineups,'theirs','ours','block').map(p=>p.id),['a1','a2','a3']);
+ assert.deepEqual(rallyCandidates(base,lineups,'theirs','ours','defenseError').map(p=>p.id),base.awayLineup);
+ assert.deepEqual(rallyCandidates({...base,awayPlayers:[]},{...lineups,theirs:[]},'theirs','ours','serveError'),[]);
 });

@@ -15,7 +15,6 @@ const name=(d,side,id)=>{const r=roster(d,side).find(x=>x.id===id);return r?(r.n
 const seconds=t=>[Math.floor(t/3600),Math.floor(t/60)%60,t%60].map(x=>String(x).padStart(2,'0')).join(':');
 const score=x=>x.ours+' : '+x.theirs;
 const sides=['ours','theirs'];
-const errors=['serveError','attackError','receiveError','otherError'];
 function playerLabel(p){return (p.number==null?'':'№'+p.number+' · ')+p.name;}
 function six(players,initial=[],options={}){return lineupPicker(players,initial,options);}
 function parseAway(text){
@@ -90,7 +89,7 @@ function court(d,lineups,serve,selected,choose){
 }
 function shown(d,s){return {ours:s.lineup.map(id=>s.liberoFor===id?d.libero:id),theirs:s.awayLineup};}
 export function openDetailedMatch(initial,back,refresh){
- let d=initial,busy=false,selected=null,attributing=false,section='match',nextDraft=null,quick=false;
+ let d=initial,busy=false,selected=null,pointDraft=null,section='match',nextDraft=null,quick=false;
  const body=el('div',{class:'vp-stack vp-live'});
  const perform=async(event,after)=>{
   if(busy)return;busy=true;
@@ -101,8 +100,9 @@ export function openDetailedMatch(initial,back,refresh){
  function draw(){
   const s=V.replayDetailed(d),last=s.timeline.at(-1),won=s.sets.filter(x=>x.ours>x.theirs).length;
   const set=s.setEnded?s.sets.length:s.sets.length+1;
-  const pre=attributing&&d.events.at(-1)?.type==='rally'&&last?.before;
-  if(!pre)attributing=false;
+  const pre=pointDraft?.editing&&last?.before;
+  const begin=(side,editing=false)=>{pointDraft={side,editing,kind:null};selected=null;draw();body.closest('.sheet')?.scrollTo(0,0);};
+  const cancel=()=>{pointDraft=null;selected=null;draw();};
   const courtState=pre?last.before.lineups:shown(d,s),serve=pre?last.before.serve:s.serve;
   const displayScore=el('div',{class:'vp-scoreboard'},sides.map(side=>el('div',{class:'vp-score-side '+side+(s.serve===side?' score-serving':'')},[el('span',{text:sideName(d,side)}),el('strong',{text:String(s.score[side])}),el('small',{text:(s.serve===side?'● Подача · ':'')+'Сеты '+(side==='ours'?won:s.sets.length-won)})])));
   body.replaceChildren(el('div',{class:'vp-match-head'},[el('div',{class:'vp-match-title'},[el('span',{class:'match-live-label',text:s.finished?'ЗАВЕРШЁН':s.setEnded?'ПЕРЕРЫВ':'● LIVE'}),el('strong',{text:'Партия '+set})]),displayScore,el('div',{class:'match-sets'},s.sets.length?s.sets.map((x,i)=>el('span',{class:'match-set',text:(i+1)+' · '+score(x)})):[el('span',{text:'Первая партия'})])]),
@@ -111,15 +111,28 @@ export function openDetailedMatch(initial,back,refresh){
   else if(section==='events'){
    body.append(p('Событий: '+d.events.length),...s.timeline.slice().reverse().slice(0,100).map(x=>p('Сет '+x.set+' · '+x.score+' · '+eventText(d,x))));
   }else{
-   body.append(el('div',{class:'vp-tabs',role:'group','aria-label':'Режим ввода очков'},[['Стандартный',false],['Быстрый счёт',true]].map(([label,value])=>el('button',{class:'btn '+(quick===value?'primary':''),type:'button','aria-pressed':String(quick===value),text:label,onclick:()=>{quick=value;attributing=false;selected=null;draw();}}))));
-   body.append(court(d,courtState,serve,selected,(side,id)=>{selected={side,id};draw();}));
-   if(pre){
-    const winner=last.side,actor=selected?.side,options=actor===winner?['kill','block','ace']:actor?errors:[];
-    body.append(el('div',{class:'vp-attribution match-attribution'},[el('strong',{text:'Очко записано · '+last.score}),p('Выберите игрока на площадке ДО перехода. Можно указать причину без автора или пропустить.'),p(selected?name(d,selected.side,selected.id):'Автор не выбран'),
-      el('div',{class:'vp-actions'},options.map(k=>btn(V.reasons[k],()=>perform({type:'attribute',kind:k,player:selected.id},()=>{attributing=false;selected=null;})))),
-      field('Причина без автора',select([['point','Без детализации'],...Object.entries(V.reasons).filter(([k])=>k!=='point')],'point'))]));
-    const area=body.lastElementChild,reason=area.querySelector('select');
-    area.append(btn('Сохранить причину',()=>perform({type:'attribute',kind:reason.value,player:null},()=>{attributing=false;selected=null;}),'wide'),btn('Пропустить / продолжить',()=>{attributing=false;selected=null;draw();},'primary wide'));
+   body.append(el('div',{class:'vp-tabs',role:'group','aria-label':'Режим ввода очков'},[['Стандартный',false],['Быстрый счёт',true]].map(([label,value])=>el('button',{class:'btn '+(quick===value?'primary':''),type:'button','aria-pressed':String(quick===value),text:label,onclick:()=>{quick=value;pointDraft=null;selected=null;draw();}}))));
+   if(!pointDraft)body.append(court(d,courtState,serve,selected,(side,id)=>{selected={side,id};draw();}));
+   if(pointDraft){
+    const {side:winner,editing,kind}=pointDraft;
+    const submit=(k,player=null)=>perform(editing?{type:'attribute',kind:k,player}:{type:'rally',side:winner,kind:k,player},()=>{pointDraft=null;selected=null;});
+    const options=V.rallyReasonOptions(winner,serve).filter(k=>k!=='point');
+    const area=el('section',{class:'vp-attribution match-attribution','aria-label':editing?'Уточнение очка':'Новое очко'},[
+      el('div',{class:'vp-rally-heading'},[el('strong',{text:(editing?'Уточнить очко · ':'+1 · ')+sideName(d,winner)}),el('small',{text:kind?'2 из 2 · Игрок':'1 из 2 · Причина'})]),
+      p(editing?'Счёт не изменится.': 'Очко ещё не начислено.')]);
+    if(!kind){
+      for(const [title,group] of [['Результативное действие',options.filter(k=>!V.isError(k))],['Ошибка соперника',options.filter(V.isError)]]){
+        if(group.length)area.append(el('strong',{class:'vp-rally-label',text:title}),el('div',{class:'vp-actions vp-reason-grid'},group.map(k=>el('button',{type:'button',class:'btn','data-reason':k,text:V.reasons[k],onclick:()=>{pointDraft={...pointDraft,kind:k};draw();}}))));
+      }
+      area.append(btn('Без детализации',()=>submit('point'),'wide'));
+    }else{
+      const actor=V.rallyActor(winner,kind),players=V.rallyCandidates(d,courtState,serve,winner,kind);
+      area.append(el('strong',{text:V.reasons[kind]+' · '+sideName(d,actor)}),
+        p(players.length?'Выберите игрока, находившегося на площадке до розыгрыша.':'Нет доступных игроков. Можно сохранить причину без автора.'),
+        el('div',{class:'vp-actions vp-author-grid'},players.map(player=>el('button',{type:'button',class:'btn','data-player':player.id,onclick:()=>submit(kind,player.id)},[el('strong',{text:player.number==null?'—':'№'+player.number}),el('span',{text:player.name}),el('small',{text:'P'+player.zone})]))),
+        btn('Сохранить без автора',()=>submit(kind),'wide'),btn('Назад к причинам',()=>{pointDraft={...pointDraft,kind:null};draw();},'wide'));
+    }
+    area.append(btn('Отмена',cancel,'wide'));body.append(area);
    }else if(s.finished){
     body.append(p('Матч завершён'),btn('Сохранить матч и открыть протокол',async()=>{
      if(busy||!await ui.confirmDialog({title:'Завершить матч?',text:'События, счёт и статистика сохранятся в истории.',ok:'Сохранить'}))return;
@@ -136,7 +149,7 @@ export function openDetailedMatch(initial,back,refresh){
     const {own,away,first}=nextDraft;
     body.append(el('h3',{text:'Старт следующей партии'}),p('Старт предыдущей партии скопирован. Измените нужные зоны или очистите расстановку.'),p(d.teamName),own.node,...(d.awayPlayers.length?[p(d.opponent),away.node]:[]),field('Первая подача',first),btn('Начать партию',()=>perform({type:'next',lineup:own.get(),awayLineup:d.awayPlayers.length?away.get():[],serve:first.value},()=>{selected=null;nextDraft=null;}),'primary wide'));
    }else{
-    const add=side=>perform({type:'rally',side,kind:'point',player:null},()=>{selected=null;attributing=!quick;});
+    const add=side=>quick?perform({type:'rally',side,kind:'point',player:null},()=>{selected=null;}):begin(side);
     const points=el('div',{class:'vp-actions vp-points'},sides.map(side=>el('button',{type:'button',class:'btn '+(side==='ours'?'vp-ours':'vp-theirs'),onclick:()=>add(side),'aria-label':'Очко '+sideName(d,side)},[el('strong',{text:'+1'}),el('span',{text:' '+sideName(d,side)})])));
     body.insertBefore(points,body.querySelector('.vp-court'));
     body.append(el('div',{class:'vp-actions vp-secondary-actions'},sides.map(side=>btn('Тайм-аут '+sideName(d,side)+' '+s.timeouts[side]+'/2',()=>perform({type:'timeout',side})))));
@@ -148,15 +161,18 @@ export function openDetailedMatch(initial,back,refresh){
      if(side==='ours'&&d.libero)body.append(btn(s.liberoFor?'Вернуть основного игрока':'Выход либеро',()=>perform({type:'libero',for:s.liberoFor?null:selected.id},()=>selected=null),'wide'));
     }
    }
-   if(!attributing&&d.events.at(-1)?.type==='rally'){
-    body.append(btn('Уточнить последнее очко',()=>{attributing=true;selected=null;draw();},'wide'));
-    if(last&&['ace','kill'].includes(last.kind)){
+   if(!pointDraft&&d.events.at(-1)?.type==='rally'){
+    body.append(btn('Уточнить последнее очко',()=>begin(last.side,true),'wide'));
+    if(last&&V.canPlace(last.kind)){
       const zone=select([['','Не указана'],...Array.from({length:6},(_,i)=>[String(i+1),'Зона '+(i+1)])],last.placement??'');
       body.append(field('Зона завершения на площадке принимающей команды',zone),btn('Сохранить направление последнего очка',()=>perform({type:'placement',zone:zone.value?Number(zone.value):null}),'wide'));
     }
    }
   }
-  body.append(p('Замены: '+(d.substitutionMode==='paired'?'парные':'упрощённые')),p('Записано событий: '+d.events.length+' · локально'),btn('Отменить последнее событие',()=>{if(d.events.length)perform(null,()=>{selected=null;attributing=false;});},'wide'),
+  if(pointDraft)return;
+  const undo=btn('Отменить последнее событие',()=>{if(d.events.length)perform(null,()=>{selected=null;pointDraft=null;});},'wide');undo.disabled=!d.events.length;
+  if(section==='match')body.querySelector('.vp-match-head').append(undo);else body.append(undo);
+  body.append(p('Замены: '+(d.substitutionMode==='paired'?'парные':'упрощённые')),p('Записано событий: '+d.events.length+' · локально'),
    btn('Выйти · черновик сохранён',()=>{if(!busy)back();},'wide'),
    btn('Удалить черновик',async()=>{if(busy||!await ui.confirmDialog({title:'Удалить черновик?',text:'Вся история этого матча будет удалена.',ok:'Удалить',danger:true}))return;busy=true;try{await C.discardLiveMatch(d.id,d.revision);back();}catch(e){toast(e.message);}finally{busy=false;}},'wide'));
  }
@@ -183,7 +199,7 @@ function summaryBlocks(d,s){
  return sides.flatMap(side=>{
   const a=s.sides[side],op=sideName(d,side);
   return [section(op+' · '+a.points+' очков',p('На подаче: '+a.onServe+' · на ошибках соперника: '+a.opponentErrors+' · макс. серия: '+a.maxRun+' · без детализации: '+a.unknown),
-    table(['Игрок','Атака','Блок','Эйс','Ошибки'],roster(d,side).map(r=>{const st=a.stats[r.id]||{};return [playerLabel(r),st.attackKills??'—',st.blocks??'—',st.aces??'—',st.errors??'—'];})),
+    table(['Игрок','Атака (вкл. скидки)','Скидки','Блок','Эйс','Ошибки','Защита: ошибки'],roster(d,side).map(r=>{const st=a.stats[r.id]||{};return [playerLabel(r),st.attackKills??'—',st.tipKills??'—',st.blocks??'—',st.aces??'—',st.errors??'—',st.defenseErrors??'—'];})),
     table(['Причина очка','Количество'],Object.entries(V.reasons).map(([k,t])=>[t,s.timeline.filter(x=>x.type==='rally'&&x.side===side&&x.kind===k).length]))),
     section('Эффективность переходов · '+op,p('P1–P6 — шесть циклов относительно стартовой расстановки партии; первый цикл P1.'),
       table(['Цикл','Розыгрыши','Выиграно','Проиграно','+/−'],a.rotations.map(r=>['P'+r.position,r.rallies,r.won,r.lost,r.won-r.lost]))),

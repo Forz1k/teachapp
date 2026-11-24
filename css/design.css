@@ -341,3 +341,15 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 /* Two header tools, narrow phones: keep workspace labels and hit targets visible. */
 .search-action{flex-shrink:0}
 @media(max-width:410px){.app-shell{gap:5px;padding-inline:10px}.app-brand>span:last-child{display:none}.workspace-switch{flex:1;justify-content:center}.workspace-option{padding-inline:7px}.app-shell .icon-btn{flex-shrink:0}}
+
+/* Live rally: compact, explicit two-step entry inside the existing match sheet. */
+.vp-live .match-attribution{background:var(--card);border-color:var(--sep);padding:12px;gap:10px}
+.vp-rally-heading{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;align-items:center}
+.vp-rally-heading small,.vp-rally-label,.vp-author-grid small{color:var(--text-2);font-size:12px}
+.vp-reason-grid .btn{min-height:48px;text-align:center;font-weight:650}
+.vp-author-grid .btn{min-height:65px;display:grid;gap:3px;justify-items:center;overflow-wrap:anywhere}
+.vp-author-grid .btn strong{font-size:19px;font-variant-numeric:tabular-nums}
+.vp-author-grid .btn span{font-size:12px;max-width:100%}
+.vp-live .vp-match-head>.btn{min-height:44px;font-size:12px;padding:6px}
+.vp-live .vp-player{min-height:60px}
+@media(max-width:390px){.vp-live .vp-player{min-height:54px}.vp-live .vp-player strong{min-width:28px;height:28px}.vp-live .vp-score-side strong{font-size:clamp(36px,10vw,54px)}}

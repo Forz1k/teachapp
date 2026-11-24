@@ -68,7 +68,12 @@ try{
  await nav('Тренировки');await clickText('button','План сезона и недельные циклы');await ready('.sheet.show');await clickText('.sheet button','+ План сезона');await clickText('.sheet button','Сохранить план');await wait(()=>evalJs('document.querySelector(".sheet.show")?.textContent.includes("Недельные циклы")'),'season saved');await capture('390-season-plan');await closeSheet();
  await nav('Команда');await ready('.player-directory-row');await click('.player-directory-row');await ready('.player-profile');await sleep(320);await capture('390-player');await closeSheet();
  await nav('Матчи');await clickText('button','Площадка и live-матч');await ready('.sheet.show');await clickText('.sheet button','Продолжить матч');await ready('.vp-court');await sleep(320);await capture('390-live');
- await click('.vp-points .vp-ours');await ready('.match-attribution');await clickText('.sheet button','Пропустить / продолжить');await ready('.vp-points');
+ await click('.vp-points .vp-ours');await ready('.match-attribution');
+ assert.equal(await evalJs('document.querySelector(".vp-score-side.ours strong").textContent'),'0');
+ await capture('390-live-reasons');await clickText('.sheet button','Отмена');await ready('.vp-points');
+ assert.equal(await evalJs('document.querySelector(".vp-score-side.ours strong").textContent'),'0');
+ await click('.vp-points .vp-ours');await ready('.match-attribution');await click('[data-reason="tip"]');await ready('.vp-author-grid [data-player]');await capture('390-live-author');
+ await click('.vp-author-grid [data-player]');await ready('.vp-points');
  assert.equal(await evalJs('document.querySelector(".vp-score-side.ours strong").textContent'),'1');
  await clickText('.sheet button','Отменить последнее событие');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="0"'),'undo score');
  await closeSheet();
