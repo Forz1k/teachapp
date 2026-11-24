@@ -1,3 +1,4 @@
+import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,7 +41,7 @@ test('Матчи: партии, частичная статистика, экс�
 });
 test('Резервная копия 4 хранит тренерские данные; формат 3 совместим',async()=>{
  const {team,p}=await seed();
- const backup=await S.makeBackup();assert.equal(backup.version,16);
+ const backup=await S.makeBackup();assert.equal(backup.version,BACKUP_VERSION);
  await S.restoreBackup(backup);assert.equal((await C.loadCoach()).coachPlayers[0].id,p.id);
  const broken=structuredClone(backup);broken.data.coachPlayers[0].teamId='missing';
  await assert.rejects(S.restoreBackup(broken));assert.equal((await C.loadCoach()).coachTeams[0].id,team.id);

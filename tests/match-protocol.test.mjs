@@ -1,3 +1,4 @@
+import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,7 +38,7 @@ test('Подробный матч переносит историю и обе к
  d=await C.changeLiveMatch(d.id,d.revision,{type:'attribute',kind:'kill',player:lineup[0]});
  const m=await C.finishLiveMatch(d.id,d.revision);assert.equal(m.detail.events.length,31);assert.equal(reportData(m.detail).sets.length,2);
  assert.equal(m.stats[lineup[0]].attackKills,1);
- const b=await S.makeBackup();assert.equal(b.version,16);await S.restoreBackup(b);
+ const b=await S.makeBackup();assert.equal(b.version,BACKUP_VERSION);await S.restoreBackup(b);
  assert.equal((await C.loadCoach()).coachMatches[0].detail.awayPlayers.length,7);
  await assert.rejects(C.saveMatch(m),/нельзя редактировать/);
 });

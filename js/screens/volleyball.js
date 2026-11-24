@@ -25,12 +25,13 @@ function lineupFields(players,initial=[],libero=null){
  lib.onchange=()=>picker.setExcluded(lib.value?[lib.value]:[]);
  return {node:el('div',{class:'vb-stack'},[picker.node,field('Либеро (не входит в стартовую шестёрку)',lib)]),values:()=>({lineup:picker.get(),libero:lib.value||null})};
 }
+import {openLineupAssistant,openTacticBoards} from './tactics.js';
 export async function openMatchCenter(team,refresh){
  try{
  const data=await C.loadCoach(),players=data.coachPlayers.filter(p=>p.teamId===team.id),active=players.filter(p=>!p.archived);
  const body=el('div',{class:'vb-stack'},[el('h2',{text:'Площадка и матч · '+team.name}),p('Черновик матча сохраняется после каждого действия. Статистика отражает только отмеченные действия.')]);
  const back=()=>openMatchCenter(team,refresh);
- body.append(btn('+ Новый подробный матч',()=>openDetailedSetup(team,active,back,refresh),'primary wide'),btn('Прежний режим матча',()=>setup(team,active,null,refresh),'wide'),btn('+ Сохранить расстановку',()=>setup(team,active,{preset:true},refresh),'wide'));
+ body.append(btn('+ Новый подробный матч',()=>openDetailedSetup(team,active,back,refresh),'primary wide'),btn('Прежний режим матча',()=>setup(team,active,null,refresh),'wide'),btn('+ Сохранить расстановку',()=>setup(team,active,{preset:true},refresh),'wide'),btn('Помощник состава',()=>openLineupAssistant(team,C.teamView(data,team.id),back),'wide'),btn('Тактическая доска',()=>openTacticBoards(team),'wide'));
  for(const x of data.coachLineups.filter(x=>x.teamId===team.id))body.append(el('div',{class:'card-block vb-stack'},[p(x.name+' · '+V.schemes[x.scheme]),court(players,x.lineup,x.libero,null,null,null),
    btn('Начать с этой расстановкой',()=>openDetailedSetup(team,active,back,refresh,x),'wide'),btn('Удалить расстановку',async()=>{if(await ui.confirmDialog({title:'Удалить расстановку?',text:'Матчи не меняются.',ok:'Удалить'})){await C.deleteLineup(x.id);openMatchCenter(team,refresh);}},'wide')]));
  for(const d of data.coachLive.filter(x=>x.teamId===team.id)){
