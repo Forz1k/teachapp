@@ -126,7 +126,7 @@ export function editTags(entity, isTopic, done) {
   openSheet(sheet);
 }
 
-export function warning(lesson,studentId) {
+export function warning(lesson,studentId,onBack) {
   const {matches,needsReview} = S.lessonCheck(lesson);
   const rows = matches.filter(m => !studentId || m.studentId === studentId);
   const node = el('div');
@@ -142,6 +142,7 @@ export function warning(lesson,studentId) {
         el('p',{text:[groupAt(id,lesson.date),nameOf(activityId),nameOf(r.activityId),H.types[r.type],r.instruction,dateLabel(r)].filter(Boolean).join(' · ')}),
         ...(lesson.id ? [btn('Зафиксировать фактическое участие',() => openParticipation(id,lesson.id,activityId))] : [])]));
     }
+    if (onBack) panel.append(btn('Вернуться к уроку',onBack));
     openSheet(panel);
   }));
   return node;
