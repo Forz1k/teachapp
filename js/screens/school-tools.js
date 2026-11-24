@@ -93,8 +93,8 @@ export async function openDebtCenter(back=closeSheet){
   const rows=schoolDebtRows(S.state,await W.listWork('normAssignment'));
   const cls=select([['','Все классы'],...S.state.classes.map(c=>[c.id,c.name])],'');
   const norm=select([['','Все нормативы'],...S.state.norms.map(n=>[n.id,n.name])],'');
-  const status=select([['','Все причины'],['overdue','Просроченные (без медицинского заключения)'],...Object.entries(checklistLabels).filter(([k])=>k!=='done')],'');
-  const period=select([['','Весь год'],...S.state.settings.trimesters.map(t=>[t.id,t.name||t.kind])],'');
+  const status=select([['','Все причины'],['overdue','Срок прошёл — проверить выполнение'],...Object.entries(checklistLabels).filter(([k])=>k!=='done')],'');
+  const period=select([['','Весь год'],...S.state.settings.trimesters.map(t=>[t.id,t.name||M.fmtFull(t.from)+' — '+M.fmtFull(t.to)])],'');
   const result=el('div'),summary=p('');
   const visible=()=>rows.filter(r=>(!cls.value||r.classId===cls.value)&&(!norm.value||r.normId===norm.value)&&(!status.value||(status.value==='overdue'?r.overdue:r.status===status.value))&&(!period.value||S.state.settings.trimesters.some(t=>t.id===period.value&&r.from<=t.to&&r.to>=t.from)));
   const refresh=()=>{const list=visible();summary.textContent='Назначений × учеников: '+list.length+'; просрочено: '+list.filter(r=>r.overdue).length+'; требуют проверки: '+list.filter(r=>r.review||r.status==='noScale').length;result.replaceChildren(...list.slice(0,300).map(r=>card(r.studentName+' · '+r.className,[p(r.normName+' · '+r.from+' — '+r.to),p(checklistLabels[r.status]+(r.overdue?' · срок прошёл':'')),p('Попыток с результатом: '+r.attempts),r.review?p('Есть основание для проверки допустимости нагрузки.'):null])),list.length>300?p('Показаны первые 300 записей. Уточните фильтр или сформируйте полный документ.'):null,list.length?null:p('Нет записей по этим фильтрам.'));};
