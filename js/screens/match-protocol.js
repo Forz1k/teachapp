@@ -135,7 +135,7 @@ export function openDetailedMatch(initial,back,refresh){
     body.append(el('h3',{text:'Старт следующей партии'}),p('Старт предыдущей партии скопирован. Измените нужные зоны или очистите расстановку.'),p(d.teamName),own.node,...(d.awayPlayers.length?[p(d.opponent),away.node]:[]),field('Первая подача',first),btn('Начать партию',()=>perform({type:'next',lineup:own.get(),awayLineup:d.awayPlayers.length?away.get():[],serve:first.value},()=>{selected=null;nextDraft=null;}),'primary wide'));
    }else{
     const add=side=>perform({type:'rally',side,kind:'point',player:null},()=>{selected=null;attributing=true;});
-    const points=el('div',{class:'vp-actions vp-points'},sides.map(side=>el('button',{type:'button',class:'btn '+(side==='ours'?'vp-ours':'vp-theirs'),onclick:()=>add(side),'aria-label':'Очко '+sideName(d,side)},[el('strong',{text:'+1'}),el('span',{text:sideName(d,side)})])));
+    const points=el('div',{class:'vp-actions vp-points'},sides.map(side=>el('button',{type:'button',class:'btn '+(side==='ours'?'vp-ours':'vp-theirs'),onclick:()=>add(side),'aria-label':'Очко '+sideName(d,side)},[el('strong',{text:'+1'}),el('span',{text:' '+sideName(d,side)})])));
     body.insertBefore(points,body.querySelector('.vp-court'));
     body.append(el('div',{class:'vp-actions vp-secondary-actions'},sides.map(side=>btn('Тайм-аут '+sideName(d,side)+' '+s.timeouts[side]+'/2',()=>perform({type:'timeout',side})))));
     if(selected){
