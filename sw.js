@@ -1,4 +1,4 @@
-const VERSION = 'v2.9.3';
+const VERSION = 'v2.9.4';
 const PREFIX = `teachapp:${self.registration.scope}:`;
 const CACHE = PREFIX + VERSION;
 
@@ -65,6 +65,8 @@ const PRECACHE = [
   './js/screens/ktp.js',
   './js/screens/settings.js',
   './vendor/xlsx.full.min.js',
+  './icons/brand.svg',
+  './icons/apple-touch-icon.png',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',

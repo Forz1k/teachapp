@@ -1,16 +1,19 @@
 {
-  "name": "Журнал учителя физкультуры",
-  "short_name": "Журнал",
-  "description": "Электронный журнал учителя физической культуры: классы, ученики, оценки, посещаемость и месячные отметки. Работает офлайн.",
+  "name": "TeachApp — учитель и тренер",
+  "short_name": "TeachApp",
+  "description": "Рабочее пространство учителя физкультуры и волейбольного тренера. Журнал, уроки, матчи и аналитика офлайн.",
   "lang": "ru",
   "dir": "ltr",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#F5F5F7",
-  "theme_color": "#F5F5F7",
-  "categories": ["education", "productivity"],
+  "orientation": "any",
+  "background_color": "#F4F6FA",
+  "theme_color": "#F4F6FA",
+  "categories": [
+    "education",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "./icons/icon-192.png",
@@ -38,9 +41,9 @@
       "url": "./index.html#journal"
     },
     {
-      "name": "Быстрый ввод",
-      "short_name": "Ввод",
-      "url": "./index.html#quick"
+      "name": "Волейбол",
+      "short_name": "Тренер",
+      "url": "./index.html#coach"
     }
   ]
 }
