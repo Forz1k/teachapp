@@ -2,6 +2,7 @@ import * as S from '../store.js';
 import * as M from '../model.js';
 import * as A from '../assessment.js';
 import * as ui from '../ui.js';
+import {openNormImport,openNormBatch} from './norm-batch.js';
 const {el,openSheet,toast}=ui;
 const btn=(text,onclick,primary=false)=>el('button',{type:'button',class:'btn wide'+(primary?' primary':''),text,onclick});
 const field=(text,input)=>el('label',{class:'field'},[text,input]);
@@ -130,9 +131,9 @@ function history(norm){
 }
 export function renderNorms(root){
   root.append(el('div',{class:'topbar'},[el('div',{class:'topbar-row'},[el('h1',{text:'Нормативы'})])]));
-  const body=el('div',{class:'norm-list'},[btn('+ Новый норматив',()=>editNorm(),true)]);
+  const body=el('div',{class:'norm-list'},[btn('+ Новый норматив',()=>editNorm(),true),btn('Импорт шкал из Excel',openNormImport)]);
   if(!S.state.norms.length)body.append(el('p',{text:'Создайте норматив: бег, челночный бег, прыжки, подтягивания, отжимания, гибкость или своё упражнение. Пороги задаёт учитель.'}));
   for(const n of S.state.norms)body.append(el('article',{class:'card-block'},[el('h2',{text:n.name}),el('p',{text:n.unit+' · '+(n.direction==='min'?'меньше — лучше':'больше — лучше')+' · '+(n.scales!==undefined?n.scales.length+' шкал':n.scale.join(' / '))}),
-    ...(n.scales||[]).map(r=>el('p',{text:scopeLabel(r)+' · '+r.scale.join(' / ')})),btn('Внести результат',()=>choosePupil(n),true),btn('История и динамика',()=>history(n)),btn('Редактировать шкалу',()=>editNorm(n))]));
+    ...(n.scales||[]).map(r=>el('p',{text:scopeLabel(r)+' · '+r.scale.join(' / ')})),btn('Внести результат',()=>choosePupil(n),true),btn('Внести результаты класса',()=>openNormBatch(n),true),btn('История и динамика',()=>history(n)),btn('Редактировать шкалу',()=>editNorm(n))]));
   root.append(body);
 }

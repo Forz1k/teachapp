@@ -982,3 +982,8 @@ body.privacy-covered {overflow:hidden;}
 .norm-scale-values input {min-width:0;width:100%;padding-inline:5px;text-align:center;}
 .norm-group-row {padding:8px 0;border-bottom:1px solid var(--sep);}
 .norm-group-row select {width:100%;min-height:44px;}
+
+.norm-batch-row {display:grid;gap:8px;padding:12px;min-width:0;}
+.norm-batch-row p {margin:0;overflow-wrap:anywhere;}
+.norm-batch-row input {min-height:44px;}
+.norm-batch-row input[type=checkbox] {min-height:24px;width:24px;}

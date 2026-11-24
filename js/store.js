@@ -8,6 +8,7 @@ import * as db from './db.js';
 import * as H from './health.js';
 import * as M from './model.js';
 import * as A from './assessment.js';
+import {planNormImport} from './norm-import.js';
 
 /** Кэш в памяти. Грузим один раз при старте — база маленькая (сотни записей). */
 export const state = {
@@ -1108,7 +1109,7 @@ export async function saveNorm(input){
 export function normCheck(norm,lesson,studentId){
   return lessonCheck({...lesson,activityIds:[norm.activityId,'test'],activitiesConfirmed:true}).matches.filter(m=>m.studentId===studentId);
 }
-export async function saveNormResult({normId,studentId,lessonId,status,value=null,basis=''}){
+function buildNormResult({normId,studentId,lessonId,status,value=null,basis=''}){
   const norm=state.norms.find(n=>n.id===normId),lesson=state.lessons.find(l=>l.id===lessonId),student=state.students.find(s=>s.id===studentId);
   if(!norm||!lesson||!student||student.classId!==lesson.classId||lesson.date>M.todayIso())throw Error('Проверьте ученика и дату урока');
   const matches=normCheck(norm,lesson,studentId),mark=markMap(lesson.classId).get(lessonId+'|'+studentId),full=activeExemption(studentId,lesson.date)||M.hasOsv(mark);
@@ -1118,7 +1119,34 @@ export async function saveNormResult({normId,studentId,lessonId,status,value=nul
   if(status==='done'&&matches.length&&!basis.trim())throw Error('Укажите подтверждённое основание допуска');
   const definition=A.normSnapshot(norm,state.classes.find(c=>c.id===student.classId),student);
   const record={id:M.uid('result'),normId,studentId,lessonId,date:lesson.date,status,value:status==='done'?value:null,grade:status==='done'?A.gradeNorm(definition,value):null,basis:basis.trim(),definition,createdAt:new Date().toISOString()};
-  await db.put('normResults',record);state.normResults.push(record);notify();return record;
+  return record;
+}
+export async function saveNormResult(input){
+  const record=buildNormResult(input);await db.put('normResults',record);state.normResults.push(record);notify();return record;
+}
+// Массовая запись: не создаём второй результат того же норматива за урок.
+export async function saveNormResultsBatch(normId,lessonId,entries,confirmed=false){
+  if(!confirmed)throw Error('Подтвердите сохранение результатов');
+  if(!Array.isArray(entries)||!entries.length||entries.length>500||new Set(entries.map(r=>r.studentId)).size!==entries.length)throw Error('Проверьте список учеников');
+  const records=entries.map(r=>buildNormResult({...r,normId,lessonId}));
+  await db.transaction(['normResults'],'readwrite',async s=>{
+    const existing=await s.normResults.index('lessonId').getAll(lessonId);
+    if(records.some(r=>existing.some(x=>x.normId===normId&&x.studentId===r.studentId)))throw Error('Один из результатов уже существует. Откройте список заново');
+    for(const r of records)await s.normResults.add(r);
+  });
+  state.normResults.push(...records);notify();return records;
+}
+export async function importNormScales(rows,{replace=false,confirmed=false,expected=null}={}){
+  if(!confirmed)throw Error('Подтвердите импорт');
+  const result=await db.transaction(['norms'],'readwrite',async s=>{
+    const existing=await s.norms.getAll();
+    const plan=planNormImport(rows,existing,activities(),{replace});
+    if(plan.errors.length)throw Error(plan.errors.join('; '));
+    if(expected&&JSON.stringify(plan.counts)!==JSON.stringify(expected))throw Error('Шкалы изменились. Повторите предпросмотр');
+    for(const n of plan.records)await s.norms.put(n);
+    return plan;
+  });
+  const map=new Map(result.records.map(n=>[n.id,n]));state.norms=state.norms.filter(n=>!map.has(n.id)).concat(result.records);notify();return result.counts;
 }
 export async function deleteNormResult(id){await db.del('normResults',id);state.normResults=state.normResults.filter(r=>r.id!==id);notify();}
 export async function transferNormGrade(id,confirmed=false){

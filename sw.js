@@ -1,4 +1,4 @@
-const VERSION = 'v2.0.1';
+const VERSION = 'v2.0.2';
 const PREFIX = `teachapp:${self.registration.scope}:`;
 const CACHE = PREFIX + VERSION;
 
@@ -16,6 +16,8 @@ const PRECACHE = [
   './js/model.js',
   './js/health.js',
   './js/assessment.js',
+  './js/norm-import.js',
+  './js/screens/norm-batch.js',
   './js/coach.js',
   './js/privacy.js',
   './js/retention.js',

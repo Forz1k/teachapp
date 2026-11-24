@@ -1,0 +1,34 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as S from '../js/store.js';
+import * as db from '../js/db.js';
+import {headers,parseNormRows,planNormImport} from '../js/norm-import.js';
+import {catalog} from '../js/health.js';
+const row=(level,group,scale=[120,130,140,150,165])=>['Прыжок','standing','см','больше',level,group,...scale];
+test('Импорт: шкалы, дубли, ошибки, конфликт и повторная загрузка',async()=>{
+ await db.clearAll();await S.load();
+ const matrix=[headers,row(6,'мальчики'),row(7,'девочки',[110,120,130,140,160])];
+ const parsed=parseNormRows(matrix,catalog,[]);assert.deepEqual(parsed.errors,[]);
+ assert.equal(planNormImport(parsed.rows,[],catalog).counts.added,2);
+ assert.equal(planNormImport([...parsed.rows,parsed.rows[0]],[],catalog).errors.length,1);
+ assert.equal(parseNormRows([headers,row(6,'мальчики',[1,2,'',4,5])],catalog,[]).errors.length,1);
+ await S.importNormScales(parsed.rows,{confirmed:true});assert.equal(S.state.norms.length,1);assert.equal(S.state.norms[0].scales.length,2);
+ assert.equal(planNormImport(parsed.rows,S.state.norms,catalog).counts.unchanged,2);
+ const changed=parseNormRows([headers,row(6,'мальчики',[120,130,140,150,170])],catalog,[]);
+ await assert.rejects(S.importNormScales(changed.rows,{confirmed:true}),/существует/);
+ await S.importNormScales(changed.rows,{confirmed:true,replace:true});assert.equal(S.state.norms[0].scales.length,2);
+ assert.equal(S.state.norms[0].scales.find(r=>r.gradeLevel===6).scale[4],170);
+});
+test('Массовая запись: ограничения, без оценки, атомарность и повтор',async()=>{
+ await db.clearAll();await S.load();
+ const c=await S.addClass('6А'),b=await S.addStudent(c.id,'Первый',1,'boys'),g=await S.addStudent(c.id,'Вторая',2,'girls'),l=await S.addLesson(c.id,'2026-01-01');
+ const n=await S.saveNorm({name:'Прыжок',activityId:'standing',unit:'см',direction:'max',scales:[{gradeLevel:6,group:'boys',scale:[120,130,140,150,165]}]});
+ await S.saveRestriction({studentId:g.id,activityId:'jump',type:'avoid',dateFrom:'2025-01-01',dateTo:null});
+ const good={studentId:b.id,status:'done',value:165},bad={studentId:g.id,status:'done',value:165};
+ await assert.rejects(S.saveNormResultsBatch(n.id,l.id,[good,bad],true),/не разрешена/);assert.equal(S.state.normResults.length,0);
+ const result=await S.saveNormResultsBatch(n.id,l.id,[good,{studentId:g.id,status:'restricted'}],true);
+ assert.equal(result[0].grade,'5');assert.equal(result[1].grade,null);assert.equal(S.state.marks.length,0);
+ await assert.rejects(S.saveNormResultsBatch(n.id,l.id,[good],true),/уже существует/);
+ await S.load();assert.equal(S.state.normResults.length,2);
+});
