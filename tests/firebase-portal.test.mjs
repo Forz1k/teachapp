@@ -12,6 +12,7 @@ const fake=async (url,options={})=>{
  if(url.includes('identitytoolkit.googleapis.com'))return json({localId:'owner1',idToken:'PRIVATE_TOKEN',refreshToken:'PRIVATE_REFRESH',expiresIn:'3600'});
  if(url.includes('securetoken.googleapis.com'))return json({user_id:'owner1',id_token:'NEW_PRIVATE',refresh_token:'NEW_REFRESH',expires_in:'3600'});
  if(options.method==='PUT'){server=JSON.parse(options.body);return new Response(null,{status:204});}
+ if(options.method==='PATCH'){for(const [k,v] of Object.entries(JSON.parse(options.body))){if(v===null)delete server[k];else server[k]=v;}return new Response(null,{status:204});}
  if(options.method==='DELETE'){server=null;return json(null);}
  return json(server);
 };
@@ -30,7 +31,7 @@ test('Публикация выключена до явного согласия
  assert.equal(P.portalInfo(id).data.enabled,false);P.setPortalEnabled(id,true,'Команда');await wait(()=>server?.team==='Команда');
  const players=Array.from({length:6},(_,i)=>({id:'a'+i,number:i+1,name:'PRIVATE '+i}));
  let d={id:'match1',teamId:id,date:day,mode:'dual',teamName:'Команда',opponent:'Гости',competition:'',venue:'',startedAt:new Date(start).toISOString(),ourPlayers:players,awayPlayers:[],roster:players.map(p=>p.id),lineup:players.map(p=>p.id),awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours',events:[]};
- assert.equal(P.syncPortalMatch(d),true);await wait(()=>server?.match?.id==='match1');
+ assert.equal(P.syncPortalMatch(d),true);await wait(()=>server?.match?.id==='match_'+start);
  const {detailEvent}=await import('../js/match-protocol.js');d=detailEvent(d,{type:'rally',side:'ours',kind:'kill',player:'a2'});P.syncPortalMatch(d);await wait(()=>server?.match?.score?.ours===1);
  assert.equal(server.match.events[0].number,undefined);assert.equal(JSON.stringify(server).includes('PRIVATE'),false);
  P.setPortalSettings(id,{numbers:true});P.syncPortalMatch(d);await wait(()=>server?.match?.events?.[0]?.number===3);

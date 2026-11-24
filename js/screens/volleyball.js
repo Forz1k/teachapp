@@ -2,6 +2,8 @@ import * as C from '../coach.js';
 import * as V from '../volleyball.js';
 import {openDetailedSetup,openDetailedMatch} from './match-protocol.js';
 import {openPublicPortal} from './public-portal.js';
+import {portalInfo} from '../public-publisher.js';
+import {localDay} from '../public-portal.js';
 import {todayIso} from '../model.js';
 import * as ui from '../ui.js';
 import {lineupPicker} from './lineup-picker.js';
@@ -33,11 +35,13 @@ export async function openMatchCenter(team,refresh){
  const body=el('div',{class:'vb-stack'},[el('h2',{text:'Площадка и матч · '+team.name}),p('Черновик матча сохраняется после каждого действия. Статистика отражает только отмеченные действия.')]);
  const back=()=>openMatchCenter(team,refresh);
  const setupOptions={matches:data.coachMatches,presets:data.coachLineups};
+ const fixtures=portalInfo(team.id).data.schedule.filter(x=>localDay(x.startAt)===todayIso());
+ if(fixtures.length)body.append(el('section',{class:'card-block vb-stack'},[el('h3',{text:'Сегодня по расписанию'}),...fixtures.map(f=>el('div',{class:'vb-stack'},[p(new Intl.DateTimeFormat('ru-RU',{timeStyle:'short'}).format(f.startAt)+' · '+f.opponent),btn('Подготовить матч · '+f.opponent,()=>openDetailedSetup(team,active,back,refresh,null,{...setupOptions,fixture:f}),'primary wide')]))]));
  body.append(btn('+ Новый подробный матч',()=>openDetailedSetup(team,active,back,refresh,null,setupOptions),'primary wide'),btn('Прежний режим матча',()=>setup(team,active,null,refresh),'wide'),btn('+ Сохранить расстановку',()=>setup(team,active,{preset:true},refresh),'wide'),btn('Помощник состава',()=>openLineupAssistant(team,C.teamView(data,team.id),back),'wide'),btn('Тактическая доска',()=>openTacticBoards(team),'wide'),btn('Публичная страница команды',()=>openPublicPortal(team,back),'wide'));
  for(const x of data.coachLineups.filter(x=>x.teamId===team.id))body.append(el('div',{class:'card-block vb-stack'},[p(x.name+' · '+V.schemes[x.scheme]),court(players,x.lineup,x.libero,null,null,null),
    btn('Начать с этой расстановкой',()=>openDetailedSetup(team,active,back,refresh,x,setupOptions),'wide'),btn('Удалить расстановку',async()=>{if(await ui.confirmDialog({title:'Удалить расстановку?',text:'Матчи не меняются.',ok:'Удалить'})){await C.deleteLineup(x.id);openMatchCenter(team,refresh);}},'wide')]));
  for(const d of data.coachLive.filter(x=>x.teamId===team.id)){
-  const s=V.replay(d);body.append(el('div',{class:'card-block vb-stack'},[p(d.date+' · '+d.opponent+' · '+s.ours+':'+s.theirs),btn('Продолжить матч',()=>d.mode==='dual'?openDetailedMatch(d,back,refresh):live(team,players,d,refresh),'primary wide')]));
+  const s=V.replay(d);body.append(el('div',{class:'card-block vb-stack'},[p(d.date+' · '+d.opponent+' · '+(s.score?.ours??s.ours)+':'+(s.score?.theirs??s.theirs)),btn('Продолжить матч',()=>d.mode==='dual'?openDetailedMatch(d,back,refresh):live(team,players,d,refresh),'primary wide')]));
  }
  body.append(btn('Закрыть',ui.closeSheet,'wide'));openSheet(body);
  }catch(e){toast(e.message);}

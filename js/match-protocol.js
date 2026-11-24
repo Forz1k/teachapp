@@ -284,3 +284,14 @@ export function spectatorSnapshot(d,s=replayDetailed(d)){
  const won=s.sets.filter(x=>x.ours>x.theirs).length;
  return {teamName:d.teamName,opponent:d.opponent,score:{...s.score},sets:s.sets.map(x=>({...x})),setsWon:{ours:won,theirs:s.sets.length-won},set:s.setEnded?s.sets.length:s.sets.length+1,serve:s.serve,status:s.finished?'finished':s.setEnded?'break':'live',colors:{...(d.boardColors||defaultBoardColors)},logos:{...(d.boardLogos||{ours:null,theirs:null})}};
 }
+
+export async function prepareLogo(file){
+ if(!file||!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>5000000)throw Error('Выберите PNG, JPEG или WebP до 5 МБ');
+ const url=URL.createObjectURL(file);
+ try{const image=new Image();await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(Error('Изображение не удалось открыть'));image.src=url;});
+ if(!image.naturalWidth||!image.naturalHeight||image.naturalWidth*image.naturalHeight>32000000)throw Error('Изображение слишком большое');
+ const canvas=document.createElement('canvas');canvas.width=96;canvas.height=96;const scale=96/Math.max(image.naturalWidth,image.naturalHeight),w=image.naturalWidth*scale,h=image.naturalHeight*scale;
+ canvas.getContext('2d').drawImage(image,(96-w)/2,(96-h)/2,w,h);const data=canvas.toDataURL('image/png');
+ if(!validBoardLogos({ours:data,theirs:null}))throw Error('Не удалось подготовить эмблему');return data;
+ }finally{URL.revokeObjectURL(url);}
+}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {firebaseOrigin,portalAddress,shareUrl,projectMatch,buildPortal,readPortal,portalState,countdown,matchingSchedule,archiveMatch} from '../js/public-portal.js';
+import {primaryPortal,firebaseOrigin,portalAddress,shareUrl,projectMatch,buildPortal,readPortal,portalState,countdown,matchingSchedule,archiveMatch} from '../js/public-portal.js';
 import {detailEvent} from '../js/match-protocol.js';
 const players=Array.from({length:6},(_,i)=>({id:'a'+i,number:i+1,name:'PRIVATE '+i}));
 const away=players.map((p,i)=>({...p,id:'b'+i,name:'SECRET '+i}));
@@ -9,7 +9,7 @@ test('Публичная модель не передаёт закрытые д�
  const match=detailEvent(d,{type:'rally',side:'ours',kind:'tip',player:'a2',placement:4,secondary:{kind:'defenseError',player:'b2'}});
  const a=projectMatch(match),b=projectMatch(match,{numbers:true});
  assert.equal(a.score.ours,1);assert.equal(a.events[0].number,undefined);assert.equal(a.stats.length,0);assert.equal(b.events[0].number,3);assert.equal(b.stats[0].tip,1);
- const str=JSON.stringify(b);for(const value of ['PRIVATE','SECRET','private_team','placement','secondary','lineup','a2','b2'])assert.equal(str.includes(value),false,value);
+ const str=JSON.stringify(b);for(const value of [d.id,'PRIVATE','SECRET','private_team','placement','secondary','lineup','a2','b2'])assert.equal(str.includes(value),false,value);
  assert.equal(projectMatch(match,{events:false,numbers:false}).events.length,0);
  assert.equal(projectMatch(detailEvent(match,null)).score.ours,0);
 });
@@ -19,7 +19,7 @@ test('До матча, ожидание, live и завершение выбир
  const live=projectMatch(d,{scheduledId:'fixture1'});assert.equal(portalState(buildPortal('Наши',[item],live,[],1),1).mode,'live');
  const finished={...live,status:'finished'};assert.equal(portalState(buildPortal('Наши',[item],finished,[],1),1).mode,'finished');
  assert.deepEqual(countdown(90061000),[1,1,1,1]);
- assert.equal(readPortal(buildPortal('Наши',[],live,[archiveMatch(finished)],1)).match.id,d.id);
+ assert.equal(readPortal(buildPortal('Наши',[],live,[archiveMatch(finished)],1)).match.id,live.id);
 });
 test('Адрес Firebase проверяется, токен не входит в зрительскую ссылку',()=>{
  assert.equal(firebaseOrigin('https://demo-default-rtdb.europe-west1.firebasedatabase.app/'),'https://demo-default-rtdb.europe-west1.firebasedatabase.app');
@@ -33,3 +33,5 @@ test('Firebase возвращает массивы или индексирова
  const a=readPortal(raw);assert.deepEqual(a.schedule.map(x=>x.id),['first','second']);assert.equal(Object.hasOwn(a,'secret'),false);
  assert.equal(readPortal({...raw,schema:99}),null);
 });
+
+test('Основная команда получает короткую постоянную ссылку, дополнительные — отдельные адреса',()=>{assert.equal(shareUrl('https://example.com/teachapp/',primaryPortal.origin,primaryPortal.owner,primaryPortal.slug),'https://example.com/teachapp/live/');assert.equal(new URL(shareUrl('https://example.com/teachapp/',primaryPortal.origin,primaryPortal.owner,'other')).searchParams.get('team'),'other');});

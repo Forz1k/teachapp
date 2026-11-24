@@ -60,7 +60,9 @@ export async function createRelay({directory,tokens,allowedOrigin}){
    try{await file.writeFile(JSON.stringify(data),'utf8');await file.sync();}finally{await file.close();}
    await rename(temp,path);
    // Persist the directory rename on supported POSIX systems.
-   const dir=await open(directory,'r');try{await dir.sync();}finally{await dir.close();}
+   if(process.platform!=='win32'){
+    const dir=await open(directory,'r');try{await dir.sync();}finally{await dir.close();}
+   }
   }finally{await unlink(temp).catch(e=>{if(e.code!=='ENOENT')throw e;});}
  }
  const server=http.createServer({requestTimeout:60000,headersTimeout:10000,maxHeaderSize:8192},async(req,res)=>{

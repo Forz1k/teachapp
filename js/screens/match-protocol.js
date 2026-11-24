@@ -19,16 +19,6 @@ const score=x=>x.ours+' : '+x.theirs;
 const sides=['ours','theirs'];
 function playerLabel(p){return (p.number==null?'':'№'+p.number+' · ')+p.name;}
 function six(players,initial=[],options={}){return lineupPicker(players,initial,options);}
-async function prepareLogo(file){
- if(!file||!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>5000000)throw Error('Выберите PNG, JPEG или WebP до 5 МБ');
- const url=URL.createObjectURL(file);
- try{const image=new Image();await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(Error('Изображение не удалось открыть'));image.src=url;});
- if(!image.naturalWidth||!image.naturalHeight||image.naturalWidth*image.naturalHeight>32000000)throw Error('Изображение слишком большое');
- const canvas=document.createElement('canvas');canvas.width=96;canvas.height=96;const scale=96/Math.max(image.naturalWidth,image.naturalHeight),w=image.naturalWidth*scale,h=image.naturalHeight*scale;
- canvas.getContext('2d').drawImage(image,(96-w)/2,(96-h)/2,w,h);const data=canvas.toDataURL('image/png');
- if(!V.validBoardLogos({ours:data,theirs:null}))throw Error('Не удалось подготовить эмблему');return data;
- }finally{URL.revokeObjectURL(url);}
-}
 function teamEmblem(d,side){const src=d.boardLogos?.[side];return src?el('img',{class:'vp-team-emblem',src,alt:'Эмблема '+sideName(d,side)}):null;}
 function colorFields(initial=V.defaultBoardColors,initialLogos={ours:null,theirs:null}){
  const rows=Object.entries(V.boardPalette).map(([id,c])=>[id,c.label]);
@@ -37,7 +27,7 @@ function colorFields(initial=V.defaultBoardColors,initialLogos={ours:null,theirs
  function draw(){preview.replaceChildren(...[ours,theirs].map((n,i)=>{const c=V.boardPalette[n.value];return el('span',{style:'background:'+c.end},[logos[sides[i]]?el('img',{class:'vp-team-emblem',src:logos[sides[i]],alt:'Эмблема'}):null,el('span',{text:i?'Соперник':'Наши'})]);}));}
  for(const side of sides){
   const file=el('input',{type:'file',accept:'image/png,image/jpeg,image/webp'});let revision=0;
-  file.onchange=async()=>{const current=++revision;try{const data=await prepareLogo(file.files[0]);if(current===revision){logos[side]=data;draw();}}catch(e){if(current===revision)toast(e.message);}finally{file.value='';}};
+  file.onchange=async()=>{const current=++revision;try{const data=await V.prepareLogo(file.files[0]);if(current===revision){logos[side]=data;draw();}}catch(e){if(current===revision)toast(e.message);}finally{file.value='';}};
   logoRows.push(field(side==='ours'?'Эмблема нашей команды':'Эмблема соперника',file),btn('Убрать эмблему '+(side==='ours'?'нашей команды':'соперника'),()=>{revision++;logos[side]=null;draw();},'wide'));
  }
  ours.addEventListener('change',draw);theirs.addEventListener('change',draw);draw();
@@ -65,12 +55,12 @@ function parseAway(text){
  if(new Set(result.map(p=>p.number)).size!==result.length)throw Error('Номера соперника не должны повторяться');
  return result;
 }
-export function openDetailedSetup(team,players,back,refresh,preset=null,{matches=[],presets=[]}={}){
- const date=input(todayIso(),'date',{max:todayIso()}),opp=input('','text',{placeholder:'Название соперника'}),comp=input('','text',{placeholder:'Турнир'}),venue=input('','text',{placeholder:'Спортивный зал'});
+export function openDetailedSetup(team,players,back,refresh,preset=null,{matches=[],presets=[],fixture=null}={}){
+ const date=input(todayIso(),'date',{max:todayIso()}),opp=input(fixture?.opponent||'','text',{placeholder:'Название соперника'}),comp=input('','text',{placeholder:'Турнир'}),venue=input('','text',{placeholder:'Спортивный зал'});
  const best=select([[3,'До двух побед'],[5,'До трёх побед']],5),target=select([15,21,25].map(n=>[n,n]),25),decider=select([15,21,25].map(n=>[n,n]),15);
  const serve=select([['ours',team.name],['theirs','Соперник']],'ours'),scheme=select([['5-1','5–1'],['4-2','4–2'],['free','Свободная']],preset?.scheme||'5-1');
  const substitutions=select([['simple','Упрощённые (до 6)'],['paired','Парные (возврат стартового игрока)']],'simple');
- const colors=colorFields();
+ const colors=colorFields(V.defaultBoardColors,fixture?.logos||{ours:null,theirs:null});
  const previousMatches=matches.filter(m=>m.teamId===team.id&&m.detail?.mode==='dual').sort((a,b)=>b.date.localeCompare(a.date)||b.detail.startedAt.localeCompare(a.detail.startedAt));
  const previous=previousMatches[0]?.detail;
  const templates=presets.filter(x=>x.teamId===team.id);
@@ -155,11 +145,11 @@ export function openDetailedMatch(initial,back,refresh){
  const body=el('div',{class:'vp-stack vp-live'});
  const wake=matchWakeLock();let observer=null,spectator=null;
  const publish=(options={})=>{try{return Portal.syncPortalMatch(d,options);}catch(e){toast('Публикация: '+e.message);return false;}};
- publish();const heartbeat=setInterval(()=>Portal.heartbeatPortal(d.teamId,d.id),30000);
+ publish();const heartbeat=window.setInterval(()=>Portal.heartbeatPortal(d.teamId,d.id),30000);
  const unwatch=Portal.watchPortal(d.teamId,()=>{const n=body.querySelector('.vp-portal-live-status');if(n)n.textContent=Portal.portalInfo(d.teamId).status;});
  const spectatorUpdate=(s,connected=true)=>{try{if(spectator&&!spectator.closed)renderSpectatorBoard(spectator.document,V.spectatorSnapshot(d,s),connected);else spectator=null;}catch{spectator=null;}};
  const spectatorOpen=()=>{try{if(!spectator||spectator.closed)spectator=window.open('','teachapp-score-'+d.id,'popup,width=1000,height=600');if(!spectator)return toast('Разрешите открытие отдельного окна');spectatorUpdate(V.replayDetailed(d));spectator?.focus?.();}catch{toast('Отдельное окно недоступно');}};
- const stop=()=>{clearInterval(heartbeat);unwatch();spectatorUpdate(V.replayDetailed(d),false);spectator=null;wake.stop();observer?.disconnect();window.removeEventListener('pagehide',stop);};
+ const stop=()=>{window.clearInterval(heartbeat);unwatch();spectatorUpdate(V.replayDetailed(d),false);spectator=null;wake.stop();observer?.disconnect();window.removeEventListener('pagehide',stop);};
  window.addEventListener('pagehide',stop);
  const perform=async(event,after)=>{
   if(busy)return;busy=true;
