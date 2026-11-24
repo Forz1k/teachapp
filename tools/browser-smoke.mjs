@@ -14,7 +14,7 @@ const binary=binaries.find(p=>existsSync(p)||spawnSync(p,['--version'],{stdio:'i
 if(!binary)throw Error('Chromium / Chrome not found; set CHROME_BIN');
 const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.png':'image/png','.svg':'image/svg+xml'};
 const server=createServer(async(req,res)=>{
- try{const u=new URL(req.url,'http://localhost'),path=resolve(root,'.'+decodeURIComponent(u.pathname==='/'?'/index.html':u.pathname));
+ try{const u=new URL(req.url,'http://localhost'),path=resolve(root,'.'+decodeURIComponent(u.pathname.endsWith('/')?u.pathname+'index.html':u.pathname));
   if(path!==root&&!path.startsWith(root+sep))throw Error('path');
   const data=await readFile(path);res.writeHead(200,{'Content-Type':types[extname(path)]||'application/octet-stream','Cache-Control':'no-cache'});res.end(data);
  }catch{res.writeHead(404);res.end();}
@@ -67,7 +67,7 @@ try{
  await clickText('button','Тактическая доска');await ready('.tactic-board');await capture('390-tactics');await closeSheet();
  await nav('Тренировки');await clickText('button','План сезона и недельные циклы');await ready('.sheet.show');await clickText('.sheet button','+ План сезона');await clickText('.sheet button','Сохранить план');await wait(()=>evalJs('document.querySelector(".sheet.show")?.textContent.includes("Недельные циклы")'),'season saved');await capture('390-season-plan');await closeSheet();
  await nav('Команда');await ready('.player-directory-row');await click('.player-directory-row');await ready('.player-profile');await sleep(320);await capture('390-player');await closeSheet();
- await nav('Матчи');await clickText('button','Площадка и live-матч');await ready('.sheet.show');await clickText('.sheet button','Продолжить матч');await ready('.vp-court');await sleep(320);await capture('390-live');
+ await nav('Матчи');await clickText('button','Площадка и live-матч');await ready('.sheet.show');await clickText('.sheet button','Публичная страница команды');await ready('.vp-portal-status');await capture('390-public-portal-settings');await clickText('.sheet button','Назад');await wait(()=>evalJs('Array.from(document.querySelectorAll(".sheet button")).some(n=>n.textContent==="Продолжить матч")'),'back to match center');await clickText('.sheet button','Продолжить матч');await ready('.vp-court');await sleep(320);await capture('390-live');
  assert.equal(await evalJs('document.querySelectorAll(".vp-mini-player").length'),12);
  await clickText('.sheet button','↔ Сменить стороны');
  assert.equal(await evalJs('document.querySelector(".vp-board-score .vp-score-side").classList.contains("theirs")'),true);
@@ -104,6 +104,16 @@ try{
  await viewport(390,844);
  await nav('Ещё');await ready('.sheet.show');await clickText('.sheet button','Настройки');await ready('.settings-group');await sleep(350);await clickText('button','Выборочная копия / восстановление');await ready('.sheet.show');await clickText('.sheet button','Создать выборочную копию');await ready('select[aria-label="Область выборочной копии"]');await capture('390-selective-backup');await closeSheet();await nav('Главная');await ready('.dashboard');
  await wait(()=>evalJs('(async()=>{const r=await navigator.serviceWorker.getRegistration();return Boolean(r?.active&&navigator.serviceWorker.controller)})()'),'service worker active',30000);
+ // Public viewer is a separate navigation even when the private PWA worker controls the origin.
+ await send('Page.addScriptToEvaluateOnNewDocument',{source:`if(location.pathname.startsWith('/live/')){window.EventSource=class{constructor(url){this.handlers={};window.__portalTestPush=data=>this.handlers.put?.({data:JSON.stringify({path:'/',data})});setTimeout(()=>this.onopen?.(),0);}addEventListener(k,f){this.handlers[k]=f;}close(){}};}`});
+ await send('Page.navigate',{url:origin+'/live/?db=https%3A%2F%2Fdemo.firebaseio.com&owner=owner&team=team'});await ready('#portal');
+ await wait(()=>evalJs('typeof window.__portalTestPush==="function"'),'mock public stream');
+ const upcoming={schema:1,team:'Демо-команда',updatedAt:Date.now(),schedule:[{id:'f1',opponent:'Гости',startAt:Date.now()+3600000}],archive:[]};
+ await evalJs('window.__portalTestPush('+JSON.stringify(upcoming)+')');await ready('.clock');await capture('390-public-upcoming');
+ const current={id:'m1',opponent:'Гости',startedAt:Date.now(),status:'live',set:1,score:{ours:8,theirs:6},setsWon:{ours:0,theirs:0},sets:[],serve:'ours',colors:{ours:'blue',theirs:'red'},events:[{set:1,score:'8:6',side:'ours',kind:'tip',actor:'ours',number:8}],stats:[{side:'ours',number:8,points:1,attack:1,tip:1,ace:0,block:0}],scheduledId:'f1'};
+ await evalJs('window.__portalTestPush('+JSON.stringify({...upcoming,match:current})+')');await ready('.event');assert.equal(await exists('.workspace-nav'),false);await capture('390-public-live');
+ await viewport(1280,900);await capture('1280-public-live');await viewport(390,844);
+ await send('Page.navigate',{url:origin+'/index.html'});await ready('.workspace-nav');await ready('.dashboard');
  const version=JSON.parse(await readFile(join(root,'package.json'),'utf8')).version;
  const cached=await evalJs('(async()=>{const keys=await caches.keys();return keys.some(k=>k.endsWith('+JSON.stringify('v'+version)+'))})()');assert.equal(cached,true);
  await send('Network.emulateNetworkConditions',{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});

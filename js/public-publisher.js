@@ -45,7 +45,7 @@ export async function connectPortal(id,{origin,apiKey,email,password,slug='',tea
   const chosen=d.slug||slug||Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');portalAddress(origin,session.uid,chosen);
   const publisher=firebasePublisher(origin,chosen,session,fetcher);
   const remote=readPortal(await publisher.read());
-  if(!d.slug&&remote){d.team=remote.team;d.schedule=remote.schedule;d.archive=remote.archive;d.match=remote.match;d.enabled=true;d.activeId=null;}
+  if(!d.slug&&remote){d.team=remote.team;d.schedule=remote.schedule;d.archive=remote.archive;d.match=remote.match;d.enabled=true;d.activeId=remote.match&&['live','break'].includes(remote.match.status)?remote.match.id:null;}
   e.session?.close();e.epoch++;e.session=session;e.publisher=publisher;Object.assign(d,{origin,apiKey,owner:session.uid,slug:chosen,team:d.team||String(team).trim()});
   save(e);status(e,'Подключено · '+(d.enabled?'публикация включена':'публикация выключена'));
   if(d.pendingDelete||d.enabled)enqueue(e);
