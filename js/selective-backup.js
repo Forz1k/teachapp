@@ -40,7 +40,7 @@ export function makeScopedBackup(source,scope){
    const supported=r.action==='add'?r.classId===id:rules.has(r.ruleId)&&(!r.classId||r.classId===id||r.classId==='window');
    if(!supported)omitted++;return supported;
   });
-  out.workRecords=data.workRecords.filter(r=>r.kind==='gradeHistory'&&pupils.has(r.studentId)&&(r.scope==='final'||lessons.has(r.lessonId))||r.kind==='achievement'&&inYear(r.date,year)&&(r.subjectType==='class'&&r.subjectId===id||r.subjectType==='student'&&lineages.has(r.subjectId)));
+  out.workRecords=data.workRecords.filter(r=>r.kind==='normAssignment'&&r.classId===id&&r.yearFrom===year.from&&r.yearTo===year.to||r.kind==='gradeHistory'&&pupils.has(r.studentId)&&(r.scope==='final'||lessons.has(r.lessonId))||r.kind==='achievement'&&inYear(r.date,year)&&(r.subjectType==='class'&&r.subjectId===id||r.subjectType==='student'&&lineages.has(r.subjectId)));
  }else if(scope.kind==='team'){
   const team=data.coachTeams.find(t=>t.id===id);check(team,'Команда отсутствует в копии');out.coachTeams=[team];
   for(const n of ['coachPlayers','coachTrainings','coachMatches','coachLineups','coachLive','coachTests'])out[n]=data[n].filter(r=>r.teamId===id);

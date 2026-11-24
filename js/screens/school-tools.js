@@ -1,7 +1,7 @@
 import * as S from '../store.js';
 import * as W from '../workbench.js';
 import * as M from '../model.js';
-import {physicalPassport,normChecklist,checklistLabels,scoreRubric} from '../school-tools.js';
+import {physicalPassport,normChecklist,checklistLabels,scoreRubric,assignmentOverview} from '../school-tools.js';
 import {trendChart,metric} from '../dashboard.js';
 import {el,openSheet,closeSheet,toast,confirmDialog} from '../ui.js';
 const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
@@ -49,4 +49,24 @@ function useRubric(r,back){
 export async function openRubrics(){
  async function draw(){try{const rows=await W.listWork('rubric');openSheet(stack([el('h2',{text:'Конструктор оценивания'}),p('Шаблоны критериев техники: собственные баллы и пороги. Оценку после расчёта подтверждает преподаватель в журнале.'),btn('+ Шаблон',()=>rubricForm(null,draw),'primary'),...rows.map(r=>card(r.name,[p('Критериев: '+r.criteria.length),btn('Оценить по критериям',()=>useRubric(r,draw),'primary'),btn('Редактировать',()=>rubricForm(r,draw)),btn('Удалить',async()=>{if(!await confirmDialog({title:'Удалить шаблон?',text:'Оценки журнала не изменятся.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(r.id,'rubric');await draw();}catch(e){toast(e.message);}})])),btn('Закрыть',closeSheet)]));}catch(e){toast(e.message);}}
  await draw();
+}
+
+function assignmentForm(existing,back){
+ const year=S.state.settings.year,period=S.currentTrimester(),a=existing||{},cls=select(S.state.classes.map(c=>[c.id,c.name]),a.classId||S.state.currentClassId),norm=select(S.state.norms.map(n=>[n.id,n.name]),a.normId),from=input(a.from||period?.from||year.from,'date',{min:year.from,max:year.to}),to=input(a.to||period?.to||year.to,'date',{min:year.from,max:year.to}),target=select([['','Любой зафиксированный результат'],...['1','2','3','4','5'].map(n=>[n,'Оценка не ниже '+n])],a.targetGrade==null?'':String(a.targetGrade));
+ const save=btn('Сохранить назначение',async()=>{save.disabled=true;try{const c=S.state.classes.find(x=>x.id===cls.value),n=S.state.norms.find(x=>x.id===norm.value);if(!c||!n)throw Error('Выберите класс и норматив');await W.saveWork({id:a.id,kind:'normAssignment',name:(c.name+' · '+n.name).slice(0,200),classId:c.id,normId:n.id,yearFrom:year.from,yearTo:year.to,from:from.value,to:to.value,targetGrade:target.value?Number(target.value):null});await back();}catch(e){toast(e.message);}finally{save.disabled=false;}},'primary');
+ openSheet(stack([el('h2',{text:existing?'Изменить назначение':'Назначить норматив классу'}),p('Назначение задаёт период и критерий учителя. Не изменяет оценки и не отменяет освобождения, ограничения и необходимость допуска. Сдача позже срока учитывается после продления периода.'),field('Класс',cls),field('Норматив',norm),el('div',{class:'coach-columns'},[field('Начало',from),field('Срок',to)]),field('Критерий выполнения',target),save,btn('Назад',back)]));
+}
+export async function openNormAssignments(back=closeSheet){
+ const draw=async()=>{try{
+  const assignments=await W.listWork('normAssignment'),year=S.state.settings.year,active=assignments.filter(a=>a.yearFrom===year.from&&a.yearTo===year.to).sort((a,b)=>a.to.localeCompare(b.to));
+  const body=stack([el('h2',{text:'Назначения нормативов'}),p('Только явно заданные нормативы входят в этот список. Просрочено — нет результата по выбранному критерию в заданный период; это не автоматически выставленная оценка и не медицинский допуск.'),S.state.classes.length&&S.state.norms.length?btn('+ Назначить норматив',()=>assignmentForm(null,draw),'primary'):p('Сначала добавьте классы и нормативы.')]);
+  for(const a of active){const v=assignmentOverview(S.state,a),n=S.state.norms.find(n=>n.id===a.normId),c=S.state.classes.find(c=>c.id===a.classId);const labels={upcoming:'Ещё не начат',active:'В периоде',closed:'Срок завершён',unavailable:'Класс или норматив недоступен'};
+   body.append(card(c&&n?c.name+' · '+n.name:a.name,[p(M.fmtFull(a.from)+' — '+M.fmtFull(a.to)+' · '+labels[v.state]),p(a.targetGrade==null?'Любой зафиксированный результат':'Оценка не ниже '+a.targetGrade),v.state!=='unavailable'?p('Выполнено '+v.done+' · без результата / ниже цели '+v.pending+' · проверить основания / шкалу '+v.review):null,v.overdue?p('После срока требуют проверки: '+v.overdue):null,
+    v.rows.length?el('details',{},[el('summary',{text:'Список класса · '+v.rows.length}),...v.rows.map(r=>p(r.student.fullName+' · '+checklistLabels[r.status]))]):null,
+    v.state!=='unavailable'?btn('Изменить срок / критерий',()=>assignmentForm(a,draw)):null,btn('Удалить назначение',async()=>{if(!await confirmDialog({title:'Удалить назначение?',text:'Результаты нормативов и оценки сохранятся.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(a.id,'normAssignment');await draw();}catch(e){toast(e.message);}})]));
+  }
+  if(!active.length)body.append(p('В текущем учебном году нет назначений.'));
+  if(assignments.length>active.length)body.append(el('details',{},[el('summary',{text:'Назначения других учебных лет · '+(assignments.length-active.length)}),...assignments.filter(a=>!active.includes(a)).map(a=>p(a.name+' · '+a.yearFrom+' — '+a.yearTo))]));
+  body.append(btn('Назад',back));openSheet(body);
+ }catch(e){toast(e.message);}};await draw();
 }

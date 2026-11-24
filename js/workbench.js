@@ -5,7 +5,7 @@ import {validateInventory,validateAchievement} from './resources.js';
 import {validateBoard} from './tactics.js';
 import {validateGoal} from './coach-goals.js';
 import {validateSeasonPlan} from './season-plan.js';
-import {validateRubric} from './school-tools.js';
+import {validateRubric,validateNormAssignment} from './school-tools.js';
 import {validateTournament} from './tournaments.js';
 import {validateEvent} from './work-calendar.js';
 import {catalog,checkLessonRestrictions} from './health.js';
@@ -36,6 +36,7 @@ export function validateWorkRecord(r){
  if(r.kind==='coachGoal'){validateGoal(r);return;}
  if(r.kind==='seasonPlan'){validateSeasonPlan(r);return;}
  if(r.kind==='rubric'){validateRubric(r);return;}
+ if(r.kind==='normAssignment'){validateNormAssignment(r);return;}
  if(r.kind==='tournament'){validateTournament(r);return;}
  if(r.kind==='event'){validateEvent(r);return;}
  if(r.kind==='exercise'){validateExercise(r);require(!r.id.startsWith('builtin-'),'Системное упражнение нельзя перезаписать');return;}
@@ -51,10 +52,12 @@ export function validateWorkRecord(r){
 }
 export async function listWork(kind){return db.transaction(['workRecords'],'readonly',s=>s.workRecords.index('kind').getAll(kind));}
 export async function saveWork(input){
- require(['exercise','plan','event','rubric'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
+ require(['exercise','plan','event','rubric','normAssignment'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
  const r=structuredClone({...input,id:input.id||uid(input.kind)});validateWorkRecord(r);
  return db.transaction(['workRecords'],'readwrite',async s=>{
-  const old=await s.workRecords.get(r.id);require(!old||old.kind===r.kind,'Нельзя изменить тип записи');if(input.id)require(old,'Запись уже удалена');await s.workRecords.put(r);return r;
+  const old=await s.workRecords.get(r.id);require(!old||old.kind===r.kind,'Нельзя изменить тип записи');if(input.id)require(old,'Запись уже удалена');
+  if(r.kind==='normAssignment'){const others=await s.workRecords.index('kind').getAll('normAssignment');require(!others.some(a=>a.id!==r.id&&a.classId===r.classId&&a.normId===r.normId&&a.yearFrom===r.yearFrom&&a.yearTo===r.yearTo&&a.from<=r.to&&r.from<=a.to),'Для этого класса и норматива уже есть пересекающееся назначение');}
+  await s.workRecords.put(r);return r;
  });
 }
 export async function deleteWork(id,kind){return db.transaction(kind==='archive'?['workRecords','students','lessons']:['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');if(kind==='archive'){const pupils=new Set(old.snapshot.students.map(p=>p.id)),lessons=new Set(old.snapshot.lessons.map(l=>l.id));for(const p of await s.students.getAll())pupils.delete(p.id);for(const l of await s.lessons.getAll())lessons.delete(l.id);for(const r of await s.workRecords.index('kind').getAll('gradeHistory'))if(pupils.has(r.studentId)||lessons.has(r.lessonId))await s.workRecords.delete(r.id);}await s.workRecords.delete(id);});}

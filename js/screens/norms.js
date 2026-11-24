@@ -129,10 +129,10 @@ function history(norm){
   }
   filter.onchange=draw;draw();panel.append(field('Ученик',filter),list);openSheet(panel);
 }
-import {openNormChecklist,openRubrics} from './school-tools.js';
+import {openNormChecklist,openRubrics,openNormAssignments} from './school-tools.js';
 export function renderNorms(root){
   root.append(el('div',{class:'topbar'},[el('div',{class:'topbar-row'},[el('h1',{text:'Нормативы'})])]));
-  const search=el('input',{type:'search',placeholder:'Поиск норматива','aria-label':'Поиск норматива'}),list=el('div',{class:'norm-directory'}),body=el('div',{class:'norm-list'},[el('div',{class:'norm-toolbar'},[btn('+ Новый норматив',()=>editNorm(),true),btn('Импорт шкал из Excel',openNormImport),btn('Конструктор оценивания',openRubrics)]),search,list]);
+  const search=el('input',{type:'search',placeholder:'Поиск норматива','aria-label':'Поиск норматива'}),list=el('div',{class:'norm-directory'}),body=el('div',{class:'norm-list'},[el('div',{class:'norm-toolbar'},[btn('+ Новый норматив',()=>editNorm(),true),btn('Импорт шкал из Excel',openNormImport),btn('Конструктор оценивания',openRubrics),btn('Назначения и сроки',()=>openNormAssignments())]),search,list]);
   if(!S.state.norms.length)body.append(el('p',{text:'Создайте норматив: бег, челночный бег, прыжки, подтягивания, отжимания, гибкость или своё упражнение. Пороги задаёт учитель.'}));
   for(const n of S.state.norms)list.append(el('article',{class:'card-block norm-card','data-name':n.name.toLocaleLowerCase('ru')},[el('h2',{text:n.name}),el('p',{text:n.unit+' · '+(n.direction==='min'?'меньше — лучше':'больше — лучше')+' · '+(n.scales!==undefined?n.scales.length+' шкал':n.scale.join(' / '))}),
     el('details',{class:'norm-scales'},[el('summary',{text:'Шкалы оценивания'}),...(n.scales||[{scale:n.scale}]).map(r=>el('div',{class:'norm-scale-preview'},[el('span',{text:n.scales?scopeLabel(r):'Общая шкала'}),el('div',{class:'norm-thresholds'},r.scale.map((value,i)=>el('div',{},[el('small',{text:String(i+1)}),el('strong',{text:String(value)})])))]))]),btn('Внести результаты класса',()=>openNormBatch(n),true),el('div',{class:'norm-card-actions'},[btn('Внести результат',()=>choosePupil(n)),btn('История и динамика',()=>history(n)),btn('План сдачи / пересдачи',()=>openNormChecklist(n)),btn('Редактировать шкалу',()=>editNorm(n))])]));
