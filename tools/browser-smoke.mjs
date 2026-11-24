@@ -85,8 +85,13 @@ try{
  await clickText('.vp-tabs button','Статистика');await ready('.vp-heat-grid');
  assert.equal(await evalJs('Array.from(document.querySelectorAll(".vp-heat-cell")).some(n=>n.getAttribute("aria-label")==="Зона 4: 1")'),true);
  await capture('390-live-analytics');
+ await clickText('.vp-tabs button','События');await clickText('.vp-history-row button','Уточнить');await ready('.vp-report-section');await clickText('.sheet button','Сохранить уточнение');await ready('.vp-history-row');
  await clickText('.vp-tabs button','Матч');await ready('.vp-undo');
+ await click('.vp-scout-open');await ready('.vp-scout-panel');await capture('390-live-scout');
+ await click('[data-scout-entry]');await clickText('.sheet button','Вернуться к матчу');await ready('.vp-undo');
  await click('.vp-undo');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="0"'),'undo score');
+ await click('.vp-points .vp-ours');await click('[data-reason="tip"]');await click('.vp-author-grid [data-player]');await ready('[data-scout-zone]');await click('[data-scout-zone="6"]');await clickText('.sheet button','Начислить очко');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="1"'),'scout point saved');
+ await click('.vp-scout-open');await ready('.vp-scout-panel');assert.ok(await evalJs('document.querySelector(".vp-scout-panel").textContent.includes("с зоной: 1 из 1")'));await clickText('.sheet button','Вернуться к матчу');await click('.vp-undo');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="0"'),'scout undo');
  await closeSheet();
  await nav('Главная');await ready('.coach-body .dashboard-metrics');await theme('dark');await ready('.coach-body .dashboard-metrics');await capture('390-coach-dark');
  await viewport(320,740);await capture('320-coach-dark');
