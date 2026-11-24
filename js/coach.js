@@ -5,6 +5,7 @@ import {uid,todayIso} from './model.js';
 import {catalog,validPeriod,active,ancestorIds} from './health.js';
 import {replay,appendEvent,undoEvent,validateLiveData} from './volleyball.js';
 import {replayDetailed} from './match-protocol.js';
+import {validateVolleyImport,duplicateVolleyMatch} from './volleypoint-import.js';
 export const coachStores=['coachTeams','coachPlayers','coachTrainings','coachMatches','coachLive','coachLineups'];
 export const positions={setter:'Связующая',outside:'Доигровщица',opposite:'Диагональная',middle:'Центральная блокирующая',libero:'Либеро',universal:'Универсальная'};
 export const attendanceLabels={present:'Присутствовала',absent:'Отсутствовала',limited:'Присутствовала, нагрузка ограничена'};
@@ -45,10 +46,11 @@ export function validateCoachData(data){
       (t.held||!Object.keys(t.attendance).length),'Проверьте тренировку, план и посещаемость');
   }
   for(const m of matches){
-    assert(only(m,['id','teamId','date','opponent','competition','sets','roster','stats','detail'])&&str(m.id)&&teamIds.has(m.teamId)&&date(m.date)&&str(m.opponent)&&typeof m.competition==='string'&&m.competition.length<=200&&
+    assert(only(m,['id','teamId','date','opponent','competition','sets','roster','stats','detail','imported'])&&str(m.id)&&teamIds.has(m.teamId)&&date(m.date)&&str(m.opponent)&&typeof m.competition==='string'&&m.competition.length<=200&&
       Array.isArray(m.sets)&&m.sets.length>=1&&m.sets.length<=5&&m.sets.every(s=>only(s,['ours','theirs'])&&count(s.ours)&&count(s.theirs)&&s.ours!==s.theirs)&&
       roster(m,m.roster)&&only(m.stats,m.roster),'Проверьте матч, партии и состав');
     for(const s of Object.values(m.stats))validateStats(s);
+    if(m.imported!==undefined)validateVolleyImport(m);
     if(m.detail){
       const d=m.detail,st=replay(d);
       assert(d.mode==='dual'&&d.teamId===m.teamId&&d.date===m.date&&d.opponent===m.opponent&&d.competition===m.competition&&JSON.stringify(d.roster)===JSON.stringify(m.roster)&&st.finished&&JSON.stringify(st.sets)===JSON.stringify(m.sets)&&JSON.stringify(st.stats)===JSON.stringify(m.stats),'Протокол не соответствует результату матча');
@@ -89,7 +91,12 @@ export async function saveMatch(input){
   const r={id:input.id||uid('match'),teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),
     sets:input.sets.map(x=>({ours:x.ours,theirs:x.theirs})),roster:[...input.roster],stats:Object.fromEntries(Object.entries(input.stats||{}).map(([id,s])=>[id,{...s}]))};
   assert(r.date<=todayIso(),'Результат будущего матча недоступен');
-  return write('coachMatches',r,(d,old)=>{teamGuard(d,old,r);assert(!old?.detail,'Матч с протоколом нельзя редактировать вручную');});
+  return write('coachMatches',r,(d,old)=>{teamGuard(d,old,r);assert(!old?.detail&&!old?.imported,'Матч с протоколом нельзя редактировать вручную');});
+}
+export async function saveVolleyImport(input){
+ const r={id:uid('match'),teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),sets:structuredClone(input.sets),roster:[...input.roster],stats:structuredClone(input.stats),imported:structuredClone(input.imported)};
+ assert(r.date<=todayIso(),'Результат будущего матча недоступен');
+ return write('coachMatches',r,(d,old)=>{teamGuard(d,old,r);validateVolleyImport(r);assert(!duplicateVolleyMatch(d.coachMatches,r),'Такой матч уже есть в истории');});
 }
 export async function removeEvent(name,id){
   assert(['coachTrainings','coachMatches'].includes(name),'Нельзя удалить состав этой командой');
@@ -135,8 +142,14 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
  const summary=summarizeStats(chosen,[playerId]);
  const errors={serve:0,attack:0,receive:0,other:0};
  let detailedMatches=0,rallies=0,serviceRallies=0,serviceWins=0,serviceAces=0,serviceErrors=0,unclassifiedServiceLosses=0,unknownOnCourt=0;
+ let importedMatches=0,importedServiceWins=0,importedLongestSeries=0,importedErrors=0;
+ const importedBreakdown={serve:0,attack:0,receive:0,other:0};
  const rates={serve:{total:0,success:0},receive:{total:0,success:0},attack:{total:0,success:0}};
  for(const m of chosen){
+  if(m.imported){
+   const p=m.imported.players[playerId];if(p){importedMatches++;importedErrors+=p.errors;importedBreakdown.serve+=p.serveErrors;importedBreakdown.attack+=p.attackErrors;importedBreakdown.receive+=p.receiveErrors;importedBreakdown.other+=p.otherErrors;for(const s of p.serviceSeries){importedServiceWins+=s.wins;importedLongestSeries=Math.max(importedLongestSeries,s.wins);}}
+   continue;
+  }
   if(m.detail){
    const state=replayDetailed(m.detail);detailedMatches++;
    const stat=state.sides.ours.stats[playerId]||{};
@@ -159,7 +172,7 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
    rates[key].total+=x[total];rates[key].success+=complement?x[total]-x[success]:x[success];
   }
  }
- return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,rates,chosen};
+ return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,importedMatches,importedErrors,importedBreakdown,importedServiceWins,importedLongestSeries,rates,chosen};
 }
 export function teamView(data,teamId){
   return {players:data.coachPlayers.filter(p=>p.teamId===teamId),trainings:data.coachTrainings.filter(t=>t.teamId===teamId).sort(dateOrder),
