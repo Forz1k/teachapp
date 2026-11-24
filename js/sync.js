@@ -183,12 +183,12 @@ async function readPacket(envelope,password,area,rev){
  return p;
 }
 const snapshotLimit=90*1024*1024;
-export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch}={}){
+export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeoutMs=45000}={}){
  endpoint=normalizeEndpoint(endpoint);
  check(validArea(area)&&typeof token==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(token),'Проверьте индивидуальный ключ доступа сервера');
  const url=endpoint+'/v1/snapshot/'+area;
  async function request(method,body){
-  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),45000);
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),timeoutMs);
   try{
    const res=await fetcher(url,{method,headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal});
    if(res.status===413)throw Error('Пакет превышает лимит выбранного сервера. Локальные данные сохранены.');
@@ -240,7 +240,7 @@ export async function prepareSync({area,endpoint,password,client,data}){
   }
  }
  const draft=mergeScopes(base,local,remoteSnapshot,area);
- return {area,endpoint,workspaceId,revision:remote.revision,checkpoint,base,local,remote:remoteSnapshot,conflicts:draft.conflicts};
+ return {area,endpoint,workspaceId,revision:remote.revision,checkpoint,base,local,remote:remoteSnapshot,remoteEnvelope:remote.envelope,conflicts:draft.conflicts};
 }
 export function previewSync(current,plan,choices={}){
  check(same(projectScope(current,plan.area),plan.local)&&same(getCheckpoint(current,plan.area),plan.checkpoint),'Локальные данные изменились. Повторите предпросмотр.');
@@ -249,17 +249,21 @@ export function previewSync(current,plan,choices={}){
  combineScope(current,result.snapshot,plan.area);
  return {...result,counts:counts(plan.local,result.snapshot)};
 }
-export async function executeSync({plan,choices,password,client,confirmed=false}){
+export async function executeSync({plan,choices,password,client,confirmed=false,reuseRemote=false}){
  check(confirmed,'Подтвердите синхронизацию');
  const preview=previewSync(await db.dumpAll(),plan,choices);
  check(!preview.conflicts.length,'Сначала разрешите все конфликты');
- const nextRevision=plan.revision+1;
+ const pullOnly=reuseRemote&&plan.revision>0&&same(preview.snapshot,plan.remote)&&isEncryptedBackup(plan.remoteEnvelope);
+ if(pullOnly&&plan.checkpoint?.revision===plan.revision&&same(plan.local,plan.remote))return {revision:plan.revision,counts:preview.counts};
+ const nextRevision=pullOnly?plan.revision:plan.revision+1;
  check(revision(nextRevision),'Лимит ревизий');
- const envelope=await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:plan.area,workspaceId:plan.workspaceId,revision:nextRevision,snapshot:preview.snapshot},password);
+ const envelope=pullOnly?plan.remoteEnvelope:await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:plan.area,workspaceId:plan.workspaceId,revision:nextRevision,snapshot:preview.snapshot},password);
  // Recheck after expensive encryption; the transaction below checks again after CAS.
  previewSync(await db.dumpAll(),plan,choices);
- const committed=await client.put(plan.revision,envelope);
- check(committed.revision===nextRevision&&same(committed.envelope,envelope),'Сервер не подтвердил запись ожидаемой ревизии');
+ if(!pullOnly){
+  const committed=await client.put(plan.revision,envelope);
+  check(committed.revision===nextRevision&&same(committed.envelope,envelope),'Сервер не подтвердил запись ожидаемой ревизии');
+ }
  try{
   return await db.transaction(names,'readwrite',async s=>{
    const current=Object.fromEntries(await Promise.all(names.map(async n=>[n,await s[n].getAll()])));
@@ -276,7 +280,19 @@ export async function executeSync({plan,choices,password,client,confirmed=false}
    }
    return {revision:nextRevision,counts:final.counts};
   });
- }catch{throw Error('Сервер принял пакет, но локальная запись не завершилась. Ваши данные не заменены этой операцией. Повторите синхронизацию; при конфликте проверьте обе версии.');}
+ }catch{throw Error((pullOnly?'Локальная запись не завершилась.':'Сервер принял пакет, но локальная запись не завершилась.')+' Ваши данные не заменены этой операцией. Повторите синхронизацию; при конфликте проверьте обе версии.');}
+}
+// Automatic sync only for an already confirmed workspace; never auto-propagate deletions.
+export async function syncPersonalArea({area,endpoint,password,client,stillAllowed=()=>true}){
+ if(!await syncStatus(area))return {area,status:'setup'};
+ const plan=await prepareSync({area,endpoint,password,client});
+ if(!plan.checkpoint)return {area,status:'setup'};
+ if(plan.conflicts.length)return {area,status:'conflict'};
+ const current=await db.dumpAll(),preview=previewSync(current,plan,{});
+ if(preview.conflicts.length||counts(plan.base,preview.snapshot).deleted||preview.counts.deleted)return {area,status:'review'};
+ if(!stillAllowed())return {area,status:'paused'};
+ const result=await executeSync({plan,choices:{},password,client,confirmed:true,reuseRemote:true});
+ return {area,status:'synced',revision:result.revision,changed:result.counts.added+result.counts.changed>0};
 }
 export async function syncStatus(area){
  check(validArea(area),'Выберите рабочую область');

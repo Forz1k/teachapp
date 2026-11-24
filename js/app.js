@@ -19,6 +19,8 @@ import * as C from './coach.js';
 import {openCoachSearchResult} from './screens/coach.js';
 import {readNavigation,saveNavigation,coachRoutes,schoolRoutes} from './design.js';
 import {animateOnce} from './motion.js';
+import {readPersonalCode} from './personal-sync.js';
+import {openSyncSession,runPersonalSync} from './auto-sync.js';
 const { el, icon } = ui;
 
 const TABS = [
@@ -32,6 +34,23 @@ const TABS = [
 
 const appRoot = document.getElementById('app');
 let tabbarEl = null;
+let syncSession=null,autoBusy=false,autoAttempt=0;
+function safeAutoRoute(){
+ return store.state.currentTab==='today'||store.state.currentTab==='coach'&&navigation.coach==='home';
+}
+async function maybeAutoSync(initial=false){
+ if(!syncSession||autoBusy||!readPersonalCode()||navigator.onLine===false||document.visibilityState==='hidden')return;
+ if(!initial&&(!safeAutoRoute()||ui.isSheetOpen()||document.querySelector('.dialog-backdrop,.privacy-cover')||document.activeElement?.matches('input,textarea,select,[contenteditable=true]')||Date.now()-autoAttempt<55000))return;
+ autoBusy=true;autoAttempt=Date.now();
+ const oldTabbar=tabbarEl;
+ appRoot.inert=true;if(oldTabbar)oldTabbar.inert=true;
+ try{
+  const result=await syncSession.exclusive(()=>runPersonalSync());
+  if(result?.areas.some(x=>x.changed))await store.load();
+  if(!initial&&result?.areas.some(x=>['conflict','review'].includes(x.status)))ui.toast('Синхронизация: проверьте спорные изменения в настройках.');
+ }catch{/* The offline database remains usable. */}
+ finally{appRoot.inert=false;if(oldTabbar)oldTabbar.inert=false;if(tabbarEl)tabbarEl.inert=false;autoBusy=false;}
+}
 let journalUpdate = null;
 let renderedRoute = '';
 let renderedTab = '';
@@ -247,7 +266,9 @@ async function boot() {
       ui.toast('Закройте другие вкладки TeachApp и повторите действие.', null, 8000);
     } else {ui.toast('Операция не завершена. Повторите действие.');}
   });
+  try{syncSession=await openSyncSession();}catch{/* Manual sync remains available. */}
   await store.load();
+  await maybeAutoSync(true);
   const shortcut=location.hash.slice(1);
   if(shortcut==='coach')navigation=saveNavigation({...navigation,workspace:'coach'});
   else if(shortcut==='journal'||shortcut==='quick')navigation=saveNavigation({...navigation,workspace:'school',school:shortcut==='journal'?'journal':'today'});
@@ -260,6 +281,9 @@ async function boot() {
     else render();
   });
   render();
+  window.addEventListener('online',()=>{autoAttempt=0;void maybeAutoSync();});
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){autoAttempt=0;void maybeAutoSync();}});
+  setInterval(()=>void maybeAutoSync(),60000);
 
   // Следим за системной темой в режиме «как в системе»
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -268,6 +292,7 @@ async function boot() {
 
   // Горячие клавиши для отладки на десктопе: 1-5 — табы
   window.addEventListener('keydown', (e) => {
+    if(autoBusy)return;
     if(e.altKey && e.code==='KeyH'){e.preventDefault();ui.coverPrivacy();return;}
     if(document.body.classList.contains('privacy-covered'))return;
     if (e.target.matches('input, textarea, select')) return;

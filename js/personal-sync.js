@@ -41,8 +41,8 @@ export async function personalTokenHashes(code){
  }));
  return Object.fromEntries(pairs);
 }
-export function readPersonalCode(storage=globalThis.localStorage){
- try{const value=storage.getItem(KEY);return value?parsePersonalCode(value).code:null;}catch{return null;}
+export function readPersonalCode(storage){
+ try{const value=(storage??globalThis.localStorage).getItem(KEY);return value?parsePersonalCode(value).code:null;}catch{return null;}
 }
 export function savePersonalCode(code,storage=globalThis.localStorage){
  const parsed=parsePersonalCode(code);

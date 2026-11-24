@@ -1,6 +1,6 @@
 {
   "name": "teachapp",
-  "version": "5.0.5",
+  "version": "5.0.6",
   "private": true,
   "type": "module",
   "description": "Электронный журнал учителя физической культуры — офлайн PWA на чистом HTML/CSS/JS",
