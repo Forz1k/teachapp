@@ -1,9 +1,9 @@
 /* Optional Cloudflare relay for synthetic data. No default credentials. */
+import {DurableObject} from 'cloudflare:workers';
+import {LIMIT,digestToken} from './cloudflare-protocol.mjs';
 const areas=['school','coach'];
-export const LIMIT=1024*1024;
 const tokenPattern=/^[A-Za-z0-9_-]{32,256}$/;
 const digestPattern=/^[0-9a-f]{64}$/;
-const encoder=new TextEncoder();
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 function json(status,body,extra={}){
  return new Response(JSON.stringify(body),{status,headers:{...headers,'Content-Type':'application/json; charset=utf-8',...extra}});
@@ -26,9 +26,6 @@ function config(env){
   if(!seen.size)throw Error();
  }catch{return null;}
  return {origin,hashes};
-}
-export async function digestToken(token){
- return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(token))),b=>b.toString(16).padStart(2,'0')).join('');
 }
 function equal(a,b){let diff=0;for(let i=0;i<64;i++)diff|=a.charCodeAt(i)^b.charCodeAt(i);return diff===0;}
 async function authorized(request,hashes){
@@ -91,8 +88,9 @@ export default {async fetch(request,env){
  }catch{return json(503,{error:'storage-unavailable'},cors);}
 }};
 /* One SQLite-backed object per area. All writes share a synchronous transaction. */
-export class SyncSnapshot{
- constructor(ctx){
+export class SyncSnapshot extends DurableObject{
+ constructor(ctx,env){
+  super(ctx,env);
   this.storage=ctx.storage;
   this.sql=ctx.storage.sql;
   this.sql.exec('CREATE TABLE IF NOT EXISTS snapshot (id INTEGER PRIMARY KEY CHECK (id = 1), revision INTEGER NOT NULL, envelope TEXT NOT NULL)');

@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createServer} from 'node:net';
 import {setTimeout as sleep} from 'node:timers/promises';
-import {digestToken,LIMIT} from '../server/cloudflare-relay.mjs';
+import {digestToken,LIMIT} from '../server/cloudflare-protocol.mjs';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
 import {relayClient} from '../js/sync.js';
 const origin='https://synthetic.example';
