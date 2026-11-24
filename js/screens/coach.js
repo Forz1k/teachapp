@@ -4,6 +4,7 @@ import {catalog} from '../health.js';
 import {todayIso,fmtFull} from '../model.js';
 import * as ui from '../ui.js';
 import {openMatchCenter} from './volleyball.js';
+import {openVideoReview} from './video-review.js';
 import {openMatchReport} from './match-protocol.js';
 import {openVolleyImport,openImportedReport} from './volleypoint-import.js';
 import {openCoachTeams} from './team-generator.js';
@@ -280,7 +281,7 @@ export async function renderCoach(root,ctx={}){
         for(const m of view.matches){
           const s=C.matchScore(m);
           body.append(card(m.opponent+' · '+s.ours+':'+s.theirs,[p(fmtFull(m.date)+(m.competition?' · '+m.competition:'')),p(m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),p('Игроков в составе: '+m.roster.length),
-            m.imported?btn('Импортированный протокол VolleyPoint',()=>openImportedReport(m,view),'primary wide'):m.detail?btn('Протокол матча · PDF / печать',()=>openMatchReport(m,ui.closeSheet),'primary wide'):btn('Состав, партии и статистика',()=>matchForm(team,view,m,refresh),'wide'),m.detail?btn('Тактический разбор',()=>openMatchTactics(m),'wide'):null,btn('Удалить матч',()=>confirm('Удалить матч?','Результат и статистика будут удалены.',()=>C.removeEvent('coachMatches',m.id),refresh),'wide')]));
+            m.imported?btn('Импортированный протокол VolleyPoint',()=>openImportedReport(m,view),'primary wide'):m.detail?btn('Протокол матча · PDF / печать',()=>openMatchReport(m,ui.closeSheet),'primary wide'):btn('Состав, партии и статистика',()=>matchForm(team,view,m,refresh),'wide'),m.detail?btn('Тактический разбор',()=>openMatchTactics(m),'wide'):null,m.detail?btn('Видеоразбор',()=>openVideoReview(m),'wide'):null,btn('Удалить матч',()=>confirm('Удалить матч?','Результат и статистика будут удалены.',()=>C.removeEvent('coachMatches',m.id),refresh),'wide')]));
         }
         if(!view.matches.length)body.append(p('Нет результатов матчей'));
       }else{
