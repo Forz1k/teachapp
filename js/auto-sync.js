@@ -21,10 +21,16 @@ export async function runPersonalSync({getCode=readPersonalCode,online=()=>globa
    const client=clientFactory(credentials.endpoint,area,credentials.token,{timeoutMs:7000});
    const result=await runArea({...credentials,client,initialize,stillAllowed});
    areas.push(result.status==='synced'?{...result,successfulAt:new Date().toISOString()}:result);
-  }catch{areas.push({area,status:stillAllowed()?'error':'paused'});}
+  }catch(error){const allowed=stillAllowed();areas.push({area,status:allowed?'error':'paused',...(allowed&&error?.retryable===true?{retryable:true}:{})});}
  }
  last={phase:stillAllowed()?'finished':'interrupted',areas,at:new Date().toISOString()};
  return autoSyncStatus();
+}
+// At most two expedited attempts per transient outage; normal foreground polling
+// remains responsible for longer outages. Always obtain a fresh revision on retry.
+export function syncRetryDelay(report,attempt=0){
+ if(report?.phase!=='finished'||!report.areas?.some(x=>x.status==='error'&&x.retryable===true)||!Number.isInteger(attempt)||attempt<0)return null;
+ return [5000,15000][attempt]??null;
 }
 // All updated tabs hold shared session locks before loading the database.
 // To sync, temporarily release this tab's shared lock and acquire an exclusive lock.
