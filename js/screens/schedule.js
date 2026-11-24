@@ -7,6 +7,7 @@ import * as M from '../model.js';
 import * as store from '../store.js';
 import * as ui from '../ui.js';
 
+import {openWorkCalendar} from './work-calendar.js';
 const { el, icon } = ui;
 
 /** Основной экран раздела. */
@@ -41,7 +42,7 @@ export function renderSchedule(root, opts = {}) {
       }),
     ]);
 
-    topbar.append(seg, modeSwitch);
+    topbar.append(seg,modeSwitch,el('button',{class:'btn wide calendar-link',type:'button',text:'Общий рабочий календарь',onclick:openWorkCalendar}));
 
     if (state.mode === 'day') drawDay();
     else drawWeek();

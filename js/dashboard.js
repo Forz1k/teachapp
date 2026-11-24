@@ -33,3 +33,10 @@ export function trendChart(entries,{unit='',min,max,label='Динамика'}={}
  wrap.append(svg,el('div',{class:'trend-caption'},[el('span',{text:rows[0].date||'Первая запись'}),el('span',{text:rows.at(-1).date||'Последняя запись'})]),el('small',{text:'По порядку записей · '+rows.length+' · '+(unit||'значения')}));
  return wrap;
 }
+
+export function calendarMonth(date){
+ const [y,m]=String(date).split('-').map(Number);
+ if(!Number.isInteger(y)||y<1000||y>9999||!Number.isInteger(m)||m<1||m>12)throw Error('Выберите дату');
+ const count=new Date(y,m,0).getDate(),prefix=y+'-'+String(m).padStart(2,'0')+'-';
+ return {from:prefix+'01',to:prefix+count,offset:(new Date(y,m-1,1).getDay()+6)%7,days:Array.from({length:count},(_,i)=>prefix+String(i+1).padStart(2,'0'))};
+}

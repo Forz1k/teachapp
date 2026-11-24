@@ -235,3 +235,39 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .insight-note{border-left:3px solid var(--sep-strong);background:var(--card-2);padding:12px;border-radius:10px;display:grid;gap:5px}
 .insight-note.strength{border-color:var(--mark-5)}.insight-note.focus{border-color:var(--mark-3)}
 .insight-note strong{font-size:13px}.insight-note p{font-size:14px;line-height:1.5}
+
+/* Work tools */
+.library-tabs button{min-height:44px}
+.work-tags{display:flex;flex-wrap:wrap;gap:6px}
+.plan-duration{display:grid;gap:10px;padding:14px;background:var(--accent-soft);border-radius:14px}
+.plan-duration.over{background:var(--mark-2-bg);color:var(--mark-2)}
+.phase-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.phase-summary>div{display:grid;gap:4px;padding:8px;background:var(--card-2);border-radius:9px;min-width:0}
+.phase-summary small{font-size:10px;color:var(--text-2);overflow-wrap:anywhere}
+.phase-summary strong{font-size:14px;font-variant-numeric:tabular-nums}
+.plan-items .coach-card{border-left:3px solid var(--accent)}
+.month-card{padding:12px;display:grid;gap:10px}
+.month-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.month-weekday{text-align:center;font-size:11px;color:var(--text-2);font-weight:650}
+.month-day{display:grid;place-items:center;gap:2px;min-height:44px;background:var(--card-2);border:1px solid var(--sep);border-radius:9px;font-size:14px;min-width:0;padding:4px 1px}
+.month-day small{font-size:10px;color:var(--accent-ink);font-weight:750;min-height:13px}
+.month-day.current{border-color:var(--accent);color:var(--accent-ink)}
+.month-day.selected{background:var(--accent-soft);border-color:var(--accent)}
+.calendar-nav{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.calendar-nav .btn{font-size:13px;padding:6px}
+.calendar-event{padding:13px;display:grid;gap:8px;border-left:4px solid var(--accent)}
+.calendar-event.event-coach{border-left-color:#7954ce}.calendar-event.event-tournament{border-left-color:var(--mark-5)}.calendar-event.event-review,.calendar-event.event-backup{border-left-color:var(--mark-3)}
+.calendar-event-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.calendar-event h3,.calendar-event p{margin:0;overflow-wrap:anywhere}
+.calendar-event-time{font-size:13px;font-weight:700;color:var(--text-2)}
+.calendar-link{margin-top:8px}
+.tournament-table-wrap{overflow:auto;max-width:100%;border-radius:12px;border:1px solid var(--sep)}
+.tournament-table{border-collapse:collapse;width:100%;min-width:420px;font-size:12px}
+.tournament-table th,.tournament-table td{padding:9px 7px;border-bottom:1px solid var(--sep);text-align:center}
+.tournament-table th{color:var(--text-2);font-size:11px;background:var(--card-2)}
+.tournament-table td:nth-child(2),.tournament-table th:nth-child(2){text-align:left;min-width:100px}
+.tournament-table .standing-points{font-weight:800;color:var(--accent-ink)}
+.tournament-game{padding:14px;display:grid;gap:8px}
+.tournament-game-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tournament-game-head strong{min-width:0;overflow-wrap:anywhere}
+.tournament-game p{margin:0;color:var(--text-2)}
