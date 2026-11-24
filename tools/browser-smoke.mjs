@@ -75,7 +75,8 @@ try{
  await click('.privacy-action');await ready('.privacy-cover');assert.equal(await evalJs('document.querySelector("#app").inert'),true);await clickText('.privacy-cover button','Показать данные');assert.equal(await evalJs('document.querySelector("#app").inert'),false);
  await viewport(390,844);
  await wait(()=>evalJs('(async()=>{const r=await navigator.serviceWorker.getRegistration();return Boolean(r?.active&&navigator.serviceWorker.controller)})()'),'service worker active',30000);
- const cached=await evalJs('(async()=>{const keys=await caches.keys();return keys.some(k=>k.endsWith("v3.0.0"))})()');assert.equal(cached,true);
+ const version=JSON.parse(await readFile(join(root,'package.json'),'utf8')).version;
+ const cached=await evalJs('(async()=>{const keys=await caches.keys();return keys.some(k=>k.endsWith('+JSON.stringify('v'+version)+'))})()');assert.equal(cached,true);
  await send('Network.emulateNetworkConditions',{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
  server.close();server.closeAllConnections?.();closed=true;
  await send('Page.reload',{ignoreCache:false});await ready('.workspace-nav');await ready('.dashboard');
