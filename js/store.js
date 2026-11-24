@@ -29,7 +29,7 @@ export const state = {
   // выбор пользователя
   currentClassId: null,
   currentTrimesterId: 't1',
-  currentTab: 'classes',
+  currentTab: 'today',
   lastBackupAt: null,
 };
 
@@ -42,14 +42,20 @@ export function subscribe(fn) {
 }
 
 let _notifyScheduled = false;
+let pendingStudents = new Set();
 /** Уведомление подписчиков с дебаунсом — несколько записей подряд дают один рендер. */
-export function notify() {
+export function notify(studentId = null) {
+  // Неизвестное или структурное изменение требует полной отрисовки.
+  if (studentId === null) pendingStudents = null;
+  else pendingStudents?.add(studentId);
   if (_notifyScheduled) return;
   _notifyScheduled = true;
   const flush = () => {
     _notifyScheduled = false;
+    const changedStudents = pendingStudents === null ? null : [...pendingStudents];
+    pendingStudents = new Set();
     for (const fn of subs) {
-      try { fn(state); } catch (e) { console.error('[store] подписчик упал:', e); }
+      try { fn(state, changedStudents); } catch (e) { console.error('[store] подписчик упал:', e); }
     }
   };
   // В среде без window (тесты, worker) просто откладываем таймером.
@@ -444,7 +450,7 @@ async function editMark(studentId, lessonId, edit) {
     return { previous, priorBase, base, next };
   });
   cacheMarks([{id:result.previous?.id || result.next?.id,next:result.next}]);
-  notify();
+  notify(studentId);
   return { mark:result.next, undo:() => editMark(studentId,lessonId,current => {
     if (JSON.stringify(current) !== JSON.stringify(result.base)) throw new Error('Оценка уже изменена');
     return result.priorBase;

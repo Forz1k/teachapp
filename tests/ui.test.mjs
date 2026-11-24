@@ -58,6 +58,7 @@ const doc = window.document;
 const db = await import('../js/db.js');
 const store = await import('../js/store.js');
 const ui = await import('../js/ui.js');
+const { renderToday, todayEntries } = await import('../js/screens/today.js');
 const { renderClasses } = await import('../js/screens/classes.js');
 const { renderJournal, openMarkSheet } = await import('../js/screens/journal.js');
 const { renderMonthly } = await import('../js/screens/monthly.js');
@@ -394,4 +395,43 @@ test('Экспорт копии отмечает дату только посл�
   confirm.click();
   await tick();
   assert.ok(store.state.lastBackupAt);
+});
+
+test('Сегодня показывает расписание, заполненность и не создаёт урок при просмотре', async () => {
+  const {cls,l1} = await seed();
+  const M = await import('../js/model.js');
+  const rule = await store.setScheduleEntry({weekday:M.weekdayOf(l1.date),slot:2,classId:cls.id,time:'10:00'});
+  const screen = doc.createElement('div');
+  const before = store.state.lessons.length;
+  renderToday(screen,{},l1.date);
+  assert.match(screen.textContent,/10:00/);
+  assert.match(screen.textContent,/Отметки: 2 из 2/);
+  assert.match(screen.textContent,/Содержание нагрузки требует проверки/);
+  assert.equal(store.state.lessons.length,before);
+  const date = M.addDays(l1.date,7);
+  assert.equal(todayEntries(date).length,1);
+  await store.setScheduleOverride({date,action:'cancel',ruleId:rule.id});
+  assert.equal(todayEntries(date).length,0);
+});
+
+test('Ручная отметка обновляет строку журнала без замены таблицы', async () => {
+  const {a,b,l2} = await seed();
+  store.state.currentTrimesterId = 't1';
+  const screen = doc.createElement('div');
+  const update = renderJournal(screen,{onOpenClassPicker(){},onOpenExemptions(){},onOpenLessonPlanner(){}});
+  const table = screen.querySelector('table');
+  const cell = table.querySelector('[data-student="'+a.id+'"][data-lesson="'+l2.id+'"]');
+  const other = table.querySelector('[data-student="'+b.id+'"][data-lesson="'+l2.id+'"]').firstChild.firstChild;
+  await tick();
+  const notifications = [];
+  const unsub = store.subscribe((_,ids) => notifications.push(ids));
+  try {
+    await store.setMark(a.id,l2.id,{value:'4'});
+    await tick();
+    assert.deepEqual(notifications,[[a.id]]);
+    update(notifications[0]);
+    assert.equal(screen.querySelector('table'),table);
+    assert.equal(cell.textContent,'4');
+    assert.equal(table.querySelector('[data-student="'+b.id+'"][data-lesson="'+l2.id+'"]').firstChild.firstChild,other);
+  } finally {unsub();}
 });

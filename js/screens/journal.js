@@ -52,6 +52,9 @@ export function renderJournal(root, ctx) {
   const lessons = store.lessonsInRange(classId, tr.from, tr.to);
   const markMap = store.markMap(classId);
   const today = M.todayIso();
+  const topicsById = new Map(store.state.topics.map(t => [t.id,t]));
+  const activeByStudent = new Map();
+  for (const e of store.state.exemptions) if (M.exemptionActive(e) && !activeByStudent.has(e.studentId)) activeByStudent.set(e.studentId,e);
 
   /* ---- шапка ---- */
   const topbar = el('div', { class: 'topbar' });
@@ -63,7 +66,7 @@ export function renderJournal(root, ctx) {
     el('div', { style: 'flex:1' }),
     el('button', {
       class: 'icon-btn', type: 'button', title: 'Быстрый ввод',
-      onclick: () => openQuickEntrySheet(classId, lessons[lessons.length - 1]?.date || today),
+      onclick: () => openQuickEntrySheet(classId, today),
     }, [icon('quick')]),
     el('button', {
       class: 'icon-btn', type: 'button', title: 'Освобождения',
@@ -115,7 +118,7 @@ export function renderJournal(root, ctx) {
   headRow.append(el('th', { class: 'col-name', text: 'ФИО' }));
 
   for (const lesson of lessons) {
-    const topic = store.state.topics.find((t) => t.id === lesson.topicId);
+    const topic = topicsById.get(lesson.topicId);
     headRow.append(el('th', {
       class: 'col-lesson',
       title: topic ? topic.name : 'Тема не указана',
@@ -134,12 +137,14 @@ export function renderJournal(root, ctx) {
 
   const tbody = el('tbody');
 
+  const rowByStudent = new Map();
   for (const st of students) {
     const tr_ = el('tr');
+    rowByStudent.set(st.id,tr_);
 
     tr_.append(el('td', { class: 'col-num', text: st.number ?? '' }));
 
-    const activeEx = store.exemptionsOfStudent(st.id).find((e) => M.exemptionActive(e));
+    const activeEx = activeByStudent.get(st.id);
     const nameCell = el('td', { class: 'col-name' }, [
       el('span', { class: 'name-cell', text: M.shortName(st.fullName) }),
     ]);
@@ -184,6 +189,28 @@ export function renderJournal(root, ctx) {
   table.append(tbody);
   wrap.append(table);
   root.append(topbar, wrap);
+  // При ручной отметке сохраняем DOM таблицы, прокрутку и остальные строки.
+  return changedStudents => {
+    const latest = store.markMap(classId);
+    for (const id of new Set(changedStudents)) {
+      const row = rowByStudent.get(id);
+      if (!row) continue;
+      let absent = 0, sum = 0, count = 0;
+      const cells = row.querySelectorAll('.cell');
+      lessons.forEach((lesson,i) => {
+        const mark = latest.get(lesson.id + '|' + id);
+        if (mark?.flag === 'Н') absent++;
+        if (mark?.value) { sum += Number(mark.value); count++; }
+        cells[i].classList.toggle('filled',Boolean(mark));
+        cells[i].firstChild.replaceChildren(badgeFor(mark));
+      });
+      const [avg,attendance] = row.querySelectorAll('.col-sum');
+      avg.textContent = count ? M.fmtAvg(sum/count) : '—';
+      const att = M.attendance(lessons.length,absent);
+      attendance.textContent = att.pct === null ? '—' : String(att.pct).replace('.',',') + '%';
+      attendance.style.color = att.pct !== null && att.pct < 80 ? 'var(--mark-2)' : '';
+    }
+  };
 }
 
 /* ---------- шторка отметки ---------- */
@@ -580,10 +607,18 @@ export function openQuickEntrySheet(classId, initialDate) {
   const sheet = el('div');
   const headerWrap = el('div');
   const listWrap = el('div', { class: 'quick-list' });
-  sheet.append(headerWrap, listWrap);
+  const search = el('input',{type:'search',placeholder:'Найти ученика','aria-label':'Найти ученика'});
+  const status = el('div',{class:'quick-status',role:'status','aria-live':'polite'});
+  const topicLine = el('div',{class:'quick-topic'});
+  sheet.append(headerWrap,topicLine,search,status,listWrap);
+  const filter = () => {
+    const query = search.value.trim().toLocaleLowerCase('ru');
+    for (const row of listWrap.querySelectorAll('.quick-row')) row.hidden = !row.dataset.name.includes(query);
+  };
+  search.addEventListener('input',filter);
 
   async function ensureLesson() {
-    let lesson = classLessons.find((l) => l.date === currentDate);
+    let lesson = store.lessonsOfClass(classId).find((l) => l.date === currentDate);
     if (!lesson) {
       lesson = await store.addLesson(classId, currentDate);
       classLessons.push(lesson);
@@ -598,10 +633,13 @@ export function openQuickEntrySheet(classId, initialDate) {
     headerWrap.innerHTML = '';
     const input = el('input', { type: 'date', value: currentDate, max: store.state.settings.year.to });
     input.addEventListener('change', async () => {
+      if (!input.value || input.value > store.state.settings.year.to) { input.value = currentDate; return; }
+      const previous = currentDate;
       currentDate = input.value;
-      lesson = await ensureLesson();
-      input.value = currentDate;
-      draw();
+      input.disabled = true;
+      try { lesson = await ensureLesson(); draw(); }
+      catch { currentDate = previous; input.value = previous; ui.toast('Не удалось открыть урок'); }
+      finally { input.disabled = false; }
     });
 
     headerWrap.append(
@@ -612,15 +650,20 @@ export function openQuickEntrySheet(classId, initialDate) {
   }
 
   function draw() {
-    listWrap.replaceChildren(warning(lesson || {classId,date:currentDate}));
+    const topic = store.state.topics.find(t => t.id === lesson?.topicId);
+    topicLine.textContent = topic ? topic.name : 'Тема КТП не указана';
+    listWrap.replaceChildren(warning(lesson || {classId,date:currentDate},null,() => { draw(); ui.openSheet(sheet); }));
     const markMap = store.markMap(classId);
+    for (const st of students) listWrap.append(buildRow(st,markMap));
+    filter();
+  }
 
-    for (const st of students) {
+  function buildRow(st,markMap) {
       const key = lesson ? `${lesson.id}|${st.id}` : null;
       const mark = key ? markMap.get(key) : null;
       const ex = lesson ? store.activeExemption(st.id, lesson.date) : null;
 
-      const row = el('div', { class: 'quick-row' });
+      const row = el('div', { class: 'quick-row', 'data-name':st.fullName.toLocaleLowerCase('ru') });
       row.append(el('div', { class: 'who' }, [
         el('span', { class: 'n', text: st.number ?? '' }),
         el('span', { class: 'fio', text: M.shortName(st.fullName) }),
@@ -635,9 +678,16 @@ export function openQuickEntrySheet(classId, initialDate) {
         if (!lesson) lesson = await ensureLesson();
         if (value && !checkGrade(lesson,st.id)) return;
         if (flag === 'Н' && (M.hasOsv(mark) || ex) && !window.confirm('Отметить отсутствие вместе с ОСВ?')) return;
-        await store.setMark(st.id, lesson.id, { value, flag });
-        ui.haptic(8);
-        draw();
+        for (const button of btns.querySelectorAll('button')) button.disabled = true;
+        status.textContent = 'Сохранение…';
+        try {
+          await store.setMark(st.id, lesson.id, { value, flag });
+          ui.haptic(8);
+          row.replaceWith(buildRow(st,store.markMap(classId)));
+          filter();
+          status.textContent = 'Сохранено';
+        } catch { status.textContent = 'Не удалось сохранить отметку'; }
+        finally { for (const button of btns.querySelectorAll('button')) button.disabled = false; }
       };
 
       [5, 4, 3, 2, 1].forEach((v) => {
@@ -668,14 +718,15 @@ export function openQuickEntrySheet(classId, initialDate) {
       }));
 
       row.append(btns);
-      listWrap.append(row);
-    }
+      return row;
   }
 
-  (async () => {
-    lesson = await ensureLesson();
-    drawHeader();
-    draw();
-    ui.openSheet(sheet);
+  return (async () => {
+    try {
+      lesson = await ensureLesson();
+      drawHeader();
+      draw();
+      ui.openSheet(sheet);
+    } catch { ui.toast('Не удалось открыть урок'); }
   })();
 }

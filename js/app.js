@@ -2,6 +2,7 @@
 
 import * as store from './store.js';
 import * as ui from './ui.js';
+import { renderToday } from './screens/today.js';
 import { renderClasses } from './screens/classes.js';
 import { renderJournal } from './screens/journal.js';
 import { renderParticipation } from './screens/participation.js';
@@ -12,6 +13,7 @@ import { renderSettings, applyTheme, openExportSheet } from './screens/settings.
 const { el, icon } = ui;
 
 const TABS = [
+  { id: 'today', label: 'Сегодня', icon: 'sun' },
   { id: 'classes', label: 'Классы', icon: 'classes' },
   { id: 'journal', label: 'Журнал', icon: 'journal' },
   { id: 'schedule', label: 'Расписание', icon: 'calendar' },
@@ -20,20 +22,32 @@ const TABS = [
 
 const appRoot = document.getElementById('app');
 let tabbarEl = null;
+let journalUpdate = null;
+let renderedRoute = '';
+let renderedTab = '';
+const routeKey = () => [store.state.currentTab, store.state.currentTab === 'journal' ? store.state.currentClassId : '', store.state.currentTab === 'journal' ? store.state.classSubtab || 'journal' : '', store.state.currentTab === 'journal' ? store.state.currentTrimesterId : ''].join('|');
 
 /** Перерисовка текущего таба. Вызывается на любое изменение состояния. */
 function render() {
   if (!store.state.ready) return;
 
-  const scrollPos = { journal: null };
-
-  appRoot.innerHTML = '';
+  const route = routeKey();
+  const sameRoute = route === renderedRoute;
+  const grid = sameRoute ? appRoot.querySelector('.grid-wrap') : null;
+  const scrollPos = grid ? [grid.scrollLeft, grid.scrollTop] : null;
+  const page = document.scrollingElement;
+  const pageTop = sameRoute ? page?.scrollTop : 0;
+  renderedRoute = route;
+  journalUpdate = null;
+  appRoot.replaceChildren();
   const screen = el('div', { class: 'screen' });
   appRoot.append(screen);
 
   const tab = store.state.currentTab;
 
-  if (tab === 'classes') {
+  if (tab === 'today') {
+    renderToday(screen, { onSchedule: () => setTab('schedule') });
+  } else if (tab === 'classes') {
     renderClasses(screen, {
       onOpenJournal: () => { setTab('journal'); },
       onGoSettings: () => setTab('settings'),
@@ -47,7 +61,12 @@ function render() {
     renderSettings(screen, { onChanged: render });
   }
 
-  renderTabbar();
+  if (scrollPos) {
+    const nextGrid = screen.querySelector('.grid-wrap');
+    if (nextGrid) [nextGrid.scrollLeft, nextGrid.scrollTop] = scrollPos;
+  }
+  if (page) page.scrollTop = pageTop || 0;
+  if (!tabbarEl || renderedTab !== tab) { renderTabbar(); renderedTab = tab; }
 }
 
 function renderJournalScreen(screen) {
@@ -61,7 +80,7 @@ function renderJournalScreen(screen) {
   const subtab = store.state.classSubtab || 'journal';
 
   if (subtab === 'journal') {
-    renderJournal(screen, {
+    journalUpdate = renderJournal(screen, {
       onOpenClassPicker: () => openClassPicker(),
       onOpenExemptions: (id) => { store.state.classSubtab = 'exemptions'; render(); },
       onOpenLessonPlanner: (id) => import('./screens/lesson.js').then((m) => m.openLessonPlanner(id)),
@@ -109,6 +128,7 @@ function renderTabbar() {
       type: 'button',
       class: `tab ${store.state.currentTab === t.id ? 'active' : ''}`,
       'aria-label': t.label,
+      'aria-current': store.state.currentTab === t.id ? 'page' : null,
       onclick: () => { setTab(t.id); ui.haptic(6); },
     }, [icon(t.icon), el('span', { text: t.label })])));
   document.body.append(tabbarEl);
@@ -171,7 +191,10 @@ async function boot() {
   await store.load();
   applyTheme(store.state.settings.theme || 'auto');
 
-  store.subscribe(render);
+  store.subscribe((_state, changedStudents) => {
+    if (changedStudents && journalUpdate && routeKey() === renderedRoute) journalUpdate(changedStudents);
+    else render();
+  });
   render();
 
   // Следим за системной темой в режиме «как в системе»
@@ -179,7 +202,7 @@ async function boot() {
     if ((store.state.settings.theme || 'auto') === 'auto') applyTheme('auto');
   });
 
-  // Горячие клавиши для отладки на десктопе: 1-4 — табы
+  // Горячие клавиши для отладки на десктопе: 1-5 — табы
   window.addEventListener('keydown', (e) => {
     if (e.target.matches('input, textarea, select')) return;
     if (e.key === 'Escape') { ui.closeSheet(); return; }
