@@ -191,6 +191,7 @@ export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch}={}){
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),45000);
   try{
    const res=await fetcher(url,{method,headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal});
+   if(res.status===413)throw Error('Пакет превышает лимит выбранного сервера. Локальные данные сохранены.');
    if(res.status===409)throw Error('На сервере появилась новая ревизия. Повторите предварительный просмотр.');
    if(res.status===401||res.status===403)throw Error('Сервер отказал в доступе. Проверьте ключ и область.');
    check(res.ok,'Сервер синхронизации недоступен (HTTP '+res.status+')');
