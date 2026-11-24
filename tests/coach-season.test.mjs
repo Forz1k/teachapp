@@ -28,7 +28,7 @@ test('Сезон: тренировочные рейтинги, методики,
 });
 test('Сезон: интерфейс строит рейтинги, меняет источник и сравнение',async()=>{
  const dom=new JSDOM('<!doctype html><body></body>',{url:'https://example.test'});
- globalThis.document=dom.window.document;globalThis.window=dom.window;
+ globalThis.document=dom.window.document;globalThis.window=dom.window;globalThis.Node=dom.window.Node;globalThis.Element=dom.window.Element;globalThis.HTMLElement=dom.window.HTMLElement;
  const {seasonPanel}=await import('../js/screens/coach-season.js');
  const panel=seasonPanel(view);document.body.append(panel);
  assert.match(panel.textContent,/Сезонная аналитика/);
@@ -39,5 +39,8 @@ test('Сезон: интерфейс строит рейтинги, меняет
  const method=[...panel.querySelectorAll('select')].find(x=>[...x.options].some(o=>o.value===definitionKey(testPresets.serve)));
  method.value=definitionKey(testPresets.serve);method.dispatchEvent(new dom.window.Event('change'));
  assert.match(panel.textContent,/Лидер по показателю/);assert.match(panel.textContent,/40 попыток/);
+ const choices=[...panel.querySelectorAll('select')].filter(x=>[...x.options].some(o=>o.value==='a')&&[...x.options].some(o=>o.value==='b'));
+ assert.equal(choices.length,2);choices[0].value='a';choices[0].dispatchEvent(new dom.window.Event('change'));choices[1].value='b';choices[1].dispatchEvent(new dom.window.Event('change'));
+ assert.match(panel.textContent,/Сравнение игроков/);assert.match(panel.textContent,/Динамика · А/);assert.match(panel.textContent,/вне рейтинга/);
  dom.window.close();
 });
