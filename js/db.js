@@ -97,27 +97,45 @@ const migrations = {
 };
 
 let _db = null;
+let _opening = null;
 
-/** Открывает базу, при первом запуске создаёт хранилища. Кэширует соединение. */
+/** Открывает базу. Параллельные обращения используют один запрос IndexedDB. */
 export function open() {
   if (_db) return Promise.resolve(_db);
-  return new Promise((resolve, reject) => {
+  if (_opening) return _opening;
+  const pending = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
+    let blocked = false;
 
+    req.onblocked = () => {
+      blocked = true;
+      reject(new DOMException('Закройте другие вкладки TeachApp и запустите приложение снова.', 'DatabaseBlockedError'));
+    };
     req.onupgradeneeded = (event) => {
+      // Запрос IndexedDB нельзя отменить, пока другая вкладка удерживает базу.
+      // Не запускаем отложенную миграцию после того, как сообщили об ошибке.
+      if (blocked) { req.transaction.abort(); return; }
       for (let version = event.oldVersion + 1; version <= DB_VERSION; version++) {
         migrations[version](req.result, req.transaction);
       }
     };
-
     req.onsuccess = () => {
-      _db = req.result;
-      // Если в другой вкладке подняли версию — закрываемся, чтобы не блокировать.
-      _db.onversionchange = () => { _db.close(); _db = null; };
-      resolve(_db);
+      const connection = req.result;
+      if (blocked) { connection.close(); return; }
+      _db = connection;
+      connection.onversionchange = () => {
+        connection.close();
+        if (_db === connection) _db = null;
+      };
+      connection.onclose = () => {
+        if (_db === connection) _db = null;
+      };
+      resolve(connection);
     };
     req.onerror = () => reject(req.error);
   });
+  _opening = pending.finally(() => { _opening = null; });
+  return _opening;
 }
 
 /** Обёртка над транзакцией. fn получает объект со store-хелперами, может быть async. */
