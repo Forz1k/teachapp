@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {firebaseOrigin,portalAddress,shareUrl,projectMatch,buildPortal,readPortal,portalState,countdown,matchingSchedule,archiveMatch} from '../js/public-portal.js';
+import {primaryPortal,firebaseOrigin,portalAddress,shareUrl,projectMatch,buildPortal,readPortal,portalState,countdown,matchingSchedule,archiveMatch} from '../js/public-portal.js';
 import {detailEvent} from '../js/match-protocol.js';
 const players=Array.from({length:6},(_,i)=>({id:'a'+i,number:i+1,name:'PRIVATE '+i}));
 const away=players.map((p,i)=>({...p,id:'b'+i,name:'SECRET '+i}));
@@ -33,3 +33,5 @@ test('Firebase возвращает массивы или индексирова
  const a=readPortal(raw);assert.deepEqual(a.schedule.map(x=>x.id),['first','second']);assert.equal(Object.hasOwn(a,'secret'),false);
  assert.equal(readPortal({...raw,schema:99}),null);
 });
+
+test('Основная команда получает короткую постоянную ссылку, дополнительные — отдельные адреса',()=>{assert.equal(shareUrl('https://example.com/teachapp/',primaryPortal.origin,primaryPortal.owner,primaryPortal.slug),'https://example.com/teachapp/live/');assert.equal(new URL(shareUrl('https://example.com/teachapp/',primaryPortal.origin,primaryPortal.owner,'other')).searchParams.get('team'),'other');});

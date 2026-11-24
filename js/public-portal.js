@@ -27,7 +27,7 @@ export function portalAddress(origin,owner,slug){
 }
 export function shareUrl(base,origin,owner,slug){
  portalAddress(origin,owner,slug);
- const u=new URL('live/',base);u.searchParams.set('db',firebaseOrigin(origin));u.searchParams.set('owner',owner);u.searchParams.set('team',slug);return u.href;
+ const u=new URL('live/',base);if(firebaseOrigin(origin)===primaryPortal.origin&&owner===primaryPortal.owner&&slug===primaryPortal.slug)return u.href;u.searchParams.set('db',firebaseOrigin(origin));u.searchParams.set('owner',owner);u.searchParams.set('team',slug);return u.href;
 }
 export function scheduleItem(x){
  if(!x||!validId(x.id)||!clean(x.opponent)||!dateMs(x.startAt)||x.startAt===0)throw Error('Проверьте соперника и дату матча');

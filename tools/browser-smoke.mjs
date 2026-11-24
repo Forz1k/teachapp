@@ -109,10 +109,10 @@ try{
  await send('Page.navigate',{url:origin+'/live/?db=https%3A%2F%2Fdemo.firebaseio.com&owner=owner&team=team'});await ready('#portal');
  await wait(()=>evalJs('typeof window.__portalTestPush==="function"'),'mock public stream');
  const upcoming={schema:1,team:'Демо-команда',updatedAt:Date.now(),schedule:[{id:'f1',opponent:'Гости',startAt:Date.now()+3600000}],archive:[]};
- await evalJs('window.__portalTestPush('+JSON.stringify(upcoming)+')');await ready('.clock');await capture('390-public-upcoming');
+ await evalJs('window.__portalTestPush('+JSON.stringify(upcoming)+')');await ready('.clock');await capture('390-public-upcoming');assert.equal(await evalJs('document.querySelector(".credit a").href'),'https://github.com/Forz1k/teachapp');await click('[data-tab="schedule"]');await ready('.fixture');await capture('390-public-schedule');await click('[data-tab="overview"]');await ready('.clock');
  const current={id:'m1',opponent:'Гости',startedAt:Date.now(),status:'live',set:1,score:{ours:8,theirs:6},setsWon:{ours:0,theirs:0},sets:[],serve:'ours',colors:{ours:'blue',theirs:'red'},events:[{set:1,score:'8:6',side:'ours',kind:'tip',actor:'ours',number:8}],stats:[{side:'ours',number:8,points:1,attack:1,tip:1,ace:0,block:0}],scheduledId:'f1'};
  await evalJs('window.__portalTestPush('+JSON.stringify({...upcoming,match:current})+')');await ready('.event');assert.equal(await exists('.workspace-nav'),false);await capture('390-public-live');
- await viewport(1280,900);await capture('1280-public-live');await viewport(390,844);
+ await viewport(320,740);await capture('320-public-live');await click('#theme');assert.equal(await evalJs('document.documentElement.dataset.theme'),'light');await capture('320-public-light');await viewport(1280,900);await capture('1280-public-live');await viewport(390,844);
  await send('Page.navigate',{url:origin+'/index.html'});await ready('.workspace-nav');await ready('.dashboard');
  const version=JSON.parse(await readFile(join(root,'package.json'),'utf8')).version;
  const cached=await evalJs('(async()=>{const keys=await caches.keys();return keys.some(k=>k.endsWith('+JSON.stringify('v'+version)+'))})()');assert.equal(cached,true);

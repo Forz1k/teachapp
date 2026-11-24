@@ -82,7 +82,10 @@ export function removeFixture(id,fixtureId){const e=entry(id);if(e.data.match?.s
 export function syncPortalMatch(match,{start=false,finish=false,discard=false}={}){
  if(match?.mode!=='dual')return false;const e=entry(match.teamId),d=e.data;if(!d.enabled)return false;
  const scheduled=matchingSchedule(d.schedule,match);
- const continuing=d.activeId===match.id;
+ const publicId='match_'+Date.parse(match.startedAt);
+ const continuing=d.activeId===match.id||d.activeId===publicId&&d.match?.id===publicId;
+ if(continuing)d.activeId=match.id;
+ if(!continuing&&!start&&d.match?.id===publicId&&d.match.status==='finished')return false;
  if(!continuing){
   if(discard||finish)return false;
   if(d.activeId&&d.match){if(start)throw Error('Сначала завершите или отключите текущую трансляцию');return false;}

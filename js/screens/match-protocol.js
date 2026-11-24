@@ -55,12 +55,12 @@ function parseAway(text){
  if(new Set(result.map(p=>p.number)).size!==result.length)throw Error('Номера соперника не должны повторяться');
  return result;
 }
-export function openDetailedSetup(team,players,back,refresh,preset=null,{matches=[],presets=[]}={}){
- const date=input(todayIso(),'date',{max:todayIso()}),opp=input('','text',{placeholder:'Название соперника'}),comp=input('','text',{placeholder:'Турнир'}),venue=input('','text',{placeholder:'Спортивный зал'});
+export function openDetailedSetup(team,players,back,refresh,preset=null,{matches=[],presets=[],fixture=null}={}){
+ const date=input(todayIso(),'date',{max:todayIso()}),opp=input(fixture?.opponent||'','text',{placeholder:'Название соперника'}),comp=input('','text',{placeholder:'Турнир'}),venue=input('','text',{placeholder:'Спортивный зал'});
  const best=select([[3,'До двух побед'],[5,'До трёх побед']],5),target=select([15,21,25].map(n=>[n,n]),25),decider=select([15,21,25].map(n=>[n,n]),15);
  const serve=select([['ours',team.name],['theirs','Соперник']],'ours'),scheme=select([['5-1','5–1'],['4-2','4–2'],['free','Свободная']],preset?.scheme||'5-1');
  const substitutions=select([['simple','Упрощённые (до 6)'],['paired','Парные (возврат стартового игрока)']],'simple');
- const colors=colorFields();
+ const colors=colorFields(V.defaultBoardColors,fixture?.logos||{ours:null,theirs:null});
  const previousMatches=matches.filter(m=>m.teamId===team.id&&m.detail?.mode==='dual').sort((a,b)=>b.date.localeCompare(a.date)||b.detail.startedAt.localeCompare(a.detail.startedAt));
  const previous=previousMatches[0]?.detail;
  const templates=presets.filter(x=>x.teamId===team.id);

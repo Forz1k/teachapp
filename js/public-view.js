@@ -41,6 +41,7 @@ function draw(){
  if(past.length&&!(past.length===1&&m?.status==='finished'))parts.push(card(head('Последние результаты'),...archiveRows(past.slice(0,5))));
  root.replaceChildren(...parts);
 }
+const brand=document.querySelector('.brand');if(brand)brand.href=location.href;
 const theme=document.getElementById('theme');
 function setTheme(value){document.documentElement.dataset.theme=value;if(theme){theme.textContent=value==='light'?'☾':'☀';theme.setAttribute('aria-label',value==='light'?'Включить тёмную тему':'Включить светлую тему');}try{window.localStorage.setItem('teachapp:viewer-theme',value);}catch{}}
 try{setTheme(window.localStorage.getItem('teachapp:viewer-theme')==='light'?'light':'dark');}catch{setTheme('dark');}
@@ -62,7 +63,7 @@ try{
     const assign=(key,v)=>{const parts=key.split('/').filter(Boolean);if(!parts.length||parts.some(k=>['__proto__','constructor','prototype'].includes(k)))return;let parent=current;for(const k of parts.slice(0,-1)){if(!Object.hasOwn(parent,k)||!parent[k]||typeof parent[k]!=='object')parent[k]=Object.create(null);parent=parent[k];}if(v===null)delete parent[parts.at(-1)];else parent[parts.at(-1)]=v;};
     if(event.type==='put')assign(path,value);else for(const [key,v] of Object.entries(value||{}))assign(path+'/'+key,v);
    }
-   data=readPortal(current);received=true;connected=true;draw();
+   const next=readPortal(current),same=JSON.stringify(data&&{...data,updatedAt:0})===JSON.stringify(next&&{...next,updatedAt:0}),wasConnected=connected;data=next;received=true;connected=true;if(!same||!wasConnected||lastStale||portalState(data).mode!==lastMode)draw();
   }catch{connected=false;problem='Не удалось прочитать обновление. Ожидаем повторного подключения.';draw();}
  }
  stream.addEventListener('put',receive);stream.addEventListener('patch',receive);
