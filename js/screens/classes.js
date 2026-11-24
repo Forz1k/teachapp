@@ -35,17 +35,17 @@ export function renderClasses(root, ctx = {}) {
       el('button', {
         type: 'button', text: 'Сохранить',
         onclick: async () => {
-          const { exportBackup } = await import('../export.js');
-          await exportBackup();
-          ui.toast('Копия сохранена');
-          ctx.onChanged?.();
+          try { await (await import('../export.js')).exportBackup(); }
+          catch (err) { ui.toast('Не удалось подготовить копию: ' + err.message); }
         },
       }),
       el('button', {
         type: 'button', text: 'Позже', style: 'color:var(--text-3)',
-        onclick: () => {
-          banner.remove();
-          store.saveSettings({ lastBackupAt: new Date().toISOString() });
+        onclick: async () => {
+          try {
+            await store.saveSettings({ backupReminderAfter: new Date(Date.now() + 86400000).toISOString() });
+            banner.remove();
+          } catch (err) { ui.toast(err.message); }
         },
       }),
     ]);
@@ -141,6 +141,7 @@ function ringColor(pct) {
 
 function needsBackupReminder() {
   const last = store.state.lastBackupAt;
+  if (Date.parse(store.state.settings.backupReminderAfter) > Date.now()) return false;
   if (!store.state.students.length) return false;
   if (!last) return true;
   const days = (Date.now() - new Date(last).getTime()) / 86400000;

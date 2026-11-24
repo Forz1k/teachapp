@@ -379,3 +379,19 @@ test('Предупреждение до ввода оценки и провер�
     assert.ok(sheet.textContent.includes(a.fullName));
   } finally { window.confirm = original; }
 });
+
+test('Экспорт копии отмечает дату только после подтверждения сохранённого файла', async t => {
+  await seed();
+  t.mock.method(URL,'createObjectURL',() => 'blob:backup');
+  t.mock.method(window.HTMLAnchorElement.prototype,'click',() => {});
+  await exporter.exportBackup();
+  const buttons = [...doc.querySelectorAll('.sheet button')];
+  const confirm = buttons.find(b => b.textContent.includes('Подтверждаю, что файл сохранён'));
+  assert.equal(confirm.disabled,true);
+  buttons.find(b => b.textContent === 'Скачать JSON').click();
+  assert.equal(confirm.disabled,false);
+  assert.equal(store.state.lastBackupAt,null);
+  confirm.click();
+  await tick();
+  assert.ok(store.state.lastBackupAt);
+});

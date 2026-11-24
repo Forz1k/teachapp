@@ -162,6 +162,12 @@ async function boot() {
     applyTheme('auto');
   }
 
+  window.addEventListener('unhandledrejection', event => {
+    if (event.reason?.name === 'QuotaExceededError') {
+      event.preventDefault();
+      ui.toast('Недостаточно места. Запись прервана. Освободите место и повторите операцию.', null, 8000);
+    }
+  });
   await store.load();
   applyTheme(store.state.settings.theme || 'auto');
 

@@ -3,7 +3,7 @@
 
 import * as store from './store.js';
 import * as M from './model.js';
-import { downloadBlob, copyText } from './ui.js';
+import { el, openSheet, closeSheet, toast, downloadBlob, copyText } from './ui.js';
 
 /** Есть ли SheetJS. Если нет — приложение работает, но XLSX отключается с понятным сообщением. */
 export const hasXlsx = () => typeof window.XLSX !== 'undefined';
@@ -470,14 +470,36 @@ export async function applyKtpTopics(ktpId, items, { append = false } = {}) {
 export async function exportBackup() {
   const payload = await store.makeBackup();
   const name = `teachapp-backup-${payload.createdAt.slice(0, 10)}.json`;
-  downloadBlob(new Blob([JSON.stringify(payload, null, 1)], { type: 'application/json' }), name);
+  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+  const file = typeof File === 'function' ? new File([blob],name,{type:blob.type}) : null;
+  const sheet = el('div',{},[el('h2',{text:'Резервная копия'}),
+    el('p',{text:'Сохраните файл в выбранном месте. Копия содержит журнал и внесённые сведения об ограничениях.'})]);
+  const confirmed = el('button',{type:'button',class:'btn wide',text:'Подтверждаю, что файл сохранён',onclick:async () => {
+    try {
+      await store.saveSettings({lastBackupAt:payload.createdAt,backupReminderAfter:null});
+      closeSheet(); toast('Дата копии отмечена');
+    } catch (err) { toast(err.message); }
+  }});
+  confirmed.disabled = true;
+  if (file && navigator.canShare?.({files:[file]})) sheet.append(el('button',{
+    type:'button',class:'btn primary wide',text:'Поделиться / Сохранить в Файлы',onclick:async () => {
+      try { await navigator.share({files:[file]}); confirmed.disabled = false; }
+      catch (err) { if (err.name !== 'AbortError') toast('Не удалось передать файл. Используйте скачивание.'); }
+    },
+  }));
+  sheet.append(el('button',{type:'button',class:'btn wide',text:'Скачать JSON',onclick:() => {
+    try { downloadBlob(blob,name); confirmed.disabled = false; toast('Скачивание начато. Проверьте файл в загрузках.'); }
+    catch { toast('Не удалось начать скачивание'); }
+  }}),confirmed);
+  openSheet(sheet);
   return name;
 }
 
 /** Читает файл как JSON-бэкап. */
 export async function readBackupFile(file) {
   const text = await file.text();
-  return JSON.parse(text);
+  try { return JSON.parse(text.replace(/^\uFEFF/, '')); }
+  catch { throw new Error('Файл повреждён или имеет неверный формат JSON'); }
 }
 
 /* ---------- импорт списков ---------- */

@@ -15,6 +15,8 @@ test('Обновление базы v2 сохраняет архив и доба
         if (name === 'participation') continue;
         const s = req.result.createObjectStore(name, { keyPath: def.keyPath });
         for (const index of def.indexes) s.createIndex(...index);
+        if (name === 'classes') s.put({ id: 'old-class', name: 'Архив' });
+        if (name === 'students') s.put({ id: 'old', classId: 'old-class', fullName: 'Архивный ученик' });
         if (name === 'monthly') s.put({ id: 'archive', studentId: 'old', year: 2025, month: 11, value: '5' });
       }
     };

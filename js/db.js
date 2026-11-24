@@ -126,7 +126,12 @@ async function tx(storeNames, mode, fn) {
     }
     t.oncomplete = () => resolve(result);
     t.onabort = () => reject(t.error || new Error('Транзакция отменена'));
-    t.onerror = () => reject(t.error);
+    t.onerror = event => reject(event.target.error || t.error);
+  }).catch(error => {
+    if (error?.name === 'QuotaExceededError') {
+      throw new DOMException('Недостаточно места на устройстве для записи в журнал. Освободите место и повторите операцию.', 'QuotaExceededError');
+    }
+    throw error;
   });
 }
 
@@ -194,19 +199,18 @@ export async function clearAll() {
 
 /** Полная выгрузка базы в один объект — для JSON-бэкапа. */
 export async function dumpAll() {
-  const out = {};
-  for (const name of Object.keys(STORES)) {
-    out[name] = await getAll(name);
-  }
-  return out;
+  const names = Object.keys(STORES);
+  return tx(names, 'readonly', async stores => Object.fromEntries(await Promise.all(
+    names.map(async name => [name, await stores[name].getAll()]))));
 }
 
-/** Восстановление из объекта бэкапа. Существующие данные перезаписываются по id. */
-export async function restoreAll(data) {
-  const names = Object.keys(STORES).filter((n) => Array.isArray(data[n]));
-  return tx(names, 'readwrite', (s) => {
-    for (const n of names) {
-      for (const item of data[n]) s[n].put(item);
+/** Замена базы одной транзакцией. add отклоняет повторяющиеся ключи. */
+export function replaceAll(data) {
+  const names = Object.keys(STORES);
+  return tx(names, 'readwrite', async stores => {
+    for (const name of names) {
+      await stores[name].clear();
+      for (const row of data[name]) await stores[name].add(row);
     }
   });
 }

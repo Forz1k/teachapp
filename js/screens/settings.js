@@ -1,3 +1,4 @@
+import { validateBackup } from '../backup.js';
 /* screens/settings.js — настройки, импорт, экспорт, резервные копии, управление классами. */
 
 import { APP_VERSION } from '../version.js';
@@ -178,8 +179,7 @@ export function renderSettings(root, ctx = {}) {
       el('button', {
         class: 'btn small', type: 'button', text: 'Сохранить',
         onclick: async () => {
-          const name = await exporter.exportBackup();
-          ui.toast(`Файл ${name} сохранён`, null, 4000);
+          try { await exporter.exportBackup(); } catch (err) { ui.toast(err.message); }
         },
       }),
     ]),
@@ -190,21 +190,23 @@ export function renderSettings(root, ctx = {}) {
     const file = restoreInput.files?.[0];
     if (!file) return;
     restoreInput.value = '';
-    const ok = await ui.confirmDialog({
-      title: 'Восстановить из копии?',
-      text: 'Текущие данные будут полностью заменены содержимым файла. Рекомендуем сначала сохранить текущую копию.',
-      ok: 'Восстановить', danger: true,
-    });
-    if (!ok) return;
     try {
       const payload = await exporter.readBackupFile(file);
+      const data = validateBackup(payload);
+      const ok = await ui.confirmDialog({
+        title: 'Заменить журнал данными из копии?',
+        text: 'В файле классов: ' + data.classes.length + ', учеников: ' + data.students.length + ', уроков: ' + data.lessons.length
+          + '. Все текущие записи будут заменены, включая сведения об участии и ограничениях.',
+        ok: 'Заменить журнал', danger: true,
+      });
+      if (!ok) return;
       await store.restoreBackup(payload);
       ui.toast('Данные восстановлены');
     } catch (err) {
       ui.toast('Не удалось: ' + err.message, null, 6000);
     }
   });
-  document.body.append(restoreInput);
+  backupBlock.append(restoreInput);
 
   backupBlock.append(el('div', { class: 'row-item' }, [
     el('div', { class: 'label', text: 'Восстановить из копии' }),
@@ -502,7 +504,7 @@ export function openExportSheet(presetClassId = null) {
     onclick: () => {
       try {
         const name = exporter.exportXlsxSummary(params());
-        ui.toast(`Файл ${name} сохранён`);
+        ui.toast(`Начато скачивание ${name}`);
       } catch (e) { ui.toast('Ошибка: ' + e.message); }
     },
   }));
@@ -512,7 +514,7 @@ export function openExportSheet(presetClassId = null) {
     onclick: () => {
       try {
         const name = exporter.exportXlsxFlat(params());
-        ui.toast(`Файл ${name} сохранён`);
+        ui.toast(`Начато скачивание ${name}`);
       } catch (e) { ui.toast('Ошибка: ' + e.message); }
     },
   }));
@@ -521,7 +523,7 @@ export function openExportSheet(presetClassId = null) {
     class: 'btn wide', type: 'button', text: 'CSV (резервный вариант)',
     onclick: () => {
       const name = exporter.exportCsvSummary(params());
-      ui.toast(`Файл ${name} сохранён`);
+      ui.toast(`Начато скачивание ${name}`);
     },
   }));
 

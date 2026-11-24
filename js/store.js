@@ -1,3 +1,4 @@
+import { BACKUP_VERSION, validateBackup } from './backup.js';
 /* store.js — состояние приложения и все команды записи.
    UI читает состояние отсюда и подписывается на изменения.
    Каждая мутация: сначала IndexedDB, потом обновление кэша и уведомление подписчиков.
@@ -61,20 +62,11 @@ export function notify() {
 
 /** Первичная загрузка всей базы в кэш. */
 export async function load() {
-  const [settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides, marks, exemptions, studentHealthProfiles, activityRestrictions, activityCategories, monthly, participation] = await Promise.all([
-    db.getAll('meta'),
-    db.getAll('classes'),
-    db.getAll('students'),
-    db.getAll('lessons'),
-    db.getAll('topics'),
-    db.getAll('ktp'),
-    db.getAll('schedule'),
-    db.getAll('scheduleOverrides'),
-    db.getAll('marks'),
-    db.getAll('exemptions'),
-    db.getAll('studentHealthProfiles'), db.getAll('activityRestrictions'), db.getAll('activityCategories'), db.getAll('monthly'), db.getAll('participation'),
-  ]);
+  return applySnapshot(await db.dumpAll());
+}
 
+function applySnapshot({ meta: settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides,
+  marks, exemptions, studentHealthProfiles, activityRestrictions, activityCategories, monthly, participation }) {
   state.settings = { ...M.defaultSettings(), ...(settingsArr.find((s) => s.id === 'settings') || {}) };
   state.settings.trimesters = (settingsArr.find((s) => s.id === 'settings')?.trimesters) || M.defaultSettings().trimesters;
   state.settings.rules = { ...M.defaultSettings().rules, ...(settingsArr.find((s) => s.id === 'settings')?.rules || {}) };
@@ -97,6 +89,7 @@ export async function load() {
   state.participation = participation;
   state.lastBackupAt = state.settings.lastBackupAt || null;
 
+  if (!state.classes.length) state.currentClassId = null;
   if (!state.currentClassId && state.classes.length) {
     state.currentClassId = state.classes[0].id;
   }
@@ -172,9 +165,15 @@ export function lessonsOfMonth(classId, year, month) {
 /* ---------- настройки ---------- */
 
 export async function saveSettings(patch) {
-  state.settings = { ...state.settings, ...patch };
-  rightOrderTrimesters(state.settings);
-  await db.put('meta', state.settings);
+  const settings = await db.transaction(['meta'],'readwrite', async s => {
+    const current = await s.meta.get('settings');
+    const next = { ...M.defaultSettings(), ...current, ...patch };
+    rightOrderTrimesters(next);
+    await s.meta.put(next);
+    return next;
+  });
+  state.settings = settings;
+  state.lastBackupAt = settings.lastBackupAt || null;
   notify();
 }
 
@@ -224,7 +223,14 @@ export async function deleteClass(id) {
   const records = state.participation.filter(p => studentIds.has(p.studentId) || lessonIds.has(p.lessonId));
   const removedStudents = studentIds;
   const restricted = state.activityRestrictions.filter(r => removedStudents.has(r.studentId));
-  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions'], 'readwrite', (s) => {
+  const schedules = state.schedule.filter(r => r.classId === id);
+  const scheduleIds = new Set(schedules.map(r => r.id));
+  const overrides = state.scheduleOverrides.filter(r => r.classId === id || scheduleIds.has(r.ruleId));
+  const plans = state.ktp.filter(p => p.classIds.includes(id)).map(p => ({...p,classIds:p.classIds.filter(c => c !== id)}));
+  await db.transaction(['classes', 'students', 'lessons', 'marks', 'exemptions', 'monthly', 'participation','studentHealthProfiles','activityRestrictions','schedule','scheduleOverrides','ktp'], 'readwrite', (s) => {
+    for (const r of schedules) s.schedule.delete(r.id);
+    for (const r of overrides) s.scheduleOverrides.delete(r.id);
+    for (const p of plans) s.ktp.put(p);
     for (const key of removedStudents) s.studentHealthProfiles.delete(key);
     for (const r of restricted) s.activityRestrictions.delete(r.id);
     for (const p of records) s.participation.delete(p.id);
@@ -236,6 +242,9 @@ export async function deleteClass(id) {
     s.classes.delete(id);
   });
 
+  state.schedule = state.schedule.filter(r => !scheduleIds.has(r.id));
+  state.scheduleOverrides = state.scheduleOverrides.filter(r => !overrides.includes(r));
+  state.ktp = state.ktp.map(p => plans.find(plan => plan.id === p.id) || p);
   state.classes = state.classes.filter((c) => c.id !== id);
   state.students = state.students.filter((s) => s.classId !== id);
   state.lessons = state.lessons.filter((l) => l.classId !== id);
@@ -900,22 +909,18 @@ export async function makeBackup() {
   const data = await db.dumpAll();
   const payload = {
     app: 'teachapp',
-    version: 1,
+    version: BACKUP_VERSION,
     createdAt: new Date().toISOString(),
     data,
   };
-  state.lastBackupAt = payload.createdAt;
-  await saveSettings({ lastBackupAt: payload.createdAt });
   return payload;
 }
 
 export async function restoreBackup(payload) {
-  if (!payload || payload.app !== 'teachapp' || !payload.data) {
-    throw new Error('Файл не похож на резервную копию этого приложения');
-  }
-  await db.clearAll();
-  await db.restoreAll(payload.data);
-  await load();
+  const copy = typeof structuredClone === 'function' ? structuredClone(payload) : JSON.parse(JSON.stringify(payload));
+  const snapshot = validateBackup(copy);
+  await db.replaceAll(snapshot);
+  applySnapshot(snapshot);
   return true;
 }
 
