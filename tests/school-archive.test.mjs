@@ -17,7 +17,7 @@ test('Архив: атомарный перевод, старые оценки �
  await assert.rejects(A.rollSchoolYear({year,transfers,kind:'quarter',expected:'stale',confirmed:true}),/изменились/);
  assert.equal((await W.listWork('archive')).length,0);
  const result=await A.rollSchoolYear({year,transfers,kind:'quarter',expected:preview.token,confirmed:true});
- assert.equal(result.students,1);assert.equal(S.state.classes[0].name,'8А');assert.equal(S.state.marks.length,0);assert.notEqual(S.state.students[0].id,p.id);assert.equal(S.state.students[0].normGroup,'girls');
+ assert.equal(result.students,1);assert.equal(S.state.classes[0].name,'8А');assert.equal(S.state.marks.length,0);assert.notEqual(S.state.students[0].id,p.id);assert.equal(S.state.students[0].lineageId,p.id);assert.equal(S.state.students[0].normGroup,'girls');
  assert.equal(A.archiveClass(result.record,cls.id).students[0].marks[0].value,'5');
  assert.equal((await C.loadCoach()).coachTeams.length,1);
  const backup=await S.makeBackup();await S.restoreBackup(backup);assert.equal((await W.listWork('archive')).length,1);

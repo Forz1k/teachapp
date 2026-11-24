@@ -28,7 +28,7 @@ export function buildNextYear(data,year,transfers,kind='trimester',today=M.today
   require(txt(name)&&!names.has(name.toLowerCase()),'Названия новых классов должны быть уникальны');names.add(name.toLowerCase());
   const id=M.uid('cls');classIds.set(cls.id,id);next.classes.push({id,name,gradeLevel:t.gradeLevel??null});
  }
- for(const st of data.students){const classId=classIds.get(st.classId);if(!classId)continue;const id=M.uid('stu');studentIds.set(st.id,id);next.students.push({id,classId,fullName:st.fullName,number:st.number,normGroup:st.normGroup??null});}
+ for(const st of data.students){const classId=classIds.get(st.classId);if(!classId)continue;const id=M.uid('stu');studentIds.set(st.id,id);next.students.push({id,classId,fullName:st.fullName,number:st.number,normGroup:st.normGroup??null,lineageId:st.lineageId||st.id});}
  next.activityCategories=structuredClone(data.activityCategories);
  // Шкалы конкретного прежнего класса не подходят новому возрасту.
  next.norms=data.norms.map(n=>n.scales?{...n,scales:n.scales.filter(s=>s.classId==null)}:{...n});

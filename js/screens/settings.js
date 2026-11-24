@@ -13,6 +13,7 @@ import { seedDemo } from '../demo.js';
 
 import {openTournaments} from './tournaments.js';
 import {openWorkCalendar} from './work-calendar.js';
+import {openRubrics} from './school-tools.js';
 import {openArchive} from './school-archive.js';
 import {openLibrary} from './library.js';
 import {accents,readAccent,applyAccent,initializeDesign} from '../design.js';
@@ -31,7 +32,7 @@ export function renderSettings(root, ctx = {}) {
   if(ctx.onAnalytics)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Аналитика и итоговые оценки'}),el('button',{class:'btn wide',type:'button',text:'Открыть аналитику',onclick:ctx.onAnalytics})]));
   if(ctx.onCoach)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Режим тренера'}),el('button',{class:'btn wide',type:'button',text:'Волейбол · команды и тренировки',onclick:ctx.onCoach})]));
 
-  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Методические материалы'}),el('button',{class:'btn wide',type:'button',text:'Библиотека упражнений и конспекты',onclick:()=>openLibrary('school')})]));
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Методические материалы'}),el('button',{class:'btn wide',type:'button',text:'Библиотека упражнений и конспекты',onclick:()=>openLibrary('school')}),el('button',{class:'btn wide',type:'button',text:'Конструктор оценивания техники',onclick:openRubrics})]));
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Рабочий календарь'}),el('button',{class:'btn wide',type:'button',text:'Календарь и напоминания',onclick:openWorkCalendar})]));
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Соревнования'}),el('button',{class:'btn wide',type:'button',text:'Организация соревнований',onclick:openTournaments})]));
   /* ---------- учебный год ---------- */

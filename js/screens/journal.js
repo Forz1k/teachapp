@@ -7,6 +7,7 @@ import {periodName} from '../assessment.js';
 import * as store from '../store.js';
 import * as ui from '../ui.js';
 
+import {openPassport} from './school-tools.js';
 import {metric,dashboardHeading} from '../dashboard.js';
 const { el, icon } = ui;
 
@@ -498,6 +499,7 @@ async function openStudentSheet(studentId, classId) {
   ]);
 
   sheet.append(dashboardHeading(periodName(period)),el('div',{class:'dashboard-metrics'},[metric('Средняя оценка',grades.length?M.fmtAvg(grades.reduce((a,b)=>a+b,0)/grades.length):'—','journal'),metric('Посещаемость',att.pct==null?'—':att.pct+'%','check'),metric('Оценок',grades.length,'chart'),metric('Нормативов',results.length,'quick')]),el('div',{class:'profile-note',text:'Не отмечено: '+att.unknown+' · отсутствия: '+att.absent+' · ОСВ: '+att.exempt}),dashboardHeading('Нормативы за период'),...results.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10).map(r=>el('div',{class:'profile-result'},[el('strong',{text:r.definition?.name||'Норматив'}),el('span',{text:M.fmtFull(r.date)+' · '+(r.value??'—')+' '+(r.definition?.unit||'')+' · оценка '+(r.grade??'—')})])),...(!results.length?[el('p',{text:'Нет результатов за выбранный период.'})]:[]),dashboardHeading('Участие и ограничения'));
+  sheet.append(el('button',{class:'btn wide',type:'button',text:'Паспорт физической подготовки',onclick:()=>openPassport(studentId,()=>openStudentSheet(studentId,classId))}));
   sheet.append(el('button',{class:'btn',type:'button',text:'Группа здоровья и ограничения',onclick:() => openHealth(studentId)}));
   if (exs.length) {
     const block = el('div', { class: 'card-block', style: 'margin-top:8px' }, [

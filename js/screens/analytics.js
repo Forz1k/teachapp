@@ -59,7 +59,7 @@ export function renderAnalytics(root,ctx={}){
       card('Итоговые оценки',[p('Предложение — округлённый средний балл за проведённые уроки. Итог выставляет преподаватель вручную за завершённый период. Журнал не меняется.'),
         ...a.rows.map(r=>{
           const choose=select([['','Не выставлена'],...['1','2','3','4','5'].map(x=>[x,x])],r.final||'');
-          return el('div',{class:'analytics-student'},[p(r.student.fullName),p('Средний: '+format(r.mean)+' · предложение: '+format(r.suggested)+' · итог: '+format(r.final)),
+          return el('div',{class:'analytics-student'},[p(r.student.fullName),p('Оценок: '+r.count+' · средний: '+format(r.mean)+' · предложение: '+format(r.suggested)+' · итог: '+format(r.final)),p('Отсутствия: '+r.att.absent+' · не отмечено: '+r.att.unknown+' · ОСВ: '+r.att.exempt),!r.count?p('Недостаточно оценок для предложения.'):null,
             field('Итоговая оценка',choose),btn('Подтвердить итог',async()=>{
               if(!await ui.confirmDialog({title:'Сохранить итоговую оценку?',text:choose.value?'Будет сохранена оценка '+choose.value+'.':'Текущая итоговая оценка будет удалена.',ok:'Подтвердить'}))return;
               try{await S.saveFinalGrade(r.student.id,t.id,choose.value||null,true);ui.toast('Итог сохранён');draw();}catch(e){ui.toast(e.message);}
