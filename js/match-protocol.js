@@ -1,3 +1,4 @@
+import {validateCapture} from './match-capture.js';
 /* TeachApp — detailed event-sourced indoor match. No external service. */
 const fail=(ok,msg)=>{if(!ok)throw Error(msg);};
 const sides=['ours','theirs'],other=s=>s==='ours'?'theirs':'ours';
@@ -129,6 +130,7 @@ export function replayDetailed(d){
    fail(o&&sides.includes(o.side)&&['serve','attack','tip','defense'].includes(o.kind)&&typeof o.player==='string'&&visible(o.side).includes(o.player),'Наблюдение: выберите игрока на площадке до розыгрыша');
    if(o.kind==='serve'){receptions++;fail(receptions<=1&&o.side!==s.serve&&!['ace','receiveError','serveError'].includes(ev.kind),'Успешный приём возможен только один раз после подачи, продолжившей розыгрыш');}
   }
+  validateCapture(ev,before,actor);
   const keys=rallyStatKeys;
   if(keys[ev.kind])stat(actor,player,keys[ev.kind]);
   if(ev.secondary!=null){
@@ -175,14 +177,14 @@ export function detailEvent(d,event,now=new Date().toISOString()){
  let events=[...d.events];
  if(event.type==='editRally'){
   const i=event.index,last=events[i];fail(integer(i,0,events.length-1)&&last?.type==='rally','Выберите розыгрыш в журнале');
-  const patch=event.patch;fail(patch&&typeof patch==='object'&&!Array.isArray(patch)&&Object.keys(patch).every(k=>['kind','player','placement','secondary','observations'].includes(k)),'Редактирование не меняет команду, счёт и порядок событий');
-  const updated={...last};if(Object.hasOwn(patch,'kind')&&patch.kind!==last.kind){delete updated.placement;delete updated.secondary;}
+  const patch=event.patch;fail(patch&&typeof patch==='object'&&!Array.isArray(patch)&&Object.keys(patch).every(k=>['kind','player','placement','secondary','observations','touches','captureComplete','captureMode'].includes(k)),'Редактирование не меняет команду, счёт и порядок событий');
+  const updated={...last};if(Object.hasOwn(patch,'kind')&&patch.kind!==last.kind){delete updated.placement;delete updated.secondary;updated.captureComplete=false;}
   for(const [k,v] of Object.entries(patch)){if(v===null&&['placement','secondary','observations'].includes(k))delete updated[k];else updated[k]=v;}
   events[i]=updated;
  }else if(event.type==='attribute'){
   const last=events.at(-1);fail(last?.type==='rally','Можно уточнить только последнее очко');
   events[events.length-1]={...last,kind:event.kind,player:event.player??null};
-  if(last.kind!==event.kind){delete events[events.length-1].placement;delete events[events.length-1].secondary;}
+  if(last.kind!==event.kind){delete events[events.length-1].placement;delete events[events.length-1].secondary;events[events.length-1].captureComplete=false;}
  }else if(event.type==='observations'){
   const last=events.at(-1);fail(last?.type==='rally','Выберите завершённый розыгрыш');
   events[events.length-1]={...last,observations:event.observations};
