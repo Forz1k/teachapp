@@ -321,3 +321,12 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .attention-text{display:grid;gap:4px;flex:1;min-width:0}
 .attention-text strong{font-size:14px;overflow-wrap:anywhere}.attention-text small{font-size:12px;color:var(--text-2);line-height:1.45;overflow-wrap:anywhere}
 .attention-row>svg{width:16px;height:16px;flex:none;color:var(--text-3)}
+
+.tactical-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;padding:8px;background:var(--card-2);border:1px solid var(--sep);border-radius:14px}
+.tactical-cell{display:grid;justify-items:center;gap:3px;padding:12px 4px;background:var(--accent-soft);border-radius:10px;color:var(--accent-ink);min-width:0}
+.tactical-cell strong{font-size:21px;font-variant-numeric:tabular-nums}
+.tactical-cell small,.tactical-cell span,.tactical-cell p{font-size:11px;margin:0;text-align:center}
+.tactical-cell.sample-small{background:var(--card);color:var(--text-2);border:1px dashed var(--sep-strong)}
+.score-trend{stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}
+.score-trend.ours{stroke:var(--accent-ink)}.score-trend.theirs{stroke:var(--mark-2);stroke-dasharray:5 2}
+.score-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px}.score-legend span::before{content:'';display:inline-block;width:15px;height:3px;vertical-align:middle;margin-right:5px;background:var(--accent-ink)}.score-legend .theirs::before{background:var(--mark-2)}
