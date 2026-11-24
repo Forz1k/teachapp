@@ -1,0 +1,32 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as db from '../js/db.js';
+import * as S from '../js/store.js';
+import * as C from '../js/coach.js';
+import * as W from '../js/workbench.js';
+import {BACKUP_VERSION} from '../js/backup.js';
+import {inventoryBalance,saveInventory,inventoryMovement,equipmentStatus,achievementSubjects,saveAchievement} from '../js/resources.js';
+test('Инвентарь: приход, смена состояния, списание и защита остатков',async()=>{
+ await db.clearAll();await S.load();
+ const r=await saveInventory({name:'Мячи',category:'Волейбол',unit:'шт.',location:'Зал',minimum:5,initial:{good:6,repair:0,unusable:0},archived:false});
+ const next=await inventoryMovement(r.id,r.revision,{date:'2026-11-24',type:'move',from:'good',to:'repair',qty:2,note:'Проверка'},true);
+ assert.deepEqual(inventoryBalance(next),{good:4,repair:2,unusable:0,total:6});
+ assert.equal(equipmentStatus([{itemId:r.id,name:r.name,unit:r.unit,qty:5}],[next])[0].shortage,1);
+ await assert.rejects(inventoryMovement(r.id,next.revision,{date:'2026-11-24',type:'writeOff',from:'repair',to:null,qty:3,note:'Акт'},true),/остаток/);
+ await assert.rejects(inventoryMovement(r.id,r.revision,{date:'2026-11-24',type:'add',from:null,to:'good',qty:1,note:'Поступление'},true),/изменена/);
+ const done=await inventoryMovement(r.id,next.revision,{date:'2026-11-24',type:'writeOff',from:'repair',to:null,qty:2,note:'Акт'},true);assert.equal(inventoryBalance(done).total,4);
+ await assert.rejects(saveInventory({...done,unit:'компл.'}),/единицу/);
+ const plan=await W.saveWork({kind:'plan',name:'Урок',context:'school',minutes:45,goal:'',equipment:'',audience:'',items:[{phase:'intro',exercise:W.builtinExercises[0],minutes:5,notes:''}],resources:[{itemId:r.id,name:r.name,unit:r.unit,qty:5}]});assert.equal(plan.resources.length,1);
+});
+test('Достижения: ссылка по идентификатору, без копирования имени и восстановление',async()=>{
+ await db.clearAll();await S.load();const cls=await S.addClass('7А'),student=await S.addStudent(cls.id,'Ученик',1);
+ const team=await C.saveTeam({name:'Команда'}),player=await C.savePlayer({teamId:team.id,name:'Игрок',position:'setter'});
+ const r=await saveAchievement({subjectType:'student',subjectId:student.id,title:'Олимпиада',date:'2026-11-24',level:'school',result:'1 место',note:'',revision:0});
+ assert.equal(Object.hasOwn(r,'name'),false);
+ await saveAchievement({subjectType:'player',subjectId:player.id,title:'Турнир',date:'2026-11-24',level:'city',result:'2 место',note:'',revision:0});
+ await assert.rejects(saveAchievement({...r,id:undefined,subjectId:'missing'}),/недоступен/);
+ const b=await S.makeBackup();assert.equal(b.version,BACKUP_VERSION);await S.restoreBackup(b);assert.equal((await W.listWork('achievement')).length,2);
+ const names=achievementSubjects(S.state,await C.loadCoach());assert.ok(names.some(s=>s.id===student.id&&s.label.includes('Ученик')));
+ const bad=structuredClone(b);bad.data.workRecords[0].date='2026-02-31';await assert.rejects(S.restoreBackup(bad));
+});
