@@ -55,3 +55,30 @@ export function checkLessonRestrictions({ lesson, activities, students, restrict
   }
   return { matches, needsReview };
 }
+
+
+/** Suggestions only: the teacher must confirm actual load before saving. */
+export function suggestActivityIds(title){
+  const name=String(title??'').toLocaleLowerCase('ru').replace(/ё/g,'е');
+  const tags=new Set(),add=id=>tags.add(id);
+  const norm=/норматив|контрольн[а-я]* (?:испытан|упражнен)|сдача/.test(name);
+  if(/челночн/.test(name)){add('shuttle');if(norm&&/3\s*[xх×*]\s*10/.test(name))add('3x10');}
+  else if(/бег|спринт|кросс/.test(name)){
+    if(/спринт|(?:30|60|100)\s*м(?:етр|[ .),]|$)|коротк[а-я]* дистанц/.test(name)){add('sprint');if(norm&&/30\s*м(?:етр|[ .),]|$)/.test(name))add('30m');}
+    else if(/кросс|длительн|выносливост|(?:1000|1500|2000|3000)\s*м/.test(name))add('long');
+    else add('run');
+  }
+  if(/прыж[а-я]* в длину/.test(name)){add('broad');if(norm&&/с места/.test(name))add('standing');}
+  else if(/прыж[а-я]* в высоту/.test(name))add('high');
+  else if(/прыж|скакалк/.test(name))add(/скакалк/.test(name)?'rope':'jump');
+  if(/подтягиван/.test(name)){add('pull');if(norm)add('pullTest');}
+  if(/отжиман/.test(name))add('push');
+  if(/приседан/.test(name))add('squat');
+  if(/отягощен/.test(name))add('weight');
+  if(/гибкост|растяжк/.test(name))add('flex');
+  if(/волейбол/.test(name))add('volley');
+  if(/спортивн[а-я]* игр|баскетбол|футбол|гандбол/.test(name))add('games');
+  if(/соревнован/.test(name))add('competition');
+  if(norm)add('test');
+  return [...tags];
+}

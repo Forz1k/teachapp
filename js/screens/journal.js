@@ -89,8 +89,7 @@ export function renderJournal(root, ctx) {
       class: t.id === store.state.currentTrimesterId ? 'active' : '',
       text: periodName(t),
       onclick: () => {
-        store.state.currentTrimesterId = t.id;
-        store.notify();
+        store.selectSchoolPeriod(t.id);
       },
     })));
 

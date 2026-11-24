@@ -486,3 +486,19 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 @media(min-width:1700px){.screen>.journal-grid{--journal-date-width:68px}}
 @media(max-width:360px){.screen>.journal-grid{--journal-name-width:124px;--journal-date-width:62px}}
 
+
+
+.class-period-switch{margin-top:10px}
+.class-today{display:grid;gap:6px}
+.class-today h2{margin:0 0 4px}
+.class-today-row{display:flex;align-items:center;gap:10px;min-height:58px;width:100%;padding:9px 5px;border-bottom:1px solid var(--sep);text-align:left;color:var(--text)}
+.class-today-row:last-child{border-bottom:0}
+.class-today-row .class-name-pill{min-width:53px;flex-shrink:0}
+.class-today-copy{min-width:0;flex:1;display:grid;gap:3px;overflow-wrap:anywhere}
+.class-today-copy strong{font-size:14px;line-height:1.3}
+.class-today-status{font-size:12px;line-height:1.3;color:var(--text-2)}
+.class-today-status.has-restrictions{color:var(--mark-2);font-weight:650}
+.class-today-arrow{width:20px;height:20px;flex:0 0 20px;color:var(--text-3)}
+.class-today-arrow svg{width:18px;height:18px}
+@media(min-width:1000px){.class-today-row{padding-inline:9px;min-height:56px}}
+

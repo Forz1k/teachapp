@@ -35,7 +35,7 @@ export function renderAnalytics(root,ctx={}){
  const body=el('div',{class:'analytics-body'});root.append(body);
  if(!S.state.classes.length){body.append(p('Добавьте класс, чтобы открыть аналитику.'));return;}
  if(!S.state.classes.some(c=>c.id===pickedClass))pickedClass=S.state.currentClassId||S.state.classes[0].id;
- if(!S.state.settings.trimesters.some(t=>t.id===pickedPeriod))pickedPeriod=S.currentTrimester().id;
+ pickedPeriod=S.currentTrimester().id;
  const cls=select(S.state.classes.map(c=>[c.id,c.name]),pickedClass);
  const periods=select(S.state.settings.trimesters.map(t=>[t.id,periodName(t)+' · '+M.fmtFull(t.from)+' — '+M.fmtFull(t.to)]),pickedPeriod);
  const pupil=select([]);const content=el('div',{class:'analytics-content'});
@@ -98,6 +98,6 @@ export function renderAnalytics(root,ctx={}){
   }
  }
  cls.onchange=()=>{pickedClass=cls.value;pickedStudent='';pupils();draw();};
- periods.onchange=()=>{pickedPeriod=periods.value;draw();};pupil.onchange=()=>{pickedStudent=pupil.value;draw();};
+ periods.onchange=()=>{pickedPeriod=periods.value;S.selectSchoolPeriod(pickedPeriod);draw();};pupil.onchange=()=>{pickedStudent=pupil.value;draw();};
  pupils();body.append(card('Фильтры',[field('Класс',cls),field('Учебный период',periods),field('Ученик',pupil)]),content);draw();
 }
