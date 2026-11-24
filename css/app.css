@@ -973,3 +973,12 @@ body.privacy-covered {overflow:hidden;}
 .analytics-table th,.analytics-table td {padding:8px;border:1px solid var(--sep);text-align:left;vertical-align:top;}
 #teachapp-print-report {display:none;}
 @media print {body:not(.privacy-covered)>:not(#teachapp-print-report) {display:none!important;}body:not(.privacy-covered)>#teachapp-print-report {display:block;color:#000;background:#fff;}#teachapp-print-report .analytics-table {overflow:visible;}#teachapp-print-report table {width:100%;font-size:9pt;}#teachapp-print-report th,#teachapp-print-report td {border:1px solid #999;padding:4pt;}#teachapp-print-report tr {break-inside:avoid;}body.privacy-covered>* {display:none!important;}}
+
+.norm-scale-list,.norm-editor,.norm-group-list {display:grid;gap:12px;min-width:0;}
+.norm-scale {padding:12px;display:grid;gap:8px;}
+.norm-scale h3 {margin:0;}
+.norm-scale-values {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;}
+.norm-scale-values .field {min-width:0;}
+.norm-scale-values input {min-width:0;width:100%;padding-inline:5px;text-align:center;}
+.norm-group-row {padding:8px 0;border-bottom:1px solid var(--sep);}
+.norm-group-row select {width:100%;min-height:44px;}
