@@ -8,6 +8,7 @@ import {openMatchReport} from './match-protocol.js';
 import {openVolleyImport,openImportedReport} from './volleypoint-import.js';
 import {openCoachTeams} from './team-generator.js';
 import {openTestForm,testList,playerTestCards} from './coach-tests.js';
+import {openSeasonAnalytics,playerInsightCard} from './coach-season.js';
 const {el,openSheet,closeSheet,toast}=ui;
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn '+kind,text,onclick});
 const field=(text,input)=>el('label',{class:'field'},[el('span',{text}),input]);
@@ -79,6 +80,7 @@ function playerCard(team,player,view,refresh){
       ...(s.importedMatches?[card('VolleyPoint · импортированные матчи',[p('Протоколов: '+s.importedMatches+' · ошибок по итогам: '+s.importedErrors),p('Зафиксированные ошибки: подача '+s.importedBreakdown.serve+' · атака '+s.importedBreakdown.attack+' · приём '+s.importedBreakdown.receive+' · прочие '+s.importedBreakdown.other),p('Очки в записанных сериях подачи: '+s.importedServiceWins+' · максимальная записанная серия: '+s.importedLongestSeries),p('Полное число попыток и выходы на площадку неизвестны; проценты не вычисляются.')])]:[]),
       card('Тренировки · посещаемость',[p(format(a.pct)+(a.pct==null?'':'%')+' · посещено '+(a.present+a.limited)+' · пропущено '+a.absent+' · не отмечено '+a.unknown)]),
       card('Тренировочные тесты и физподготовка',[...playerTestCards(view,player.id,range),!team.archived&&!player.archived?btn('+ Индивидуальный тест',()=>openTestForm(team,view,null,refresh,player.id),'wide'):null]),
+      playerInsightCard(view,player.id,range),
       card('История матчей',s.chosen.length?s.chosen.map(m=>p(fmtFull(m.date)+' · '+m.opponent+' · личные очки: '+format(m.stats[player.id]?.points))):[p('Матчей за период нет')]));
   }
   from.onchange=draw;to.onchange=draw;draw();
@@ -233,6 +235,7 @@ export async function renderCoach(root,ctx={}){
         }
         if(!view.matches.length)body.append(p('Нет результатов матчей'));
       }else{
+        body.append(card('Сезонная статистика',[p('Рейтинги по отдельным показателям, сравнение игроков, динамика и тренерские подсказки.'),btn('Открыть сезонную аналитику',()=>openSeasonAnalytics(view),'primary wide')]));
         const filter=select([['','Вся команда'],...view.players.map(p=>[p.id,label(p)])]),stats=el('div',{class:'coach-stack'});
         function draw(){
           const id=filter.value,chosen=id?view.matches.filter(m=>m.roster.includes(id)):view.matches;
