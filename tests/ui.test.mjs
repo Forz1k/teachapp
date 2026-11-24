@@ -633,3 +633,19 @@ test('Wake lock освобождается при выходе и не вклю�
  fakeDoc.visibilityState='visible';fakeDoc.dispatchEvent(new Event('visibilitychange'));await Promise.resolve();assert.equal(requests,2);
  wake.stop();assert.equal(releases,2);assert.equal(await wake.toggle(),false);
 });
+
+test('Подготовка матча: шаблон с другим либеро и повторная заявка соперника',async()=>{
+ const {openDetailedSetup}=await import('../js/screens/match-protocol.js');
+ const players=Array.from({length:7},(_,i)=>({id:'p'+i,name:'Наш '+i,number:i+1,archived:false,restrictions:[]}));
+ const away=Array.from({length:6},(_,i)=>({id:'b'+i,name:'Гость '+i,number:i+11}));
+ const first={id:'s1',teamId:'t',name:'Старт',scheme:'5-1',lineup:players.slice(0,6).map(p=>p.id),libero:'p6'};
+ const second={id:'s2',teamId:'t',name:'Другой старт',scheme:'5-1',lineup:players.slice(1,7).map(p=>p.id),libero:'p0'};
+ const match={id:'m1',teamId:'t',date:'2026-01-01',opponent:'Гости',detail:{mode:'dual',startedAt:'2026-01-01T12:00:00Z',scheme:'5-1',lineup:first.lineup,libero:first.libero,awayPlayers:away,awayLineup:away.map(p=>p.id)}};
+ openDetailedSetup({id:'t',name:'Наши'},players,()=>{},()=>{},first,{matches:[match],presets:[first,second]});await tick();
+ const sheet=doc.querySelector('.sheet'),selects=[...sheet.querySelectorAll('select')];
+ const template=selects.find(n=>[...n.options].some(o=>o.value==='s2'));template.value='s2';
+ const click=t=>[...sheet.querySelectorAll('button')].find(b=>b.textContent===t).click();
+ click('Применить шаблон');assert.equal(sheet.querySelector('.lineup-court .zone-6 strong').textContent,'7');assert.equal(sheet.querySelector('.lineup-court .zone-1 strong').textContent,'2');
+ const opponent=selects.find(n=>[...n.options].some(o=>o.value==='m1'));opponent.value='m1';click('Загрузить состав соперника');
+ assert.equal(sheet.querySelector('input[placeholder="Название соперника"]').value,'Гости');assert.equal(sheet.querySelector('.lineup-court.theirs .zone-1 strong').textContent,'11');ui.closeSheet();
+});

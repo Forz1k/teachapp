@@ -61,7 +61,7 @@ export function openDetailedSetup(team,players,back,refresh,preset=null,{matches
  let awayPlayers=[],awayFields=six([]),parsedText='',ownFields,eligible=[],libero;
  const checked=new Set(players.map(p=>p.id));
  const template=select([['','Выберите шаблон'],...templates.map(x=>[x.id,x.name])],'');
- const loadOwn=(line,lib)=>{ownFields.set(line);libero.value=eligible.some(p=>p.id===lib)?lib:'';ownFields.setExcluded(libero.value?[libero.value]:[]);};
+ const loadOwn=(line,lib)=>{libero.value=eligible.some(p=>p.id===lib)?lib:'';ownFields.setExcluded(libero.value?[libero.value]:[]);ownFields.set(line);};
  const shortcuts=el('div',{class:'vp-stack'},[templates.length?field('Сохранённая шестёрка',template):null,templates.length?btn('Применить шаблон',()=>{const t=templates.find(x=>x.id===template.value);if(!t)return;scheme.value=t.scheme;loadOwn(t.lineup,t.libero);},'wide'):null,previous?btn('Старт последнего матча',()=>{scheme.value=previous.scheme;loadOwn(previous.lineup,previous.libero);},'wide'):null]);
  const opponentPick=select([['','Выберите соперника'],...history.map(m=>[m.id,m.opponent+' · '+m.date])],'');
  const loadOpponent=()=>{const m=history.find(x=>x.id===opponentPick.value);if(!m)return;opp.value=m.opponent;awayInput.value=m.detail.awayPlayers.map(p=>p.number+' '+p.name).join('\n');parse();const numbers=new Map(m.detail.awayPlayers.map(p=>[p.id,p.number]));awayFields.set(m.detail.awayLineup.map(id=>awayPlayers.find(p=>p.number===numbers.get(id))?.id));};
@@ -251,7 +251,7 @@ export function openDetailedMatch(initial,back,refresh){
   if(!active){if(section==='match')body.querySelector('.vp-match-head').append(undo);else body.append(undo);}
   const liveColors=colorFields(palette);
   const saveColors=btn('Сохранить цвета',async()=>{if(busy)return;busy=true;saveColors.disabled=true;try{d=await C.changeLiveColors(d.id,d.revision,liveColors.get());draw();}catch(e){toast(e.message);}finally{busy=false;saveColors.disabled=false;}},'wide');
-  const wakeBtn=btn(wake.enabled?'Экран: не выключать':'Экран: обычный режим',async()=>{if(busy)return;wakeBtn.disabled=true;const enabled=await wake.toggle();wakeBtn.textContent=enabled?'Экран: не выключать':'Экран: обычный режим';wakeBtn.setAttribute('aria-pressed',String(enabled));wakeBtn.disabled=false;if(!enabled&&wake.enabled===false)toast('Обычный режим экрана');},'wide');wakeBtn.setAttribute('aria-pressed',String(wake.enabled));
+  const wakeBtn=btn(wake.enabled?'Экран: не выключать':'Экран: обычный режим',async()=>{if(busy)return;wakeBtn.disabled=true;const requested=!wake.enabled;const enabled=await wake.toggle();wakeBtn.textContent=enabled?'Экран: не выключать':'Экран: обычный режим';wakeBtn.setAttribute('aria-pressed',String(enabled));wakeBtn.disabled=false;if(requested&&!enabled)toast('Не удалось удерживать экран. Проверьте настройки браузера или энергосбережение.');},'wide');wakeBtn.setAttribute('aria-pressed',String(wake.enabled));
   const menu=el('details',{class:'vp-match-more'},[el('summary',{text:'Управление матчем · черновик сохранён'}),
    wake.supported?wakeBtn:p('Удержание экрана недоступно в этом браузере.'),liveColors.node,saveColors,
    p('Замены: '+(d.substitutionMode==='paired'?'парные':'упрощённые')+' · Событий: '+d.events.length),
@@ -288,9 +288,9 @@ function momentumBlock(d,s){
   const svg=(tag,attrs)=>{const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,String(v));return n;};
   const plot=svg('svg',{viewBox:'0 0 320 150',role:'img','aria-label':'График набранных очков по розыгрышам',class:'vp-momentum-chart'});
   for(let i=0;i<=4;i++){const y=10+i*30;plot.append(svg('line',{x1:22,y1:y,x2:308,y2:y,stroke:'currentColor','stroke-opacity':.15}));}
-  for(const side of sides){const coords=a.points.map((x,i)=>(22+286*i/Math.max(1,a.points.length-1))+','+(130-120*x[side]/max)).join(' ');plot.append(svg('polyline',{points:coords,fill:'none',stroke:side==='ours'?'#397CCB':'#C85066','stroke-width':3,'stroke-linejoin':'round','stroke-linecap':'round'}));}
+  for(const side of sides){const coords=a.points.map((x,i)=>(22+286*i/Math.max(1,a.points.length-1))+','+(130-120*x[side]/max)).join(' ');plot.append(svg('polyline',{points:coords,fill:'none',stroke:V.boardPalette[(d.boardColors||V.defaultBoardColors)[side]].start,'stroke-width':3,'stroke-linejoin':'round','stroke-linecap':'round'}));}
   const end=a.points.at(-1);
-  chart.replaceChildren(el('div',{class:'vp-momentum-legend'},[el('span',{class:'ours',text:d.teamName+' · '+end.ours}),el('span',{class:'theirs',text:d.opponent+' · '+end.theirs})]),plot,
+  chart.replaceChildren(el('div',{class:'vp-momentum-legend'},[el('span',{class:'ours',style:'color:'+V.boardPalette[(d.boardColors||V.defaultBoardColors).ours].start,text:d.teamName+' · '+end.ours}),el('span',{class:'theirs',style:'color:'+V.boardPalette[(d.boardColors||V.defaultBoardColors).theirs].start,text:d.opponent+' · '+end.theirs})]),plot,
    p('Розыгрышей: '+(a.points.length-1)+' · смен лидера: '+a.changes+' · равный счёт: '+a.ties),
    table(['Показатель',d.teamName,d.opponent],[['Макс. серия',a.maxRun.ours,a.maxRun.theirs],['Макс. преимущество',a.maxLead.ours,a.maxLead.theirs]]));
  }
