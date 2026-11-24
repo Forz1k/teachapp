@@ -159,7 +159,7 @@ export function renderSettings(root, ctx = {}) {
   /* ---------- импорт ---------- */
   const impBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Импорт' })]);
   const fileInput = el('input', {
-    type: 'file', accept: '.xlsx,.xls,.csv', style: 'display:none',
+    type: 'file', accept: '.xlsx,.xls,.csv,.tsv', style: 'display:none',
   });
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files?.[0];
@@ -452,13 +452,18 @@ async function handleImport(file) {
   sheet.append(el('div', { class: 'actions' }, [
     el('button', {
       class: 'btn primary wide', type: 'button', text: 'Импортировать',
-      onclick: async () => {
+      onclick: async (event) => {
         const chosen = items.filter((i) => i.checked);
         if (!chosen.length) { ui.toast('Ничего не выбрано'); return; }
+        event.currentTarget.disabled = true;
         ui.closeSheet();
         ui.toast('Импортирую…', null, 2000);
-        const report = await exporter.applyRoster(chosen);
-        ui.toast(`Готово: классов ${report.classes}, добавлено ${report.added}, обновлено ${report.updated}`, null, 6000);
+        try {
+          const report = await exporter.applyRoster(chosen);
+          ui.toast(`Готово: классов ${report.classes}, добавлено ${report.added}, обновлено ${report.updated}, пропущено совпадений ${report.skipped}`, null, 6000);
+        } catch {
+          ui.toast('Импорт прерван. Проверьте состав класса и повторите импорт.');
+        }
       },
     }),
     el('button', { class: 'btn wide', type: 'button', text: 'Отмена', onclick: ui.closeSheet }),

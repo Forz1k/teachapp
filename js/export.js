@@ -93,11 +93,13 @@ export function buildFlat({ classId, from, to }) {
   for (const st of students) {
     for (const mm of store.state.monthly.filter((x) => x.studentId === st.id)) {
       if (!mm.value || mm.value === '—') continue;
+      const date = `${mm.year}-${String(mm.month).padStart(2, '0')}-01`;
+      if (!M.inRange(date, from, to)) continue;
       const isNum = ['1', '2', '3', '4', '5'].includes(String(mm.value));
       rows.push([
         className,
         st.fullName,
-        `01.${String(mm.month).padStart(2, '0')}.${mm.year}`,
+        M.fmtFull(date),
         isNum ? String(mm.value) : '',
         isNum ? 'М' : String(mm.value),
       ]);
@@ -168,18 +170,12 @@ export function exportXlsxSummary({ classId, from, to, includeMonthly = true }) 
     [`Журнал ${cls ? cls.name : ''} — ${M.fmtFull(from)} – ${M.fmtFull(to)}`],
     [],
   ];
-  const matrix = [...title, header, ...rows];
-
   if (includeMonthly) {
-    const { head, rows: mrows } = buildMonthlyBlock({ classId });
-    // Дописываем блок М справа от «Посещаемости»
-    const mHeaderRow = matrix[1];
-    const startCol = mHeaderRow.length;
-    matrix[1] = [...mHeaderRow, ...head.map((h) => `${h} (мес.)`)];
-    rows.forEach((r, i) => {
-      matrix[2 + i] = [...r, ...mrows[i]];
-    });
+    const monthly = buildMonthlyBlock({ classId, settings: store.state.settings });
+    header.push(...monthly.head.map(h => `${h} (мес.)`));
+    rows.forEach((row, i) => row.push(...monthly.rows[i]));
   }
+  const matrix = [...title, header, ...rows];
 
   const ws = sheetFromMatrix(XLSX, matrix);
   XLSX.utils.book_append_sheet(wb, ws, 'Журнал');
@@ -214,8 +210,9 @@ export function exportXlsxFlat({ classId, from, to }) {
 /* ---------- CSV / TSV ---------- */
 
 const csvEscape = (v, delim) => {
-  const s = String(v ?? '');
-  if (s.includes(delim) || s.includes('"') || s.includes('\n')) {
+  let s = String(v ?? '');
+  if (typeof v === 'string' && /^(?:\s*[=+@-]|[\t\r\n])/.test(s)) s = "'" + s;
+  if (s.includes(delim) || s.includes('"') || /[\r\n]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
@@ -496,7 +493,10 @@ export async function parseRosterFile(file) {
   if (!hasXlsx()) throw new Error('Модуль XLSX не загружен');
   const XLSX = window.XLSX;
   const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: 'array' });
+  const isText = /\.(csv|tsv)$/i.test(file.name || '');
+  const wb = isText
+    ? XLSX.read(new TextDecoder().decode(buf), { type: 'string', raw: true })
+    : XLSX.read(buf, { type: 'array' });
 
   const result = [];
 
@@ -571,12 +571,14 @@ export async function parseRosterFile(file) {
   return result;
 }
 
+const rosterKey = name => name.trim().replace(/\s+/g, ' ').normalize('NFC').toLowerCase();
+
 /** Дубликаты ФИО внутри класса — предупреждение учителю. */
 export function findDuplicates(students) {
   const seen = new Map();
   const dups = [];
   for (const s of students) {
-    const key = s.fullName.toLowerCase().replace(/\s+/g, ' ');
+    const key = rosterKey(s.fullName);
     if (seen.has(key)) dups.push(s.fullName);
     else seen.set(key, true);
   }
@@ -585,19 +587,26 @@ export function findDuplicates(students) {
 
 /** Применяет разобранный список к базе. Существующих учеников обновляет по ФИО, оценки сохраняются. */
 export async function applyRoster(parsed) {
-  const report = { classes: 0, added: 0, updated: 0 };
+  const report = { classes: 0, added: 0, updated: 0, skipped: 0 };
 
   for (const { className, students } of parsed) {
-    let cls = store.state.classes.find((c) => c.name.toLowerCase() === className.toLowerCase());
+    let cls = store.state.classes.find((c) => rosterKey(c.name) === rosterKey(className));
     if (!cls) {
       cls = await store.addClass(className);
       report.classes += 1;
     }
 
     const existing = store.studentsOfClass(cls.id);
+    const seen = new Set();
     for (const s of students) {
-      const norm = (n) => n.toLowerCase().replace(/\s+/g, ' ');
-      const found = existing.find((x) => norm(x.fullName) === norm(s.fullName));
+      const key = rosterKey(s.fullName);
+      const matches = existing.filter(x => rosterKey(x.fullName) === key);
+      if (seen.has(key) || matches.length > 1) {
+        report.skipped += 1;
+        continue;
+      }
+      seen.add(key);
+      const [found] = matches;
       if (found) {
         if (found.number !== s.number || found.fullName !== s.fullName) {
           await store.updateStudent(found.id, { number: s.number, fullName: s.fullName });
