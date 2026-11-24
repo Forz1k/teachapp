@@ -2,7 +2,7 @@ import {BACKUP_VERSION} from '../js/backup.js';
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates,setMomentum,validBoardColors,opponentHistory,rallySummary} from '../js/match-protocol.js';
+import {replayDetailed,detailEvent,reportData,placementSummary,rallyReasonOptions,rallyCandidates,setMomentum,validBoardColors,opponentHistory,rallySummary,scoutSummary} from '../js/match-protocol.js';
 import * as C from '../js/coach.js';
 import * as S from '../js/store.js';
 import * as db from '../js/db.js';
@@ -120,4 +120,25 @@ test('Статистика партии учитывает дополнител�
  assert.equal(b.theirs.points,1);assert.equal(b.theirs.stats.b2.attackKills,1);assert.equal(b.theirs.stats.b2.defenseErrors,undefined);
  assert.equal(all.ours.points,s.sides.ours.points);assert.equal(all.theirs.stats.b2.errors,s.sides.theirs.stats.b2.errors);
  assert.equal(a.ours.serve,14);assert.equal(a.ours.receiveWon,1);
+});
+
+test('Разведка разделяет ошибки игроков, зоны и неизвестные данные, учитывает текущую шестёрку',()=>{
+ let d=detailEvent(base,{type:'rally',side:'ours',kind:'tip',player:'a2',placement:4,secondary:{kind:'defenseError',player:'b3'}});
+ d=detailEvent(d,{type:'rally',side:'ours',kind:'ace',player:'a1',placement:6});
+ d=detailEvent(d,{type:'rally',side:'ours',kind:'receiveError',player:'b2',placement:6});
+ d=detailEvent(d,{type:'rally',side:'ours',kind:'defenseError',player:'b3'});
+ d=detailEvent(d,{type:'sub',side:'theirs',out:'b3',in:'b6'});
+ d=detailEvent(d,{type:'rally',side:'theirs',kind:'kill',player:'b1',placement:2,secondary:{kind:'defenseError',player:'a2'}});
+ const s=replayDetailed(d),a=scoutSummary(s.timeline,'theirs',{active:s.awayLineup});
+ assert.equal(a.total,4);assert.equal(a.knownPlayers,3);assert.equal(a.knownZones,3);assert.equal(a.zones[5],2);
+ assert.equal(a.ranked[0].id,'b2');assert.equal(a.ranked[0].serve,1);assert.equal(a.former[0].id,'b3');assert.equal(a.former[0].misses,2);
+ assert.equal(a.rows.find(x=>x.id==='b6').misses,0);
+ assert.equal(scoutSummary(s.timeline,'theirs',{kind:'tip',active:s.awayLineup}).total,1);
+ const ours=scoutSummary(s.timeline,'ours',{active:s.lineup});assert.equal(ours.ranked[0].id,'a2');assert.equal(ours.ranked[0].attack,1);
+ assert.equal(scoutSummary(replayDetailed(detailEvent(d,null)).timeline,'ours',{active:s.lineup}).total,0);
+});
+test('Разведка не приписывает ошибку игроку по позиции мяча, не считает незаписанный состав',()=>{
+ let d=detailEvent({...base,awayPlayers:[],awayLineup:[]},{type:'rally',side:'ours',kind:'tip',player:'a2',placement:3});
+ const s=replayDetailed(d),a=scoutSummary(s.timeline,'theirs',{active:[]});
+ assert.equal(a.total,1);assert.equal(a.knownPlayers,0);assert.equal(a.knownZones,1);assert.equal(a.ranked.length,0);
 });

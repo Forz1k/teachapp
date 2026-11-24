@@ -119,7 +119,7 @@ function court(d,lineups,serve,selected,choose){
 }
 function shown(d,s){return {ours:s.lineup.map(id=>s.liberoFor===id?d.libero:id),theirs:s.awayLineup};}
 export function openDetailedMatch(initial,back,refresh){
- let d=initial,busy=false,selected=null,pointDraft=null,section='match',nextDraft=null,quick=false,swapped=false;
+ let d=initial,busy=false,selected=null,pointDraft=null,section='match',nextDraft=null,quick=false,swapped=false,scoutOpen=false,scoutSide='theirs',scoutKind='all',scoutSet=0,scoutEntry=false;
  const body=el('div',{class:'vp-stack vp-live'});
  const wake=matchWakeLock();let observer=null;
  const stop=()=>{wake.stop();observer?.disconnect();};
@@ -134,7 +134,7 @@ export function openDetailedMatch(initial,back,refresh){
   const set=s.setEnded?s.sets.length:s.sets.length+1;
   const pre=pointDraft?.editing&&last?.before;
   const begin=(side,editing=false)=>{pointDraft={side,editing,kind:null};selected=null;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;};
-  const cancel=()=>{pointDraft=null;selected=null;draw();};
+  const cancel=()=>{pointDraft=null;selected=null;scoutOpen=false;draw();};
   const courtState=pre?last.before.lineups:shown(d,s),serve=pre?last.before.serve:s.serve;
   const active=section==='match'&&!s.setEnded&&!s.finished;
   const palette=d.boardColors||V.defaultBoardColors;
@@ -176,14 +176,26 @@ export function openDetailedMatch(initial,back,refresh){
     body.append(overlay);
     area.setAttribute('tabindex','-1');area.setAttribute('role','dialog');area.setAttribute('aria-modal','true');area.focus({preventScroll:true});
    };
+   if(scoutOpen){
+    const area=scoutPanel(d,s,{side:scoutSide,kind:scoutKind,set:scoutSet,entry:scoutEntry},patch=>{if(Object.hasOwn(patch,'side'))scoutSide=patch.side;if(Object.hasOwn(patch,'kind'))scoutKind=patch.kind;if(Object.hasOwn(patch,'set'))scoutSet=patch.set;if(Object.hasOwn(patch,'entry')){scoutEntry=patch.entry;if(scoutEntry)quick=false;}draw();},cancel);
+    showOverlay(area);return;
+   }
    if(pointDraft){
     const {side:winner,editing,kind}=pointDraft;
-    const submit=(k,player=null)=>perform(editing?{type:'attribute',kind:k,player}:{type:'rally',side:winner,kind:k,player},()=>{pointDraft=null;selected=null;});
+    const submit=(k,player=null,extra={})=>perform(editing?{type:'attribute',kind:k,player}:{type:'rally',side:winner,kind:k,player,...extra},()=>{pointDraft=null;selected=null;});
+    const afterAuthor=(k,player=null)=>{if(!editing&&scoutEntry&&V.canPlace(k)){pointDraft={...pointDraft,author:player,extra:true,defender:null,zone:null};draw();}else submit(k,player);};
     const options=V.rallyReasonOptions(winner,serve).filter(k=>k!=='point');
     const area=el('section',{class:'vp-attribution match-attribution','aria-label':editing?'Уточнение очка':'Новое очко'},[
-      el('div',{class:'vp-rally-heading'},[el('strong',{text:(editing?'Уточнить очко · ':'+1 · ')+sideName(d,winner)}),el('small',{text:kind?'2 из 2 · Игрок':'1 из 2 · Причина'})]),
+      el('div',{class:'vp-rally-heading'},[el('strong',{text:(editing?'Уточнить очко · ':'+1 · ')+sideName(d,winner)}),el('small',{text:pointDraft.extra?'Доп. данные · защита':kind?'2 · Игрок':'1 · Причина'})]),
       p(editing?'Счёт не изменится.': 'Очко ещё не начислено.')]);
-    if(!kind){
+    if(pointDraft.extra){
+      const losing=winner==='ours'?'theirs':'ours',secondary=V.secondaryKind(kind),defenders=roster(d,losing).filter(p=>courtState[losing].includes(p.id));
+      const patch=x=>{pointDraft={...pointDraft,...x};draw();};
+      area.append(p('Необязательно. Укажите только наблюдаемую ошибку и фактическую зону завершения.'));
+      if(secondary&&defenders.length)area.append(el('strong',{text:'Кто допустил ошибку · '+sideName(d,losing)}),el('div',{class:'vp-actions vp-author-grid'},defenders.map(p=>el('button',{type:'button',class:'btn'+(pointDraft.defender===p.id?' primary':''),'data-defender':p.id,'aria-pressed':String(pointDraft.defender===p.id),onclick:()=>patch({defender:pointDraft.defender===p.id?null:p.id})},[el('strong',{text:p.number==null?'—':'№'+p.number}),el('span',{text:p.name})]))));
+      area.append(el('strong',{text:'Зона завершения'}),el('div',{class:'vp-heat-net',text:'СЕТКА'}),el('div',{class:'vp-heat-grid'},[4,3,2,5,6,1].map(z=>el('button',{type:'button',class:'btn vp-heat-entry'+(pointDraft.zone===z?' primary':''),'data-scout-zone':z,'aria-pressed':String(pointDraft.zone===z),text:'P'+z,onclick:()=>patch({zone:pointDraft.zone===z?null:z})}))),
+       btn('Начислить очко',()=>submit(kind,pointDraft.author,{...(pointDraft.zone?{placement:pointDraft.zone}:{}),...(secondary&&pointDraft.defender?{secondary:{kind:secondary,player:pointDraft.defender}}:{})}),'primary wide'),btn('Пропустить уточнение',()=>submit(kind,pointDraft.author),'wide'),btn('Назад к игрокам',()=>{pointDraft={side:winner,editing,kind};draw();},'wide'));
+    }else if(!kind){
       for(const [title,group] of [['Результативное действие',options.filter(k=>!V.isError(k))],['Ошибка соперника',options.filter(V.isError)]]){
         if(group.length)area.append(el('strong',{class:'vp-rally-label',text:title}),el('div',{class:'vp-actions vp-reason-grid'},group.map(k=>el('button',{type:'button',class:'btn','data-reason':k,text:V.reasons[k],onclick:()=>{pointDraft={...pointDraft,kind:k};draw();}}))));
       }
@@ -192,8 +204,8 @@ export function openDetailedMatch(initial,back,refresh){
       const actor=V.rallyActor(winner,kind),players=V.rallyCandidates(d,courtState,serve,winner,kind);
       area.append(el('strong',{text:V.reasons[kind]+' · '+sideName(d,actor)}),
         p(players.length?'Выберите игрока, находившегося на площадке до розыгрыша.':'Нет доступных игроков. Можно сохранить причину без автора.'),
-        el('div',{class:'vp-actions vp-author-grid'},players.map(player=>el('button',{type:'button',class:'btn','data-player':player.id,onclick:()=>submit(kind,player.id)},[el('strong',{text:player.number==null?'—':'№'+player.number}),el('span',{text:player.name}),el('small',{text:'P'+player.zone})]))),
-        btn('Сохранить без автора',()=>submit(kind),'wide'),btn('Назад к причинам',()=>{pointDraft={...pointDraft,kind:null};draw();},'wide'));
+        el('div',{class:'vp-actions vp-author-grid'},players.map(player=>el('button',{type:'button',class:'btn','data-player':player.id,onclick:()=>afterAuthor(kind,player.id)},[el('strong',{text:player.number==null?'—':'№'+player.number}),el('span',{text:player.name}),el('small',{text:'P'+player.zone})]))),
+        btn('Сохранить без автора',()=>afterAuthor(kind),'wide'),btn('Назад к причинам',()=>{pointDraft={...pointDraft,kind:null};draw();},'wide'));
     }
     area.append(btn('Отмена',cancel,'wide'));showOverlay(area);
    }else if(s.finished){
@@ -202,6 +214,7 @@ export function openDetailedMatch(initial,back,refresh){
      busy=true;try{const m=await C.finishLiveMatch(d.id,d.revision);stop();await refresh();openMatchReport(m,back);}catch(e){toast(e.message);}finally{busy=false;}
     },'primary wide'));
    }else if(s.setEnded){
+    body.append(btn('◎ Тактическая разведка',()=>{scoutOpen=true;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;},'wide vp-scout-open'));
     if(!nextDraft||nextDraft.revision!==d.revision){
      const prev=s.setDetails.at(-1).lineups;
      nextDraft={revision:d.revision,
@@ -216,7 +229,7 @@ export function openDetailedMatch(initial,back,refresh){
     const pointButton=side=>el('button',{type:'button',class:'btn '+(side==='ours'?'vp-ours':'vp-theirs'),onclick:()=>add(side),'aria-label':'Очко '+sideName(d,side)},[el('strong',{text:'+1'}),el('span',{text:sideName(d,side)})]);
     const undo=el('button',{type:'button',class:'btn vp-undo',text:'↶','aria-label':'Отменить последнее событие',disabled:!d.events.length,onclick:()=>perform(null,()=>{selected=null;pointDraft=null;})});
     const points=el('div',{class:'vp-actions vp-points vp-board-points'},[pointButton(order[0]),undo,pointButton(order[1])]);
-    body.append(points);
+    body.append(points,el('button',{type:'button',class:'btn wide vp-scout-open',onclick:()=>{if(busy)return;selected=null;scoutOpen=true;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;},text:'◎ Тактическая разведка'}));
     if(last)body.append(el('div',{class:'vp-last-event',role:'status',text:'Последнее: '+eventText(d,last)}));
     const momentum=V.setMomentum(s.timeline,set);
     if(momentum.run>=4&&momentum.runSide==='theirs')body.append(el('div',{class:'vp-run-note',role:'status',text:'Соперник выиграл '+momentum.run+' розыгрыша подряд. '+(s.timeouts.ours<2?'Можно рассмотреть тайм-аут.':'Лимит тайм-аутов исчерпан.')}));
@@ -278,6 +291,31 @@ function placementBlock(d,s,side,kind){
  return section(sideName(d,side)+' · '+(kind==='ace'?'Направления эйсов':'Направления результативных атак'),
    p('Зона на стороне принимающей команды. Указано '+a.known+' из '+a.total+' · без зоны '+a.unknown+'. Не включает подачи или атаки, продолжившие розыгрыш.'),
    el('div',{class:'tactical-grid'},[4,3,2,5,6,1].map(z=>el('div',{class:'tactical-cell'},[el('small',{text:'Зона '+z}),el('strong',{text:a.zones[z-1]}),el('progress',{max,value:a.zones[z-1],'aria-label':'Зона '+z+' · '+a.zones[z-1]})]))));
+}
+function scoutPanel(d,s,options,change,close){
+ const side=options.side,kind=options.kind,active=shown(d,s)[side],current=s.setEnded?s.sets.length:s.sets.length+1;
+ const a=V.scoutSummary(s.timeline,side,{kind,set:options.set,active});
+ const types=select(Object.entries(V.scoutTypes),kind),period=select([[0,'Весь матч'],...Array.from({length:current},(_,i)=>[i+1,'Партия '+(i+1)])],options.set);
+ types.onchange=()=>change({kind:types.value});period.onchange=()=>change({set:Number(period.value)});
+ const top=a.ranked[0],zone=a.topZones[0],hint=side==='theirs'?'Проверить игрока соперника':'Обратить внимание на нашу защиту';
+ const ranked=top&&top.misses>=2?el('div',{class:'vp-scout-tip'},[el('strong',{text:hint+': '+name(d,side,top.id)+' · P'+top.zone}),p('Отмечено '+top.misses+' ошибок выбранного типа за период. Это наблюдение, не вероятность ошибки. '+(a.ranked.filter(x=>x.misses===top.misses).length>1?'Есть другие игроки с таким же количеством.':''))]):p('Пока нет повторяющихся персональных ошибок выбранного типа.');
+ const zoneTip=zone&&zone.count>=2?el('div',{class:'vp-scout-tip'},[el('strong',{text:(side==='theirs'?'Проверить зону соперника P':'Прикрыть нашу зону P')+zone.zone}),p('Зафиксировано завершений: '+zone.count+'. '+(a.topZones.filter(x=>x.count===zone.count).length>1?'Есть зоны с таким же количеством.':''))]):p('Пока нет повторяющихся завершений в известной зоне.');
+ const byZone=new Map(a.rows.map(x=>[x.zone,x])),maxPlayer=Math.max(1,...a.rows.map(x=>x.misses)),maxZone=Math.max(1,...a.zones);
+ const grid=(isPlayer)=>el('div',{class:'vp-heat-grid'},[4,3,2,5,6,1].map(z=>{
+  const r=byZone.get(z),pl=roster(d,side).find(p=>p.id===r?.id),count=isPlayer?r?.misses||0:a.zones[z-1];
+  return el('div',{class:'vp-heat-cell vp-scout-cell',style:'--heat:'+count/(isPlayer?maxPlayer:maxZone)},[el('small',{text:'P'+z}),el('strong',{text:isPlayer?(pl?.number!=null?'№'+pl.number:pl?'•':'—'):String(count)}),el('small',{text:isPlayer?(pl?pl.name+' · '+count+' ошибок':'Нет состава'):'завершений'})]);
+ }));
+ return el('section',{class:'vp-attribution vp-scout-panel','aria-label':'Тактическая разведка'},[
+  el('h3',{text:'Тактическая разведка'}),el('div',{class:'vp-tabs'},[['theirs','Соперник'],['ours','Наша команда']].map(([id,label])=>btn(label,()=>change({side:id}),side===id?'primary':''))),field('Период',period),field('Тип действия',types),
+  p('Розыгрышей: '+a.rallies+' · завершений выбранного типа: '+a.total),p('С автором ошибки: '+a.knownPlayers+' из '+a.total+' · с зоной: '+a.knownZones+' из '+a.total),
+  ranked,zoneTip,el('strong',{text:'Игроки в текущей расстановке'}),el('div',{class:'vp-heat-net',text:'СЕТКА'}),grid(true),p('P1–P6 — текущие позиции по расстановке, не фактическое место игрока в розыгрыше. Цвет показывает число отмеченных ошибок, а не качество игры.'),
+  el('strong',{text:'Карта пропущенных завершений'}),el('div',{class:'vp-heat-net',text:'СЕТКА'}),grid(false),
+  table(['Игрок на площадке','Подача/приём','Атака','Скидка','Защита*','Всего'],a.ranked.map(r=>[name(d,side,r.id),r.serve,r.attack,r.tip,r.defense,r.misses])),
+  a.former.length?el('details',{},[el('summary',{text:'Игроки вне площадки · '+a.former.length}),...a.former.map(r=>p(name(d,side,r.id)+' · '+r.misses+' отмеченных ошибок'))]):null,
+  p('* Ошибка защиты без указанного типа атаки. Учитываются только терминальные действия и явно отмеченные ошибки; полное число направленных мячей неизвестно.'),
+  el('button',{type:'button',class:'btn wide'+(options.entry?' primary':''),'aria-pressed':String(options.entry),'data-scout-entry':'true',text:options.entry?'Уточнение очка: включено':'Уточнение очка: выключено',onclick:()=>change({entry:!options.entry})}),
+  p('При включении после выбора автора атаки, скидки, эйса или ошибки приёма/защиты появится необязательный шаг для отметки зоны и ошибки соперника.'),
+  btn('Вернуться к матчу',close,'primary wide')]);
 }
 function liveAnalysis(d,s){
  const current=s.setEnded?s.sets.length:s.sets.length+1;

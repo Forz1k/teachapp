@@ -14,7 +14,7 @@ export function opponentHistory(matches,teamId){
  const seen=new Set();return matches.filter(m=>m.teamId===teamId&&m.detail?.mode==='dual'&&m.detail.awayPlayers.length>=6&&m.detail.awayPlayers.length<=30&&m.detail.awayPlayers.every(p=>Number.isInteger(p.number))&&uniq(m.detail.awayPlayers.map(p=>p.number))).sort((a,b)=>b.date.localeCompare(a.date)||b.detail.startedAt.localeCompare(a.detail.startedAt)).filter(m=>{const k=m.opponent.trim().toLocaleLowerCase('ru');if(seen.has(k))return false;seen.add(k);return true;});
 }
 const errors=['serveError','attackError','receiveError','defenseError','setError','netError','otherError'];
-export const canPlace=kind=>['ace','kill','tip'].includes(kind);
+export const canPlace=kind=>['ace','kill','tip','receiveError','defenseError'].includes(kind);
 export const isError=k=>errors.includes(k);
 export const rallyActor=(winner,kind)=>isError(kind)?other(winner):winner;
 export const secondaryKind=kind=>kind==='ace'?'receiveError':['kill','tip'].includes(kind)?'defenseError':null;
@@ -116,7 +116,7 @@ export function replayDetailed(d){
   fail(ev.type==='rally'&&sides.includes(ev.side)&&Object.hasOwn(reasons,ev.kind),'Неизвестное действие');
   const winner=ev.side,actor=rallyActor(winner,ev.kind),player=ev.player??null,before={lineups:{ours:visible('ours'),theirs:visible('theirs')},serve:s.serve};
   fail(ev.kind!=='point'||player===null,'Для неуточнённого очка не указывайте игрока');
-  fail(ev.placement==null||canPlace(ev.kind)&&integer(ev.placement,1,6),'Зона завершения — 1–6 только для эйса или результативной атаки');
+  fail(ev.placement==null||canPlace(ev.kind)&&integer(ev.placement,1,6),'Зона завершения — 1–6 для эйса, атаки, скидки, ошибки приёма или защиты');
   if(player!==null)fail(visible(actor).includes(player),'Выберите игрока до перехода');
   if(['ace','serveError'].includes(ev.kind))fail(s.serve===actor&&(player===null||server(actor)===player),'Эйс или ошибка подачи относится к подающей команде и игроку');
   if(ev.kind==='block'&&player!==null)fail([2,3,4].includes(lineupFor(actor).indexOf(player)+1)&&!(actor==='ours'&&player===d.libero),'Блок — игрок передней линии');
@@ -175,7 +175,7 @@ export function detailEvent(d,event,now=new Date().toISOString()){
   if(event.player===null)delete events[events.length-1].secondary;
   else events[events.length-1].secondary={kind:secondaryKind(last.kind),player:event.player};
  }else if(event.type==='placement'){
-  const last=events.at(-1);fail(last?.type==='rally'&&canPlace(last.kind),'Укажите направление последнего эйса или результативной атаки');
+  const last=events.at(-1);fail(last?.type==='rally'&&canPlace(last.kind),'Укажите направление последнего завершения в приёме или защите');
   fail(event.zone===null||integer(event.zone,1,6),'Выберите зону 1–6');
   events[events.length-1]={...last};
   if(event.zone===null)delete events[events.length-1].placement;else events[events.length-1].placement=event.zone;
@@ -231,4 +231,31 @@ export function rallySummary(timeline,set=0){
   for(const side of sides){const row=result[side],serving=e.before.serve===side;if(serving){row.serve++;if(e.side===side)row.onServe++;}else{row.receive++;if(e.side===side)row.receiveWon++;}}
  }
  return result;
+}
+
+/** Observed terminal concessions only. Zones are independent of attributed defenders.
+ * No inferred target attempts; a zero count is not proof of strong reception/defense. */
+export const scoutTypes={all:'Все завершения',serve:'Подачи и приём',attack:'Атаки без скидок',tip:'Скидки',defense:'Защита без уточнения'};
+const scoutCategory={ace:'serve',receiveError:'serve',kill:'attack',tip:'tip',defenseError:'defense'};
+export function scoutSummary(timeline,side,{kind='all',set=0,active=[]}={}){
+ fail(sides.includes(side)&&Object.hasOwn(scoutTypes,kind),'Выберите сторону и вид разведки');
+ const players=new Map(),zones=Array(6).fill(0);let total=0,knownPlayers=0,knownZones=0,rallies=0;
+ const player=id=>{if(!players.has(id))players.set(id,{id,onCourt:0,misses:0,serve:0,attack:0,tip:0,defense:0});return players.get(id);};
+ for(const e of timeline){
+  if(e.type!=='rally'||(set&&e.set!==set))continue;
+  rallies++;
+  for(const id of new Set(e.before.lineups[side].filter(Boolean)))player(id).onCourt++;
+  if(e.side===side)continue;
+  const category=scoutCategory[e.kind];if(!category||(kind!=='all'&&category!==kind))continue;
+  total++;
+  if(integer(e.placement,1,6)){zones[e.placement-1]++;knownZones++;}
+  const id=['receiveError','defenseError'].includes(e.kind)?e.player:e.secondary?.player;
+  if(id&&e.before.lineups[side].includes(id)){const r=player(id);r.misses++;r[category]++;knownPlayers++;}
+ }
+ const rows=active.flatMap((id,i)=>id?[{...player(id),zone:i+1}]:[]);
+ const byCount=(a,b)=>b.misses-a.misses||b.onCourt-a.onCourt||a.zone-b.zone;
+ const ranked=rows.filter(x=>x.misses>0).sort(byCount);
+ const topZones=zones.map((count,i)=>({zone:i+1,count})).filter(x=>x.count>0).sort((a,b)=>b.count-a.count||a.zone-b.zone);
+ return {rallies,total,knownPlayers,knownZones,unknownPlayers:total-knownPlayers,unknownZones:total-knownZones,zones,rows,ranked,topZones,
+  former:[...players.values()].filter(x=>!active.includes(x.id)&&x.misses>0).sort(byCount)};
 }
