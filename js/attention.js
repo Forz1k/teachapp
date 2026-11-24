@@ -1,6 +1,6 @@
 import * as M from './model.js';
 import {attendanceDetails} from './assessment.js';
-export const taskLabels={lesson:'Уроки и журнал',review:'Проверка сведений',training:'Тренировки',match:'Матчи',custom:'Рабочие задачи',backup:'Резервное копирование'};
+export const taskLabels={lesson:'Уроки и журнал',review:'Проверка сведений',training:'Тренировки',goal:'Индивидуальные цели',match:'Матчи',custom:'Рабочие задачи',backup:'Резервное копирование'};
 const item=(id,kind,title,detail,date,priority,target)=>({id,kind,title,detail,date,priority,target});
 const dates=(a,b)=>a&&a>=b;
 export function orderTasks(tasks){return tasks.slice().sort((a,b)=>b.priority-a.priority||a.date.localeCompare(b.date)||a.title.localeCompare(b.title,'ru')||a.id.localeCompare(b.id));}
@@ -54,4 +54,9 @@ export function commonTasks(settings,events,today=M.todayIso()){
  const due=last&&Number.isFinite(Date.parse(last))?M.addDays(M.iso(new Date(last)),7):today;
  if(due<=today&&!(postponed&&Number.isFinite(Date.parse(postponed))&&M.iso(new Date(postponed))>today))tasks.push(item('backup','backup','Создать защищённую копию',last?'С последней подтверждённой копии прошло не менее 7 дней':'Копия ещё не подтверждена',today,2,{}));
  return orderTasks(tasks);
+}
+
+export function goalTasks(goals,teamId,today=M.todayIso()){
+ const until=M.addDays(today,7);
+ return orderTasks(goals.filter(g=>g.teamId===teamId&&g.status==='active'&&g.to<=until).map(g=>item('goal-'+g.id,'goal',g.name,g.to<today?'Срок цели истёк. Проверьте прогресс.':'Срок проверки цели в ближайшие 7 дней',g.to,g.to<today?3:2,{playerId:g.playerId})));
 }
