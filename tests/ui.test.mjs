@@ -129,7 +129,10 @@ test('журнал строит сетку: строки учеников, ко�
 
   const heads = table.querySelectorAll('thead th');
   assert.equal(heads[0].textContent, '№');
-  assert.equal(heads[1].textContent, 'ФИО');
+  assert.equal(heads[1].textContent, 'Фамилия и имя');
+  assert.deepEqual([...table.querySelectorAll('.name-cell')].map(n=>n.textContent.trim()), ['Иванов Иван','Петрова Анна']);
+  assert.equal(table.querySelectorAll('thead .journal-lesson-head').length,2);
+  assert.equal(screen.querySelector('.journal-manage').textContent,'Уроки триместра');
 
   // Оценка 5 и отметка Н отрисованы
   const html = table.innerHTML;

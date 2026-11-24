@@ -65,13 +65,14 @@ export function renderJournal(root, ctx) {
   for (const e of store.state.exemptions) if (M.exemptionActive(e) && !activeByStudent.has(e.studentId)) activeByStudent.set(e.studentId,e);
 
   /* ---- шапка ---- */
-  const topbar = el('div', { class: 'topbar' });
+  const topbar = el('div', { class: 'topbar journal-topbar' });
   const row1 = el('div', { class: 'topbar-row' }, [
     el('button', {
-      class: 'chip', type: 'button', text: `${cls ? cls.name : 'Класс'} ▾`,
+      class: 'chip class-name-pill', type: 'button', text: `${cls ? M.displayClassName(cls.name) : 'Класс'} ▾`,
       onclick: () => ctx.onOpenClassPicker(),
     }),
     el('div', { style: 'flex:1' }),
+    el('button',{class:'btn small journal-manage',type:'button',text:'Уроки триместра',onclick:()=>import('./lesson.js').then(m=>m.openTrimesterLessons(classId))}),
     el('button', {
       class: 'icon-btn', type: 'button', title: 'Проведение урока',
       onclick: () => import('./session.js').then(m=>m.openLessonPicker(classId,today)),
@@ -124,7 +125,7 @@ export function renderJournal(root, ctx) {
   const headRow = el('tr');
 
   headRow.append(el('th', { class: 'col-num', text: '№' }));
-  headRow.append(el('th', { class: 'col-name', text: 'ФИО' }));
+  headRow.append(el('th', { class: 'col-name', text: 'Фамилия и имя' }));
 
   for (const lesson of lessons) {
     const topic = topicsById.get(lesson.topicId);
@@ -132,9 +133,9 @@ export function renderJournal(root, ctx) {
       class: 'col-lesson',
       title: topic ? topic.name : 'Тема не указана',
     }, [
-      el('span', { class: 'date', text: M.fmtShort(lesson.date) }),
-      el('span', { class: 'dow', text: dowOf(lesson.date) }),
-      el('span', { class: 'topic', text: topic ? topic.name : '' }),
+      el('button',{type:'button',class:'journal-lesson-head','aria-label':'Изменить урок '+M.fmtFull(lesson.date),title:topic?.name||'Без темы',onclick:()=>import('./lesson.js').then(m=>m.openLessonSheet(lesson.id,classId))},[
+        el('span',{class:'date',text:M.fmtShort(lesson.date)}),el('span',{class:'dow',text:dowOf(lesson.date)}),el('span',{class:'topic',text:topic?.name||'Без темы'}),
+      ]),
     ]));
   }
 
@@ -157,7 +158,7 @@ export function renderJournal(root, ctx) {
 
     const activeEx = activeByStudent.get(st.id);
     const nameCell = el('td', { class: 'col-name' }, [
-      el('button', { class:'name-cell',type:'button',text:M.shortName(st.fullName),'aria-label':'Карточка ученика: '+st.fullName,title:st.fullName }),
+      el('button', { class:'name-cell',type:'button',text:M.surnameAndName(st.fullName),'aria-label':'Карточка ученика: '+st.fullName,title:st.fullName }),
     ]);
     if (activeEx) nameCell.firstChild.append(el('span', { class: 'ex-dot', title: M.exemptionLabel(activeEx) }));
     nameCell.addEventListener('click', () => openStudentSheet(st.id, classId));

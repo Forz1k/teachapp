@@ -435,3 +435,26 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .about-credit{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:0 16px 14px;color:var(--text-2);font-size:13px}.about-credit a{color:var(--accent-ink);text-decoration:underline;padding:10px 0;min-height:44px;display:flex;align-items:center}.document-table>p{font-size:12px;padding:8px;color:var(--text-2)}
 
 .personal-sync-action{position:relative;flex-shrink:0}.personal-sync-action::after{content:'';position:absolute;right:5px;top:5px;width:7px;height:7px;border-radius:50%;background:var(--sep)}.personal-sync-action[data-status=ok]::after{background:#22a06b}.personal-sync-action[data-status=review]::after{background:#d97706}.personal-sync-action[data-status=offline]::after{background:#7b8494}@media(max-width:440px){.app-shell:has(.personal-sync-action) .app-brand>span{display:none}.app-shell:has(.personal-sync-action){gap:4px;padding-inline:8px}.app-shell:has(.personal-sync-action) .icon-btn{width:34px;min-width:34px}.app-shell:has(.personal-sync-action) .workspace-option{padding-inline:6px}}
+
+
+.class-name-pill{display:inline-flex;align-items:center;justify-content:center;min-width:44px;white-space:nowrap;border-radius:9px;background:var(--card-2);border:1px solid var(--sep);font-weight:750;color:var(--text);padding:6px 10px;font-variant-numeric:tabular-nums}
+.class-picker-row{display:flex;align-items:center;gap:12px;min-height:56px;width:100%;padding:8px 10px;margin:3px 0;border:1px solid transparent;border-radius:12px;text-align:left;color:var(--text)}
+.class-picker-row[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent)}
+.class-picker-count{flex:1;min-width:0;font-size:13px;color:var(--text-2)}
+.class-picker-check{display:grid;place-items:center;flex:0 0 24px;width:24px;height:24px;color:var(--accent-ink)}
+.class-picker-check svg{display:block;width:18px;height:18px;max-width:18px;max-height:18px}
+.journal-topbar .topbar-row{flex-wrap:wrap;gap:8px}
+.journal-manage.btn{min-height:40px;padding:6px 10px}
+.journal-lesson-head{display:flex;flex-direction:column;align-items:center;gap:2px;width:100%;min-height:64px;padding:5px 3px;text-align:center;color:inherit}
+.journal thead th .topic{font-size:11px;height:auto;min-height:26px;line-height:1.2;-webkit-line-clamp:2}
+.journal .name-cell{white-space:normal;overflow-wrap:anywhere;line-height:1.25;padding-block:7px}
+.journal .col-lesson{min-width:76px;width:76px}
+.journal thead th.col-lesson{vertical-align:top}
+.trimester-editor,.trimester-lesson-list{display:grid;gap:8px}
+.trimester-lesson-row{display:flex;align-items:center;gap:8px;padding:10px 8px;border:1px solid var(--sep);border-radius:12px;background:var(--card)}
+.trimester-lesson-copy{flex:1;min-width:0;display:grid;gap:3px;overflow-wrap:anywhere}
+.trimester-lesson-copy strong{font-size:13px}.trimester-lesson-copy small{font-size:12px;color:var(--text-2)}
+.trimester-lesson-row .icon-btn{flex:0 0 36px}
+@media(min-width:1000px){.screen>.journal-topbar{max-width:none;width:auto;margin-inline:24px;padding-inline:0}.journal .col-lesson{width:105px;min-width:105px}.journal th.col-name,.journal td.col-name{width:248px;min-width:248px;max-width:248px}.journal thead th .topic{-webkit-line-clamp:3;min-height:39px}.journal-lesson-head{min-height:82px}.journal-grid{max-height:calc(100dvh - 285px)}}
+@media(max-width:420px){.journal th.col-name,.journal td.col-name{width:138px;min-width:138px;max-width:138px}.journal-manage.btn{font-size:12px}.trimester-lesson-row{gap:5px;padding-inline:5px}}
+

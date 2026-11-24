@@ -1287,3 +1287,26 @@ export async function applyLessonBatch(lessonId,studentIds,action,value=null,con
   state.participation.push(...result.nextParts);notify();
   return studentIds.length;
 }
+
+
+export async function repairLessonTopics(classId,changes){
+  if(!Array.isArray(changes)||!changes.length)return;
+  if(new Set(changes.map(c=>c.id)).size!==changes.length)throw Error('Повторяющиеся уроки');
+  const topics=new Set(topicsForClass(classId).map(t=>t.id));
+  const records=await db.transaction(['lessons','marks','participation','normResults'],'readwrite',async s=>{
+    const [lessons,marks,parts,results]=await Promise.all([s.lessons.index('classId').getAll(classId),s.marks.getAll(),s.participation.getAll(),s.normResults.getAll()]);
+    const byId=new Map(lessons.map(l=>[l.id,l])), changed=new Set(changes.map(c=>c.id));
+    const used=new Set(lessons.filter(l=>!changed.has(l.id)).map(l=>l.topicId).filter(Boolean)), updated=[];
+    for(const c of changes){
+      const l=byId.get(c.id);
+      if(!l||l.date!==c.date||(l.topicId??null)!==c.previous||!M.canRepairLessonTopic(l,marks,parts,results))throw Error('Данные урока изменились. Обновите предпросмотр.');
+      if(c.topicId&&(!topics.has(c.topicId)||used.has(c.topicId)))throw Error('Тема уже занята или недоступна. Обновите предпросмотр.');
+      if(c.topicId)used.add(c.topicId);
+      updated.push({...l,topicId:c.topicId??null});
+    }
+    for(const l of updated)await s.lessons.put(l);
+    return updated;
+  });
+  for(const l of records){const cached=state.lessons.find(x=>x.id===l.id);if(cached)Object.assign(cached,l);}
+  notify();
+}

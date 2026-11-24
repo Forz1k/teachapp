@@ -586,3 +586,23 @@ export function planLessonDates({classId,from,to,rules,overrides,holidays,days})
   }
   return dates;
 }
+
+
+export function displayClassName(name) {
+  const raw=String(name??'').trim();
+  const m=raw.match(/^(\d{1,2})(?:[\s_.\-–—]+([0-9]+)|[\s_.\-–—]*([а-яёa-z]))$/iu);
+  return m ? m[1]+(m[2]?'-'+m[2]:m[3].toLocaleUpperCase('ru')) : raw;
+}
+export function surnameAndName(name) {
+  return String(name??'').trim().split(/\s+/).slice(0,2).join(' ');
+}
+export function canRepairLessonTopic(l,marks,parts,results) {
+  return !l.held && l.activityIds==null && !marks.some(m=>m.lessonId===l.id&&(m.value||m.source!=='auto-osv'||m.flag!=='ОСВ'||m.baseMark||m.previousFlag))
+    && !parts.some(p=>p.lessonId===l.id) && !results.some(r=>r.lessonId===l.id);
+}
+export function planLessonTopicRepair(lessons,topics,ids) {
+  const editable=new Set(ids);
+  const used=new Set(lessons.filter(l=>!editable.has(l.id)).map(l=>l.topicId).filter(Boolean));
+  const remaining=topics.filter(t=>!used.has(t.id));
+  return sortLessons(lessons.filter(l=>editable.has(l.id))).map((l,i)=>({id:l.id,date:l.date,previous:l.topicId??null,topicId:remaining[i]?.id??null})).filter(c=>c.previous!==c.topicId);
+}

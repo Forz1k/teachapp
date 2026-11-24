@@ -146,7 +146,7 @@ export function renderSchedule(root, opts = {}) {
             el('div', { style: 'font-size:20px;font-weight:800;font-feature-settings:"tnum" 1', text: String(item.slot) }),
           ]),
           el('div', { class: 'who' }, [
-            el('div', { class: 'fio', style: isWindow ? 'color:var(--text-3); font-style: italic;' : '', text: isWindow ? 'окно' : (cls ? cls.name : 'класс не найден') }),
+            el('div', { class: 'fio', style: isWindow ? 'color:var(--text-3); font-style: italic;' : '', text: isWindow ? 'окно' : (cls ? M.displayClassName(cls.name) : 'класс не найден') }),
             el('div', { class: 'dates', text: item.time || 'время не указано' }),
           ]),
         ]);
@@ -226,7 +226,7 @@ export function renderSchedule(root, opts = {}) {
           el('div', { style: 'font-size:22px;font-weight:800;font-feature-settings:"tnum" 1', text: String(item.slot) }),
         ]),
         el('div', { class: 'who' }, [
-          el('div', { class: 'fio', style: isWindow ? 'color:var(--text-3); font-style: italic;' : '', text: isWindow ? 'окно' : (cls ? cls.name : 'класс не найден') }),
+          el('div', { class: 'fio', style: isWindow ? 'color:var(--text-3); font-style: italic;' : '', text: isWindow ? 'окно' : (cls ? M.displayClassName(cls.name) : 'класс не найден') }),
           el('div', { class: 'dates', text: item.time ? item.time : 'время не указано' }),
           isChanged ? el('div', { class: 'reason', style: 'color:var(--accent)', text: 'изменено на этот день' }) : null,
         ]),
@@ -241,7 +241,7 @@ export function renderSchedule(root, opts = {}) {
           onclick: async () => {
             const ok = await ui.confirmDialog({
               title: 'Удалить из расписания?',
-              text: `${day.full}, ${item.slot}-й урок, ${cls ? cls.name : ''}.`,
+              text: `${day.full}, ${item.slot}-й урок, ${cls ? M.displayClassName(cls.name) : ''}.`,
               ok: 'Удалить', danger: true,
             });
             if (!ok) return;
@@ -281,7 +281,7 @@ function classSelect(selectedId = null) {
   sel.append(windowOpt);
 
   for (const c of store.state.classes) {
-    const o = el('option', { value: c.id, text: c.name });
+    const o = el('option', { value: c.id, text: M.displayClassName(c.name) });
     if (c.id === selectedId) o.selected = true;
     sel.append(o);
   }
@@ -383,7 +383,7 @@ function openDayEditSheet(dateIso, item, onDone) {
   const cls = store.state.classes.find((c) => c.id === item.classId);
   const sheet = el('div', {}, [
     el('h2', { text: `Урок ${item.slot}` }),
-    el('div', { class: 'sub', text: `${cls ? cls.name : ''} · ${M.fmtFull(dateIso)}` }),
+    el('div', { class: 'sub', text: `${cls ? M.displayClassName(cls.name) : ''} · ${M.fmtFull(dateIso)}` }),
     el('div', { class: 'sub', style: 'margin-bottom:12px', text: 'Что изменить на этот день?' }),
     el('div', { class: 'actions', style: 'margin-top:0' }, [
       el('button', {

@@ -1,6 +1,7 @@
 /* app.js — точка входа: маршрутизация между табами, инициализация, service worker. */
 
 import * as store from './store.js';
+import {displayClassName} from './model.js';
 import * as ui from './ui.js';
 import { renderAnalytics } from './screens/analytics.js';
 import { renderCoach } from './screens/coach.js';
@@ -238,12 +239,11 @@ function openClassPicker() {
 
   for (const c of classes) {
     const n = store.studentsOfClass(c.id).length;
-    const row = el('div', { class: 'row-item' }, [
-      el('div', { class: 'label' }, [
-        el('div', { text: c.name, style: 'font-weight:600' }),
-        el('div', { style: 'font-size:12px;color:var(--text-3)', text: `${n} учеников` }),
-      ]),
-      store.state.currentClassId === c.id ? icon('check') : el('div'),
+    const selected=store.state.currentClassId===c.id;
+    const row=el('button',{class:'class-picker-row',type:'button','aria-pressed':String(selected)},[
+      el('span',{class:'class-name-pill',text:displayClassName(c.name)}),
+      el('span',{class:'class-picker-count',text:n+' учеников'}),
+      el('span',{class:'class-picker-check','aria-hidden':'true'},selected?[icon('check')]:[]),
     ]);
     row.addEventListener('click', () => {
       store.state.currentClassId = c.id;

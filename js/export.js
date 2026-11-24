@@ -71,7 +71,7 @@ export function buildMonthlyBlock({ classId, settings }) {
 /** Плоская таблица для «Моей школы»: одна запись на строку. */
 export function buildFlat({ classId, from, to, includeMonthly = true,includeExemptions=true }) {
   const cls = store.state.classes.find((c) => c.id === classId);
-  const className = cls ? cls.name : '';
+  const className = cls ? M.displayClassName(cls.name) : '';
   const students = store.studentsOfClass(classId);
   const lessons = store.lessonsInRange(classId, from, to);
   const markMap = store.markMap(classId);
@@ -172,7 +172,7 @@ export function exportXlsxSummary({ classId, from, to, includeMonthly = false,in
   const wb = XLSX.utils.book_new();
   const { cls, header, rows } = buildSummary({ classId, from, to,includeExemptions });
   const title = [
-    [`Журнал ${cls ? cls.name : ''} — ${M.fmtFull(from)} – ${M.fmtFull(to)}`],
+    [`Журнал ${cls ? M.displayClassName(cls.name) : ''} — ${M.fmtFull(from)} – ${M.fmtFull(to)}`],
     [],
   ];
   if (includeMonthly) {
@@ -191,7 +191,7 @@ export function exportXlsxSummary({ classId, from, to, includeMonthly = false,in
   if (includeMonthly) XLSX.utils.book_append_sheet(wb, sheetFromMatrix(XLSX, buildMonthlyMatrix(classId)), 'Месячные');
 
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-  const name = `Журнал_${cls ? cls.name : 'класс'}_${from}_${to}.xlsx`;
+  const name = `Журнал_${cls ? M.displayClassName(cls.name) : 'класс'}_${from}_${to}.xlsx`;
   downloadBlob(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), name);
   return name;
 }
@@ -206,7 +206,7 @@ export function exportXlsxFlat({ classId, from, to, includeMonthly = false,inclu
   XLSX.utils.book_append_sheet(wb, ws, 'Моя школа');
   const cls = store.state.classes.find((c) => c.id === classId);
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-  const name = `МояШкола_${cls ? cls.name : 'класс'}_${from}_${to}.xlsx`;
+  const name = `МояШкола_${cls ? M.displayClassName(cls.name) : 'класс'}_${from}_${to}.xlsx`;
   downloadBlob(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), name);
   return name;
 }
@@ -233,7 +233,7 @@ export function exportCsvSummary({ classId, from, to,includeExemptions=false }) 
   const { cls, header, rows } = buildSummary({ classId, from, to,includeExemptions });
   const matrix = [header, ...rows];
   const text = matrixToDelimited(matrix, ';', true);
-  const name = `Журнал_${cls ? cls.name : 'класс'}_${from}_${to}.csv`;
+  const name = `Журнал_${cls ? M.displayClassName(cls.name) : 'класс'}_${from}_${to}.csv`;
   downloadBlob(new Blob([text], { type: 'text/csv;charset=utf-8' }), name);
   return name;
 }
@@ -300,7 +300,7 @@ export async function parseScheduleFile(file) {
   const entries = [];
   const warnings = [];
   const unknownClasses = new Set();
-  const byName = new Map(store.state.classes.map((c) => [c.name.toLowerCase().trim(), c]));
+  const byName = new Map(store.state.classes.map(c=>[c.name.toLocaleLowerCase('ru').trim(),c]));
 
   for (const sheetName of wb.SheetNames) {
     const ws = wb.Sheets[sheetName];
@@ -363,7 +363,8 @@ export async function parseScheduleFile(file) {
         continue;
       }
 
-      const cls = byName.get(className.toLowerCase().trim());
+      const aliases=store.state.classes.filter(c=>M.displayClassName(c.name).toLocaleLowerCase('ru')===M.displayClassName(className).toLocaleLowerCase('ru'));
+      const cls=byName.get(className.toLocaleLowerCase('ru').trim()) || (aliases.length===1?aliases[0]:null);
       if (!cls) {
         unknownClasses.add(className);
         continue;
@@ -621,7 +622,12 @@ export async function applyRoster(parsed) {
   const report = { classes: 0, added: 0, updated: 0, skipped: 0 };
 
   for (const { className, students } of parsed) {
-    let cls = store.state.classes.find((c) => rosterKey(c.name) === rosterKey(className));
+    let cls = store.state.classes.find(c=>rosterKey(c.name)===rosterKey(className));
+    if(!cls){
+      const matches=store.state.classes.filter(c=>rosterKey(M.displayClassName(c.name))===rosterKey(M.displayClassName(className)));
+      if(matches.length===1)cls=matches[0];
+      if(matches.length>1)throw Error('Неоднозначное название класса: '+className);
+    }
     if (!cls) {
       cls = await store.addClass(className);
       report.classes += 1;
