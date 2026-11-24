@@ -1,0 +1,223 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "publishers": {
+      ".read": false,
+      ".write": false
+    },
+    "publicTeams": {
+      "$uid": {
+        "$slug": {
+          ".read": true,
+          ".write": "auth != null && auth.uid === $uid && root.child('publishers').child(auth.uid).val() === true",
+          ".validate": "$slug.matches(/^[A-Za-z0-9_-]{1,100}$/) && newData.hasChildren(['schema','team','updatedAt'])",
+          "schema": {
+            ".validate": "newData.val() === 1"
+          },
+          "team": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
+          },
+          "updatedAt": {
+            ".validate": "newData.isNumber() && newData.val() <= now + 60000 && newData.val() >= 0"
+          },
+          "schedule": {
+            "$i": {
+              ".validate": "$i.matches(/^(0|[1-9]|1[0-9])$/) && (newData.hasChildren([\"id\",\"opponent\",\"startAt\"]))",
+              "id": {
+                ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,100}$/)"
+              },
+              "opponent": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
+              },
+              "startAt": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 8640000000000000"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "match": {
+            ".validate": "newData.hasChildren([\"id\",\"opponent\",\"startedAt\",\"status\",\"set\",\"score\",\"setsWon\",\"serve\",\"colors\"])",
+            "id": {
+              ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,100}$/)"
+            },
+            "opponent": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
+            },
+            "startedAt": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 8640000000000000"
+            },
+            "setsWon": {
+              ".validate": "newData.hasChildren(['ours','theirs'])",
+              "ours": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+              },
+              "theirs": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "sets": {
+              "$i": {
+                ".validate": "$i.matches(/^[0-4]$/) && (newData.hasChildren(['ours','theirs']))",
+                "ours": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                },
+                "theirs": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            },
+            "status": {
+              ".validate": "newData.val() === 'live' || newData.val() === 'break' || newData.val() === 'finished'"
+            },
+            "set": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5"
+            },
+            "score": {
+              ".validate": "newData.hasChildren(['ours','theirs'])",
+              "ours": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+              },
+              "theirs": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "serve": {
+              ".validate": "newData.val() === 'ours' || newData.val() === 'theirs'"
+            },
+            "colors": {
+              ".validate": "newData.hasChildren([\"ours\",\"theirs\"])",
+              "ours": {
+                ".validate": "newData.isString() && newData.val().matches(/^(blue|red|green|purple|orange|graphite)$/)"
+              },
+              "theirs": {
+                ".validate": "newData.isString() && newData.val().matches(/^(blue|red|green|purple|orange|graphite)$/)"
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "scheduledId": {
+              ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,100}$/)"
+            },
+            "events": {
+              "$i": {
+                ".validate": "$i.matches(/^(0|[1-9]|[12][0-9])$/) && (newData.hasChildren([\"set\",\"score\",\"side\",\"kind\",\"actor\"]))",
+                "set": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5"
+                },
+                "score": {
+                  ".validate": "newData.isString() && newData.val().matches(/^[0-9]{1,4}:[0-9]{1,4}$/)"
+                },
+                "side": {
+                  ".validate": "newData.val() === 'ours' || newData.val() === 'theirs'"
+                },
+                "actor": {
+                  ".validate": "newData.val() === 'ours' || newData.val() === 'theirs'"
+                },
+                "kind": {
+                  ".validate": "newData.isString() && newData.val().matches(/^(point|kill|tip|block|ace|serveError|attackError|receiveError|defenseError|setError|netError|otherError)$/)"
+                },
+                "number": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 99"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            },
+            "stats": {
+              "$i": {
+                ".validate": "$i.matches(/^(0|[1-9]|[1-9][0-9])$/) && (newData.hasChildren([\"side\",\"number\",\"points\",\"attack\",\"tip\",\"ace\",\"block\"]))",
+                "side": {
+                  ".validate": "newData.val() === 'ours' || newData.val() === 'theirs'"
+                },
+                "number": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 99"
+                },
+                "points": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                },
+                "attack": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                },
+                "tip": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                },
+                "ace": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                },
+                "block": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
+          "archive": {
+            "$i": {
+              ".validate": "$i.matches(/^(0|[1-9]|1[0-9])$/) && (newData.hasChildren([\"id\",\"opponent\",\"startedAt\",\"setsWon\"]))",
+              "id": {
+                ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,100}$/)"
+              },
+              "opponent": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
+              },
+              "startedAt": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 8640000000000000"
+              },
+              "setsWon": {
+                ".validate": "newData.hasChildren(['ours','theirs'])",
+                "ours": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                },
+                "theirs": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "sets": {
+                "$i": {
+                  ".validate": "$i.matches(/^[0-4]$/) && (newData.hasChildren(['ours','theirs']))",
+                  "ours": {
+                    ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                  },
+                  "theirs": {
+                    ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                }
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    }
+  }
+}

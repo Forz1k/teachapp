@@ -6,7 +6,7 @@ const CACHE = PREFIX + VERSION;
 const PRECACHE = [
   './',
   './index.html',
-  './live/index.html','./css/public-portal.css','./js/public-view.js','./js/public-portal.js',
+  './live/index.html','./css/public-portal.css','./js/public-view.js','./js/public-portal.js','./js/firebase-portal.js','./js/public-publisher.js',
   './manifest.webmanifest',
   './css/app.css',
   './css/design.css',
