@@ -81,6 +81,7 @@ try{
  assert.equal(await fan.locator('.record-streak .flame').evaluate(n=>getComputedStyle(n).animationName),'none');
  await fan.locator('[data-tab=results]').click();await fan.locator('[data-filter=loss]').click();assert.equal(await fan.locator('.result-card').count(),1);
  await fan.locator('[data-filter=win]').click();assert.equal(await fan.locator('.result-card .trophy').count(),2);
+ await fan.locator('.archive-search').fill('Тест 1');assert.equal(await fan.locator('.result-card').count(),1);await fan.getByRole('button',{name:'Очистить поиск',exact:true}).click();assert.equal(await fan.locator('.result-card').count(),2);
  assert.ok(await fan.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'public result cards overflow');
  await fan.close();
  await context.setOffline(true);

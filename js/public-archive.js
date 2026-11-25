@@ -1,5 +1,5 @@
 // Public archive v2: score-only projection. Never stores a private match record.
-import {viewerPageLink} from './public-portal.js';
+import {viewerPageLink,resultOutcome} from './public-portal.js';
 const id=/^[A-Za-z0-9_-]{1,100}$/,key=/^\d{16}_[A-Za-z0-9_-]{1,100}$/;
 const validScore=x=>Number.isInteger(x)&&x>=0&&x<=9999;
 export function archiveProjection(r){
@@ -26,3 +26,28 @@ export function archiveSeasons(rows){return [...new Set(rows.map(r=>archiveSeaso
 export function filterArchiveSeason(rows,season='all'){return season==='all'?rows:rows.filter(r=>String(archiveSeason(r.startedAt))===String(season));}
 /** Compare complete public score projections, not private match IDs or notes. */
 export function equalArchiveResult(a,b){try{return JSON.stringify(archiveProjection(a))===JSON.stringify(archiveProjection(b));}catch{return false;}}
+
+/** Search only public, already loaded rows. Search never changes the season
+ * summary or silently requests more pages from Firebase. */
+const searchKey=value=>String(value??'').normalize('NFKC').toLocaleLowerCase('ru').replace(/ё/g,'е').trim().replace(/\s+/g,' ');
+export function searchArchive(rows,{query='',season='all',outcome='all'}={}){
+ if(!['all','win','loss','draw'].includes(outcome))throw Error('Некорректный фильтр');
+ const words=searchKey(query).slice(0,200).split(' ').filter(Boolean);
+ return filterArchiveSeason(rows,season).filter(r=>(outcome==='all'||resultOutcome(r)===outcome)&&words.every(w=>searchKey(r.opponent).includes(w)));
+}
+/** Current public stream wins over an older fetched archive copy. Keep the
+ * direct archive key only when the full public scores agree. */
+export function mergeLoadedResults(current,extra){
+ const rows=new Map(extra.map(r=>[r.id,r]));
+ for(const row of current){
+  const old=rows.get(row.id);
+  rows.set(row.id,old?.archiveKey&&equalArchiveResult(old,row)?{...row,archiveKey:old.archiveKey}:row);
+ }
+ return [...rows.values()].sort((a,b)=>b.startedAt-a.startedAt||a.id.localeCompare(b.id));
+}
+/** Build a card from validated score-only data; ignore all other fields. */
+export function publicResultCard(team,row){
+ const r=archiveProjection(row);
+ const date=new Intl.DateTimeFormat('ru-RU',{dateStyle:'long',...(r.id.startsWith('result_')?{timeZone:'UTC'}:{})}).format(r.startedAt);
+ return {template:'result',format:'square',team:String(team??'').trim().slice(0,100),opponent:r.opponent,score:r.setsWon.ours+' : '+r.setsWon.theirs,details:date+' · Партии: '+r.sets.map(s=>s.ours+':'+s.theirs).join(' / '),footer:'TeachApp · Опубликованный результат'};
+}

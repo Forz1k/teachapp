@@ -1,8 +1,9 @@
 import {mediaTarget,fetchPublicMedia,newsTypes} from './public-media.js';
-import {archiveTarget,fetchArchivePage,fetchArchiveRecord,resultLink,fixtureCalendar,archiveSeasons,filterArchiveSeason} from './public-archive.js';
+import {archiveTarget,fetchArchivePage,fetchArchiveRecord,resultLink,fixtureCalendar,archiveSeasons,filterArchiveSeason,searchArchive,mergeLoadedResults,publicResultCard} from './public-archive.js';
 import {animateOnce,scoreChanges,enterGroup,normalizeMotion,motionModes,motionAllowed} from './motion.js';
 import {viewerTarget,viewerPageLink,fixtureLink,fixtureState,scheduleSections,readPortal,portalState,countdown,fanResults,resultOutcome,resultSummary,publicMatchMoments} from './public-portal.js';
 import {reasons,boardPalette} from './match-protocol.js';
+import {paintStudio,canvasPng} from './media-studio.js';
 const root=document.getElementById('portal'),connection=document.getElementById('connection'),nav=document.getElementById('portal-nav');
 const el=(tag,cls,text,...children)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=String(text);n.append(...children.filter(Boolean));return n;};
 const p=(t,c='muted')=>el('p',c,t),card=(...children)=>el('section','card',null,...children);
@@ -10,7 +11,7 @@ const format=(t,options)=>new Intl.DateTimeFormat('ru-RU',options).format(t);
 const date=t=>format(t,{dateStyle:'long',timeStyle:'short'})+' · местное время';
 const head=(title,detail='')=>el('div','section-head',null,el('h2','',title),detail?el('small','',detail):null);
 let data=null,connected=false,awaitingSnapshot=true,received=false,problem='',lastMode='',lastStale=false,tab='overview',lastMatchId=null,lastPaintedMatch=null,lastPaintedTab=null;
-let resultFilter='all',primaryPage=false,lastStreakKey='',archiveRowsExtra=[],archiveCursor=null,archiveLoaded=false,archiveBusy=false,archiveMessage='',archiveAddress='',directResult=null,directBusy=false,seasonFilter='all',archiveEpoch=0;
+let resultFilter='all',resultQuery='',resultLimit=40,primaryPage=false,lastStreakKey='',archiveRowsExtra=[],archiveCursor=null,archiveLoaded=false,archiveBusy=false,archiveMessage='',archiveAddress='',directResult=null,directBusy=false,seasonFilter='all',archiveEpoch=0;
 let mediaAddress='',media=null,mediaBusy=false,mediaError='',mediaEpoch=0;
 const tabs=[['overview','Матч'],['schedule','Расписание'],['results','Результаты'],['news','Новости'],['tournament','Турнир']];
 function renderNav(){if(!nav)return;nav.hidden=!data;if(!data)return;if(!nav.childElementCount){for(const [key,label] of tabs){const b=el('button','',label);b.type='button';b.dataset.tab=key;b.onclick=()=>{tab=key;draw();if(['news','tournament'].includes(key))void loadMedia();};nav.append(b);}}for(const b of nav.children)b.setAttribute('aria-pressed',String(b.dataset.tab===tab));}
@@ -39,9 +40,26 @@ function shareButton(url,title,label){
 }
 function shareMatch(x){return shareButton(resultLink(shareLink,x),teamName()+' — '+x.opponent,'Поделиться матчем');}
 function shareFixture(x){return shareButton(fixtureLink(shareLink,x.scheduledId||x.id),teamName()+' — '+x.opponent,'Поделиться встречей');}
+function resultDownload(row){
+ // Snapshot of only the visible published result; no current player stats,
+ // stored credentials or personal artwork. No download on a live score.
+ const b=el('button','archive-link','Скачать карточку PNG');b.type='button';
+ b.onclick=async()=>{
+  if(b.disabled)return;b.disabled=true;const canvas=document.createElement('canvas');
+  try{
+   paintStudio(canvas,publicResultCard(teamName(),row));const blob=await canvasPng(canvas);
+   // A stream update may revoke a result while rendering. Don't download from
+   // a disconnected/replaced button or after the page is unpublished.
+   if(!b.isConnected||!data)return;
+   const url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download='teachapp-result.png';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+   b.textContent='Карточка подготовлена';
+  }catch(e){b.textContent='Карточка недоступна';b.title=e.message;}
+  finally{canvas.width=canvas.height=1;b.disabled=false;}
+ };return b;
+}
 function calendarButton(x){const a=el('button','archive-link','В календарь');a.type='button';a.onclick=()=>{const u=URL.createObjectURL(new Blob([fixtureCalendar(teamName(),x)],{type:'text/calendar;charset=utf-8'})),l=document.createElement('a');l.href=u;l.download='teachapp-match.ics';l.click();setTimeout(()=>URL.revokeObjectURL(u),1000);};return a;}
 async function loadMoreArchive(refresh=false){if(archiveBusy||!data)return;const epoch=archiveEpoch;archiveBusy=true;archiveMessage='Загрузка…';draw();try{const page=await fetchArchivePage(archiveAddress,{cursor:refresh?null:archiveCursor});if(epoch!==archiveEpoch||!data)return;archiveRowsExtra=[...new Map([...(refresh?[]:archiveRowsExtra),...page.rows].map(r=>[r.archiveKey,r])).values()];archiveCursor=page.cursor;archiveLoaded=true;archiveMessage=archiveCursor?'':'Весь доступный архив загружен';}catch(e){if(epoch===archiveEpoch){archiveMessage=e.message;if(e.status===401||e.status===403){archiveRowsExtra=[];archiveCursor=null;archiveLoaded=false;}}}finally{if(epoch===archiveEpoch){archiveBusy=false;draw();}}}
-function resetArchive(){mediaEpoch++;media=null;mediaBusy=false;mediaError='';archiveEpoch++;archiveRowsExtra=[];archiveCursor=null;archiveLoaded=false;archiveBusy=false;archiveMessage='';directResult=null;directBusy=false;}
+function resetArchive(){mediaEpoch++;media=null;mediaBusy=false;mediaError='';archiveEpoch++;archiveRowsExtra=[];archiveCursor=null;archiveLoaded=false;archiveBusy=false;archiveMessage='';directResult=null;directBusy=false;resultQuery='';resultLimit=40;}
 async function loadDirectArchive(){const k=new URL(shareLink).searchParams.get('archive');if(!k||!data||directBusy)return;const epoch=archiveEpoch;directBusy=true;draw();try{const row=await fetchArchiveRecord(archiveAddress,k);if(epoch===archiveEpoch&&data)directResult=row;}catch{if(epoch===archiveEpoch)directResult=null;}finally{if(epoch===archiveEpoch){directBusy=false;draw();}}}
 function archiveControls(){const b=el('button','archive-link',archiveLoaded?'Загрузить ещё':'Загрузить расширенный архив');b.type='button';b.disabled=archiveBusy||archiveLoaded&&!archiveCursor;b.onclick=()=>void loadMoreArchive();const refresh=el('button','archive-link','Обновить архив');refresh.type='button';refresh.disabled=archiveBusy;refresh.onclick=()=>void loadMoreArchive(true);return card(b,archiveLoaded?refresh:null,archiveMessage?p(archiveMessage):null,p('Сезоны и фильтры учитывают только загруженные результаты.'));}
 async function loadMedia(){if(mediaBusy||!data)return;const epoch=mediaEpoch;mediaBusy=true;mediaError='';draw();try{const next=await fetchPublicMedia(mediaAddress);if(epoch===mediaEpoch&&data)media=next;}catch(e){if(epoch===mediaEpoch){media=null;mediaError='Медиацентр пока недоступен.';}}finally{if(epoch===mediaEpoch){mediaBusy=false;draw();}}}
@@ -61,23 +79,55 @@ function archiveRows(items){return items.map(x=>{
  return el('article','result-card '+outcome,null,el('div','result-info',null,el('div','result-meta',null,el('span','result-date',dateText),el('span','outcome-label '+outcome,label)),el('h3','result-title',null,matchLink(x)),chips),el('div','result-total '+outcome,null,outcome==='win'?glyph('trophy'):null,el('strong','',x.setsWon.ours+':'+x.setsWon.theirs),el('small','','Итог')));
  });}
 function resultsOverview(rows){const s=resultSummary(rows),key=rows[0]?.id+':'+s.streak,animate=key!==lastStreakKey;lastStreakKey=key;return el('div','fan-record',null,...[['Матчи',s.total],['Победы',s.win],['Поражения',s.loss],...(s.draw?[['Ничьи',s.draw]]:[])].map(([label,n])=>el('div','record-stat',null,el('strong','',n),el('small','',label))),s.streak>=2?el('div','record-streak'+(animate?' streak-enter':''),null,glyph('flame'),el('div','',null,el('strong','',s.streak+' подряд'),el('small','','Серия побед · по архиву'))):null);}
-function resultsPanel(rows,full=false){const chosen=full?filterArchiveSeason(rows,seasonFilter).filter(x=>resultFilter==='all'||resultOutcome(x)===resultFilter):rows;const panel=card(head(full?'Результаты':'Последние результаты',full?'Опубликовано: '+rows.length:'Опубликованные матчи'));panel.classList.add('results-panel');if(full){const filters=el('div','result-filters');filters.setAttribute('role','group');filters.setAttribute('aria-label','Фильтр результатов');for(const [key,label] of [['all','Все'],['win','Победы'],['loss','Поражения'],['draw','Ничьи']]){if(key==='draw'&&!rows.some(x=>resultOutcome(x)==='draw'))continue;const b=el('button','',label);b.type='button';b.dataset.filter=key;b.setAttribute('aria-pressed',String(resultFilter===key));b.onclick=()=>{resultFilter=key;draw();root.querySelector('[data-filter="'+key+'"]')?.focus({preventScroll:true});};filters.append(b);}const season=el('select','season-filter');season.setAttribute('aria-label','Спортивный сезон');for(const [value,label] of [['all','Все сезоны'],...archiveSeasons(rows).map(y=>[String(y),y+' / '+(y+1)])]){const o=el('option','',label);o.value=value;season.append(o);}if(![...season.options].some(o=>o.value===seasonFilter))seasonFilter='all';season.value=seasonFilter;season.onchange=()=>{seasonFilter=season.value;draw();};panel.append(filters,season,p('Сезон: сентябрь — август. Найдено '+chosen.length+' из '+rows.length+' загруженных матчей.'));}
- panel.append(el('div','result-list',null,...archiveRows(full?chosen:chosen.slice(0,5))));if(!chosen.length)panel.append(p('Нет результатов по выбранному фильтру.'));if(!full){const b=el('button','archive-link','Все результаты →');b.type='button';b.onclick=()=>{tab='results';resultFilter='all';draw();nav?.querySelector('[data-tab=results]')?.focus();};panel.append(b);}return panel;}
+function resultsPanel(rows,full=false){
+ const panel=card(head(full?'Результаты':'Последние результаты',full?'Загружено: '+rows.length:'Опубликованные матчи'));panel.classList.add('results-panel');
+ const list=el('div','result-list'),count=p(''),more=el('button','archive-link','Показать ещё результаты');more.type='button';
+ const renderRows=()=>{
+  const chosen=full?searchArchive(rows,{query:resultQuery,season:seasonFilter,outcome:resultFilter}):rows;
+  count.textContent='Найдено '+chosen.length+' из '+rows.length+' загруженных матчей.';
+  list.replaceChildren(...archiveRows(chosen.slice(0,full?resultLimit:5)),!chosen.length?p('Нет результатов по выбранному фильтру.'):null);
+  more.hidden=chosen.length<=resultLimit;
+ };
+ if(full){
+  const filters=el('div','result-filters');filters.setAttribute('role','group');filters.setAttribute('aria-label','Фильтр результатов');
+  for(const [key,label] of [['all','Все'],['win','Победы'],['loss','Поражения'],['draw','Ничьи']]){
+   if(key==='draw'&&!rows.some(x=>resultOutcome(x)==='draw'))continue;
+   const b=el('button','',label);b.type='button';b.dataset.filter=key;b.setAttribute('aria-pressed',String(resultFilter===key));b.onclick=()=>{resultFilter=key;resultLimit=40;draw();root.querySelector('[data-filter="'+key+'"]')?.focus({preventScroll:true});};filters.append(b);
+  }
+  const season=el('select','season-filter');season.setAttribute('aria-label','Спортивный сезон');
+  for(const [value,label] of [['all','Все сезоны'],...archiveSeasons(rows).map(y=>[String(y),y+' / '+(y+1)])]){const o=el('option','',label);o.value=value;season.append(o);}
+  if(![...season.options].some(o=>o.value===seasonFilter))seasonFilter='all';
+  season.value=seasonFilter;season.onchange=()=>{seasonFilter=season.value;resultLimit=40;draw();root.querySelector('.season-filter')?.focus({preventScroll:true});};
+  const search=el('input','archive-search');search.type='search';search.maxLength=200;search.value=resultQuery;search.placeholder='Поиск по сопернику';search.setAttribute('aria-label','Поиск по сопернику');
+  const clear=el('button','archive-link','Очистить поиск');clear.type='button';clear.onclick=()=>{resultQuery='';resultLimit=40;search.value='';renderRows();search.focus();};
+  search.oninput=()=>{resultQuery=search.value;resultLimit=40;renderRows();};count.setAttribute('role','status');
+  more.onclick=()=>{resultLimit+=40;renderRows();};
+  panel.append(filters,season,el('div','archive-search-row',null,search,clear),count,p('Поиск по загруженным матчам. Сезон: сентябрь — август. Сводка выше относится ко всему выбранному сезону.'));
+ }
+ renderRows();panel.append(list);if(full)panel.append(more);
+ else {const b=el('button','archive-link','Все результаты →');b.type='button';b.onclick=()=>{tab='results';resultFilter='all';resultQuery='';resultLimit=40;draw();nav?.querySelector('[data-tab=results]')?.focus();};panel.append(b);}
+ return panel;
+}
 function eventsPanel(m){const events=publicMatchMoments(m);return card(head('Ход матча','Последние '+events.length+' розыгрышей'),p('Только опубликованные события. Серии и смена лидера отмечаются по непрерывному видимому отрезку.'),...events.slice().reverse().map(e=>el('div','event',null,el('span','point-side '+e.side),el('strong','',e.score),el('div','',null,el('span','event-name',e.kind==='point'?'Очко без детализации':reasons[e.kind]),el('small','',(e.actor==='ours'?teamName():m.opponent)+(e.number==null?'':' · №'+e.number)+' · партия '+e.set+' · очко: '+(e.side==='ours'?teamName():m.opponent)),...e.notes.map(n=>el('span','moment-note',n))))));}
 function momentum(m){const rows=m.events.filter(e=>e.set===m.set);if(rows.length<2)return null;const chart=el('div','momentum',null,...rows.map(e=>{const n=el('span',e.side);n.title=e.score+' · '+(e.side==='ours'?teamName():m.opponent);return n;}));chart.style.setProperty('--n',rows.length);chart.setAttribute('role','img');chart.setAttribute('aria-label','Последние '+rows.length+' очков текущей партии: '+rows.map(e=>e.score+' '+(e.side==='ours'?teamName():m.opponent)).join(', '));return card(head('Динамика партии','Последние '+rows.length+' очков'),chart,el('div','legend',null,el('span','',teamName()),el('span','',m.opponent)),p('Слева направо: от более раннего очка к последнему.'));}
 function draw(){
  const now=Date.now(),pinned=tab==='overview'?fixtureTarget():null,state=selectedState(data,now),stale=!!data&&['live','break'].includes(state.mode)&&now-data.updatedAt>90000,modeChanged=lastMode!==state.mode;lastMode=state.mode;lastStale=stale;const fresh=connected&&!awaitingSnapshot&&!stale;
  const previous=lastPaintedMatch,current=data?.match;const changes=scoreChanges(previous,current),finished=previous&&current&&previous.id===current.id&&previous.status!=='finished'&&current.status==='finished';lastPaintedMatch=current?{id:current.id,set:current.set,status:current.status,score:{...current.score}}:null;
  const tabChanged=lastPaintedTab!==tab;lastPaintedTab=tab;
- const mount=parts=>{root.replaceChildren(...parts);if(!root.querySelector('.hero'))setScoreboard(false);if(tabChanged||modeChanged)enterGroup(root.children);};
+ const mount=parts=>{
+  const focus=document.activeElement?.classList.contains('archive-search'),selection=focus?[document.activeElement.selectionStart,document.activeElement.selectionEnd]:null;
+  root.replaceChildren(...parts);if(!root.querySelector('.hero'))setScoreboard(false);
+  if(focus){const search=root.querySelector('.archive-search');if(search){search.focus({preventScroll:true});try{search.setSelectionRange(...selection);}catch{}}}
+  if(tabChanged||modeChanged)enterGroup(root.children);
+ };
  const matchId=state.match?.id;if(!fixtureTarget()&&matchId&&matchId!==lastMatchId&&['live','break'].includes(state.mode))tab='overview';lastMatchId=matchId;
  const name=teamName();for(const id of ['brand-team','footer-team']){const n=document.getElementById(id);if(n)n.textContent=name;}document.title=name+' — матчи и результаты | TeachApp';if(brand)brand.setAttribute('aria-label','TeachApp — '+name);
  connection.textContent=connected&&!awaitingSnapshot?'● На связи':received?'Нет актуальной связи':'Подключение…';connection.dataset.state=connected&&!awaitingSnapshot?'online':'offline';renderNav();
  if(!data){setScoreboard(false);root.replaceChildren(card(el('h1','',received?'Страница пока не опубликована':'TeachApp Volleyball'),p(problem||(received?'Попросите тренера опубликовать расписание.':'Ожидание данных…'))));return;}
- const m=state.match,upcoming=data.schedule.filter(x=>x.id!==data.match?.scheduledId),past=[...new Map([...fanResults(data),...archiveRowsExtra].map(r=>[r.id,r])).values()].sort((a,b)=>b.startedAt-a.startedAt);
+ const m=state.match,upcoming=data.schedule.filter(x=>x.id!==data.match?.scheduledId),past=mergeLoadedResults(fanResults(data),archiveRowsExtra);
  if(resultFilter==='draw'&&!past.some(x=>resultOutcome(x)==='draw'))resultFilter='all';const latest=!pinned&&!state.next&&!['live','break'].includes(state.mode)&&past[0]&&(!m||past[0].id!==m.id)?past[0]:null;
  const parts=[];parts.push(el('p','portal-updated','Последнее обновление: '+format(data.updatedAt,{dateStyle:'short',timeStyle:'medium'})));if(stale||!connected||awaitingSnapshot)parts.push(el('div','notice',stale?'Данные давно не обновлялись. Последний полученный счёт.':'Соединение восстанавливается. Показаны последние данные.'));
- const params=new URL(shareLink).searchParams,requested=params.get('archive')||params.get('match');if(requested&&tab==='overview'){const detailed=data.match?.id===requested&&!params.has('archive')?data.match:null;const row=params.has('archive')?directResult:detailed||past.find(x=>x.id===requested);const back=el('a','archive-link','← Все матчи');const u=new URL(shareLink);back.href=viewerPageLink(u.href);parts.push(back,row?(detailed?card(head('Матч',detailed.status==='finished'?'Завершён':fresh?'Текущий счёт':'Последний счёт'),teams(teamName(),detailed.opponent,detailed),sets(detailed),p(date(detailed.startedAt)),shareMatch(row)):card(head('Результат матча'),...archiveRows([row]),p('Для этой записи опубликован только итоговый счёт.'),shareMatch(row))):card(p(directBusy?'Загрузка результата…':'Результат не найден или снят с публикации.')));if(detailed?.events.length){parts.push(eventsPanel(detailed));const trend=momentum(detailed);if(trend)parts.push(trend);}if(detailed?.stats.length)parts.push(...[statTable(detailed.stats,'ours',teamName()),statTable(detailed.stats,'theirs',detailed.opponent)].filter(Boolean));mount(parts);return;}
+ const params=new URL(shareLink).searchParams,requested=params.get('archive')||params.get('match');if(requested&&tab==='overview'){const detailed=data.match?.id===requested&&!params.has('archive')?data.match:null;const row=params.has('archive')?directResult:detailed||past.find(x=>x.id===requested);const back=el('a','archive-link','← Все матчи');const u=new URL(shareLink);back.href=viewerPageLink(u.href);parts.push(back,row?(detailed?card(head('Матч',detailed.status==='finished'?'Завершён':fresh?'Текущий счёт':'Последний счёт'),teams(teamName(),detailed.opponent,detailed),sets(detailed),p(date(detailed.startedAt)),shareMatch(row),detailed.status==='finished'?resultDownload(row):null):card(head('Результат матча'),...archiveRows([row]),p('Для этой записи опубликован только итоговый счёт.'),shareMatch(row),resultDownload(row))):card(p(directBusy?'Загрузка результата…':'Результат не найден или снят с публикации.')));if(detailed?.events.length){parts.push(eventsPanel(detailed));const trend=momentum(detailed);if(trend)parts.push(trend);}if(detailed?.stats.length)parts.push(...[statTable(detailed.stats,'ours',teamName()),statTable(detailed.stats,'theirs',detailed.opponent)].filter(Boolean));mount(parts);return;}
  if(['news','tournament'].includes(tab)){parts.push(mediaPanel());mount(parts);return;}
  if(tab==='schedule'){parts.push(schedulePanel());mount(parts);return;}
  if(tab==='results'){if(past.length)parts.push(resultsOverview(filterArchiveSeason(past,seasonFilter)),resultsPanel(past,true));else parts.push(el('section','card empty',null,el('h2','','Результаты'),p('Опубликованных результатов пока нет.')));parts.push(archiveControls());mount(parts);return;}
@@ -89,7 +139,7 @@ function draw(){
  }else if(m){const finished=m.status==='finished',live=m.status==='live';hero.append(el('div','status-pill'+(live&&fresh?' live':''),finished?'ФИНАЛ':!fresh?'ПОСЛЕДНИЙ СЧЁТ':live?'LIVE':'ПЕРЕРЫВ'),el('h1','',finished?'Матч завершён':live?'Партия '+m.set:'Перерыв · партия '+m.set),teams(teamName(),m.opponent,m),el('p','set-wins',finished?(m.setsWon.ours>m.setsWon.theirs?'Победа команды '+teamName():'Итог встречи'):'Партии '+m.setsWon.ours+':'+m.setsWon.theirs),sets(m));}
  else hero.append(el('h1','',teamName()),p('Предстоящих матчей пока нет. Загляните позже.'));
  if(finished&&current&&(!pinned||m?.id===current.id)){const final=el('div','fan-final'+(current.setsWon.ours>current.setsWon.theirs?'':' neutral'),null,el('strong','',current.setsWon.ours>current.setsWon.theirs?'Победа!':'Матч завершён'),el('span','',teamName()+' — '+current.opponent+' · '+current.setsWon.ours+':'+current.setsWon.theirs));if(current.setsWon.ours>current.setsWon.theirs&&document.documentElement.dataset.motion==='full'&&motionAllowed()){const sparks=el('div','fan-sparks');sparks.setAttribute('aria-hidden','true');for(let i=0;i<16;i++){const n=el('i');n.style.setProperty('--x',Math.round(Math.cos(i*Math.PI/8)*(70+(i%3)*15))+'px');n.style.setProperty('--y',Math.round(Math.sin(i*Math.PI/8)*(40+(i%3)*10))+'px');n.style.setProperty('--turn',(i%2?1:-1)*(45+i*17)+'deg');n.style.setProperty('--spark', ['#FDE68A','#86EFAC','#F8FAFC','#93C5FD'][i%4]);sparks.append(n);}final.append(sparks);}parts.push(final);final.classList.add('fan-final-enter');}
- if(state.next)hero.append(shareFixture(state.next));else if(m&&!latest)hero.append(pinned?shareFixture(m):shareMatch(m));hero.append(fullScreen());parts.push(hero);if(!pinned&&past.length)parts.push(resultsOverview(past));
+ if(state.next)hero.append(shareFixture(state.next));else if(m&&!latest)hero.append(pinned?shareFixture(m):shareMatch(m));if(latest||m?.status==='finished')hero.append(resultDownload(latest||m));hero.append(fullScreen());parts.push(hero);if(!pinned&&past.length)parts.push(resultsOverview(past));
  if(!latest&&m?.events.length){const trend=momentum(m);parts.push(trend?el('div','overview-grid',null,eventsPanel(m),trend):eventsPanel(m));}
  if(!latest&&m?.stats.length)parts.push(el('div','details-grid',null,...[statTable(m.stats,'ours',teamName()),statTable(m.stats,'theirs',m.opponent)].filter(Boolean)));
  if(!pinned&&upcoming.length)parts.push(card(head('Расписание',upcoming.length+' встреч'),...scheduleRows(upcoming)));

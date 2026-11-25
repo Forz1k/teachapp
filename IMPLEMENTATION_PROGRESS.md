@@ -343,3 +343,7 @@ PR #94 не объединён, новый релиз не опубликова�
 ## Viewer fixture links and scoreboard checkpoint
 - `091250e`: canonical public fixture links and exact scheduledId matching, grouped schedule, scoreboard mode and prefilled matchday poster. Existing public schema unchanged. Once current finished match is replaced the fixture route directs to results, not a guessed match.
 - 389/389, zero failures/skips; both full CI runs, 73 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45578515703).
+
+## Studio 2.0 checkpoint
+- `6f80e7e`: team/device-local style, editable public post draft and batch PNG/TXT ZIP; no new runtime dependency or image persistence. Long title/score/footer layout corrected.
+- 394/394, zero failures/skips, 74 Chromium screenshots, offline batch export, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45581492539).
