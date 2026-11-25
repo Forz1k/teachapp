@@ -73,10 +73,10 @@ function enterResult(norm,studentId,lessonId){
   if(!student||!lesson)return toast('Ученик или урок не найден');
   const cls=S.state.classes.find(c=>c.id===student.classId),selectedScale=A.selectNormScale(norm,cls,student);
   const matches=S.normCheck(norm,lesson,studentId),mark=S.markMap(lesson.classId).get(lessonId+'|'+studentId),full=S.activeExemption(studentId,lesson.date)||M.hasOsv(mark);
-  const blocked=full||mark?.flag==='Н'||matches.some(m=>['avoid','no_test'].includes(m.restriction.type));
+  const blocked=full||mark?.flag==='Н'||matches.some(m=>m.potential||['avoid','no_test'].includes(m.restriction.type));
   const panel=el('div',{},[el('h2',{text:norm.name}),el('p',{text:student.fullName+' · '+M.lessonLabel(lesson)}),
     el('p',{text:matches.length?'Внимание: есть действующие ограничения.':'По внесённым сведениям совпадений нет. Это не подтверждение медицинского допуска.'})]);
-  for(const m of matches)panel.append(el('p',{text:(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'Нагрузка')+' · '+({avoid:'Не выполнять',no_test:'Освобождение от норматива',adapt:'Адаптация нагрузки',individual:'Индивидуальные условия'}[m.restriction.type]||'Ограничение')+' · '+(m.restriction.instruction||'')}));
+  for(const m of matches)panel.append(el('p',{text:(m.potential?'Возможное ограничение — уточните категорию норматива: ':'')+(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'Нагрузка')+' · '+({avoid:'Не выполнять',no_test:'Освобождение от норматива',adapt:'Адаптация нагрузки',individual:'Индивидуальные условия'}[m.restriction.type]||'Ограничение')+' · '+(m.restriction.instruction||'')}));
   panel.append(el('p',{text:'Класс: '+(cls?.name||'—')+' · категория: '+(A.normGroups[student.normGroup]||'Не указана')}),
     el('p',{text:selectedScale?'Шкала: '+selectedScale.label+' · пороги 1–5: '+selectedScale.scale.join(' / '):'Подходящая шкала не найдена. Результат можно сохранить без оценки.'}));
   if(!student.normGroup){
@@ -93,7 +93,7 @@ function enterResult(norm,studentId,lessonId){
     if(busy)return;busy=true;
     try{await S.saveNormResult({normId:norm.id,studentId,lessonId,status,value,basis});ui.closeSheet();toast('Результат сохранён');}catch(e){error(e);}finally{busy=false;}
   };
-  if(matches.length||full)panel.append(btn('Не выполнялся по ограничению',()=>save('restricted',null,'')));
+  if(matches.some(m=>!m.potential)||full)panel.append(btn('Не выполнялся по ограничению',()=>save('restricted',null,'')));
   if(!blocked){
     const basis=el('textarea',{placeholder:'Подтверждённое основание допуска (без диагноза)'}),value=el('input',{type:'number',min:0,step:'any',placeholder:norm.unit}),estimate=el('p',{role:'status'});
     value.oninput=()=>{try{estimate.textContent=value.value===''?'':'Предлагаемая оценка: '+(selectedScale?A.gradeNorm({...norm,scale:selectedScale.scale},Number(value.value))||'вне шкалы':'нет подходящей шкалы');}catch{estimate.textContent='Проверьте значение';}};

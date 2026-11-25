@@ -1,4 +1,5 @@
 import { openRoster, openLessonRestrictions } from './health.js';
+import { todayEntries } from './today.js';
 /* screens/classes.js — стартовый экран: 9 карточек классов. */
 
 import * as M from '../model.js';
@@ -82,23 +83,21 @@ export function renderClasses(root, ctx = {}) {
     return;
   }
 
-  const todayClasses = new Set([...store.scheduleForDate(today).map(row => row.classId),
-    ...store.state.lessons.filter(l => l.date === today).map(l => l.classId)]);
   const todayList=el('section',{class:'card-block class-today'});
   const holiday=M.isSchoolHoliday(today,settings.holidays||[]);
   if(holiday)todayList.append(el('p',{class:'sub',text:'Каникулы · уроков по расписанию нет'}));
-  for(const cls of store.state.classes.filter(c=>todayClasses.has(c.id))){
-    const lesson=store.lessonsOfClass(cls.id).find(l=>l.date===today);
-    if(holiday&&(!lesson||!store.lessonHeld(lesson)))continue;
-    const current=lesson||{classId:cls.id,date:today};
+  for(const {cls,lesson,slot,time} of todayEntries(today)){
+    const current=lesson||{classId:cls.id,date:today,slot,time};
+    const label=[M.displayClassName(cls.name),slot!=null?'№'+slot:'',time||''].filter(Boolean).join(' · ');
     const topic=store.state.topics.find(t=>t.id===current.topicId);
-    const {matches,needsReview}=store.lessonCheck(current);
+    const {matches,potentialMatches,needsReview}=store.lessonCheck(current);
     const count=new Set(matches.map(m=>m.studentId)).size;
+    const possible=new Set(potentialMatches.map(m=>m.studentId)).size;
     const full=store.studentsOfClass(cls.id).filter(s=>store.activeExemption(s.id,today)).length;
-    const status=count?'Ограничения: '+count+' уч.':!lesson?'Урок не создан':needsReview?'Нагрузки не указаны или не подтверждены':'Совпадений ограничений не найдено';
-    const note=(count&&needsReview?' · нужна проверка нагрузки':'')+(full?' · ОСВ: '+full:'');
-    todayList.append(el('button',{class:'class-today-row',type:'button','aria-label':M.displayClassName(cls.name)+' · '+status+note,onclick:()=>openLessonRestrictions(current)},[
-      el('span',{class:'class-name-pill',text:M.displayClassName(cls.name)}),
+    const status=count?'Ограничения: '+count+' уч.':possible?'Возможные ограничения: '+possible+' уч.':!lesson?'Урок не создан':needsReview?'Нагрузки не указаны или не подтверждены':'Совпадений ограничений не найдено';
+    const note=(count&&possible?' · возможные: '+possible+' уч.':'')+(needsReview&&(count||possible)?' · нужна проверка нагрузки':'')+(full?' · ОСВ: '+full:'');
+    todayList.append(el('button',{class:'class-today-row',type:'button','aria-label':label+' · '+status+note,onclick:()=>openLessonRestrictions(current)},[
+      el('span',{class:'class-name-pill',text:label}),
       el('span',{class:'class-today-copy'},[el('strong',{text:topic?.name||(lesson?'Тема не указана':'Урок по расписанию')}),el('span',{class:'class-today-status '+(count||full?'has-restrictions':needsReview?'needs-review':'checked'),text:status+note})]),
       el('span',{class:'class-today-arrow','aria-hidden':'true'},[icon('chevron')])
     ]));

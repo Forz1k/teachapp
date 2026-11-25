@@ -702,3 +702,19 @@ test('class overview displays one compact row and tags require explicit confirma
   assert.equal(store.lessonCheck(l).needsReview,false);
   ui.closeSheet();
 });
+
+test('Обзор классов проверяет все слоты, включая ещё не созданный урок',async()=>{
+ const {cls,b}=await seed();const M=await import('../js/model.js');const day=M.todayIso();
+ const first=await store.addTopic('Гибкость',1),second=await store.addTopic('Бег',2);
+ await store.updateTopic(first.id,{activityIds:['flex']});await store.updateTopic(second.id,{activityIds:['run']});
+ for(const slot of [1,2,3])await store.setScheduleEntry({weekday:M.weekdayOf(day),slot,classId:cls.id,time:String(slot+7).padStart(2,'0')+':00'});
+ await store.addLesson(cls.id,day,first.id,'',{slot:1,time:'08:00'});
+ await store.addLesson(cls.id,day,second.id,'',{slot:2,time:'09:00'});
+ await store.saveRestriction({studentId:b.id,activityId:'sprint',type:'avoid',dateFrom:day});
+ const screen=doc.createElement('div');renderClasses(screen,{});
+ const rows=[...screen.querySelectorAll('.class-today-row')];
+ assert.equal(rows.length,3);assert.match(rows[0].textContent,/№1.*Гибкость/);assert.match(rows[0].textContent,/Совпадений ограничений не найдено/);
+ assert.match(rows[1].textContent,/№2.*Бег/);assert.match(rows[1].textContent,/Возможные ограничения: 1/);
+ assert.match(rows[2].textContent,/№3.*Урок не создан/);
+ rows[1].click();assert.match(doc.querySelector('.sheet').textContent,/Возможное ограничение: Спринт/);assert.match(doc.querySelector('.sheet').textContent,/Петрова Анна/);ui.closeSheet();
+});
