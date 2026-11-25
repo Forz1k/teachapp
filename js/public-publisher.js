@@ -1,10 +1,10 @@
 import {mediaTarget,readMediaVersion,writePublicMedia,mediaProjection} from './public-media.js';
-import {archiveTarget,archiveKey,readArchiveVersion,writeArchiveRecord,fetchArchivePage,equalArchiveResult} from './public-archive.js';
+import {archiveTarget,archiveKey,readArchiveVersion,writeArchiveRecord,fetchArchivePage,equalArchiveResult,fetchArchiveById,queueArchiveResult,archiveProjection} from './public-archive.js';
 /* Team portal state is separate from school/coach records. Opt-in publishing only. */
 import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures,checkHandoffMatch} from './public-portal.js';
 import {firebaseSignIn,firebasePublisher,samePortalContent} from './firebase-portal.js';
 const PREFIX='teachapp:public-portal:',states=new Map();
-const initial=()=>({origin:'',apiKey:'',owner:'',slug:'',team:'',schedule:[],archive:[],match:null,activeId:null,enabled:false,publisherPaused:false,pendingDelete:false,confirmedEtag:null,pendingWrite:null,settings:{events:true,numbers:false,stats:true,auto:true}});
+const initial=()=>({origin:'',apiKey:'',owner:'',slug:'',team:'',schedule:[],archive:[],match:null,activeId:null,enabled:false,publisherPaused:false,pendingDelete:false,confirmedEtag:null,pendingWrite:null,archivePending:[],settings:{events:true,numbers:false,stats:true,auto:true,permanent:false}});
 const clone=x=>structuredClone(x);
 const key=id=>PREFIX+id,pauseKey=id=>'teachapp:portal-paused:'+id;
 // Separate local flag prevents a stale tab's saved public draft from clearing a pause.
@@ -17,13 +17,14 @@ function entry(id){
  // Migrate previously cached public snapshots before the next upload.
  if(data.match)data.match.id='match_'+data.match.startedAt;
  data.archive=data.archive.map(row=>({...row,id:row.id?.startsWith('result_')?row.id:'match_'+row.startedAt}));
+ data.archivePending=(Array.isArray(data.archivePending)?data.archivePending:[]).flatMap(row=>{try{return [archiveProjection(row)];}catch{return [];}});
  try{if(localStorage.getItem(pauseKey(id))==='1')data.publisherPaused=true;}catch{}
- const e={id,data,session:null,publisher:null,status:data.publisherPaused?'Отправка приостановлена на этом устройстве':data.enabled?'Войдите для синхронизации':'Не опубликовано',dirty:false,running:false,conflict:false,timer:null,epoch:0,listeners:new Set()};
+ const e={id,data,session:null,publisher:null,status:data.publisherPaused?'Отправка приостановлена на этом устройстве':data.enabled?'Войдите для синхронизации':'Не опубликовано',dirty:false,running:false,conflict:false,archiveSending:false,timer:null,epoch:0,listeners:new Set()};
  states.set(id,e);return e;
 }
 function notify(e){for(const f of e.listeners){try{f();}catch{}}}
 function status(e,t){e.status=t;notify(e);}
-export function portalInfo(id){const e=entry(id);isPaused(e);return {data:clone(e.data),connected:!!e.session,status:e.status,dirty:e.dirty,conflict:e.conflict};}
+export function portalInfo(id){const e=entry(id);isPaused(e);return {data:clone(e.data),connected:!!e.session,status:e.status,dirty:e.dirty,conflict:e.conflict,archiveSending:e.archiveSending};}
 export function watchPortal(id,fn){const e=entry(id);e.listeners.add(fn);return ()=>e.listeners.delete(fn);}
 export function defaultPageCode(id){
  for(let i=0;i<localStorage.length;i++){
@@ -107,7 +108,8 @@ export async function acceptRemotePortal(id){
  const version=await client.readVersion();if(e.publisher!==client||e.epoch!==epoch||e.running)throw Error('Подключение изменилось. Повторите действие.');
  const remote=readPortal(version.data),d=e.data;
  if(e.timer)clearTimeout(e.timer);e.timer=null;
- Object.assign(d,{confirmedEtag:version.etag,pendingWrite:null,enabled:!!remote,pendingDelete:false,schedule:remote?.schedule||[],archive:remote?.archive||[],match:remote?.match||null,activeId:remote?.match&&['live','break'].includes(remote.match.status)?remote.match.id:null,publisherPaused:!!remote?.match&&['live','break'].includes(remote.match.status)});
+ if(e.archiveSending)throw Error('Завершите отправку архива');
+ Object.assign(d,{archivePending:[],confirmedEtag:version.etag,pendingWrite:null,enabled:!!remote,pendingDelete:false,schedule:remote?.schedule||[],archive:remote?.archive||[],match:remote?.match||null,activeId:remote?.match&&['live','break'].includes(remote.match.status)?remote.match.id:null,publisherPaused:!!remote?.match&&['live','break'].includes(remote.match.status)});
  if(remote)d.team=remote.team;
  d.settings.auto=false;e.conflict=false;e.dirty=false;if(!save(e))throw Error('Не удалось сохранить серверную версию');persistPause(e,d.publisherPaused);
  status(e,d.publisherPaused?'Принята серверная версия · отправка счёта приостановлена':'Принята серверная версия · автоматический запуск выключен');return portalInfo(id);
@@ -148,12 +150,13 @@ export async function continuePortalHandoff(id,local,expected,{confirmed=false}=
  if(e.timer)clearTimeout(e.timer);e.timer=null;e.dirty=false;e.conflict=false;status(e,'Управление продолжено · счёт подтверждён, запись при следующем событии');return portalInfo(id);
 }
 export function setPortalEnabled(id,enabled,team){
- const e=entry(id),d=e.data;ensurePublishingAllowed(e);if(e.conflict)throw Error('Сначала разрешите конфликт публикации.');if(enabled&&!e.publisher)throw Error('Сначала подключите Firebase');
- d.enabled=!!enabled;d.team=String(team||d.team).trim().slice(0,100);d.pendingDelete=!enabled; if(!enabled){d.activeId=null;d.match=null;}
+ const e=entry(id),d=e.data;ensurePublishingAllowed(e);if(e.conflict)throw Error('Сначала разрешите конфликт публикации.');if(e.archiveSending&&!enabled)throw Error('Завершите отправку архива');if(enabled&&!e.publisher)throw Error('Сначала подключите Firebase');
+ d.enabled=!!enabled;d.team=String(team||d.team).trim().slice(0,100);d.pendingDelete=!enabled; if(!enabled){if(e.archiveSending)throw Error('Завершите отправку архива');d.activeId=null;d.match=null;d.archivePending=[];}
  save(e);enqueue(e);return portalInfo(id);
 }
 export function setPortalSettings(id,patch){
- const e=entry(id),d=e.data;ensurePublishingAllowed(e);for(const k of ['events','numbers','stats','auto'])if(Object.hasOwn(patch,k))d.settings[k]=!!patch[k];
+ const e=entry(id),d=e.data;ensurePublishingAllowed(e);for(const k of ['events','numbers','stats','auto','permanent'])if(Object.hasOwn(patch,k))d.settings[k]=!!patch[k];
+ if(!d.settings.permanent&&Object.hasOwn(patch,'permanent'))d.archivePending=[];
  if(d.match){if(!d.settings.events)d.match.events=[];if(!d.settings.numbers){d.match.events=d.match.events.map(({number,...x})=>x);d.match.stats=[];}if(!d.settings.stats)d.match.stats=[];}
  save(e);if(d.enabled)enqueue(e);else notify(e);
 }
@@ -179,7 +182,7 @@ export function syncPortalMatch(match,{start=false,finish=false,discard=false}={
   const scheduledId=continuing&&d.match?d.match.scheduledId:scheduled?.id;
   d.match=projectMatch(match,{...d.settings,scheduledId});
   if(scheduled?.logos)d.match.logos={ours:d.match.logos?.ours||scheduled.logos.ours,theirs:d.match.logos?.theirs||scheduled.logos.theirs};
-  if(finish){if(d.match.status!=='finished')throw Error('Матч ещё не завершён');d.archive=sortedArchive([archiveMatch(d.match),...d.archive.filter(x=>x.id!==d.match.id)]);d.schedule=d.schedule.filter(x=>x.id!==scheduledId);d.activeId=null;}
+  if(finish){if(d.match.status!=='finished')throw Error('Матч ещё не завершён');const completed=archiveMatch(d.match);if(d.settings.permanent)d.archivePending=queueArchiveResult(d.archivePending,completed);d.archive=sortedArchive([completed,...d.archive.filter(x=>x.id!==d.match.id)]);d.schedule=d.schedule.filter(x=>x.id!==scheduledId);d.activeId=null;}
  }
  save(e);enqueue(e);return true;
 }
@@ -196,15 +199,15 @@ export async function publishSavedResult(id,match,{fixtureId=null}={}){
  if(fixtureId&&!resultFixtures(d.schedule,match,['live','break'].includes(d.match?.status)?d.match?.scheduledId:null).some(x=>x.id===fixtureId))throw Error('Выбранная встреча недоступна или уже идёт');
  const next=sortedArchive([result,...d.archive.filter(x=>x.id!==result.id)]);
  if(!next.some(x=>x.id===result.id))throw Error('В публичном архиве доступны только 20 последних матчей');
- d.archive=next;if(fixtureId)d.schedule=d.schedule.filter(x=>x.id!==fixtureId);
+ if(d.settings.permanent)d.archivePending=queueArchiveResult(d.archivePending,result);d.archive=next;if(fixtureId)d.schedule=d.schedule.filter(x=>x.id!==fixtureId);
  save(e);enqueue(e);return result;
 }
 export function unpublishResult(id,resultId){
  const e=entry(id),d=e.data;ensurePublishingAllowed(e);
- if(!d.enabled)throw Error('Сначала включите публикацию страницы');
+ if(e.archiveSending)throw Error('Завершите отправку архива');if(!d.enabled)throw Error('Сначала включите публикацию страницы');
  if(d.match?.id===resultId&&['live','break'].includes(d.match.status))throw Error('Нельзя убрать текущую трансляцию');
  if(!d.archive.some(x=>x.id===resultId)&&d.match?.id!==resultId)throw Error('Результат уже отсутствует');
- d.archive=d.archive.filter(x=>x.id!==resultId);
+ d.archivePending=d.archivePending.filter(x=>x.id!==resultId);d.archive=d.archive.filter(x=>x.id!==resultId);
  if(d.match?.id===resultId&&d.match.status==='finished')d.match=null;
  save(e);enqueue(e);
 }
@@ -220,15 +223,16 @@ export async function listExtendedArchive(id,{cursor=null,fetcher=fetch}={}){
 }
 export async function publishExtendedResult(id,result,{confirm,fetcher=fetch}={}){
  const access=archiveSession(id),k=archiveKey(result),version=await readArchiveVersion(access.target,k,fetcher);
- access.stillAllowed();if(!await confirm?.(version.value))return false;access.stillAllowed();
+ access.stillAllowed();const existing=await fetchArchiveById(access.target,result.id,fetcher);access.stillAllowed();if(existing&&existing.archiveKey!==k)throw Error('Этот результат уже сохранён под другой датой. Проверьте архив.');if(!await confirm?.(version.value))return false;access.stillAllowed();
  const token=await access.session.getToken();access.stillAllowed();await writeArchiveRecord(access.target,k,result,token,version.etag,fetcher);return true;
 }
 export async function removeExtendedResult(id,result,{confirm,fetcher=fetch}={}){
+ if(entry(id).archiveSending)throw Error('Завершите отправку очереди');
  const access=archiveSession(id),k=archiveKey(result),version=await readArchiveVersion(access.target,k,fetcher);
  access.stillAllowed();if(!version.value)return false;
  if(!equalArchiveResult(version.value,result))throw Error('Запись изменилась. Обновите список перед удалением.');
  if(!await confirm?.(version.value))return false;access.stillAllowed();
- const token=await access.session.getToken();access.stillAllowed();await writeArchiveRecord(access.target,k,null,token,version.etag,fetcher);return true;
+ const token=await access.session.getToken();access.stillAllowed();await writeArchiveRecord(access.target,k,null,token,version.etag,fetcher);const e=entry(id);e.data.archivePending=e.data.archivePending.filter(x=>x.id!==result.id);save(e);notify(e);return true;
 }
 /** Copy only already-confirmed public score projections; never replace existing records. */
 export async function migrateExtendedArchive(id,{confirm,fetcher=fetch}={}){
@@ -238,6 +242,7 @@ export async function migrateExtendedArchive(id,{confirm,fetcher=fetch}={}){
  for(const row of rows){access.stillAllowed();try{
   const k=archiveKey(row),version=await readArchiveVersion(access.target,k,fetcher);access.stillAllowed();
   if(version.value){if(equalArchiveResult(version.value,row))report.existing++;else report.conflicts++;continue;}
+   const existing=await fetchArchiveById(access.target,row.id,fetcher);access.stillAllowed();if(existing){report.conflicts++;continue;}
   const token=await access.session.getToken();access.stillAllowed();
   await writeArchiveRecord(access.target,k,row,token,version.etag,fetcher);report.copied++;
  }catch(e){access.stillAllowed();if(e.status===412)report.conflicts++;else report.failed++;}}
@@ -246,3 +251,40 @@ export async function migrateExtendedArchive(id,{confirm,fetcher=fetch}={}){
 
 export async function loadMediaVersion(id,fetcher=fetch){const a=archiveSession(id),v=await readMediaVersion(mediaTarget(a.portal),fetcher);a.stillAllowed();return v;}
 export async function publishMediaVersion(id,value,etag,fetcher=fetch){const a=archiveSession(id),token=await a.session.getToken();a.stillAllowed();await writePublicMedia(mediaTarget(a.portal),mediaProjection(value),token,etag,fetcher);return true;}
+
+/** Pending records are created only by explicit opt-in on already public results.
+ * Retry is manual; conflicts never overwrite and remain queued. */
+export function discardPendingArchive(id,resultId){
+ const e=entry(id);ensurePublishingAllowed(e);if(e.archiveSending)throw Error('Завершите отправку архива');
+ const before=e.data.archivePending;e.data.archivePending=before.filter(x=>x.id!==resultId);
+ if(!save(e)){e.data.archivePending=before;throw Error('Не удалось сохранить очередь');}notify(e);
+}
+export async function sendPendingArchive(id,{confirm,fetcher=fetch}={}){
+ const e=entry(id),access=archiveSession(id),rows=clone(e.data.archivePending);
+ if(e.archiveSending)throw Error('Очередь уже отправляется');
+ if(!rows.length)return {copied:0,existing:0,conflicts:0,failed:0};
+ e.archiveSending=true;notify(e);
+ const report={copied:0,existing:0,conflicts:0,failed:0};
+ try{
+  if(!await confirm?.(rows.length))return {...report,cancelled:true};
+  access.stillAllowed();
+  for(const row of rows){
+   try{
+    access.stillAllowed();
+    if(!e.data.archivePending.some(x=>equalArchiveResult(x,row)))continue;
+    const k=archiveKey(row),version=await readArchiveVersion(access.target,k,fetcher);access.stillAllowed();
+    if(version.value&&!equalArchiveResult(version.value,row)){report.conflicts++;continue;}
+    if(!version.value){
+     const existing=await fetchArchiveById(access.target,row.id,fetcher);access.stillAllowed();if(existing){report.conflicts++;continue;}
+     const token=await access.session.getToken();access.stillAllowed();
+     if(!e.data.archivePending.some(x=>equalArchiveResult(x,row)))continue;
+     await writeArchiveRecord(access.target,k,row,token,version.etag,fetcher);report.copied++;
+    }else report.existing++;
+    access.stillAllowed();
+    const before=e.data.archivePending;e.data.archivePending=before.filter(x=>!equalArchiveResult(x,row));
+    if(!save(e)){e.data.archivePending=before;throw Error('Не удалось сохранить подтверждение очереди');}
+   }catch(error){if(error.status===412)report.conflicts++;else report.failed++;}
+  }
+  return report;
+ }finally{e.archiveSending=false;notify(e);}
+}

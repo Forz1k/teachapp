@@ -19,3 +19,9 @@ Emulator tests cover owner/foreign/guest permissions, limits, unknown fields, in
 ## 5.5 stage 1 — direct season browsing
 
 The spectator may query a UTC September–August season by its starting year, including a year absent from the latest 20 matches. Both key bounds and the cursor are validated; each query remains bounded to at most 42 records. Changing seasons invalidates in-flight page responses. Legacy recent results are still merged and filtered; summaries and search cover only loaded data. No production rules, publication or migration changed.
+
+## 5.5 stages 2–6 — persistent result queue and historical viewer
+
+Opt-in local outbox queues only explicitly published scores, including finished LIVE and manually published recent matches. No automatic remote writes: after parent synchronization the owner confirms the pending batch. Each score-only entry is written conditionally, exact retries acknowledge existing records, differing records or same ID under another date stay unresolved; disabling queue/publication, accepting remote state or removing a recent result clears corresponding pending entries. Existing remote archive entries are independent; parent removal hides but does not erase them. No tokens, private player data or raw events are queued. A local device must keep its storage; the queue is not a cross-device or background delivery guarantee.
+
+Legacy match links can resolve through a bounded exact-ID index; ambiguous IDs are rejected. Permanent links use original timestamp keys. Historical pages contain exact score/sets/point differential and loaded head-to-head history; no invented rally timelines, playing time, names or individual stats. Candidate rules constrain key/body equality, integer scores, continuous set indexes, non-tied sets, exact set totals and bounded indexed lookups. Production rules remain unchanged; explicit migration and physical-device acceptance required.

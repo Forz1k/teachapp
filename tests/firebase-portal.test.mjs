@@ -113,3 +113,27 @@ test('cooperative LIVE handoff pauses the first device, validates the published 
 });
 
 test('persistent pause marker prevents stale local publisher from sending after a pause in another tab',async()=>{server=null;const map=new Map();globalThis.localStorage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};const id='cross-tab-pause';await P.connectPortal(id,{origin,apiKey,email:'trainer@example.org',password:'password',slug:'pause',team:'Команда'},fake);P.setPortalEnabled(id,true,'Команда');await wait(()=>server?.team==='Команда'&&!P.portalInfo(id).dirty);map.set('teachapp:portal-paused:'+id,'1');assert.equal(P.portalInfo(id).data.publisherPaused,true);assert.throws(()=>P.setPublicTeamName(id,'Blocked'),/приостановлена/);assert.equal(server.team,'Команда');P.disconnectPortal(id);});
+
+test('Opt-in archive queue survives disconnection, never overwrites conflicts, and retries idempotently',async()=>{
+ server=null;const map=new Map();globalThis.localStorage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};
+ const id='archive-queue-test',credentials={origin,apiKey,email:'trainer@example.org',password:'password',slug:'queue',team:'Команда'},records=new Map();let archiveWrites=0;
+ const fetcher=async(url,opt={})=>{
+  if(!url.includes('/publicMatchArchive/'))return fake(url,opt);
+  const u=new URL(url),k=u.pathname.split('/').at(-1).replace(/\.json$/,'');
+  if(u.searchParams.has('equalTo'))return json(Object.fromEntries([...records].filter(([,r])=>r.id===JSON.parse(u.searchParams.get('equalTo')))));
+  if(opt.method==='PUT'){if(opt.headers['If-Match']!==(records.has(k)?'present':'empty'))return json(null,412);archiveWrites++;records.set(k,JSON.parse(opt.body));return json(records.get(k));}
+  return new Response(JSON.stringify(records.get(k)||null),{headers:{ETag:records.has(k)?'present':'empty'}});
+ };
+ await P.connectPortal(id,credentials,fetcher);P.setPortalEnabled(id,true,'Команда');await wait(()=>!P.portalInfo(id).dirty);
+ const match={id:'private_id',teamId:id,date:'2025-11-01',opponent:'Гости',sets:[{ours:25,theirs:20}],privateNote:'secret'};
+ await P.publishSavedResult(id,match);await wait(()=>!P.portalInfo(id).dirty);assert.equal(P.portalInfo(id).data.archivePending.length,0);
+ P.setPortalSettings(id,{permanent:true});await wait(()=>!P.portalInfo(id).dirty);
+ P.disconnectPortal(id);const result=await P.publishSavedResult(id,match);assert.equal(P.portalInfo(id).data.archivePending.length,1);assert.equal([...map.values()].join('').includes('privateNote'),false);
+ await P.connectPortal(id,credentials,fetcher);await wait(()=>!P.portalInfo(id).dirty);
+ const cancelled=await P.sendPendingArchive(id,{confirm:()=>false,fetcher});assert.equal(cancelled.cancelled,true);assert.equal(archiveWrites,0);
+ const key=String(result.startedAt).padStart(16,'0')+'_'+result.id;records.set(key,{...result,opponent:'Other'});
+ const conflict=await P.sendPendingArchive(id,{confirm:()=>true,fetcher});assert.equal(conflict.conflicts,1);assert.equal(archiveWrites,0);assert.equal(P.portalInfo(id).data.archivePending.length,1);
+ records.delete(key);const sent=await P.sendPendingArchive(id,{confirm:()=>true,fetcher});assert.equal(sent.copied,1);assert.equal(archiveWrites,1);assert.equal(P.portalInfo(id).data.archivePending.length,0);
+ await P.publishSavedResult(id,match);await wait(()=>!P.portalInfo(id).dirty);const retry=await P.sendPendingArchive(id,{confirm:()=>true,fetcher});assert.equal(retry.existing,1);assert.equal(archiveWrites,1);
+ P.disconnectPortal(id);
+});
