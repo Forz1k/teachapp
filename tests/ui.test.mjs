@@ -737,3 +737,20 @@ test('Центр закрытия периода показывает все к�
  assert.match(doc.querySelector('.sheet').textContent,/слот без записи/);
  assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
 });
+
+test('Подготовка незаведённого урока проверяет конспект и не создаёт записи',async()=>{
+ const {cls,b}=await seed(),M=await import('../js/model.js'),day=M.todayIso(),W=await import('../js/workbench.js');
+ await store.setScheduleEntry({weekday:M.weekdayOf(day),slot:5,classId:cls.id,time:'12:00'});
+ await store.saveRestriction({studentId:b.id,activityId:'sprint',type:'avoid',dateFrom:day});
+ const plan=await W.saveWork({kind:'plan',name:'Тестовый бег',context:'school',minutes:45,goal:'Цель',equipment:'',audience:'9А',items:[{phase:'main',exercise:{...W.builtinExercises[0],activityId:'run',name:'Бег'},minutes:5,notes:''}]});
+ const before=await db.dumpAll(),screen=doc.createElement('div');renderToday(screen,{},day);
+ const card=[...screen.querySelectorAll('.lesson-card')].find(n=>n.textContent.includes('Урок 5'));
+ assert.ok(card);
+ [...card.querySelectorAll('button')].find(x=>x.textContent==='Подготовка к уроку').click();await tick(100);
+ const sheet=doc.querySelector('.sheet');assert.match(sheet.textContent,/запись урока ещё не создана/);
+ assert.match(sheet.textContent,/Другие действующие ограничения/);
+ const select=sheet.querySelector('select[aria-label="Конспект для подготовки"]');select.value=plan.id;select.onchange();
+ assert.match(sheet.textContent,/Возможное ограничение: Петрова Анна Сергеевна/);
+ assert.match(sheet.textContent,/Конспект не назначен уроку автоматически/);
+ assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
+});

@@ -32,3 +32,10 @@ test('alternative candidates exclude matching restrictions, unknown tags and ful
  const {catalog}=await import('../js/health.js'),lesson={classId:'c',date:'2026-11-24',activityIds:['run']},students=[{id:'a',classId:'c'},{id:'b',classId:'c'}],exercises=['run','jump','pass','unknown'].map(activityId=>({kind:'exercise',activityId})),ctx={students,activities:catalog,restrictions:[{studentId:'a',activityId:'jump',type:'avoid',dateFrom:'2026-01-01'}],exemptions:[{studentId:'b',dateFrom:'2026-01-01',dateTo:null}]};
  assert.deepEqual(W.alternativeExerciseCandidates(lesson,'a',exercises,ctx).rows.map(r=>r.exercise.activityId),['pass']);assert.equal(W.alternativeExerciseCandidates(lesson,'b',exercises,ctx).full,true);assert.deepEqual(W.alternativeExerciseCandidates(lesson,'b',exercises,ctx).rows,[]);assert.throws(()=>W.alternativeExerciseCandidates(lesson,'foreign',exercises,ctx));
 });
+
+test('Broad exercise preview includes potential restrictions without classifying them as confirmed',async()=>{
+ const {catalog}=await import('../js/health.js');
+ const plan={context:'school',items:[{phase:'main',exercise:{activityId:'run'},minutes:5}]};
+ const result=W.lessonPlanReview(plan,{classId:'c',date:'2026-11-24'},{students:[{id:'a',classId:'c'}],activities:catalog,restrictions:[{studentId:'a',activityId:'sprint',type:'avoid',dateFrom:'2026-11-01'}],exemptions:[]});
+ assert.equal(result.items[0].matches.length,0);assert.equal(result.items[0].potentialMatches.length,1);assert.equal(result.items[0].needsReview,true);
+});

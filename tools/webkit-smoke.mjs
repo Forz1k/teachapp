@@ -45,6 +45,15 @@ try{
   const overflow=await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth);
   assert.ok(overflow<=3,label+' viewport overflow: '+overflow);
  }
+ // Teacher preparation and all-class period review on a real mobile viewport.
+ await page.getByRole('button',{name:'Подготовить следующий урок',exact:true}).click();
+ await page.getByRole('heading',{name:'Подготовка к уроку',exact:true}).waitFor();
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'preparation overflow');
+ await page.locator('.sheet.show').getByRole('button',{name:'Закрыть',exact:true}).click();
+ await page.getByRole('button',{name:'Закрытие периода',exact:true}).click();
+ await page.locator('.period-class-summary').waitFor();assert.equal(await page.locator('.period-class-summary').count(),1);
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'period overview overflow');
+ await page.locator('.sheet.show').getByRole('button',{name:'Закрыть',exact:true}).click();
  // Public viewer uses a synthetic stream; no production Firebase access.
  const fan=await context.newPage();fan.on('pageerror',error=>errors.push(error.message));
  await fan.addInitScript(()=>{window.EventSource=class{constructor(){this.handlers={};window.__fanPush=data=>this.handlers.put?.({type:'put',data:JSON.stringify({path:'/',data})});setTimeout(()=>this.onopen?.(),0);}addEventListener(k,f){this.handlers[k]=f;}close(){}};});

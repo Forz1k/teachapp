@@ -319,3 +319,7 @@ PR #94 не объединён, новый релиз не опубликова�
 ## Delta laboratory integration checkpoint — 25.11.2026
 - `b77d074`: checkpoint-tail reads and explicit synthetic adapter to ordinary prepare/preview/execute. Real local workerd + two synthetic IndexedDB states, separate edits, delta-only uploads, pull without revision churn, stale compacted history review and explicit conflict resolution.
 - 368/368 tests, validation, Chromium/offline (65 screenshots), WebKit, Cloudflare, Platform and Delta synthetic successful: [CI](https://github.com/Forz1k/teachapp/actions/runs/45569921608), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45569921613), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45569921763). Production transport not changed.
+
+## Teacher Intelligence: all-class period review checkpoint — 25.11.2026
+- `9c1edee`: all-class period closure overview, slot-aware schedule gaps, explicit confirmation and missing attendance, due norm review vs pending results, filters, direct lesson drill-down, aggregate document preview. Corrected class-wide attendance inference; possible restrictions remain review candidates in norm and plan workflows.
+- 371/371 tests, zero failures/skips, validate, Chromium/offline (65 screenshots), WebKit, Cloudflare, Platform and Delta synthetic successful: [CI](https://github.com/Forz1k/teachapp/actions/runs/45571373549), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45571373493).

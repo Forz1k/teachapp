@@ -1,7 +1,7 @@
 /* Local school work review. Read-only calculations; no inferred medical clearance. */
 import * as M from './model.js';
 import {attendanceDetails} from './assessment.js';
-import {validPeriod} from './health.js';
+import {validPeriod,active,checkLessonRestrictions,catalog} from './health.js';
 import {assignmentOverview} from './school-tools.js';
 const check=(ok,msg)=>{if(!ok)throw Error(msg);};
 const key=(l,s)=>l.id+'|'+s.id;
@@ -91,6 +91,30 @@ export function schoolPeriodOverview(s,{period,assignments=[],today=M.todayIso()
  }).sort((a,b)=>Number(b.status==='review')-Number(a.status==='review')||a.name.localeCompare(b.name,'ru',{numeric:true}));
  const total=Object.fromEntries(Object.keys(periodIssueLabels).map(k=>[k,rows.reduce((n,r)=>n+r.stats[k],0)]));
  return {period,ended,started,rows,total,ready:rows.filter(r=>r.status==='ready').length,needsReview:rows.filter(r=>r.status==='review').length,withoutData:rows.filter(r=>['empty','noLessons'].includes(r.status)).length};
+}
+/** Read-only preparation for an existing lesson or an uncreated schedule slot.
+ * Never infer a medical clearance, approve a plan or write a journal entry. */
+export function lessonPreparation(s,lesson,{assignments=[],today=M.todayIso()}={}){
+ const cls=s.classes.find(c=>c.id===lesson?.classId);
+ check(cls&&validPeriod(lesson.date,null),'Выберите класс и дату урока');
+ const pupils=s.students.filter(p=>p.classId===cls.id),ids=new Set(pupils.map(p=>p.id));
+ const topic=(s.topics||[]).find(t=>t.id===lesson.topicId)||null;
+ const effective={...lesson,activityIds:lesson.activityIds??topic?.activityIds};
+ const activities=[...catalog,...(s.activityCategories||[])],restrictions=s.activityRestrictions||[],exemptions=s.exemptions||[];
+ const review=checkLessonRestrictions({lesson:effective,activities,students:pupils,restrictions});
+ const full=pupils.filter(p=>exemptions.some(e=>e.studentId===p.id&&M.exemptionCovers(e,lesson.date))).map(p=>p.id);
+ const profiles=(s.studentHealthProfiles||[]).filter(p=>ids.has(p.id)&&p.group&&p.group!=='Основная'&&active(p,lesson.date));
+ const activeRestrictions=restrictions.filter(r=>ids.has(r.studentId)&&active(r,lesson.date));
+ const known=new Set([...review.matches,...review.potentialMatches].map(m=>m.restriction));
+ const otherRestrictions=activeRestrictions.filter(r=>!known.has(r));
+ // Assessment data is as of the lesson date or today, whichever is earlier.
+ // An upcoming assignment is not described as missing or overdue.
+ const asOf=lesson.date<today?lesson.date:today,year=s.settings.year;
+ const norms=assignments.filter(a=>a.classId===cls.id&&a.yearFrom===year.from&&a.yearTo===year.to&&a.from<=lesson.date)
+  .map(a=>({id:a.id,name:a.name,from:a.from,to:a.to,...assignmentOverview(s,a,asOf)}))
+  .filter(a=>a.state!=='archive'&&a.state!=='upcoming'&&(a.pending||a.review||a.state==='unavailable'))
+  .map(a=>({...a,due:asOf>=a.to})).sort((a,b)=>Number(b.due)-Number(a.due)||a.to.localeCompare(b.to)||a.name.localeCompare(b.name,'ru'));
+ return {cls,pupils,topic,lesson:effective,activities,full,profiles,otherRestrictions,...review,norms};
 }
 export function ktpForecast(s,classId,topics,today=M.todayIso()){
  const idx=indexes(s),lessons=s.lessons.filter(l=>l.classId===classId),done=new Set(lessons.filter(l=>held(l,idx,today)).map(l=>l.topicId).filter(Boolean)),remaining=topics.filter(t=>!done.has(t.id)),from=today>s.settings.year.from?today:s.settings.year.from,to=s.settings.year.to;
