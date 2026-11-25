@@ -424,3 +424,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 6.8 Studio — checkpoint
 - Adjustable photo opacity and left/right/hidden logo placement, persisted only as presentation settings; legacy style files remain compatible. Added renderer and style validation tests. Full freeform layers are not yet implemented.
+
+### 6.9 Performance — checkpoint
+- School analytics now reuses attendance contexts, indexes final grades and topic counts, and resolves student names via a map. Added result equivalence test; no device latency claim. Remaining module decomposition is open.

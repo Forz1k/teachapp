@@ -41,3 +41,7 @@ test('Player roster index preserves archive order, excludes unlisted stats and r
  const view={players,matches:rows};assert.deepEqual(matchComparison(view,'aces').map(x=>[x.player.id,x.total,x.value]),[['p',1,2],['q',2,1],['z',0,null]]);
  a.roster=['z'];assert.deepEqual(matchComparison(view,'aces').map(x=>[x.player.id,x.total,x.value]),[['p',0,null],['q',1,1],['z',1,99]]);
 });
+
+import {schoolAnalytics} from '../js/analytics.js';
+import {todayIso} from '../js/model.js';
+test('Analytics reuses attendance indexes and preserves individual and total attendance',async()=>{await DB.clearAll();const today=todayIso();await DB.put('classes',{id:'c',name:'7A'});await DB.bulkPut('students',[{id:'p',classId:'c',fullName:'P'},{id:'q',classId:'c',fullName:'Q'}]);await DB.put('lessons',{id:'l',classId:'c',date:today,held:true});await DB.put('marks',{id:'m',lessonId:'l',studentId:'p',value:'5',source:'manual'});await S.load();const a=schoolAnalytics('c',today,today);assert.equal(a.held,1);assert.equal(a.rows.length,2);assert.equal(a.rows.find(r=>r.student.id==='p').mean,5);assert.equal(a.rows.find(r=>r.student.id==='q').att.unknown,1);assert.deepEqual(a.att,S.attendanceFor(S.lessonsInRange('c',today,today),S.studentsOfClass('c'),'c'));});
