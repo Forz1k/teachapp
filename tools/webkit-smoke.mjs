@@ -8,6 +8,7 @@ import {createRelay} from '../server/sync-relay.mjs';
 import {createPersonalCode,personalCredentials} from '../js/personal-sync.js';
 import {resolve,sep,extname} from 'node:path';
 import {webkit,devices} from 'playwright';
+import {timingRows,timingPdf} from '../tests/fixtures/volleypoint-timing-fixture.mjs';
 
 const root=process.cwd();
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png'};
@@ -143,6 +144,18 @@ try{
  await shown.getByRole('button',{name:'Возобновить время',exact:true}).waitFor();assert.equal(await shown.locator('.court-time-panel [data-court-time]').first().textContent(),(await page.evaluate(async id=>{const C=await import('./js/coach.js'),V=await import('./js/match-protocol.js'),T=await import('./js/court-time.js');return T.courtTimeLabel(V.courtTime(V.replayDetailed((await C.loadCoach()).coachLive.find(x=>x.id===id))).elapsedMs);},timedId)));
  await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
  console.log('WEBKIT COURT TIME PASS: live tick, timeout pause, explicit resume, persisted exact clock and six players, reopen and mobile stats.');
+ const vpFixture=await page.evaluate(async rows=>{const C=await import('./js/coach.js'),V=await import('./js/volleypoint-import.js'),U=await import('./js/screens/volleypoint-import.js');const report=V.parseVolleyRows(rows),team=await C.saveTeam({name:'История VolleyPoint'}),mapping={};for(const p of report.teams[0].players){const r=await C.savePlayer({teamId:team.id,name:p.name,number:p.number,position:'universal'});mapping[p.number]=r.id;}const input={...V.buildVolleyImport(report,0,mapping),teamId:team.id};delete input.imported.timing;input.opponent='Старое имя соперника';const m=await C.saveVolleyImport(input),view=C.teamView(await C.loadCoach(),team.id);U.openImportedReport(m,view,()=>U.openVolleyImport(team,view,async()=>{},{matchId:m.id}));return {teamId:team.id,matchId:m.id,playerId:mapping[1]};},timingRows);
+ await shown.getByRole('heading',{name:'Игровое время по PDF',exact:true}).waitFor();await shown.getByRole('button',{name:'Дополнить из исходного PDF',exact:true}).click();
+ await shown.getByLabel('PDF VolleyPoint',{exact:true}).setInputFiles({name:'synthetic-volley.pdf',mimeType:'application/pdf',buffer:timingPdf()});
+ const timingPreview=shown.locator('[aria-label="Предварительный расчёт времени"]');await timingPreview.waitFor();await shown.getByRole('button',{name:'Дополнить существующий матч',exact:true}).waitFor();
+ assert.match(await timingPreview.textContent(),/7:00/);assert.match(await timingPreview.textContent(),/0:00–4:00/);
+ await shown.getByLabel('Подтверждаю прежние сопоставления и дополнение матча',{exact:true}).check();await shown.getByRole('button',{name:'Дополнить существующий матч',exact:true}).click();
+ await page.waitForFunction(async f=>{const C=await import('./js/coach.js'),matches=(await C.loadCoach()).coachMatches.filter(m=>m.teamId===f.teamId);return matches.length===1&&matches[0].id===f.matchId&&!!matches[0].imported.timing;},vpFixture);
+ await page.evaluate(async f=>{const C=await import('./js/coach.js'),S=await import('./js/screens/coach.js');S.openCoachSearchResult(await C.loadCoach(),{kind:'player',teamId:f.teamId,id:f.playerId},async()=>{});},vpFixture);
+ await shown.getByRole('heading',{name:'VolleyPoint · восстановлено по PDF',exact:true}).waitFor();await shown.getByRole('button',{name:'Весь архив',exact:true}).click();
+ assert.match(await shown.textContent(),/По длительности партий: 7:00/);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'historical time overflow');
+ await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
+ console.log('WEBKIT VOLLEYPOINT TIME PASS: actual synthetic PDF upload, timing preview, re-import same ID with preserved record, historical player profile and mobile layout.');
  await page.evaluate(async()=>{(await import('./js/screens/studio.js')).openStudio({scope:'test',template:'result',team:'Демо',opponent:'Гости',score:'2:1'});});
  await page.locator('.studio-editor canvas').waitFor();assert.equal(await page.locator('.studio-editor textarea[aria-label="Текст публикации"]').inputValue(),'Итоговый результат\n\nДемо — Гости\n\n2:1');
  await page.getByRole('button',{name:'Сохранить фирменный стиль',exact:true}).click();
