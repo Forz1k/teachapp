@@ -63,6 +63,10 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
    if(method==='GET'&&path==='me')return ok({workspaceId:s.id,name:s.name,member:publicMember(actor)});
    if(method==='GET'&&path==='members'){owner();return ok({members:s.members.map(publicMember)});}
    if(method==='GET'&&path==='audit'){owner();return ok({events:s.audit.slice().reverse()});}
+   if(method==='GET'&&path==='invites'){owner();return ok({invites:s.invites.filter(i=>i.usedAt===null&&i.expiresAt>now).map(i=>({id:i.id,role:i.scope.role,teamId:i.scope.teamId,athleteId:i.scope.athleteId,matchId:i.scope.matchIds[0]??null,expiresAt:i.expiresAt}))});}
+   if(method==='POST'&&path==='invites/cancel'){
+    owner();require(exact(body,['inviteId'])&&id(body.inviteId),400,'packet');const i=s.invites.find(x=>x.id===body.inviteId&&x.usedAt===null&&x.expiresAt>now);require(i,404,'invite');s.invites=s.invites.filter(x=>x!==i);audit(s,actor,'member.invite.cancel',i.id,now);return ok({cancelled:true},200,true);
+   }
    if(method==='POST'&&path==='invite'){
     owner();const scope=inviteScope(s,body);s.invites=s.invites.filter(i=>i.usedAt===null&&i.expiresAt>now);require(s.invites.length<64,409,'invite-limit');require(!s.invites.some(i=>i.hash===issued.hash),409,'collision');s.invites.push({id:issued.id,hash:issued.hash,scope,issuerId:actor.id,expiresAt:now+INVITE_MS,usedAt:null});audit(s,actor,'member.invite',issued.id,now);return ok({invite:issued.secret,expiresAt:now+INVITE_MS},201,true);
    }
