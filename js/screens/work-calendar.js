@@ -1,3 +1,5 @@
+import {openRetakePlans} from './school-tools.js';
+import {openSchoolCompetitions} from './teacher-portfolio.js';
 import {enterGroup} from '../motion.js';
 import * as S from '../store.js';
 import * as C from '../coach.js';
@@ -14,14 +16,14 @@ const inp=(value='',type='text',props={})=>el('input',{type,value,...props});
 const select=(opts,value)=>{const n=el('select',{},opts.map(([v,text])=>el('option',{value:v,text})));n.value=value??opts[0]?.[0]??'';return n;};
 const card=(title,children)=>el('section',{class:'card-block coach-card'},[el('h3',{text:title}),...children]);
 const stack=children=>el('div',{class:'coach-form'},children);
-async function entries(from,to){const [coach,events,tournaments]=await Promise.all([C.loadCoach(),W.listWork('event'),W.listWork('tournament')]);return calendarEntries(S.state,coach,events,from,to,tournaments,Object.fromEntries(coach.coachTeams.filter(t=>!t.archived).map(t=>[t.id,portalInfo(t.id).data])));}
+async function entries(from,to){const [coach,events,tournaments,competitions,retakes]=await Promise.all([C.loadCoach(),W.listWork('event'),W.listWork('tournament'),W.listWork('schoolCompetition'),W.listWork('normRetake')]);return calendarEntries(S.state,coach,events,from,to,tournaments,Object.fromEntries(coach.coachTeams.filter(t=>!t.archived).map(t=>[t.id,portalInfo(t.id).data])),competitions,retakes);}
 function form(existing,date,back){
  const e=existing||{},name=inp(e.name||''),day=inp(e.date||date,'date'),time=inp(e.time||'','time'),duration=inp(e.minutes??0,'number',{min:0,max:600}),type=select(Object.entries(eventTypes),e.eventType||'task'),note=el('textarea',{maxlength:2000,rows:3},[e.note||'']),remind=select([['','Без напоминания'],['0','В момент события'],['15','За 15 минут'],['30','За 30 минут'],['60','За час'],['120','За 2 часа'],['1440','За день']],e.remind==null?'':String(e.remind)),done=el('input',{type:'checkbox'});done.checked=!!e.done;
  const save=btn('Сохранить',async()=>{save.disabled=true;try{await W.saveWork({id:e.id,kind:'event',name:name.value.trim(),date:day.value,time:time.value,minutes:Number(duration.value),eventType:type.value,note:note.value,remind:remind.value===''?null:Number(remind.value),done:done.checked});await back();}catch(err){toast(err.message);}finally{save.disabled=false;}},'primary');
  openSheet(stack([el('h2',{text:'Рабочее событие'}),field('Название',name),field('Дата',day),field('Время (необязательно)',time),field('Минуты (0 — не указаны)',duration),field('Тип',type),field('Примечание (без персональных данных)',note),field('Напомнить',remind),p('Без времени напоминание действует на день события или за день. Для фоновых уведомлений экспортируйте событие в календарь телефона.'),field('Выполнено',done),save,btn('Назад',back)]));
 }
 export async function openWorkCalendar(options={}){
- const day=inp(options.date||M.todayIso(),'date'),span=select([['1','День'],['7','7 дней'],['14','14 дней'],['month','Месяц']],['1','7','14','month'].includes(options.span)?options.span:'7'),source=select([['all','Все'],['school','Уроки'],['coach','Волейбол'],['tournament','Турниры'],['custom','Свои события'],['review','Проверки'],['backup','Резервные копии']],options.source||'all'),titles=el('input',{type:'checkbox'}),body=el('div',{class:'coach-stack'});
+ const day=inp(options.date||M.todayIso(),'date'),span=select([['1','День'],['7','7 дней'],['14','14 дней'],['month','Месяц']],['1','7','14','month'].includes(options.span)?options.span:'7'),source=select([['all','Все'],['school','Уроки'],['coach','Волейбол'],['tournament','Турниры'],['schoolCompetition','Олимпиады и соревнования'],['normRetake','Пересдачи'],['custom','Свои события'],['review','Проверки'],['backup','Резервные копии']],options.source||'all'),titles=el('input',{type:'checkbox'}),body=el('div',{class:'coach-stack'});
  let sequence=0,visible=[];
  let paintedRange='';
  async function draw(){
@@ -36,7 +38,7 @@ export async function openWorkCalendar(options={}){
    let date='';
    for(const e of visible){
     if(date!==e.date){date=e.date;body.append(el('h3',{text:M.fmtFull(date)}));}
-    body.append(el('article',{class:'card-block calendar-event event-'+e.source},[el('div',{class:'calendar-event-head'},[el('span',{class:'calendar-event-time',text:e.time||'Весь день'}),el('span',{class:'status-pill',text:e.done?'Выполнено':'Запланировано'})]),el('h3',{text:e.title}),p((e.done?'Выполнено':'Запланировано')+(e.minutes?' · '+e.minutes+' мин':'')+(e.remind===null?'':' · напоминание')),e.record?btn('Открыть / редактировать',()=>form(e.record,e.date,open)):null,e.record?btn(e.done?'Вернуть в задачи':'Отметить выполненным',async()=>{try{await W.saveWork({...e.record,done:!e.done});await draw();}catch(err){toast(err.message);}}):null,e.record?btn('Удалить событие',async()=>{if(!await confirmDialog({title:'Удалить событие?',text:'Удаляется только эта рабочая запись.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(e.id,'event');await draw();}catch(err){toast(err.message);}}):null]));
+    body.append(el('article',{class:'card-block calendar-event event-'+e.source},[el('div',{class:'calendar-event-head'},[el('span',{class:'calendar-event-time',text:e.time||'Весь день'}),el('span',{class:'status-pill',text:e.done?'Выполнено':'Запланировано'})]),el('h3',{text:e.title}),p((e.done?'Выполнено':'Запланировано')+(e.minutes?' · '+e.minutes+' мин':'')+(e.remind===null?'':' · напоминание')),e.competitionId?btn('Открыть мероприятия',()=>openSchoolCompetitions(open)):null,e.retakeId?btn('Открыть планы пересдач',()=>openRetakePlans(open)):null,e.record?btn('Открыть / редактировать',()=>form(e.record,e.date,open)):null,e.record?btn(e.done?'Вернуть в задачи':'Отметить выполненным',async()=>{try{await W.saveWork({...e.record,done:!e.done});await draw();}catch(err){toast(err.message);}}):null,e.record?btn('Удалить событие',async()=>{if(!await confirmDialog({title:'Удалить событие?',text:'Удаляется только эта рабочая запись.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(e.id,'event');await draw();}catch(err){toast(err.message);}}):null]));
    }
    if(!visible.length)body.append(p('Событий за период нет.'));
    const range=from+'|'+to+'|'+source.value;if(range!==paintedRange){paintedRange=range;enterGroup([...body.children].filter(n=>n.matches('.month-card,.calendar-event')));}

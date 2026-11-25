@@ -1,3 +1,4 @@
+import {captureModes,touchActions,touchQuality,touchResults,captureSummary,captureZoneSummary} from '../match-capture.js';
 import {animateOnce,scoreChanges,recentRallies,rallyStreak,capturePositions,animatePositions} from '../motion.js';
 import * as C from '../coach.js';
 import * as V from '../match-protocol.js';
@@ -60,34 +61,36 @@ export function openDetailedSetup(team,players,back,refresh,preset=null,{matches
  const date=input(todayIso(),'date',{max:todayIso()}),opp=input(fixture?.opponent||'','text',{placeholder:'Название соперника'}),comp=input('','text',{placeholder:'Турнир'}),venue=input('','text',{placeholder:'Спортивный зал'});
  const best=select([[3,'До двух побед'],[5,'До трёх побед']],5),target=select([15,21,25].map(n=>[n,n]),25),decider=select([15,21,25].map(n=>[n,n]),15);
  const serve=select([['ours',team.name],['theirs','Соперник']],'ours'),scheme=select([['5-1','5–1'],['4-2','4–2'],['free','Свободная']],preset?.scheme||'5-1');
- const substitutions=select([['simple','Упрощённые (до 6)'],['paired','Парные (возврат стартового игрока)']],'simple');
+ const substitutions=select([['simple','Упрощённые'],['paired','Парные (возврат стартового игрока)']],'simple');
+ const subLimit=el('input',{type:'number',min:0,max:20,step:1,value:6}),timeoutLimit=el('input',{type:'number',min:0,max:5,step:1,value:2});
  const colors=colorFields(V.defaultBoardColors,fixture?.logos||{ours:null,theirs:null});
  const previousMatches=matches.filter(m=>m.teamId===team.id&&m.detail?.mode==='dual').sort((a,b)=>b.date.localeCompare(a.date)||b.detail.startedAt.localeCompare(a.detail.startedAt));
  const previous=previousMatches[0]?.detail;
  const templates=presets.filter(x=>x.teamId===team.id);
  const history=V.opponentHistory(matches,team.id);
  const awayInput=el('textarea',{placeholder:'7 Иванова\n8 Петрова\n9\n10\n11\n12',rows:5});const awayArea=el('div',{class:'vp-stack'}),ownArea=el('div',{class:'vp-stack'});
- let awayPlayers=[],awayFields=six([]),parsedText='',ownFields,eligible=[],libero;
+ let awayPlayers=[],awayFields=six([]),parsedText='',ownFields,eligible=[],libero,libero2;
  const checked=new Set(players.map(p=>p.id));
  const template=select([['','Выберите шаблон'],...templates.map(x=>[x.id,x.name])],'');
- const loadOwn=(line,lib)=>{libero.value=eligible.some(p=>p.id===lib)?lib:'';ownFields.setExcluded(libero.value?[libero.value]:[]);ownFields.set(line);};
- const shortcuts=el('div',{class:'vp-stack'},[templates.length?field('Сохранённая шестёрка',template):null,templates.length?btn('Применить шаблон',()=>{const t=templates.find(x=>x.id===template.value);if(!t)return;scheme.value=t.scheme;loadOwn(t.lineup,t.libero);},'wide'):null,previous?btn('Старт последнего матча',()=>{scheme.value=previous.scheme;loadOwn(previous.lineup,previous.libero);},'wide'):null]);
+ const loadOwn=(line,lib,second=null)=>{libero.value=eligible.some(p=>p.id===lib)?lib:'';libero2.value=eligible.some(p=>p.id===second)?second:'';ownFields.setExcluded([libero.value,libero2.value].filter(Boolean));ownFields.set(line);};
+ const shortcuts=el('div',{class:'vp-stack'},[templates.length?field('Сохранённая шестёрка',template):null,templates.length?btn('Применить шаблон',()=>{const t=templates.find(x=>x.id===template.value);if(!t)return;scheme.value=t.scheme;loadOwn(t.lineup,t.libero);},'wide'):null,previous?btn('Старт последнего матча',()=>{scheme.value=previous.scheme;loadOwn(previous.lineup,previous.libero,previous.libero2);},'wide'):null]);
  const opponentPick=select([['','Выберите соперника'],...history.map(m=>[m.id,m.opponent+' · '+m.date])],'');
  const loadOpponent=()=>{const m=history.find(x=>x.id===opponentPick.value);if(!m)return;opp.value=m.opponent;awayInput.value=m.detail.awayPlayers.map(p=>p.number+' '+p.name).join('\n');parse();const numbers=new Map(m.detail.awayPlayers.map(p=>[p.id,p.number]));awayFields.set(m.detail.awayLineup.map(id=>awayPlayers.find(p=>p.number===numbers.get(id))?.id));};
  function refreshOwn(){
-  const previous=ownFields?.get()||preset?.lineup||[],previousLib=libero?.value??preset?.libero??'';
+  const previous=ownFields?.get()||preset?.lineup||[],previousLib=libero?.value??preset?.libero??'',previousLib2=libero2?.value??'';
   const warnings=C.trainingWarnings({date:date.value,roster:players.map(p=>p.id),exercises:[{name:'Волейбол',activityId:'volley'},{name:'Прыжки',activityId:'jump'},{name:'Соревнование',activityId:'competition'}]},players);
   const restricted=new Set(warnings.map(x=>x.player.id));
   eligible=players.filter(p=>!p.archived&&!restricted.has(p.id)&&checked.has(p.id));
   libero=select([['','Без либеро'],...eligible.map(p=>[p.id,playerLabel(p)])],eligible.some(p=>p.id===previousLib)?previousLib:'');
-  ownFields=six(eligible,previous,{excluded:libero.value?[libero.value]:[]});
-  libero.onchange=()=>ownFields.setExcluded(libero.value?[libero.value]:[]);
+  libero2=select([['','Без второго либеро'],...eligible.map(p=>[p.id,playerLabel(p)])],eligible.some(p=>p.id===previousLib2)?previousLib2:'');
+  ownFields=six(eligible,previous,{excluded:[libero.value,libero2.value].filter(Boolean)});
+  const updateLibero=()=>{if(libero2.value===libero.value)libero2.value='';ownFields.setExcluded([libero.value,libero2.value].filter(Boolean));};libero.onchange=libero2.onchange=updateLibero;
   const rows=players.map(p=>{
    const check=el('input',{type:'checkbox'});check.checked=checked.has(p.id)&&!restricted.has(p.id);check.disabled=restricted.has(p.id);
    check.onchange=()=>{if(check.checked)checked.add(p.id);else checked.delete(p.id);refreshOwn();};
    return field(playerLabel(p)+(restricted.has(p.id)?' · ограничение нагрузки':''),check);
   });
-  ownArea.replaceChildren(p('Выберите фактический состав. Совпадения с внесёнными ограничениями исключены; отсутствие совпадений не является допуском.'),el('details',{},[el('summary',{text:'Заявка · '+eligible.length}),...rows]),shortcuts,ownFields.node,field('Либеро нашей команды (не входит в стартовую шестёрку)',libero));
+  ownArea.replaceChildren(p('Выберите фактический состав. Совпадения с внесёнными ограничениями исключены; отсутствие совпадений не является допуском.'),el('details',{},[el('summary',{text:'Заявка · '+eligible.length}),...rows]),shortcuts,ownFields.node,field('Либеро нашей команды (не входит в стартовую шестёрку)',libero),field('Второй либеро (необязательно)',libero2),p('Поддерживается один либеро на площадке. Это упрощённый регламент: интервалы между заменами либеро и исключительные судейские решения контролирует тренер.'));
  }
  function parse(){
   awayPlayers=parseAway(awayInput.value);parsedText=awayInput.value;
@@ -100,17 +103,17 @@ export function openDetailedSetup(team,players,back,refresh,preset=null,{matches
   try{
    if(parsedText!==awayInput.value)parse();
    const line=ownFields.get(),away=awayPlayers.length?awayFields.get():[];
-   if(new Set(line).size!==6||line.some(id=>!eligible.some(p=>p.id===id))||line.includes(libero.value))throw Error('Проверьте шесть стартовых игроков и либеро');
+   if(new Set(line).size!==6||line.some(id=>!eligible.some(p=>p.id===id))||line.includes(libero.value)||line.includes(libero2.value)||libero2.value&&(!libero.value||libero2.value===libero.value))throw Error('Проверьте шесть стартовых игроков и либеро');
    if(awayPlayers.length&&(new Set(away).size!==6||away.some(id=>!awayPlayers.some(p=>p.id===id))))throw Error('Проверьте расстановку соперника');
    if(!opp.value.trim())throw Error('Укажите соперника');
    if(!V.validBoardColors(colors.get()))throw Error('Выберите два разных цвета команд');
    if(!await ui.confirmDialog({title:'Начать матч?',text:'Подтвердите фактические составы и выбранный регламент.',ok:'Начать'}))return;
    const d=await C.startDetailedMatch({teamId:team.id,teamName:team.name,opponent:opp.value,date:date.value,competition:comp.value,venue:venue.value,
-     roster:eligible.map(p=>p.id),ourPlayers:eligible,awayPlayers,awayLineup:away,lineup:line,libero:libero.value||null,bestOf:Number(best.value),target:Number(target.value),decider:Number(decider.value),firstServe:serve.value,scheme:scheme.value,substitutionMode:substitutions.value,boardColors:colors.get(),boardLogos:colors.getLogos()});
+     roster:eligible.map(p=>p.id),ourPlayers:eligible,awayPlayers,awayLineup:away,lineup:line,libero:libero.value||null,libero2:libero2.value||null,bestOf:Number(best.value),target:Number(target.value),decider:Number(decider.value),firstServe:serve.value,scheme:scheme.value,substitutionMode:substitutions.value,limits:{substitutions:Number(subLimit.value),timeouts:Number(timeoutLimit.value)},boardColors:colors.get(),boardLogos:colors.getLogos()});
    openDetailedMatch(d,back,refresh);
   }catch(e){toast(e.message);}finally{save.disabled=false;}
  },'primary wide');
- openSheet(el('div',{class:'vp-stack vp-setup'},[el('h2',{text:'Новый подробный матч'}),field('Соперник',opp),field('Дата',date),field('Турнир',comp),field('Место',venue),field('Формат',best),field('Очков в партии',target),field('Решающая партия',decider),field('Первая подача',serve),field('Тактическая схема',scheme),field('Правила замен',substitutions),el('details',{class:'vp-match-more'},[el('summary',{text:'Цвета табло'}),colors.node]),p('Парные замены: один запасной на стартового игрока, один возврат за партию. Исключительные замены и все судейские правила не реализованы.'),
+ openSheet(el('div',{class:'vp-stack vp-setup'},[el('h2',{text:'Новый подробный матч'}),field('Соперник',opp),field('Дата',date),field('Турнир',comp),field('Место',venue),field('Формат',best),field('Очков в партии',target),field('Решающая партия',decider),field('Первая подача',serve),field('Тактическая схема',scheme),field('Правила замен',substitutions),field('Лимит замен на команду за партию',subLimit),field('Лимит тайм-аутов на команду за партию',timeoutLimit),el('details',{class:'vp-match-more'},[el('summary',{text:'Цвета табло'}),colors.node]),p('Парные замены: один запасной на стартового игрока, один возврат за партию. Исключительные замены и все судейские правила не реализованы.'),
   el('h3',{text:team.name}),ownArea,el('h3',{text:'Состав соперника (необязательно)'}),p('Один игрок в строке: номер и имя. Если фамилии неизвестны, достаточно номера.'),history.length?field('Состав из истории',opponentPick):null,history.length?btn('Загрузить состав соперника',loadOpponent,'wide'):null,awayInput,btn('Подготовить расстановку соперника',()=>{try{parse();}catch(e){toast(e.message);}},'wide'),awayArea,save,btn('Назад',back,'wide')]));
 }
 function court(d,lineups,serve,selected,choose){
@@ -125,7 +128,7 @@ function court(d,lineups,serve,selected,choose){
  }
  return el('div',{class:'vp-court'},[half('theirs',[1,6,5,2,3,4]),el('div',{class:'vp-net',text:'СЕТКА'}),half('ours',[4,3,2,5,6,1])]);
 }
-function shown(d,s){return {ours:s.lineup.map(id=>s.liberoFor===id?d.libero:id),theirs:s.awayLineup};}
+function shown(d,s){return {ours:s.lineup.map(id=>s.liberoFor===id?s.liberoId:id),theirs:s.awayLineup};}
 // A local, read-only scoreboard in a separate same-device window. No network or player data.
 export function renderSpectatorBoard(doc,snapshot,connected=true){
  const make=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=String(text);return n;};
@@ -142,7 +145,7 @@ export function renderSpectatorBoard(doc,snapshot,connected=true){
 }
 
 export function openDetailedMatch(initial,back,refresh){
- let d=initial,busy=false,selected=null,pointDraft=null,section='match',nextDraft=null,quick=false,swapped=false,scoutOpen=false,scoutSide='theirs',scoutKind='all',scoutSet=0,scoutEntry=false,historySet=0,historyEdit=null,historyLimit=80,detailOpen=false,observationOpen=false;
+ let d=initial,busy=false,selected=null,pointDraft=null,section='match',nextDraft=null,quick=false,captureMode='standard',swapped=false,scoutOpen=false,scoutSide='theirs',scoutKind='all',scoutSet=0,scoutEntry=false,historySet=0,historyEdit=null,historyLimit=80,detailOpen=false,observationOpen=false;
  const body=el('div',{class:'vp-stack vp-live'});
  const wake=matchWakeLock();let observer=null,spectator=null;
  const publish=(options={})=>{try{return Portal.syncPortalMatch(d,options);}catch(e){toast('Публикация: '+e.message);return false;}};
@@ -183,15 +186,15 @@ export function openDetailedMatch(initial,back,refresh){
    const zones=index===0?[5,4,6,3,1,2]:[2,1,3,6,4,5];
    const mini=active?el('div',{class:'vp-court vp-mini-court','aria-label':'Расстановка '+sideName(d,side)},zones.map(z=>{
     const id=ids[z-1],pl=roster(d,side).find(p=>p.id===id);
-    return el('button',{type:'button',class:'vp-mini-player'+(z===1&&serving?' serving':'')+(side==='ours'&&id===d.libero?' libero':''),'data-motion-player':pl?side+':'+pl.id:null,disabled:!pl||!!pointDraft,onclick:()=>choose(side,id),'aria-label':sideName(d,side)+', зона '+z+', '+(pl?playerLabel(pl):'нет игрока')},[
+    return el('button',{type:'button',class:'vp-mini-player'+(z===1&&serving?' serving':'')+(side==='ours'&&V.liberoIds(d).includes(id)?' libero':''),'data-motion-player':pl?side+':'+pl.id:null,disabled:!pl||!!pointDraft,onclick:()=>choose(side,id),'aria-label':sideName(d,side)+', зона '+z+', '+(pl?playerLabel(pl):'нет игрока')},[
      el('span',{class:'vp-mini-number',text:pl?.number??(pl?'•':'—')}),el('small',{text:'P'+z})]);
    })):null;
    return el('div',{class:'vp-score-side '+side+(serving?' score-serving':'')},[
     teamEmblem(d,side),el('span',{text:sideName(d,side)}),el('strong',{class:'vp-score-number','data-score-side':side,text:String(s.score[side])}),
     el('small',{text:'Партии '+(side==='ours'?won:s.sets.length-won)}),mini,
     active?el('div',{class:'vp-board-indicators'},[
-     el('div',{class:'vp-pips','aria-label':'Замены '+s.subCounts[side]+' из 6'},[el('span',{text:'Замены'}),...Array.from({length:6},(_,i)=>el('i',{class:i<s.subCounts[side]?'used':''}))]),
-     el('button',{type:'button',class:'vp-timeout-button',disabled:s.timeouts[side]>=2||!!pointDraft,onclick:()=>perform({type:'timeout',side},()=>{selected=null;}),'aria-label':'Тайм-аут '+sideName(d,side)},[el('span',{text:'Тайм-аут'}),...Array.from({length:2},(_,i)=>el('i',{class:i<s.timeouts[side]?'used':''}))]),
+     el('div',{class:'vp-pips','aria-label':'Замены '+s.subCounts[side]+' из '+V.matchLimits(d).substitutions},[el('span',{text:'Замены'}),...Array.from({length:V.matchLimits(d).substitutions},(_,i)=>el('i',{class:i<s.subCounts[side]?'used':''}))]),
+     el('button',{type:'button',class:'vp-timeout-button',disabled:s.timeouts[side]>=V.matchLimits(d).timeouts||!!pointDraft,onclick:()=>perform({type:'timeout',side},()=>{selected=null;}),'aria-label':'Тайм-аут '+sideName(d,side)},[el('span',{text:'Тайм-аут'}),...Array.from({length:V.matchLimits(d).timeouts},(_,i)=>el('i',{class:i<s.timeouts[side]?'used':''}))]),
      el('small',{class:'vp-board-serving',text:serving?'● Подаёт '+(player?.number!=null?'№'+player.number:player?.name||'команда'):'Приём'})]):null]);
   }));
   body.replaceChildren(el('div',{class:'vp-match-head'},[el('div',{class:'vp-match-title'},[el('span',{class:'match-live-label',text:s.finished?'ЗАВЕРШЁН':s.setEnded?'ПЕРЕРЫВ':'● LIVE'}),el('strong',{text:'Партия '+set})]),displayScore,el('div',{class:'match-sets'},s.sets.length?s.sets.map((x,i)=>el('span',{class:'match-set',text:(i+1)+' · '+score(x)})):[el('span',{text:'Первая партия'})])]),
@@ -201,7 +204,7 @@ export function openDetailedMatch(initial,back,refresh){
   if(newSetEnd)animateOnce(body.querySelector('.vp-match-title'),'enter',{duration:360});
   if(!pointDraft&&!scoutOpen)previousOverlay='';
   if(active&&!pointDraft&&!scoutOpen){const rows=recentRallies(s.timeline,set),streak=rallyStreak(recentRallies(s.timeline,set,s.timeline.length));if(rows.length){const meter=el('div',{class:'vp-rally-meter'},[el('div',{class:'vp-rally-meter-head'},[el('small',{text:'Последние '+rows.length+' розыгрышей'}),el('strong',{text:streak.count>=2?'Серия '+sideName(d,streak.side)+' · '+streak.count:'Последнее очко · '+sideName(d,streak.side)})]),el('div',{class:'vp-rally-strip','aria-label':rows.map(x=>x.score+' '+sideName(d,x.side)).join(', ')},rows.map(x=>el('span',{class:x.side,title:x.score}))) ]);body.insertBefore(meter,body.children[1]);if(Object.keys(changes).length)animateOnce(meter.querySelector('.vp-rally-strip span:last-child'),'enter',{duration:180});}}
-  if(section==='stats'){body.append(momentumBlock(d,s),liveAnalysis(d,s));}
+  if(section==='stats'){body.append(momentumBlock(d,s),liveAnalysis(d,s),captureBlock(d,s));}
   else if(section==='events'){
    const rawRallies=d.events.flatMap((e,i)=>e.type==='rally'?[i]:[]);let ri=0;
    const entries=s.timeline.map(x=>({x,index:x.type==='rally'?rawRallies[ri++]:null}));
@@ -211,7 +214,7 @@ export function openDetailedMatch(initial,back,refresh){
    else {const visible=entries.filter(r=>!historySet||r.x.set===historySet).reverse();for(const {x,index} of visible.slice(0,historyLimit))body.append(el('div',{class:'vp-history-row'},[p('Сет '+x.set+' · '+x.score+' · '+eventText(d,x)),index!==null?btn('Уточнить',()=>{historyEdit=index;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;}):null]));if(visible.length>historyLimit)body.append(btn('Показать ещё события · '+(visible.length-historyLimit),()=>{historyLimit+=80;draw();},'wide'));}
   }else{
    const controls=el('div',{class:'vp-board-controls'},[
-    btn(quick?'Режим: быстрый':'Режим: подробный',()=>{quick=!quick;if(quick)scoutEntry=false;selected=null;draw();}),
+    ...Object.entries(captureModes).map(([id,label])=>btn(label,()=>{captureMode=id;quick=id==='quick';if(quick)scoutEntry=false;selected=null;draw();},captureMode===id?'primary':'')),
     btn('↔ Сменить стороны',()=>{swapped=!swapped;selected=null;draw();})]);
    if(!pointDraft)body.append(controls);
    if(!active&&!pointDraft)body.append(court(d,courtState,serve,selected,choose));
@@ -223,18 +226,20 @@ export function openDetailedMatch(initial,back,refresh){
     area.setAttribute('tabindex','-1');area.setAttribute('role','dialog');area.setAttribute('aria-modal','true');area.focus({preventScroll:true});
    };
    if(scoutOpen){
-    const area=scoutPanel(d,s,{side:scoutSide,kind:scoutKind,set:scoutSet,entry:scoutEntry},patch=>{if(Object.hasOwn(patch,'side'))scoutSide=patch.side;if(Object.hasOwn(patch,'kind'))scoutKind=patch.kind;if(Object.hasOwn(patch,'set'))scoutSet=patch.set;if(Object.hasOwn(patch,'entry')){scoutEntry=patch.entry;if(scoutEntry)quick=false;}draw();},cancel);
+    const area=scoutPanel(d,s,{side:scoutSide,kind:scoutKind,set:scoutSet,entry:scoutEntry},patch=>{if(Object.hasOwn(patch,'side'))scoutSide=patch.side;if(Object.hasOwn(patch,'kind'))scoutKind=patch.kind;if(Object.hasOwn(patch,'set'))scoutSet=patch.set;if(Object.hasOwn(patch,'entry')){scoutEntry=patch.entry;if(scoutEntry){quick=false;if(captureMode==='quick')captureMode='standard';}}draw();},cancel);
     showOverlay(area);return;
    }
    if(pointDraft){
     const {side:winner,editing,kind}=pointDraft;
-    const submit=(k,player=null,extra={})=>perform(editing?{type:'attribute',kind:k,player}:{type:'rally',side:winner,kind:k,player,...extra},()=>{pointDraft=null;selected=null;});
-    const afterAuthor=(k,player=null)=>{if(!editing&&scoutEntry&&V.canPlace(k)){pointDraft={...pointDraft,author:player,extra:true,defender:null,zone:null};draw();}else submit(k,player);};
+    const submit=(k,player=null,extra={})=>perform(editing?{type:'attribute',kind:k,player}:{type:'rally',side:winner,kind:k,player,captureMode,...extra},()=>{pointDraft=null;selected=null;});
+    const afterAuthor=(k,player=null)=>{if(!editing&&captureMode==='pro'){pointDraft={...pointDraft,author:player,touchEntry:true};draw();return;}if(!editing&&scoutEntry&&V.canPlace(k)){pointDraft={...pointDraft,author:player,extra:true,defender:null,zone:null};draw();}else submit(k,player);};
     const options=V.rallyReasonOptions(winner,serve).filter(k=>k!=='point');
     const area=el('section',{class:'vp-attribution match-attribution','aria-label':editing?'Уточнение очка':'Новое очко'},[
       el('div',{class:'vp-rally-heading'},[el('strong',{text:(editing?'Уточнить очко · ':'+1 · ')+sideName(d,winner)}),el('small',{text:pointDraft.extra?'Доп. данные · защита':kind?'2 · Игрок':'1 · Причина'})]),
       p(editing?'Счёт не изменится.': 'Очко ещё не начислено.')]);
-    if(pointDraft.extra){
+    if(pointDraft.touchEntry){
+      const draft={...pointDraft};area.append(touchEditor(d,{side:winner,before:{lineups:courtState,serve},touches:draft.touches||[],captureComplete:false},(items,complete)=>submit(kind,draft.author,{touches:items,captureComplete:complete})),btn('Сохранить только причину и автора',()=>submit(kind,draft.author),'wide'),btn('Назад к игрокам',()=>{pointDraft={side:winner,editing,kind};draw();},'wide'));
+    }else if(pointDraft.extra){
       const losing=winner==='ours'?'theirs':'ours',secondary=V.secondaryKind(kind),defenders=roster(d,losing).filter(p=>courtState[losing].includes(p.id));
       const patch=x=>{pointDraft={...pointDraft,...x};draw();};
       area.append(p('Необязательно. Укажите только наблюдаемую ошибку и фактическую зону завершения.'));
@@ -264,21 +269,22 @@ export function openDetailedMatch(initial,back,refresh){
     if(!nextDraft||nextDraft.revision!==d.revision){
      const prev=s.setDetails.at(-1).lineups;
      nextDraft={revision:d.revision,
-      own:six(d.ourPlayers.filter(p=>p.id!==d.libero),prev.ours,{previous:prev.ours,final:s.lineup}),
+      own:six(d.ourPlayers.filter(p=>!V.liberoIds(d).includes(p.id)),prev.ours,{previous:prev.ours,final:s.lineup}),
       away:six(d.awayPlayers,prev.theirs,{previous:prev.theirs,final:s.awayLineup,side:'theirs'}),
       first:select(sides.map(side=>[side,sideName(d,side)]),s.sets.length%2?d.firstServe==='ours'?'theirs':'ours':d.firstServe)};
     }
     const {own,away,first}=nextDraft;
     body.append(el('h3',{text:'Старт следующей партии'}),p('Старт предыдущей партии скопирован. Измените нужные зоны или очистите расстановку.'),p(d.teamName),own.node,...(d.awayPlayers.length?[p(d.opponent),away.node]:[]),field('Первая подача',first),btn('Начать партию',()=>perform({type:'next',lineup:own.get(),awayLineup:d.awayPlayers.length?away.get():[],serve:first.value},()=>{selected=null;nextDraft=null;}),'primary wide'));
    }else{
-    const add=side=>{detailOpen=false;observationOpen=false;return quick?perform({type:'rally',side,kind:'point',player:null},()=>{selected=null;}):begin(side);};
+    const add=side=>{detailOpen=false;observationOpen=false;return quick?perform({type:'rally',side,kind:'point',player:null,captureMode:'quick'},()=>{selected=null;}):begin(side);};
     const pointButton=side=>el('button',{type:'button',class:'btn '+(side==='ours'?'vp-ours':'vp-theirs'),onclick:()=>add(side),'aria-label':'Очко '+sideName(d,side)},[el('strong',{text:'+1'}),el('span',{text:sideName(d,side)})]);
     const undo=el('button',{type:'button',class:'btn vp-undo',text:'↶','aria-label':'Отменить последнее событие',disabled:!d.events.length,onclick:()=>perform(null,()=>{selected=null;pointDraft=null;})});
     const points=el('div',{class:'vp-actions vp-points vp-board-points'},[pointButton(order[0]),undo,pointButton(order[1])]);
-    body.append(points,el('button',{type:'button',class:'btn wide vp-scout-open',onclick:()=>{if(busy)return;selected=null;scoutOpen=true;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;},text:'◎ Тактическая разведка'}));
+    const sanctions=el('details',{class:'vp-match-more'},[el('summary',{text:'Судейские санкции'})]);const sanctionSide=select(sides.map(x=>[x,sideName(d,x)]),'ours'),sanctionPlayer=select([],''),sanctionType=select(Object.entries(V.sanctionTypes),'warning'),sanctionNote=el('input',{maxlength:500,placeholder:'Причина / решение судьи'});const fillSanctions=()=>sanctionPlayer.replaceChildren(el('option',{value:'',text:'Команда / без указания игрока'}),...roster(d,sanctionSide.value).map(p=>el('option',{value:p.id,text:playerLabel(p)})));sanctionSide.onchange=fillSanctions;fillSanctions();sanctions.append(field('Команда',sanctionSide),field('Игрок',sanctionPlayer),field('Санкция',sanctionType),field('Примечание',sanctionNote),p('Запись не начисляет очко, не меняет расстановку и не определяет последствия санкции. Внесите фактическое изменение счёта или состава отдельно согласно решению судьи.'),btn('Записать санкцию',()=>perform({type:'sanction',side:sanctionSide.value,category:sanctionType.value,player:sanctionPlayer.value||null,note:sanctionNote.value.trim()},()=>selected=null),'wide'));
+    body.append(points,sanctions,el('button',{type:'button',class:'btn wide vp-scout-open',onclick:()=>{if(busy)return;selected=null;scoutOpen=true;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;},text:'◎ Тактическая разведка'}));
     if(last)body.append(el('div',{class:'vp-last-event',role:'status',text:'Последнее: '+eventText(d,last)}));
     const momentum=V.setMomentum(s.timeline,set);
-    if(momentum.run>=4&&momentum.runSide==='theirs')body.append(el('div',{class:'vp-run-note',role:'status',text:'Соперник выиграл '+momentum.run+' розыгрыша подряд. '+(s.timeouts.ours<2?'Можно рассмотреть тайм-аут.':'Лимит тайм-аутов исчерпан.')}));
+    if(momentum.run>=4&&momentum.runSide==='theirs')body.append(el('div',{class:'vp-run-note',role:'status',text:'Соперник выиграл '+momentum.run+' розыгрыша подряд. '+(s.timeouts.ours<V.matchLimits(d).timeouts?'Можно рассмотреть тайм-аут.':'Лимит тайм-аутов исчерпан.')}));
     if(selected){
      const side=selected.side;
      const candidates=V.legalSubstitutions(d,s,side,selected.id);
@@ -288,8 +294,11 @@ export function openDetailedMatch(initial,back,refresh){
       el('h3',{text:name(d,side,selected.id)}),
       p('Очки: '+(playerStats.points||0)+' · Ошибки: '+(playerStats.errors||0)),
       p('Атаки: '+(playerStats.attackKills||0)+' · Скидки: '+(playerStats.tipKills||0)+' · Блоки: '+(playerStats.blocks||0)+' · Эйсы: '+(playerStats.aces||0)),
-      field('Игрок на замену',reserve),candidates.length?btn('Замена · '+s.subCounts[side]+'/6',()=>{if(!reserve.value)return toast('Выберите запасного');perform({type:'sub',side,out:selected.id,in:reserve.value},()=>selected=null);},'primary wide'):p('Допустимых обычных замен нет.')]);
-     if(side==='ours'&&d.libero&&(s.liberoFor===null?[1,5,6].includes(s.lineup.indexOf(selected.id)+1)&&!(s.serve==='ours'&&s.lineup[0]===selected.id):selected.id===d.libero))area.append(btn(s.liberoFor?'Вернуть основного игрока':'Выход либеро',()=>perform({type:'libero',for:s.liberoFor?null:selected.id},()=>selected=null),'wide'));
+      field('Игрок на замену',reserve),candidates.length?btn('Замена · '+s.subCounts[side]+'/'+V.matchLimits(d).substitutions,()=>{if(!reserve.value)return toast('Выберите запасного');perform({type:'sub',side,out:selected.id,in:reserve.value},()=>selected=null);},'primary wide'):p('Допустимых обычных замен нет.')]);
+     if(side==='ours'&&V.liberoIds(d).length){
+      if(s.liberoFor===null&&[1,5,6].includes(s.lineup.indexOf(selected.id)+1)&&!(s.serve==='ours'&&s.lineup[0]===selected.id))for(const id of V.liberoIds(d))area.append(btn('Выход либеро · '+name(d,'ours',id),()=>perform({type:'libero',for:selected.id,player:id},()=>selected=null),'wide'));
+      else if(selected.id===s.liberoId){area.append(btn('Вернуть основного игрока',()=>perform({type:'libero',for:null},()=>selected=null),'wide'));for(const id of V.liberoIds(d).filter(id=>id!==s.liberoId))area.append(btn('Сменить либеро · '+name(d,'ours',id),()=>perform({type:'libero',for:s.liberoFor,player:id},()=>selected=null),'wide'));}
+     }
      area.append(btn('Отмена',()=>{selected=null;draw();},'wide'));showOverlay(area);return;
     }
    }
@@ -332,7 +341,8 @@ function eventText(d,x){
  if(x.type==='rally')return sideName(d,x.side)+' · '+V.reasons[x.kind]+' · '+name(d,x.actor,x.player)+(x.placement?' · зона '+x.placement:'')+(x.secondary?' · '+V.reasons[x.secondary.kind]+': '+name(d,x.side==='ours'?'theirs':'ours',x.secondary.player):'')+(x.observations?.length?' · успешных действий: '+x.observations.length:'');
  if(x.type==='sub')return sideName(d,x.side)+' · замена '+name(d,x.side,x.out)+' → '+name(d,x.side,x.in)+' · P'+x.zone;
  if(x.type==='timeout')return sideName(d,x.side)+' · тайм-аут '+x.number;
- if(x.type==='libero')return d.teamName+' · '+(x.for?'Выход либеро вместо '+name(d,'ours',x.for):'Возвращение основного игрока');
+ if(x.type==='libero')return d.teamName+' · '+(x.for?'Либеро '+name(d,'ours',x.player||d.libero)+' вместо '+name(d,'ours',x.for):'Возвращение основного игрока');
+ if(x.type==='sanction')return sideName(d,x.side)+' · '+V.sanctionTypes[x.category]+(x.player?' · '+name(d,x.side,x.player):'')+(x.note?' · '+x.note:'');
  return x.type;
 }
 function placementBlock(d,s,side,kind){
@@ -356,8 +366,24 @@ function historyRallyEditor(d,event,index,save,close){
  }
  reason.onchange=fill;fill();
  const node=section('Редактирование · сет '+event.set+' · '+event.score,p('Команда, получившая очко: '+sideName(d,event.side)+'. Счёт и переходы не изменяются.'),field('Причина',reason),field('Автор',player),field('Зона завершения',zone),field('Дополнительная ошибка соперника',defender),btn('Сохранить уточнение',()=>save({kind:reason.value,player:player.value||null,placement:!zone.disabled&&zone.value?Number(zone.value):null,secondary:!defender.disabled&&defender.value?{kind:V.secondaryKind(reason.value),player:defender.value}:null}),'primary wide'),
- observationEditor(d,event,items=>save({observations:items})),btn('Отмена',close,'wide'));
+ observationEditor(d,event,items=>save({observations:items})),touchEditor(d,event,(touches,captureComplete)=>save({touches,captureComplete})),btn('Отмена',close,'wide'));
  return node;
+}
+function touchEditor(d,event,save){
+ const items=structuredClone(event.touches||[]),side=select(sides.map(x=>[x,sideName(d,x)]),event.before.serve),player=select([],''),action=select(Object.entries(touchActions),'serve'),quality=select(Object.entries(touchQuality),'unknown'),result=select(Object.entries(touchResults),'continue'),zone=select([['','Не указана'],...Array.from({length:6},(_,i)=>[i+1,'P'+(i+1)])],'');
+ const complete=el('input',{type:'checkbox'});complete.checked=event.captureComplete===true;
+ const rows=el('div',{class:'vp-stack'});const draw=()=>rows.replaceChildren(...items.map((t,i)=>el('div',{class:'vp-observed-row'},[p((i+1)+'. '+name(d,t.side,t.player)+' · '+touchActions[t.action]+' · '+touchQuality[t.quality]+' · '+touchResults[t.result]+(t.zone?' · P'+t.zone:'')),btn('Удалить',()=>{items.splice(i,1);complete.checked=false;draw();})])));
+ const fill=()=>player.replaceChildren(el('option',{value:'',text:'Выберите игрока'}),...roster(d,side.value).filter(p=>event.before.lineups[side.value].includes(p.id)).map(p=>el('option',{value:p.id,text:playerLabel(p)})));side.onchange=fill;fill();draw();
+ return section('Последовательность касаний',p('Только фактически наблюдаемые действия. Полную запись отметьте, если записаны все действия от подачи до окончания розыгрыша. Незавершённая запись не участвует в процентах эффективности.'),field('Команда',side),field('Игрок',player),field('Элемент',action),field('Качество',quality),field('Результат',result),field('Зона направления (сторона получателя)',zone),btn('+ Добавить действие',()=>{if(!player.value||items.length>=60)return toast('Выберите игрока; максимум 60 действий');items.push({side:side.value,player:player.value,action:action.value,quality:quality.value,result:result.value,zone:zone.value?Number(zone.value):null});complete.checked=false;draw();},'wide'),rows,el('label',{class:'field'},[complete,el('span',{text:'Все действия записаны полностью'})]),btn('Сохранить последовательность',()=>save(structuredClone(items),complete.checked),'primary wide'));
+}
+function captureBlock(d,s){
+ const side=select(sides.map(x=>[x,sideName(d,x)]),'ours'),set=select([[0,'Весь матч'],...Array.from({length:d.bestOf},(_,i)=>[i+1,'Партия '+(i+1)])],0),action=select(Object.entries(touchActions),'serve'),player=select([['','Все игроки']],'');
+ const rotation=select([['','Все переходы'],...Array.from({length:6},(_,i)=>[i,'P'+(i+1)])],'');const out=el('div',{class:'vp-stack'});
+ const fill=()=>player.replaceChildren(el('option',{value:'',text:'Все игроки'}),...roster(d,side.value).map(p=>el('option',{value:p.id,text:playerLabel(p)})));
+ const fmt=m=>m.value==null?'— ('+m.total+' действий)':m.value.toFixed(1)+'% · '+m.n+'/'+m.total;
+ function draw(){const options={set:Number(set.value),side:side.value,player:player.value||null},a=captureSummary(s.timeline,options),z=captureZoneSummary(s.timeline,{...options,action:action.value,rotation:rotation.value===''?null:Number(rotation.value)}),max=Math.max(1,...z.zones.map(x=>x.count));
+ out.replaceChildren(p('Розыгрыши: '+a.rallies+' · с причиной '+a.reasons+' · с автором '+a.authors+' · с касаниями '+a.touchRallies+' · полная запись '+a.complete),table(['Режим','Розыгрыши'],Object.entries(a.modes).map(([k,v])=>[captureModes[k]||'Старые записи',v])),table(['Показатель','По полной выборке'],[['Эффективность атаки (очки − ошибки)',fmt(a.attackEfficiency)],['Эффективность подачи (очки − ошибки)',fmt(a.serveEfficiency)],['Положительный приём',fmt(a.positiveReceive)],['Идеальный приём',fmt(a.perfectReceive)],['Конверсия защиты',fmt(a.defenseConversion)]]),p('Проценты относятся только к розыгрышам, явно отмеченным как полные. При неизвестном знаменателе или качестве — прочерк. Это не оценка всего матча.'),p('Карта записанных действий: зона известна в '+z.known+' из '+z.total+'; учитываются также частичные записи.'),el('div',{class:'vp-heat-grid'},[4,3,2,5,6,1].map(n=>{const x=z.zones[n-1];return el('div',{class:'vp-heat-cell',style:'--heat:'+(x.count/max)},[el('small',{text:'P'+n}),el('strong',{text:x.count}),el('small',{text:'Очки '+x.point+' · ошибки '+x.error})]);})));
+ }side.onchange=()=>{fill();draw()};for(const x of [set,action,player,rotation])x.onchange=draw;fill();draw();return section('Полнота регистрации и расширенная статистика',field('Партия',set),field('Команда',side),field('Игрок',player),field('Действие для карты',action),field('Переход для карты',rotation),out);
 }
 function observationEditor(d,event,save){
  const items=[...(event.observations||[])],side=select(sides.map(x=>[x,sideName(d,x)]),event.before.serve==='ours'?'theirs':'ours'),kind=select([['serve','Приём подачи · мяч остался в игре'],['attack','Защита от атаки'],['tip','Защита от скидки'],['defense','Защита без уточнения']],'serve'),person=select([],'');
@@ -469,8 +495,9 @@ export function buildMatchReport(m){
   section('Результаты партий',table(['Сет',d.teamName,d.opponent,'Длительность'],sets.map(x=>[x.set,x.ours,x.theirs,seconds(x.seconds)]))),
   section('Стартовые расстановки',...sets.map(x=>section('Сет '+x.set,table(['Команда','P1','P2','P3','P4','P5','P6'],sides.map(side=>[sideName(d,side),...Array.from({length:6},(_,i)=>x.lineups[side][i]?name(d,side,x.lineups[side][i]):'—')]))))),
   section('Замены и либеро',table(['Сет','Счёт','Действие'],s.timeline.filter(x=>x.type==='sub'||x.type==='libero').map(x=>[x.set,x.score,eventText(d,x)]))),
+  section('Судейские санкции (записанные решения)',table(['Сет','Счёт','Санкция'],s.timeline.filter(x=>x.type==='sanction').map(x=>[x.set,x.score,eventText(d,x)]))),
   section('Тайм-ауты',table(['Сет','Счёт','Команда','№'],s.timeline.filter(x=>x.type==='timeout').map(x=>[x.set,x.score,sideName(d,x.side),x.number]))),
-  ...summaryBlocks(d,s),
+  ...summaryBlocks(d,s),captureBlock(d,s),
   section('Детали очка',table(['Сет','Счёт','Команда','Причина','Автор','Зона','Доп. ошибка'],s.timeline.filter(x=>x.type==='rally').map(x=>[x.set,x.score,sideName(d,x.side),V.reasons[x.kind],name(d,x.actor,x.player),x.placement??'—',x.secondary?V.reasons[x.secondary.kind]+' · '+name(d,x.side==='ours'?'theirs':'ours',x.secondary.player):'—']))),
   section('Подписи',p('Первый судья __________________________'),p('Капитан '+d.teamName+' __________________________'),p('Капитан '+d.opponent+' __________________________'))]);
 }

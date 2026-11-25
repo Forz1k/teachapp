@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import * as db from '../js/db.js';
 import * as S from '../js/store.js';
 import * as W from '../js/workbench.js';
-import {physicalPassport,normChecklist,scoreRubric} from '../js/school-tools.js';
+import {physicalPassport,normChecklist,scoreRubric,schoolDebtRows} from '../js/school-tools.js';
 const old={id:'old',classId:'old-c',fullName:'Тест'},student={id:'new',lineageId:'old',classId:'c',fullName:'Новое имя'};
 const d={id:'n',name:'Прыжок',activityId:'standing',unit:'см',direction:'max',scale:[100,110,120,130,140]};
 const year={from:'2026-09-01',to:'2027-05-31'};
@@ -28,4 +28,11 @@ test('Критерии: явные баллы, без автоматически
  assert.equal(S.state.marks.length,0);
  const b=await S.makeBackup();assert.equal(b.version,BACKUP_VERSION);await S.restoreBackup(b);assert.equal((await W.listWork('rubric')).length,1);
  const bad=structuredClone(b);bad.data.workRecords[0].thresholds=[0,0,60,75,90];await assert.rejects(S.restoreBackup(bad));
+});
+
+test('Центр задолженностей отделяет сроки, ограничения и будущие назначения',()=>{
+ const s={settings:{year},classes:[{id:'c',name:'8А'}],students:[student,{id:'missing',classId:'c',fullName:'Нет результата'},{id:'restricted',classId:'c',fullName:'Ограничение'}],norms:[d],normResults:[r('a','new','2026-11-20',140)],activityCategories:[],activityRestrictions:[{studentId:'restricted',activityId:'jump',type:'avoid',dateFrom:'2026-09-01'}],exemptions:[]};
+ const a={id:'a',kind:'normAssignment',name:'Контроль',classId:'c',normId:'n',from:year.from,to:'2026-11-23',yearFrom:year.from,yearTo:year.to,targetGrade:5};
+ const rows=schoolDebtRows(s,[a,{...a,id:'future',from:'2026-12-01',to:'2026-12-15'}],'2026-11-24');
+ assert.deepEqual(rows.map(x=>[x.studentId,x.status,x.overdue]),[['missing','missing',true],['restricted','review',false]]);
 });

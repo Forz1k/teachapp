@@ -569,10 +569,22 @@ export function initialsName(fullName) {
 
 /** Сортировка уроков по дате. */
 export function sortLessons(list) {
-  return [...list].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return [...list].sort((a,b)=>a.date.localeCompare(b.date)||(a.slot??0)-(b.slot??0)||(parseTime(a.time)??9999)-(parseTime(b.time)??9999)||a.id.localeCompare(b.id));
 }
 
-/** Один урок журнала на класс и дату, даже если в расписании несколько слотов. */
+/** Legacy lessons retain their IDs and may have no lesson number. */
+export const validLessonSlot=slot=>slot==null||Number.isInteger(slot)&&slot>=1&&slot<=99;
+export const validLessonTime=time=>time==null||time===''||typeof time==='string'&&parseTime(time)!==null;
+export function lessonLabel(lesson,short=false){return (short?fmtShort(lesson.date):fmtFull(lesson.date))+(lesson.slot!=null?' · №'+lesson.slot:'')+(lesson.time?' · '+lesson.time:'');}
+// Match each schedule row once. Explicit slots take priority; legacy rows are
+// matched to remaining slots in schedule order without rewriting existing IDs.
+export function matchScheduledLessons(rows,lessons){
+ const used=new Set(),matches=new Map();
+ for(const row of rows){const found=lessons.find(l=>!used.has(l.id)&&l.classId===row.classId&&l.slot!=null&&l.slot===row.slot);if(found){used.add(found.id);matches.set(row.id,found);}}
+ for(const row of rows){if(matches.has(row.id))continue;const found=lessons.find(l=>!used.has(l.id)&&l.classId===row.classId&&l.slot==null);if(found){used.add(found.id);matches.set(row.id,found);}}
+ return matches;
+}
+/** All eligible calendar dates (legacy callers need date-only output). */
 export function planLessonDates({classId,from,to,rules,overrides,holidays,days}) {
   if (!from || !to || from > to) return [];
   const dates = [];
@@ -585,6 +597,27 @@ export function planLessonDates({classId,from,to,rules,overrides,holidays,days})
     if (scheduled || (days?.has(d.getDay()) && !templateDay)) dates.push(date);
   }
   return dates;
+}
+
+
+// New planner works with slots; legacy date planner remains API-compatible.
+export function planLessonEntries(args){
+ return planLessonDates(args).flatMap(date=>{
+  const rows=scheduleForDate(args.rules,args.overrides,date).filter(r=>r.classId===args.classId);
+  return rows.length?rows.map(r=>({date,slot:r.slot,time:r.time||'',id:r.id,classId:r.classId})):[{date,slot:null,time:'',classId:args.classId,id:'manual-'+date}];
+ });
+}
+export function missingLessonEntries(entries,lessons){
+ const byDate=new Map();
+ for(const row of entries){if(!byDate.has(row.date))byDate.set(row.date,[]);byDate.get(row.date).push(row);}
+ const out=[];
+ for(const [date,rows] of byDate){
+  const existing=lessons.filter(l=>l.date===date);
+  if(rows.length===1&&rows[0].slot==null){if(!existing.length)out.push(rows[0]);continue;}
+  const matched=matchScheduledLessons(rows,existing);
+  const seen=new Set();for(const row of rows){const key=row.classId+'|'+row.slot;if(!matched.has(row.id)&&!seen.has(key))out.push(row);seen.add(key);}
+ }
+ return out;
 }
 
 

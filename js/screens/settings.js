@@ -1,3 +1,5 @@
+import {privacyIdleOptions,readShieldPreferences,saveShieldPreferences,screenLockEnabled,changeScreenLock} from '../privacy-shield.js';
+import {openBriefings,openGymBoards} from './methodical.js';
 import {isEncryptedBackup,decryptBackup} from '../privacy.js';
 import {retentionPreview,purgeExpired} from '../retention.js';
 import { validateBackup } from '../backup.js';
@@ -20,7 +22,7 @@ import {openDocuments} from './documents.js';
 import {openRubrics} from './school-tools.js';
 import {openArchive} from './school-archive.js';
 import {openLibrary} from './library.js';
-import {accents,readAccent,applyAccent,initializeDesign} from '../design.js';
+import {accents,readAccent,applyAccent,initializeDesign,readGymMode,applyGymMode} from '../design.js';
 import {dashboardHeading,metric} from '../dashboard.js';
 import {motionModes,readMotion,applyMotion,animateOnce} from '../motion.js';
 const { el, icon } = ui;
@@ -34,10 +36,12 @@ export function renderSettings(root, ctx = {}) {
 
   const body = el('div', { class:'list settings-directory' });
   root.append(body);
+  const gym=el('input',{type:'checkbox',checked:readGymMode()});gym.onchange=()=>applyGymMode(gym.checked);body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Режим спортивного зала'}),el('label',{class:'row-item'},[gym,el('span',{text:'Крупные кнопки, высокий контраст, минимум анимации'})])]));
   if(ctx.onAnalytics)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Аналитика и итоговые оценки'}),el('button',{class:'btn wide',type:'button',text:'Открыть аналитику',onclick:ctx.onAnalytics})]));
   if(ctx.onCoach)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Режим тренера'}),el('button',{class:'btn wide',type:'button',text:'Волейбол · команды и тренировки',onclick:ctx.onCoach})]));
 
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Методические материалы'}),el('button',{class:'btn wide',type:'button',text:'Библиотека упражнений и конспекты',onclick:()=>openLibrary('school')}),el('button',{class:'btn wide',type:'button',text:'Конструктор оценивания техники',onclick:openRubrics})]));
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Инструктажи и организация занятий'}),el('button',{class:'btn wide',type:'button',text:'Журнал инструктажей',onclick:openBriefings}),el('button',{class:'btn wide',type:'button',text:'Конструктор спортивного зала',onclick:openGymBoards})]));
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Рабочий календарь'}),el('button',{class:'btn wide',type:'button',text:'Календарь и напоминания',onclick:openWorkCalendar})]));
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Соревнования'}),el('button',{class:'btn wide',type:'button',text:'Организация соревнований',onclick:openTournaments})]));
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Генератор документов'}),el('button',{class:'btn wide',type:'button',text:'Word, Excel и PDF',onclick:()=>openDocuments()})]));
@@ -294,6 +298,27 @@ export function renderSettings(root, ctx = {}) {
       }catch(e){ui.toast(e.message);}
     }})]));
 
+    const shield=readShieldPreferences();
+  const idle=el('select',{'aria-label':'Автоматическая экранная ширма'},privacyIdleOptions.map(minutes=>el('option',{value:String(minutes),text:minutes?minutes+' мин':'Выключена'})));
+  idle.value=String(shield.idleMinutes);
+  const hideBackground=el('input',{type:'checkbox',checked:shield.hideOnBackground});
+  body.append(el('div',{class:'card-block'},[
+    el('div',{class:'head',text:'Конфиденциальность · автоширма'}),
+    el('p',{text:'Скрывает интерфейс при бездействии или уходе с вкладки. Если включён PIN или пароль, требуется разблокировка. Это не шифрование и не защита от доступа к браузерному профилю. Настройки действуют только на этом устройстве; системный снимок экрана при сворачивании не гарантируется.'}),
+    el('label',{class:'field'},['Скрывать данные после бездействия',idle]),
+    el('label',{class:'row-item'},[hideBackground,el('span',{text:'Скрывать при уходе с вкладки или приложения'})]),
+    el('button',{class:'btn wide',type:'button',text:'Сохранить автоширму',onclick:()=>{
+      try{saveShieldPreferences({idleMinutes:Number(idle.value),hideOnBackground:hideBackground.checked});ui.toast('Настройки автоширмы сохранены');}catch{ui.toast('Не удалось сохранить настройки автоширмы');}
+    }})
+  ]));
+  const lockStatus=el('p',{text:screenLockEnabled()?'PIN / пароль включён':'PIN / пароль не настроен'});
+  const lockChange=async(remove=false)=>{try{
+    const current=screenLockEnabled()?await ui.promptDialog({title:'Действующий PIN или пароль',password:true,ok:'Продолжить'}):'';if(current===null)return;
+    let next=null;if(!remove){next=await ui.promptDialog({title:'Новый PIN или пароль',text:'6–12 цифр либо пароль от 8 символов. Запомните его. Это не шифрование и не системная защита.',password:true});if(next===null)return;const repeat=await ui.promptDialog({title:'Повторите PIN или пароль',password:true});if(repeat!==next)throw Error('Значения не совпадают');}
+    if(!await ui.confirmDialog({title:remove?'Отключить блокировку?':'Включить блокировку интерфейса?',text:remove?'Экранная ширма останется доступной без пароля.':'Блокировка будет требоваться при каждом новом открытии приложения и активации ширмы. Данные и резервные копии не меняются. Храните код безопасно.',ok:remove?'Отключить':'Включить'}))return;
+    const enabled=await changeScreenLock({current,next});lockStatus.textContent=enabled?'PIN / пароль включён':'PIN / пароль не настроен';ui.toast('Настройка сохранена');
+  }catch(e){ui.toast(e.message);}};
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Локальная блокировка интерфейса'}),lockStatus,el('p',{text:'Ограничивает случайный доступ через интерфейс, но не защищает IndexedDB от доступа к профилю браузера. Используйте пароль устройства и зашифрованные резервные копии.'}),el('button',{class:'btn wide',type:'button',text:'Настроить / изменить PIN или пароль',onclick:()=>lockChange()}),el('button',{class:'btn wide',type:'button',text:'Отключить PIN или пароль',onclick:()=>lockChange(true)})]));
   /* ---------- демо-данные ---------- */
   const demoBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Демонстрационные данные' })]);
   const demoDesc = el('div', {

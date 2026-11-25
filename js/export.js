@@ -21,7 +21,7 @@ export function buildSummary({ classId, from, to, settings, includeExemptions=tr
   const lessons = store.lessonsInRange(classId, from, to);
   const markMap = store.markMap(classId);
 
-  const header = ['№', 'ФИО', ...lessons.map((l) => M.fmtFull(l.date)), 'Средний', 'Посещаемость'];
+  const header = ['№', 'ФИО', ...lessons.map((l) => M.lessonLabel(l)), 'Средний', 'Посещаемость'];
 
   const rows = students.map((st) => {
     const cells = [];
@@ -86,7 +86,7 @@ export function buildFlat({ classId, from, to, includeMonthly = true,includeExem
       rows.push([
         className,
         st.fullName,
-        M.fmtFull(lesson.date),
+        M.lessonLabel(lesson),
         m.value || '',
         !includeExemptions&&M.hasOsv(m)?(m.flag==='Н'?'Н':''):m.flag === 'Н' && M.hasOsv(m) ? 'ОСВ + Н' : m.flag || '',
       ]);
@@ -119,7 +119,7 @@ export function buildTopicsSheet({ classId, from, to,includeNotes=false }) {
   const rows = [['Дата', 'Тема', ...(includeNotes?['Примечание']:[])]];
   for (const l of lessons) {
     const topic = store.state.topics.find((t) => t.id === l.topicId);
-    rows.push([M.fmtFull(l.date), topic ? topic.name : '', ...(includeNotes?[l.note||'']:[])]);
+    rows.push([M.lessonLabel(l), topic ? topic.name : '', ...(includeNotes?[l.note||'']:[])]);
   }
   return rows;
 }
@@ -400,6 +400,7 @@ export async function applySchedule(entries) {
  * Возвращает [{order, name}].
  */
 export async function parseKtpFile(file) {
+  if(/\.docx$/i.test(file.name||'')){const {parseKtpDocx}=await import('./ktp-docx.js');return parseKtpDocx(file);}
   if (!hasXlsx()) throw new Error('Модуль XLSX не загружен');
   const XLSX = window.XLSX;
   const buf = await file.arrayBuffer();

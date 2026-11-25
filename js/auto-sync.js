@@ -1,27 +1,36 @@
 /* Foreground sync; never runs from service worker or while another updated tab is active. */
 import {syncAreas,relayClient,syncPersonalArea} from './sync.js';
-import {readPersonalCode,personalCredentials} from './personal-sync.js';
+import {readSyncIdentity,identityCredentials,identityAreas} from './device-trust.js';
 let last={phase:'idle',areas:[],at:null},activeSession=null;
 export const withSyncSession=task=>activeSession?activeSession.exclusive(task):task();
 export const autoSyncStatus=()=>({...last,areas:last.areas.map(x=>({...x}))});
-export async function runPersonalSync({getCode=readPersonalCode,online=()=>globalThis.navigator?.onLine!==false,clientFactory=relayClient,runArea=syncPersonalArea,initialize=false}={}){
+export async function runPersonalSync({getCode=readSyncIdentity,online=()=>globalThis.navigator?.onLine!==false,clientFactory=relayClient,runArea=syncPersonalArea,initialize=false}={}){
+ // Do not replace an active attempt with a concurrent offline/disconnected request.
+ if(last.phase==='running')return autoSyncStatus();
  const code=getCode();
- if(!code)return {phase:'off',areas:[],at:null};
- if(!online())return {phase:'offline',areas:[],at:null};
- if(last.phase==='running')return last;
+ if(!code){last={phase:'off',areas:[],at:null};return autoSyncStatus();}
+ if(!online()){last={phase:'offline',areas:[],at:null};return autoSyncStatus();}
  last={phase:'running',areas:[],at:null};
  const areas=[];
- for(const area of Object.keys(syncAreas)){
-  if(getCode()!==code||!online())break;
+ const stillAllowed=()=>getCode()===code&&online();
+ for(const area of identityAreas(code)){
+  if(!stillAllowed()){areas.push({area,status:'paused'});continue;}
   try{
-   const credentials=await personalCredentials(code,area);
-   if(getCode()!==code||!online())break;
-   const client=clientFactory(credentials.endpoint,area,credentials.token,{timeoutMs:7000});
-   areas.push(await runArea({...credentials,client,initialize,stillAllowed:()=>getCode()===code&&online()}));
-  }catch{areas.push({area,status:'error'});}
+   const credentials=await identityCredentials(code,area);
+   if(!stillAllowed()){areas.push({area,status:'paused'});continue;}
+   const client=clientFactory(credentials.endpoint,area,credentials.token,{timeoutMs:7000,...(credentials.protocolVersion===2?{protocolVersion:2}:{})});
+   const result=await runArea({...credentials,client,initialize,stillAllowed});
+   areas.push(result.status==='synced'?{...result,successfulAt:new Date().toISOString()}:result);
+  }catch(error){const allowed=stillAllowed();areas.push({area,status:allowed?'error':'paused',...(allowed&&error?.retryable===true?{retryable:true}:{})});}
  }
- last={phase:'finished',areas,at:new Date().toISOString()};
+ last={phase:stillAllowed()?'finished':'interrupted',areas,at:new Date().toISOString()};
  return autoSyncStatus();
+}
+// At most two expedited attempts per transient outage; normal foreground polling
+// remains responsible for longer outages. Always obtain a fresh revision on retry.
+export function syncRetryDelay(report,attempt=0){
+ if(report?.phase!=='finished'||!report.areas?.some(x=>x.status==='error'&&x.retryable===true)||!Number.isInteger(attempt)||attempt<0)return null;
+ return [5000,15000][attempt]??null;
 }
 // All updated tabs hold shared session locks before loading the database.
 // To sync, temporarily release this tab's shared lock and acquire an exclusive lock.

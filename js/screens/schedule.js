@@ -142,6 +142,7 @@ export function renderSchedule(root, opts = {}) {
       return;
     }
 
+      const mapped=M.matchScheduledLessons(list,store.state.lessons.filter(l=>l.date===state.date));
       for (const item of list) {
         const isWindow = item.classId === 'window';
         const cls = isWindow ? null : store.state.classes.find((c) => c.id === item.classId);
@@ -162,7 +163,7 @@ export function renderSchedule(root, opts = {}) {
       }, [icon('chevron')]));
 
       wrap.append(row);
-      if (cls) wrap.append(warning(store.lessonsOfClass(cls.id).find(l => l.date === state.date) || {classId:cls.id,date:state.date}));
+      if (cls) wrap.append(warning(mapped.get(item.id) || {classId:cls.id,date:state.date,slot:item.slot,time:item.time}));
     }
 
     wrap.append(el('div', { style: 'margin-top:14px' }, [

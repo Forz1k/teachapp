@@ -17,15 +17,16 @@ const select=(rows,value)=>{const n=el('select',{},rows.map(([v,text])=>el('opti
 export function openLessonPicker(classId,date=M.todayIso()){
   const input=el('input',{type:'date',value:date,max:M.todayIso()});
   const dates=S.lessonsOfClass(classId).filter(l=>l.date<=M.todayIso()).slice().reverse();
-  const picker=select([['','Выбрать дату'],...dates.map(l=>[l.date,M.fmtFull(l.date)])],'');
-  picker.onchange=()=>{if(picker.value)input.value=picker.value;};
-  openSheet(el('div',{},[el('h2',{text:'Проведение урока'}),field('Существующий урок',picker),field('Дата',input),btn('Открыть урок',()=>openLessonSession(classId,input.value),'primary wide')]));
+  const picker=select([['','Выбрать урок'],...dates.map(l=>[l.id,M.lessonLabel(l)])],'');
+  picker.onchange=()=>{const selected=dates.find(l=>l.id===picker.value);if(selected)input.value=selected.date;};input.onchange=()=>{picker.value='';};
+  const slot=el('input',{type:'number',min:1,max:99,step:1,placeholder:'Необязательно'}),time=el('input',{type:'time'});
+  openSheet(el('div',{},[el('h2',{text:'Проведение урока'}),field('Существующий урок',picker),field('Дата',input),field('Номер нового урока',slot),field('Время',time),btn('Открыть урок',()=>picker.value?showLessonSession(picker.value):openLessonSession(classId,input.value,{slot:slot.value===''?null:Number(slot.value),time:time.value}),'primary wide')]));
 }
-export async function openLessonSession(classId,date=M.todayIso()){
+export async function openLessonSession(classId,date=M.todayIso(),options={}){
   if(!S.state.classes.some(c=>c.id===classId)||!H.validPeriod(date,null)||date>M.todayIso())return toast('Выберите класс и дату не позднее сегодняшней');
   if(!S.studentsOfClass(classId).length)return toast('В классе нет учеников');
   try{
-    const lesson=await S.addLesson(classId,date);
+    const lesson=await S.addLesson(classId,date,null,'',options);
     showLessonSession(lesson.id);
   }catch(e){toast(e.message);}
 }
@@ -91,7 +92,7 @@ export function showLessonSession(lessonId){
     });
     const unknown=rows.filter(r=>!r.absent&&!r.present).length;
     const topic=S.state.topics.find(t=>t.id===lesson.topicId);
-    head.replaceChildren(el('h2',{text:(cls?.name||'Класс')+' · Урок'}),p(M.fmtFull(lesson.date)+' · '+(lesson.held?'Проведение подтверждено':'Рабочий экран')),
+    head.replaceChildren(el('h2',{text:(cls?.name||'Класс')+' · Урок'}),p(M.lessonLabel(lesson)+' · '+(lesson.held?'Проведение подтверждено':'Рабочий экран')),
       el('h3',{class:'session-topic',text:topic?.name||'Тема КТП не указана'}),el('div',{class:'dashboard-metrics session-metrics'},[metric('Присутствуют',rows.filter(r=>r.present).length,'check'),metric('Отсутствуют',rows.filter(r=>r.absent).length,'classes'),metric('Не отмечено',unknown,'journal'),metric('ОСВ',rows.filter(r=>r.covered).length,'shield')]),
       el('div',{class:'session-warning'+(byStudent.size?' has-warning':''),text:'Совпадения ограничений: '+byStudent.size}),
       needsReview?p('Содержание нагрузки требует проверки. Отсутствие совпадений не является допуском.'):p('Проверка по внесённым сведениям, не медицинский допуск.'));

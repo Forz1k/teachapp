@@ -393,13 +393,14 @@ export async function deleteStudent(id) {
 
 /* ---------- уроки ---------- */
 
-export async function addLesson(classId, dateIso, topicId = null, note = '') {
-  const existing = state.lessons.find((l) => l.classId === classId && l.date === dateIso);
-  if (existing) return existing;
-  const lesson = { id: M.uid('les'), classId, date: dateIso, topicId, note };
+export async function addLesson(classId, dateIso, topicId = null, note = '', {slot=null,time=''}={}) {
+  if(!M.validLessonSlot(slot)||!M.validLessonTime(time))throw Error('Проверьте номер и время урока');
+  const lesson = { id: M.uid('les'), classId, date: dateIso, topicId, note,...(slot!=null?{slot}:{}),...(time?{time}:{}) };
   const result = await db.transaction(['lessons','students','exemptions','marks'],'readwrite',async s => {
-    const found = await s.lessons.index('classId_date').get([classId,dateIso]);
-    if (found) return {lesson:found,changes:[]};
+    const rows=await s.lessons.index('classId_date').getAll([classId,dateIso]);
+    if(slot==null&&rows.length>1)throw Error('На эту дату несколько уроков. Выберите конкретный номер.');
+    const found=slot==null?rows[0]:rows.find(l=>l.slot===slot);
+    if(found)return {lesson:found,changes:[]};
     await s.lessons.put(lesson);
     const students = await s.students.index('classId').getAll(classId);
     const exemptions = await s.exemptions.getAll();
@@ -418,16 +419,20 @@ export async function addLesson(classId, dateIso, topicId = null, note = '') {
 }
 
 export async function updateLesson(id, patch) {
-  const result = await db.transaction(['lessons','students','participation','exemptions','marks'],'readwrite',async s => {
+  const result = await db.transaction(['lessons','students','participation','exemptions','marks','normResults'],'readwrite',async s => {
     const previous = await s.lessons.get(id);
     if (!previous) return null;
     const lesson = {...previous,...patch};
+    if(lesson.classId!==previous.classId||!M.validLessonSlot(lesson.slot)||!M.validLessonTime(lesson.time))throw Error('Проверьте класс, номер и время урока');
+    const sameDay=await s.lessons.index('classId_date').getAll([lesson.classId,lesson.date]);
+    if(sameDay.some(l=>l.id!==id&&(l.slot??null)===(lesson.slot??null)))throw Error('На эту дату уже есть урок с таким номером');
     await s.lessons.put(lesson);
     const changes = [];
-    const records = [];
+    const records = [],normRecords=[];
     if (previous.date !== lesson.date) {
       const [students,parts,marks,exemptions] = await Promise.all([s.students.index('classId').getAll(lesson.classId),
         s.participation.index('lessonId').getAll(id),s.marks.index('lessonId').getAll(id),s.exemptions.getAll()]);
+      for(const r of await s.normResults.index('lessonId').getAll(id)){const next={...r,date:lesson.date};await s.normResults.put(next);normRecords.push(next);}
       const byStudent = new Map(marks.map(m => [m.studentId,m]));
       const participation = new Map(parts.map(p => [p.studentId,p]));
       for (const p of parts) {
@@ -443,11 +448,12 @@ export async function updateLesson(id, patch) {
         changes.push({id:mark?.id || next.id,next});
       }
     }
-    return { lesson,changes,records };
+    return { lesson,changes,records,normRecords };
   });
   if (!result) return;
   Object.assign(state.lessons.find(l => l.id === id),result.lesson);
   for (const record of result.records) Object.assign(state.participation.find(p => p.id === record.id) || {},record);
+  for(const record of result.normRecords)Object.assign(state.normResults.find(r=>r.id===record.id)||{},record);
   cacheMarks(result.changes);
   state.lessons = M.sortLessons(state.lessons);
   notify();
@@ -849,50 +855,38 @@ export async function deleteTopic(id) {
 }
 
 /** Массовая замена тем в КТП — одной транзакцией (для импорта из Excel). */
+function importedTopics(items){
+  if(!Array.isArray(items)||items.length<1||items.length>5000)throw new Error('Импорт должен содержать от 1 до 5000 тем');
+  return items.map(it=>{const name=String(it?.name??'').trim();if(!name||name.length>500)throw new Error('Проверьте название темы (до 500 символов)');return name;});
+}
 export async function replaceKtpTopics(ktpId, items) {
-  const old = state.topics.filter((t) => t.ktpId === ktpId);
-  const oldIds = new Set(old.map((t) => t.id));
-  const affectedLessons = state.lessons.filter((l) => oldIds.has(l.topicId));
-
-  const created = items.map((it, i) => ({
-    id: M.uid('top'),
-    name: String(it.name).trim(),
-    ktpOrder: it.order ?? i + 1,
-    ktpId,
-  }));
-
-  await db.transaction(['topics', 'lessons'], 'readwrite', (s) => {
-    for (const l of affectedLessons) s.lessons.put({ ...l, topicId: null });
-    for (const t of old) s.topics.delete(t.id);
-    for (const t of created) s.topics.put(t);
+  const names=importedTopics(items);
+  const created=await db.transaction(['ktp','topics','lessons'],'readwrite',async s=>{
+    if(!await s.ktp.get(ktpId))throw new Error('КТП недоступен');
+    const old=await s.topics.index('ktpId').getAll(ktpId),oldIds=new Set(old.map(t=>t.id));
+    const lessons=await s.lessons.getAll();
+    if(lessons.some(l=>oldIds.has(l.topicId)))throw new Error('Темы уже используются в уроках. Допишите темы или создайте новую версию КТП.');
+    const rows=names.map((name,i)=>({id:M.uid('top'),name,ktpOrder:i+1,ktpId}));
+    for(const t of old)await s.topics.delete(t.id);
+    for(const t of rows)await s.topics.add(t);
+    return rows;
   });
-
-  for (const l of affectedLessons) l.topicId = null;
-  state.topics = state.topics.filter((t) => !oldIds.has(t.id)).concat(created);
-  state.topics.sort((a, b) => (a.ktpOrder || 0) - (b.ktpOrder || 0));
-  notify();
-  return created.length;
+  await load();notify();return created.length;
 }
 
-/** Дозаписать темы в существующее КТП (не удаляя старые). */
+/** Add in source order without overlapping existing sequence numbers. */
 export async function appendKtpTopics(ktpId, items) {
-  const existing = state.topics.filter((t) => t.ktpId === ktpId);
-  let maxOrder = existing.reduce((mx, t) => Math.max(mx, t.ktpOrder || 0), 0);
-  const created = items.map((it) => {
-    maxOrder += 1;
-    return {
-      id: M.uid('top'),
-      name: String(it.name).trim(),
-      ktpOrder: it.order ?? maxOrder,
-      ktpId,
-    };
+  if(Array.isArray(items)&&!items.length)return 0;
+  const names=importedTopics(items);
+  const created=await db.transaction(['ktp','topics'],'readwrite',async s=>{
+    if(!await s.ktp.get(ktpId))throw new Error('КТП недоступен');
+    const existing=await s.topics.index('ktpId').getAll(ktpId);
+    let max=existing.reduce((n,t)=>Math.max(n,t.ktpOrder||0),0);
+    const rows=names.map(name=>({id:M.uid('top'),name,ktpOrder:++max,ktpId}));
+    for(const t of rows)await s.topics.add(t);
+    return rows;
   });
-  if (!created.length) return 0;
-  await db.bulkPut('topics', created);
-  state.topics.push(...created);
-  state.topics.sort((a, b) => (a.ktpOrder || 0) - (b.ktpOrder || 0));
-  notify();
-  return created.length;
+  await load();notify();return created.length;
 }
 
 /* ---------- расписание ---------- */

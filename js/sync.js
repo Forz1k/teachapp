@@ -17,12 +17,15 @@ const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':plain(v)?
 const same=(a,b)=>canonical(a)===canonical(b);
 const sorted=rows=>copy(rows).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
 const keyOf=area=>'sync-checkpoint-'+area;
+// Small local-only metadata: excluded from backups and scoped cloud snapshots.
+const statusKey=area=>'sync-checkpoint-status-'+area;
+const successRecord=(area,cp)=>({id:statusKey(area),workspaceId:cp.workspaceId,revision:cp.revision,endpoint:cp.endpoint,successfulAt:new Date().toISOString()});
 export const isSyncCheckpoint=r=>typeof r?.id==='string'&&r.id.startsWith('sync-checkpoint-');
 const validArea=a=>Object.hasOwn(syncAreas,a);
 const keysFor=area=>area==='school'?[...school,'workRecords','meta']:[...coach,'workRecords'];
 function recordArea(r){
- if(['archive','gradeHistory','rubric','normAssignment'].includes(r.kind))return 'school';
- if(['coachGoal','tacticBoard','seasonPlan'].includes(r.kind))return 'coach';
+ if(['archive','gradeHistory','rubric','normAssignment','briefing','gymBoard','ktpMaterial','documentMaterial','studentGoal','schoolCompetition','teacherPortfolio','normRetake'].includes(r.kind))return 'school';
+ if(['coachGoal','tacticBoard','seasonPlan','videoReview','opponentNote','tacticMaterial','publicNewsDraft'].includes(r.kind))return 'coach';
  if(r.kind==='plan')return r.context;
  if(r.kind==='achievement')return ['class','student'].includes(r.subjectType)?'school':['team','player'].includes(r.subjectType)?'coach':null;
  return null;
@@ -108,6 +111,16 @@ export function mergeScopes(base,local,remote,area,choices={}){
  if(area==='school'&&!conflicts.length){assertGradePairs(result,local,remote);assertCoveragePairs(result,local,remote);}
  return {snapshot:result,conflicts};
 }
+// Explain the existing whole-record conflict without changing merge semantics.
+export function describeSyncConflict({base,local,remote}){
+ const kind=base===null?'created':local===null||remote===null?'deleted':'changed';
+ const keys=[...new Set([base,local,remote].flatMap(x=>Object.keys(x||{})))].filter(k=>k!=='id').sort();
+ const fields=keys.filter(k=>!same(local?.[k],remote?.[k])).map(key=>({
+  key,local:local?.[key],remote:remote?.[key],
+  localChanged:!same(base?.[key],local?.[key]),remoteChanged:!same(base?.[key],remote?.[key])
+ }));
+ return {kind,fields};
+}
 function gradePairs(snapshot){
  const history=byId(snapshot.workRecords.filter(r=>r.kind==='gradeHistory'));
  const marks=new Map(snapshot.marks.map(r=>[JSON.stringify([r.studentId,r.lessonId]),r]));
@@ -183,14 +196,21 @@ async function readPacket(envelope,password,area,rev){
  return p;
 }
 const snapshotLimit=90*1024*1024;
-export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeoutMs=45000}={}){
+export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeoutMs=45000,protocolVersion=1}={}){
  endpoint=normalizeEndpoint(endpoint);
  check(validArea(area)&&typeof token==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(token),'Проверьте индивидуальный ключ доступа сервера');
- const url=endpoint+'/v1/snapshot/'+area;
+ check(protocolVersion===1||protocolVersion===2,'Неподдерживаемая версия синхронизации');
+ const url=endpoint+'/v'+protocolVersion+'/snapshot/'+area;
  async function request(method,body){
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),timeoutMs);
   try{
-   const res=await fetcher(url,{method,headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal});
+   let res;
+   try{res=await fetcher(url,{method,headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal});}
+   catch(error){
+    if(error?.name==='AbortError'||error?.name==='TypeError')throw Object.assign(Error('Временная ошибка соединения с сервером синхронизации'),{retryable:true});
+    throw error;
+   }
+   if([408,502,503,504].includes(res.status))throw Object.assign(Error('Временная недоступность сервера синхронизации (HTTP '+res.status+')'),{retryable:true});
    if(res.status===413)throw Error('Пакет превышает лимит выбранного сервера. Локальные данные сохранены.');
    if(res.status===409)throw Error('На сервере появилась новая ревизия. Повторите предварительный просмотр.');
    if(res.status===401||res.status===403)throw Error('Сервер отказал в доступе. Проверьте ключ и область.');
@@ -254,7 +274,15 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
  const preview=previewSync(await db.dumpAll(),plan,choices);
  check(!preview.conflicts.length,'Сначала разрешите все конфликты');
  const pullOnly=reuseRemote&&plan.revision>0&&same(preview.snapshot,plan.remote)&&isEncryptedBackup(plan.remoteEnvelope);
- if(pullOnly&&plan.checkpoint?.revision===plan.revision&&same(plan.local,plan.remote))return {revision:plan.revision,counts:preview.counts};
+ if(pullOnly&&plan.checkpoint?.revision===plan.revision&&same(plan.local,plan.remote)){
+  // No network write and no rewrite of the potentially large encrypted checkpoint.
+  await db.transaction(['meta'],'readwrite',async s=>{
+   const cp=await s.meta.get(keyOf(plan.area));
+   check(same(cp,plan.checkpoint),'Локальная ревизия изменилась. Повторите проверку.');
+   await s.meta.put(successRecord(plan.area,cp));
+  });
+  return {revision:plan.revision,counts:preview.counts};
+ }
  const nextRevision=pullOnly?plan.revision:plan.revision+1;
  check(revision(nextRevision),'Лимит ревизий');
  const envelope=pullOnly?plan.remoteEnvelope:await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:plan.area,workspaceId:plan.workspaceId,revision:nextRevision,snapshot:preview.snapshot},password);
@@ -271,7 +299,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
    check(!final.conflicts.length&&same(final.snapshot,preview.snapshot),'Изменился результат слияния');
    const data=combineScope(current,final.snapshot,plan.area);
    const cp={id:keyOf(plan.area),endpoint:plan.endpoint,workspaceId:plan.workspaceId,revision:nextRevision,envelope};
-   data.meta=data.meta.filter(r=>r.id!==cp.id).concat(cp);
+   data.meta=data.meta.filter(r=>r.id!==cp.id&&r.id!==statusKey(plan.area)).concat(cp,successRecord(plan.area,cp));
    // Delete changed keys first to avoid transient unique-index collisions. One atomic transaction.
    for(const n of [...new Set([...keysFor(plan.area),'meta'])]){
     const a=byId(current[n]),b=byId(data[n]);
@@ -299,7 +327,25 @@ export async function syncStatus(area){
  const cp=await db.get('meta',keyOf(area));
  return cp?{endpoint:cp.endpoint,revision:cp.revision}:null;
 }
+// Local read-only comparison, no relay calls and no upload of personal data.
+export async function localSyncState({area,endpoint,password,data}){
+ check(validArea(area),'Выберите рабочую область');
+ const current=data||await db.dumpAll(),cp=getCheckpoint(current,area);
+ if(!cp)return {area,status:'setup',revision:null,successfulAt:null};
+ const record=current.meta.find(r=>r.id===statusKey(area));
+ const successfulAt=record&&record.workspaceId===cp.workspaceId&&record.revision===cp.revision&&record.endpoint===cp.endpoint&&typeof record.successfulAt==='string'&&Number.isFinite(Date.parse(record.successfulAt))?record.successfulAt:null;
+ const info={area,revision:cp.revision,successfulAt};
+ try{
+  check(cp.endpoint===normalizeEndpoint(endpoint),'Другой сервер');
+  const packet=await readPacket(cp.envelope,password,area,cp.revision);
+  check(packet.workspaceId===cp.workspaceId,'Неверная общая ревизия');
+  return {...info,status:same(projectScope(current,area),packet.snapshot)?'clean':'pending'};
+ }catch{return {...info,status:'review'};}
+}
 export async function disconnectSync(area,confirmed=false){
  check(validArea(area)&&confirmed,'Подтвердите отключение');
- await db.del('meta',keyOf(area));
+ await db.transaction(['meta'],'readwrite',async s=>{
+  await s.meta.delete(keyOf(area));
+  await s.meta.delete(statusKey(area));
+ });
 }

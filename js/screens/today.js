@@ -1,3 +1,6 @@
+import {openSchoolCompetitions,openTeacherPortfolio} from './teacher-portfolio.js';
+import {openAssistant} from './assistant.js';
+import {openBriefings,openGymBoards} from './methodical.js';
 /* Дневной обзор. Не создаёт записи журнала до явного начала урока. */
 import * as M from '../model.js';
 import * as S from '../store.js';
@@ -16,21 +19,22 @@ import {openDocuments} from './documents.js';
 import {openTournaments} from './tournaments.js';
 import {calendarShortcut} from './work-calendar.js';
 import {openLibrary} from './library.js';
+import {openSchoolWorkload,openPeriodReview} from './school-review.js';
+import {openDebtCenter} from './school-tools.js';
 import {metric,actionTile,dashboardHeading,personalizedActions,dayReview,dayDataIndex,focusHero,animateDashboard} from '../dashboard.js';
 const {el} = ui;
 
 export function todayEntries(date = M.todayIso()) {
   const classes = new Map(S.state.classes.map(c => [c.id,c]));
-  const lessons = new Map(S.state.lessons.filter(l => l.date === date).map(l => [l.classId,l]));
+  const lessons = S.state.lessons.filter(l=>l.date===date);
   const holiday = (S.state.settings.holidays || []).some(h => M.inRange(date,h.from,h.to));
   const schedule = holiday ? [] : S.scheduleForDate(date).filter(r => classes.has(r.classId));
-  const scheduled = new Set(schedule.map(r => r.classId));
+  const mapped=M.matchScheduledLessons(schedule,lessons),scheduled=new Set([...mapped.values()].map(l=>l.id));
   const originallyScheduled = new Set(S.state.schedule.filter(r => r.weekday === M.weekdayOf(date)).map(r => r.classId));
-  const rows = schedule.map(r => ({...r,cls:classes.get(r.classId),lesson:lessons.get(r.classId)}));
-  for (const [classId,lesson] of lessons) {
-    if (classes.has(classId) && !scheduled.has(classId) &&
-        (S.lessonHeld(lesson) || (!holiday && !originallyScheduled.has(classId)))) {
-      rows.push({id:lesson.id,classId,cls:classes.get(classId),lesson,slot:null,time:''});
+  const rows = schedule.map(r=>({...r,cls:classes.get(r.classId),lesson:mapped.get(r.id)}));
+  for(const lesson of lessons){const {classId}=lesson;
+    if(classes.has(classId)&&!scheduled.has(lesson.id)&&(S.lessonHeld(lesson)||(!holiday&&(!originallyScheduled.has(classId)||lesson.slot!=null)))){
+      rows.push({id:lesson.id,classId,cls:classes.get(classId),lesson,slot:lesson.slot??null,time:lesson.time||''});
     }
   }
   return rows;
@@ -67,16 +71,17 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
   const taskHolder=el('div',{class:'attention-holder'});
   const onTask=task=>{
     const t=task.target;
-    if(task.kind==='lesson'){if(t.lessonId)showLessonSession(t.lessonId);else openLessonSession(t.classId,t.date);}
+    if(task.kind==='lesson'){if(t.lessonId)showLessonSession(t.lessonId);else openLessonSession(t.classId,t.date,{slot:t.slot??null,time:t.time||''});}
     else if(task.kind==='review'){openReviewTask(t,date);}
     else if(task.kind==='backup'){ui.closeSheet();ctx.onSettings?.();}
     else openWorkCalendar({date:t.date,source:'custom',span:'1'});
   };
+  body.append(el('button',{type:'button',class:'btn wide',text:'TeachApp Assistant',onclick:()=>openAssistant({area:'school',state:S.state,onTask,date})}));
   const tasks=schoolTasks(S.state,date);
   taskHolder.append(attentionPanel(tasks.concat(commonTasks(S.state.settings,[],date)),onTask));body.append(taskHolder);
   listWork('event').then(events=>{if(taskHolder.isConnected)taskHolder.replaceChildren(attentionPanel(tasks.concat(commonTasks(S.state.settings,events,date)),onTask));}).catch(()=>{});
   const next=review.next?.row;
-  const openRow=async row=>{const current=todayEntries(date).find(r=>r.id===row.id&&r.classId===row.classId);if(!current)return ui.toast('Расписание изменилось. Проверьте урок.');S.state.currentClassId=row.classId;if(current.lesson)return showLessonSession(current.lesson.id);await openLessonSession(row.classId,date);};
+  const openRow=async row=>{const current=todayEntries(date).find(r=>r.id===row.id&&r.classId===row.classId);if(!current)return ui.toast('Расписание изменилось. Проверьте урок.');S.state.currentClassId=row.classId;if(current.lesson)return showLessonSession(current.lesson.id);await openLessonSession(row.classId,date,{slot:row.slot??null,time:row.time||''});};
   const hero=focusHero({eyebrow:next?'Следующий урок к работе':'Рабочий день',title:next?next.cls.name:summary.total?'Уроки подтверждены':'Нет уроков в расписании',subtitle:next?(next.time||'Без времени')+' · '+(S.state.topics.find(t=>t.id===next.lesson?.topicId)?.name||'Тема КТП не указана'):review.review?'Проверьте неизвестную явку':summary.total?'Все занятия подтверждены':'На выбранную дату',glyph:'calendar',progress:{label:'Подтверждено уроков',done:review.confirmed,total:summary.total},action:next?el('button',{type:'button',class:'btn wide focus-action',text:next.lesson?'Продолжить урок':'Открыть урок',onclick:()=>openRow(next)}):null});
   body.prepend(hero);
   body.append(dashboardHeading('Уроки дня','Подтверждение проведения и фактические отметки учитываются отдельно'));
@@ -114,7 +119,7 @@ export function renderToday(root,ctx = {},date = M.todayIso()) {
     ctx.onJournal?actionTile('Журнал','journal',ctx.onJournal):null,
     ctx.onNorms?actionTile('Нормативы','quick',ctx.onNorms):null,
     actionTile('Конспекты','classes',()=>openLibrary('school')),actionTile('Документы','journal',()=>openDocuments()),actionTile('Инвентарь','classes',openInventory),actionTile('Достижения','trophy',()=>openAchievements({area:'school'})),
-    actionTile('Соревнования','trophy',openTournaments),
+    actionTile('Соревнования','trophy',openTournaments),actionTile('Олимпиады','trophy',()=>openSchoolCompetitions()),actionTile('Портфолио учителя','journal',()=>openTeacherPortfolio()),actionTile('Инструктажи','journal',openBriefings),actionTile('Схемы зала','classes',openGymBoards),actionTile('Педагогическая нагрузка','calendar',openSchoolWorkload),actionTile('Закрытие периода','journal',()=>openPeriodReview()),actionTile('Центр задолженностей','journal',()=>openDebtCenter()),
     ctx.onAnalytics?actionTile('Аналитика','chart',ctx.onAnalytics):null
   ]));
   calendarShortcut(body);

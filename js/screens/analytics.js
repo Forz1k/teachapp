@@ -1,4 +1,5 @@
 import {openDocuments} from './documents.js';
+import {openPeriodReview,openSchoolWorkload} from './school-review.js';
 import * as S from '../store.js';
 import * as A from '../analytics.js';
 import * as M from '../model.js';
@@ -54,7 +55,7 @@ export function renderAnalytics(root,ctx={}){
   const sections={overview:'Оценки и посещаемость',ktp:'КТП',norms:'Нормативы',participation:'Участие',health:'Ограничения',reports:'Отчёты'};
   content.append(el('div',{class:'analytics-nav',role:'group','aria-label':'Разделы аналитики'},Object.entries(sections).map(([id,name])=>btn(name,()=>{section=id;draw();},section===id?'primary':''))));
   if(section==='overview'){
-    content.append(card('Фактическая посещаемость',[p('Проведено '+a.held+' из '+a.lessons+' · будущих '+att.future+' · не подтверждено '+att.unconfirmed),
+    content.append(card('Проверка периода',[btn('Мастер закрытия периода',()=>openPeriodReview(pickedClass,t.id),'primary wide'),btn('Педагогическая нагрузка',openSchoolWorkload,'wide')]),card('Фактическая посещаемость',[p('Проведено '+a.held+' из '+a.lessons+' · будущих '+att.future+' · не подтверждено '+att.unconfirmed),
       p('Явка '+format(att.pct)+(att.pct===null?'':'%')+' · присутствовали '+att.present+' · отсутствовали '+att.absent+' · без отметки '+att.unknown)]),
       card('Динамика среднего балла (не итоговые отметки)',[table([['Месяц','Средний балл','Оценок'],...a.trend.map(r=>[r.month,format(r.mean),r.count])])]),
       card('Итоговые оценки',[p('Предложение — округлённый средний балл за проведённые уроки. Итог выставляет преподаватель вручную за завершённый период. Журнал не меняется.'),

@@ -62,7 +62,7 @@ function choosePupil(norm){
   const cls=select(classes.map(c=>[c.id,c.name]),S.state.currentClassId||classes[0].id),pupil=select([]),lesson=select([]);
   function draw(){
     pupil.replaceChildren(...S.studentsOfClass(cls.value).map(s=>el('option',{value:s.id,text:s.fullName})));
-    lesson.replaceChildren(...S.lessonsOfClass(cls.value).filter(l=>l.date<=M.todayIso()).reverse().map(l=>el('option',{value:l.id,text:M.fmtFull(l.date)})));
+    lesson.replaceChildren(...S.lessonsOfClass(cls.value).filter(l=>l.date<=M.todayIso()).reverse().map(l=>el('option',{value:l.id,text:M.lessonLabel(l)})));
   }
   cls.onchange=draw;draw();
   openSheet(el('div',{},[el('h2',{text:norm.name}),field('Класс',cls),field('Ученик',pupil),field('Урок',lesson),
@@ -74,7 +74,7 @@ function enterResult(norm,studentId,lessonId){
   const cls=S.state.classes.find(c=>c.id===student.classId),selectedScale=A.selectNormScale(norm,cls,student);
   const matches=S.normCheck(norm,lesson,studentId),mark=S.markMap(lesson.classId).get(lessonId+'|'+studentId),full=S.activeExemption(studentId,lesson.date)||M.hasOsv(mark);
   const blocked=full||mark?.flag==='Н'||matches.some(m=>['avoid','no_test'].includes(m.restriction.type));
-  const panel=el('div',{},[el('h2',{text:norm.name}),el('p',{text:student.fullName+' · '+M.fmtFull(lesson.date)}),
+  const panel=el('div',{},[el('h2',{text:norm.name}),el('p',{text:student.fullName+' · '+M.lessonLabel(lesson)}),
     el('p',{text:matches.length?'Внимание: есть действующие ограничения.':'По внесённым сведениям совпадений нет. Это не подтверждение медицинского допуска.'})]);
   for(const m of matches)panel.append(el('p',{text:(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'Нагрузка')+' · '+({avoid:'Не выполнять',no_test:'Освобождение от норматива',adapt:'Адаптация нагрузки',individual:'Индивидуальные условия'}[m.restriction.type]||'Ограничение')+' · '+(m.restriction.instruction||'')}));
   panel.append(el('p',{text:'Класс: '+(cls?.name||'—')+' · категория: '+(A.normGroups[student.normGroup]||'Не указана')}),

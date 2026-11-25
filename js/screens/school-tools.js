@@ -1,7 +1,9 @@
+import {saveNormRetake,retakeStatuses} from '../norm-retakes.js';
+import {saveStudentGoal} from '../student-goals.js';
 import * as S from '../store.js';
 import * as W from '../workbench.js';
 import * as M from '../model.js';
-import {physicalPassport,normChecklist,checklistLabels,scoreRubric,assignmentOverview} from '../school-tools.js';
+import {physicalPassport,normChecklist,checklistLabels,scoreRubric,assignmentOverview,lineageOf,schoolDebtRows} from '../school-tools.js';
 import {trendChart,metric} from '../dashboard.js';
 import {el,openSheet,closeSheet,toast,confirmDialog} from '../ui.js';
 const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
@@ -18,7 +20,7 @@ export async function openPassport(id,back=closeSheet){
   body.append(card('Учебные годы',data.years.map(y=>p(y.year.from+' — '+y.year.to+' · '+y.className+' · результатов '+y.count))));
   for(const g of data.groups)body.append(card(g.name,[el('div',{class:'dashboard-metrics'},[metric('Первый',g.first==null?'—':g.first+' '+g.unit,'chart'),metric('Последний',g.last==null?'—':g.last+' '+g.unit,'check'),metric('Лучший',g.best==null?'—':g.best+' '+g.unit,'trophy')]),trendChart(g.comparable.slice(-30),{unit:g.unit,label:g.name}),el('details',{},[el('summary',{text:'История попыток · '+g.history.length}),...g.history.map(r=>p(M.fmtFull(r.date)+' · '+r.className+' · '+r.value+' '+g.unit+' · оценка '+(r.grade??'—')+(r.basisRecorded?' · вне сравнения':'')))])]));
   if(!data.groups.length)body.append(p('Записанных результатов пока нет.'));
-  body.append(btn('Назад',back));openSheet(body);
+  body.append(btn('Индивидуальные цели и портфолио',()=>openStudentPortfolio(id,()=>openPassport(id,back)),'primary'),btn('Назад',back));openSheet(body);
  }catch(e){toast(e.message);}
 }
 export function openNormChecklist(norm,back=closeSheet){
@@ -70,3 +72,38 @@ export async function openNormAssignments(back=closeSheet){
   body.append(btn('Назад',back));openSheet(body);
  }catch(e){toast(e.message);}};await draw();
 }
+
+const goalLabels={planned:'Запланирована',inProgress:'В работе',achieved:'Достигнута',cancelled:'Отменена'};
+export async function openStudentPortfolio(id,back=closeSheet){
+ try{
+  const pupil=S.state.students.find(s=>s.id===id);if(!pupil)return toast('Ученик недоступен');
+  const [goals,achievements,archives]=await Promise.all(['studentGoal','achievement','archive'].map(W.listWork));const passport=physicalPassport(S.state,archives,id);
+  const own=goals.filter(g=>g.studentId===lineageOf(pupil)).sort((a,b)=>b.from.localeCompare(a.from)),awards=achievements.filter(a=>a.subjectType==='student'&&a.subjectId===lineageOf(pupil));
+  const reload=()=>openStudentPortfolio(id,back);
+  const form=g=>{
+   const title=input(g?.name||''),from=input(g?.from||M.todayIso(),'date'),to=input(g?.to||M.todayIso(),'date'),target=input(g?.target||''),status=select(Object.entries(goalLabels),g?.status||'planned'),note=el('textarea',{rows:3,maxlength:2000},[g?.note||'']);
+   openSheet(stack([el('h2',{text:g?'Изменить индивидуальную цель':'Новая индивидуальная цель'}),p('Цель не назначает нагрузку и не изменяет оценки. Проверьте ограничения и возможность участия.'),field('Цель',title),field('Начало',from),field('Срок',to),field('Критерий достижения',target),field('Подтверждённый статус',status),field('Заметка учителя',note),btn('Сохранить',async()=>{try{await saveStudentGoal({...(g?{id:g.id}:{}),studentId:lineageOf(pupil),name:title.value.trim(),from:from.value,to:to.value,target:target.value.trim(),status:status.value,note:note.value});reload();}catch(e){toast(e.message);}},'primary'),btn('Назад',reload)]));
+  };
+  const body=stack([el('h2',{text:'Портфолио · '+pupil.fullName}),p('Приватная сводка: подтверждённые записи, без публичной публикации.'),btn('+ Индивидуальная цель',()=>form(null),'primary'),...own.map(g=>card(g.name,[p(g.from+' — '+g.to+' · '+goalLabels[g.status]),p(g.target),g.note?p(g.note):null,btn('Изменить',()=>form(g)),btn('Удалить',async()=>{if(!await confirmDialog({title:'Удалить цель?',text:'Результаты, оценки и достижения не изменятся.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(g.id,'studentGoal');reload();}catch(e){toast(e.message);}})])),card('Достижения',awards.length?awards.map(a=>p(a.date+' · '+a.title)): [p('Нет записей о достижениях')]),card('Физическая подготовка',passport?.groups?.length?passport.groups.map(g=>p(g.name+' · лучший '+(g.best??'—')+' '+g.unit+' · последний '+(g.last??'—')+' '+g.unit)):[p('Нет результатов')]),btn('Открыть историю подготовки',()=>openPassport(id,back)),btn('Назад',back)]);
+  openSheet(body);
+ }catch(e){toast(e.message);}
+}
+
+export async function openDebtCenter(back=closeSheet){
+ try{
+  const [assignments,retakes]=await Promise.all([W.listWork('normAssignment'),W.listWork('normRetake')]);const rows=schoolDebtRows(S.state,assignments),retakesFor=r=>retakes.filter(x=>x.assignmentId===r.assignmentId&&x.studentId===r.studentId).sort((a,b)=>b.date.localeCompare(a.date));
+  const cls=select([['','Все классы'],...S.state.classes.map(c=>[c.id,c.name])],'');
+  const norm=select([['','Все нормативы'],...S.state.norms.map(n=>[n.id,n.name])],'');
+  const status=select([['','Все причины'],['overdue','Срок прошёл — проверить выполнение'],...Object.entries(checklistLabels).filter(([k])=>k!=='done')],'');
+  const period=select([['','Весь год'],...S.state.settings.trimesters.map(t=>[t.id,t.name||M.fmtFull(t.from)+' — '+M.fmtFull(t.to)])],'');
+  const result=el('div'),summary=p('');
+  const visible=()=>rows.filter(r=>(!cls.value||r.classId===cls.value)&&(!norm.value||r.normId===norm.value)&&(!status.value||(status.value==='overdue'?r.overdue:r.status===status.value))&&(!period.value||S.state.settings.trimesters.some(t=>t.id===period.value&&r.from<=t.to&&r.to>=t.from)));
+  const refresh=()=>{const list=visible();summary.textContent='Назначений × учеников: '+list.length+'; просрочено: '+list.filter(r=>r.overdue).length+'; требуют проверки: '+list.filter(r=>r.review||r.status==='noScale').length;result.replaceChildren(...list.slice(0,300).map(r=>card(r.studentName+' · '+r.className,[p(r.normName+' · '+r.from+' — '+r.to),p(checklistLabels[r.status]+(r.overdue?' · срок прошёл':'')),p('Попыток с результатом: '+r.attempts),r.review?p('Есть основание для проверки допустимости нагрузки.'):null,...retakesFor(r).map(x=>el('div',{class:'profile-result'},[p(M.fmtFull(x.date)+' '+x.time+' · '+retakeStatuses[x.status]),btn('Изменить план',()=>retakeForm(r,x,()=>openDebtCenter(back)))])),['missing','retake'].includes(r.status)&&!r.review&&!retakesFor(r).some(x=>x.status==='planned')?btn('Запланировать пересдачу',()=>retakeForm(r,null,()=>openDebtCenter(back))):null])),list.length>300?p('Показаны первые 300 записей. Уточните фильтр или сформируйте полный документ.'):null,list.length?null:p('Нет записей по этим фильтрам.'));};
+  for(const n of [cls,norm,status,period])n.onchange=refresh;
+  const report=async()=>{const {openDocumentPreview}=await import('./documents.js');openDocumentPreview({title:'Контроль выполнения назначенных нормативов',personal:true,sections:[{heading:'Записи для проверки',paragraphs:['Нет результата не означает автоматически задолженность по медицинским основаниям. Решение о допуске принимает учитель.'],matrix:[['Класс','Ученик','Норматив','Срок','Статус','Попыток','План повторной сдачи'],...visible().map(r=>[r.className,r.studentName,r.normName,r.to,checklistLabels[r.status]+(r.overdue?' · срок прошёл':''),r.attempts,retakesFor(r).map(x=>x.date+' '+x.time+' · '+retakeStatuses[x.status]).join('; ')])]}]},()=>openDebtCenter(back));};
+  openSheet(stack([el('h2',{text:'Центр задолженностей'}),p('Только назначенные нормативы текущего учебного года. Ограничения и отсутствующие шкалы вынесены в отдельные причины; оценка и допуск автоматически не меняются.'),field('Класс',cls),field('Норматив',norm),field('Причина',status),field('Период',period),summary,btn('Все планы повторной сдачи',()=>openRetakePlans(()=>openDebtCenter(back)),'primary'),btn('Предпросмотр ведомости',report,'primary'),result,btn('Назад',back)]),{fullHeight:true});refresh();
+ }catch(e){toast(e.message);}
+}
+
+function retakeForm(row,old,back){const a=row,date=input(old?.date||M.todayIso(),'date'),time=input(old?.time||'','time'),status=select(Object.entries(retakeStatuses),old?.status||'planned'),notice=p('');const update=()=>notice.textContent=date.value>a.to?'Дата после исходного срока. Это отдельный план: для учёта результата в назначении требуется согласовать срок назначения. Исходный срок не меняется автоматически.':'';date.onchange=update;update();const save=btn('Сохранить план',async()=>{save.disabled=true;try{if(!await confirmDialog({title:'Сохранить план пересдачи?',text:'Это запись календаря, не допуск к нагрузке и не результат норматива. Проверьте ограничения на дату занятия.',ok:'Сохранить'}))return;await saveNormRetake({...(old?{id:old.id,revision:old.revision}:{}),assignmentId:a.assignmentId,studentId:a.studentId,date:date.value,time:time.value,status:status.value});await back();}catch(e){toast(e.message);}finally{save.disabled=false;}},'primary');openSheet(stack([el('h2',{text:'Повторная сдача'}),p(a.studentName+' · '+a.normName),p('Закрытие задания определяется по фактическому результату и условиям назначения. Не считайте запланированную дату медицинским допуском.'),field('Дата',date),field('Время',time),field('Статус плана',status),notice,save,btn('Назад',back)]));}
+export async function openRetakePlans(back=closeSheet){try{const [rows,assignments]=await Promise.all([W.listWork('normRetake'),W.listWork('normAssignment')]);const root=stack([el('h2',{text:'Планы повторной сдачи'}),p('История сохраняется независимо от закрытия задолженности. Записи календаря не меняют оценки и результаты.')]);const sorted=rows.slice().sort((a,b)=>b.date.localeCompare(a.date));for(const x of sorted){const a=assignments.find(a=>a.id===x.assignmentId),student=S.state.students.find(s=>s.id===x.studentId),norm=S.state.norms.find(n=>n.id===a?.normId),label=student?.fullName||'Ученик из истории';root.append(card(label+' · '+(norm?.name||'Назначение из истории'),[p(M.fmtFull(x.date)+' '+x.time+' · '+retakeStatuses[x.status]),a&&student?btn('Изменить план',()=>retakeForm({assignmentId:a.id,studentId:student.id,studentName:label,normName:norm?.name||a.name,to:a.to},x,()=>openRetakePlans(back))):null,btn('Удалить запись плана',async()=>{if(!await confirmDialog({title:'Удалить план?',text:'Фактические результаты и оценки не изменятся.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(x.id,x.kind);await openRetakePlans(back);}catch(e){toast(e.message);}})]));}if(!sorted.length)root.append(p('Пока нет планов.'));root.append(btn('Назад',back));openSheet(root,{fullHeight:true});}catch(e){toast(e.message);}}

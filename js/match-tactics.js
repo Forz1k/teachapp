@@ -110,3 +110,22 @@ export function matchDebrief(d,{min=10}={}){
  if(events.length&&detailed/events.length<.7)add('data','Неполная детализация','Причина отмечена в '+detailed+' из '+events.length+' розыгрышей. Не сравнивайте частоту элементов без учёта пропусков.');
  return {rallies:events.length,detailed,overall:o,errors,positive,notes,scout:{ours:weak,theirs:target}};
 }
+
+/** Suggest library exercises only for repeatedly recorded causes of lost points.
+ * The text match is transparent and does not establish a player's skill or diagnosis. */
+export function trainingRecommendations(debrief,exercises,{minErrors=3,minDetailed=10}={}){
+ if(!Number.isInteger(minErrors)||minErrors<2||!Number.isInteger(minDetailed)||minDetailed<5)throw Error('Проверьте пороги выборки');
+ if(!debrief||debrief.detailed<minDetailed)return [];
+ const topics={
+  serveError:{name:'Подача',pattern:/подач/iu},
+  receiveError:{name:'Приём подачи',pattern:/при[её]м/iu},
+  attackError:{name:'Атака',pattern:/атак|нападающ/iu},
+  defenseError:{name:'Защита',pattern:/защит|страхов/iu},
+  setError:{name:'Передача',pattern:/передач/iu}
+ };
+ return debrief.errors.filter(e=>Object.hasOwn(topics,e.kind)&&e.count>=minErrors).map(e=>{
+  const topic=topics[e.kind];
+  const matches=exercises.filter(x=>x.category==='volleyball'&&topic.pattern.test([x.name,x.description].join(' ')));
+  return {kind:e.kind,topic:topic.name,count:e.count,detailed:debrief.detailed,rallies:debrief.rallies,exercises:matches.slice(0,5).map(x=>({id:x.id,name:x.name,minutes:x.minutes,description:x.description,equipment:x.equipment}))};
+ });
+}

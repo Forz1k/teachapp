@@ -1,3 +1,11 @@
+import {validateNormRetake} from './norm-retakes.js';
+import {validateNewsDraft} from './public-media-drafts.js';
+import {validateSchoolCompetition,validateTeacherPortfolio} from './teacher-portfolio.js';
+import {validateStudentGoal} from './student-goals.js';
+import {validateMaterial,materialKinds} from './library-materials.js';
+import {validateOpponentNote} from './coach-opponents.js';
+import {validateVideoReview} from './video-review.js';
+import {validateBriefing,validateGymBoard} from './methodical.js';
 import * as db from './db.js';
 import {uid,exemptionCovers} from './model.js';
 import {validateGradeHistory} from './grade-history.js';
@@ -29,6 +37,16 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='normRetake'){validateNormRetake(r);return;}
+ if(r.kind==='publicNewsDraft'){validateNewsDraft(r);return;}
+ if(r.kind==='schoolCompetition'){validateSchoolCompetition(r);return;}
+ if(r.kind==='teacherPortfolio'){validateTeacherPortfolio(r);return;}
+ if(r.kind==='studentGoal'){validateStudentGoal(r);return;}
+ if(materialKinds.includes(r.kind)){validateMaterial(r);return;}
+ if(r.kind==='opponentNote'){validateOpponentNote(r);return;}
+ if(r.kind==='videoReview'){validateVideoReview(r);return;}
+ if(r.kind==='briefing'){validateBriefing(r);return;}
+ if(r.kind==='gymBoard'){validateGymBoard(r);return;}
  if(r.kind==='gradeHistory'){validateGradeHistory(r);return;}
  if(r.kind==='inventory'){validateInventory(r);return;}
  if(r.kind==='achievement'){validateAchievement(r);return;}
@@ -41,7 +59,8 @@ export function validateWorkRecord(r){
  if(r.kind==='event'){validateEvent(r);return;}
  if(r.kind==='exercise'){validateExercise(r);require(!r.id.startsWith('builtin-'),'Системное упражнение нельзя перезаписать');return;}
  if(r.kind==='plan'){
-  require(only(r,['id','kind','name','context','minutes','goal','equipment','audience','items','tactics','resources'])&&txt(r.name)&&Object.hasOwn(contexts,r.context)&&minutes(r.minutes)&&opt(r.goal,4000)&&opt(r.equipment,1000)&&opt(r.audience,200)&&Array.isArray(r.items)&&r.items.length>0&&r.items.length<=100,'Проверьте конспект');
+  require(only(r,['id','kind','name','context','minutes','goal','equipment','audience','items','tactics','resources','gymBoards'])&&txt(r.name)&&Object.hasOwn(contexts,r.context)&&minutes(r.minutes)&&opt(r.goal,4000)&&opt(r.equipment,1000)&&opt(r.audience,200)&&Array.isArray(r.items)&&r.items.length>0&&r.items.length<=100,'Проверьте конспект');
+  if(r.gymBoards!==undefined){require(Array.isArray(r.gymBoards)&&r.gymBoards.length<=10,'Проверьте схемы зала');for(const b of r.gymBoards)validateGymBoard(b);}
   if(r.tactics!==undefined){require(r.context==='coach'&&Array.isArray(r.tactics)&&r.tactics.length<=10,'Проверьте схемы тренировки');for(const b of r.tactics)validateBoard(b);}
   if(r.resources!==undefined)require(Array.isArray(r.resources)&&r.resources.length<=50&&r.resources.every(x=>only(x,['itemId','name','unit','qty'])&&txt(x.itemId)&&txt(x.name)&&txt(x.unit,30)&&Number.isInteger(x.qty)&&x.qty>0&&x.qty<=1000000)&&new Set(r.resources.map(x=>x.itemId)).size===r.resources.length,'Проверьте потребность в инвентаре');
   let last=-1,total=0;
@@ -52,7 +71,7 @@ export function validateWorkRecord(r){
 }
 export async function listWork(kind){return db.transaction(['workRecords'],'readonly',s=>s.workRecords.index('kind').getAll(kind));}
 export async function saveWork(input){
- require(['exercise','plan','event','rubric','normAssignment'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
+ require(['exercise','plan','event','rubric','normAssignment','videoReview','opponentNote','publicNewsDraft'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
  const r=structuredClone({...input,id:input.id||uid(input.kind)});validateWorkRecord(r);
  return db.transaction(['workRecords'],'readwrite',async s=>{
   const old=await s.workRecords.get(r.id);require(!old||old.kind===r.kind,'Нельзя изменить тип записи');if(input.id)require(old,'Запись уже удалена');
@@ -74,4 +93,17 @@ export function lessonPlanReview(plan,lesson,{students,activities,restrictions,e
   return {item,matches:check.matches,needsReview:check.needsReview};
  });
  return {items,full:[...full],minutes:items.reduce((n,x)=>n+x.item.minutes,0),total:pupils.length};
+}
+
+/** Candidate list, never clearance. Full exemptions have no physical exercise candidates. */
+export function alternativeExerciseCandidates(lesson,studentId,exercises,{students,activities,restrictions,exemptions}){
+ const student=students.find(s=>s.id===studentId&&s.classId===lesson.classId);
+ if(!student)throw Error('Ученик не найден в классе');
+ const full=exemptions.some(e=>e.studentId===studentId&&exemptionCovers(e,lesson.date));
+ const current=new Set(lesson.activityIds||[]);
+ const rows=full?[]:exercises.filter(e=>e?.kind==='exercise'&&!current.has(e.activityId)).map(exercise=>{
+  const check=checkLessonRestrictions({lesson:{...lesson,activityIds:[exercise.activityId],activitiesConfirmed:true},activities,students:[student],restrictions});
+  return {exercise,matches:check.matches,needsReview:check.needsReview};
+ }).filter(r=>!r.needsReview&&!r.matches.length);
+ return {full,rows,theoretical:['Разбор правил и техники упражнения','Наблюдение и запись последовательности действий','Анализ схемы или учебного материала без физической нагрузки']};
 }

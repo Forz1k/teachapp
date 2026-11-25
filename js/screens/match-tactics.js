@@ -1,4 +1,7 @@
-import {matchTactics,teamTactics,opponentHistory,matchDebrief} from '../match-tactics.js';
+import {seasonCapture,touchActions} from '../match-capture.js';
+import {replayDetailed} from '../match-protocol.js';
+import {matchTactics,teamTactics,opponentHistory,matchDebrief,trainingRecommendations} from '../match-tactics.js';
+import {builtinExercises,listWork} from '../workbench.js';
 import {fmtFull} from '../model.js';
 import {buildDocument} from '../documents.js';
 import {openDocumentPreview,matchDebriefInput} from './documents.js';
@@ -34,6 +37,16 @@ function combos(rows,players,title){
  const eligible=rows.filter(r=>r.eligible),small=rows.filter(r=>!r.eligible);
  return card(title,[p('Наблюдаемая доля выигранных розыгрышей в присутствии сочетания, не доказательство индивидуального вклада.'),...eligible.slice(0,15).map(r=>el('div',{class:'profile-result'},[el('strong',{text:r.players.map(id=>name(players,id)).join(' · ')}),p(percent(r.rate)+' · '+r.won+'/'+r.rallies+(r.matches?' · матчей '+r.matches:'')),el('progress',{max:100,value:r.rate||0,'aria-label':'Доля выигранных розыгрышей'})])),!eligible.length?p('Недостаточно розыгрышей для сравнения.'):null,small.length?el('details',{},[el('summary',{text:'Малая выборка · '+small.length}),...small.slice(0,30).map(r=>p(r.players.map(id=>name(players,id)).join(' · ')+' · '+r.won+'/'+r.rallies))]):null]);
 }
+function seasonCaptureCard(timelines,players){
+ const pick=(items,value='')=>{const n=el('select',{},items.map(([value,text])=>el('option',{value:String(value),text})));n.value=value;return n;};
+ const side=pick([['ours','Наша команда'],['theirs','Соперники']],'ours'),action=pick(Object.entries(touchActions),'serve'),player=pick([['','Все игроки'],...players.map(p=>[p.id,name(players,p.id)])]),rotation=pick([['','Все циклы'],...Array.from({length:6},(_,i)=>[i,'P'+(i+1)])]),set=pick([['','Все партии'],...Array.from({length:5},(_,i)=>[i+1,'Партия '+(i+1)])]),out=el('div',{class:'coach-stack'});
+ function draw(){if(side.value==='theirs')player.value='';player.disabled=side.value==='theirs';const a=seasonCapture(timelines,{side:side.value,action:action.value,player:player.value||null,rotation:rotation.value===''?null:Number(rotation.value),set:Number(set.value)||0}),s=a.summary,z=a.zones,max=Math.max(1,...z.zones.map(x=>x.count));
+ const value=m=>m.value==null?'— (выборка '+m.total+')':percent(m.value)+' · '+m.n+'/'+m.total;
+ out.replaceChildren(p('Подробных матчей: '+a.matches+' · с выбранным действием: '+a.recordedMatches+' · зоны известны '+z.known+'/'+z.total),el('div',{class:'vp-heat-grid'},[4,3,2,5,6,1].map(i=>{const n=z.zones[i-1];return el('div',{class:'vp-heat-cell',style:'--heat:'+(n.count/max)},[el('small',{text:'P'+i}),el('strong',{text:n.count}),el('small',{text:'Очки '+n.point+' · ошибки '+n.error})]);})),p('Полных розыгрышей: '+s.complete+'/'+s.rallies+'; в проценты попадают только полностью записанные розыгрыши.'),p('Атака: '+value(s.attackEfficiency)),p('Подача: '+value(s.serveEfficiency)),p('Положительный приём: '+value(s.positiveReceive)),p('Идеальный приём: '+value(s.perfectReceive)),p('Конверсия защиты: '+value(s.defenseConversion)));
+ }
+ for(const n of [side,action,player,rotation,set])n.onchange=draw;draw();
+ return card('Сезонная карта действий',[p('Карта показывает направления зарегистрированных действий, включая частичные записи. P1–P6 на карте — зоны; фильтр цикла — относительная расстановка. Неизвестные зоны не распределяются.'),field('Команда',side),field('Игрок',player),field('Элемент карты',action),field('Цикл переходов',rotation),field('Партия',set),out]);
+}
 function timeoutCards(rows){
  return card('До и после тайм-аутов',[p('До пяти розыгрышей до и после, только в одной партии. Окна могут пересекаться; показатели не доказывают, что тайм-аут вызвал изменение.'),...rows.map(t=>el('div',{class:'profile-result'},[el('strong',{text:(t.date?fmtFull(t.date)+' · ':'')+'Партия '+t.set+' · '+t.score+' · '+(t.side==='ours'?'наш':'соперника')}),p('До: '+t.before.won+'/'+t.before.total+' · после: '+t.after.won+'/'+t.after.total),p(t.delta==null?'Неполное окно':'Разница: '+(t.delta>0?'+':'')+Math.round(t.delta*10)/10+' п.п.')])),!rows.length?p('Тайм-аутов в записанной истории нет.'):null]);
 }
@@ -47,7 +60,8 @@ export function openTeamTactics(view){
  function draw(){
   if(from.value&&to.value&&from.value>to.value){body.replaceChildren(p('Начало периода позже окончания.'));return;}
   const a=teamTactics(view.matches,{from:from.value,to:to.value,opponent:opponent.value,min:Number(min.value)});
-  body.replaceChildren(p('Подробных матчей: '+a.detailed+' из '+a.total+'. Матчи без полного журнала не включены в тактические проценты.'),summary(a.overall),rotations(a.rotations),combos(a.pairs,view.players,'Сочетания двух игроков'),combos(a.six,view.players,'Составы на площадке'),timeoutCards(a.timeouts.slice(-30)),card('История соперников',a.opponents.map(r=>p(r.name+' · матчей '+r.matches+' · побед '+r.wins+' · поражений '+r.losses+' · партии '+r.setsWon+':'+r.setsLost+' · подробно '+r.details))));
+  const timelines=view.matches.filter(m=>m.detail&&(!from.value||m.date>=from.value)&&(!to.value||m.date<=to.value)&&(!opponent.value||String(m.opponent||'').trim().replace(/\s+/g,' ').toLocaleLowerCase('ru')===opponent.value)).map(m=>replayDetailed(m.detail).timeline);
+  body.replaceChildren(p('Подробных матчей: '+a.detailed+' из '+a.total+'. Матчи без полного журнала не включены в тактические проценты.'),summary(a.overall),seasonCaptureCard(timelines,view.players),rotations(a.rotations),combos(a.pairs,view.players,'Сочетания двух игроков'),combos(a.six,view.players,'Составы на площадке'),timeoutCards(a.timeouts.slice(-30)),card('История соперников',a.opponents.map(r=>p(r.name+' · матчей '+r.matches+' · побед '+r.wins+' · поражений '+r.losses+' · партии '+r.setsWon+':'+r.setsLost+' · подробно '+r.details))));
  }
  from.onchange=to.onchange=opponent.onchange=min.onchange=draw;draw();openSheet(stack([el('h2',{text:'Тактическая аналитика'}),p('Фильтр по точному нормализованному названию соперника. Расстановки сравниваются как циклы, а составы — по фактическим игрокам до розыгрыша.'),el('div',{class:'coach-columns'},[field('С',from),field('По',to)]),field('Соперник',opponent),field('Минимум выборки',min),body,btn('Закрыть',closeSheet)]));
 }
@@ -56,7 +70,15 @@ export function debriefCard(detail){
  const d=matchDebrief(detail);
  return card('Выводы тренеру',[p('Причины указаны: '+d.detailed+'/'+d.rallies+'. Рекомендации основаны только на внесённых розыгрышах и не заменяют оценку тренера.'),...d.notes.map(n=>el('div',{class:'insight-note '+n.kind},[el('strong',{text:n.title}),p(n.text)])),!d.notes.length?p('Выраженных закономерностей по выбранным порогам не обнаружено.'):null,el('details',{},[el('summary',{text:'Основания выводов'}),...d.errors.map(x=>p('Потеря очка · '+x.label+': '+x.count)),...d.positive.map(x=>p('Наше очко · '+x.label+': '+x.count)),p('Указаны количества зарегистрированных действий, а не полные попытки.')])]);
 }
+async function openTrainingRecommendations(match,back){
+ const body=stack([el('h2',{text:'Подбор упражнений'}),p('Повторяющиеся отмеченные причины потери очков: минимум 3 одинаковые причины и 10 розыгрышей с указанием причины. Подбор по названию и описанию упражнений из библиотеки. Это не оценка всех попыток и не автоматический план тренировки.'),p('Загрузка библиотеки…'),btn('Назад',back)]);
+ openSheet(body);
+ try{
+  const saved=await listWork('exercise'),items=trainingRecommendations(matchDebrief(match.detail),[...builtinExercises,...saved]);
+  body.replaceChildren(el('h2',{text:'Подбор упражнений'}),p('Подбор по тексту упражнений. Объём, технику и нагрузку определяет тренер.'),...items.map(r=>card(r.topic,[p('Отмечено причин потери очка: '+r.count+'; всего с указанной причиной '+r.detailed+' из '+r.rallies+' розыгрышей.'),...r.exercises.map(x=>el('div',{class:'insight-note'},[el('strong',{text:x.name}),p(x.minutes+' мин · '+x.description),p(x.equipment||'Инвентарь не указан')])),!r.exercises.length?p('В библиотеке нет упражнения с подходящим описанием. Добавьте своё.'):null])),!items.length?p('Недостаточно зарегистрированных причин для подбора по заданным порогам.'):null,btn('Назад',back));
+ }catch{body.replaceChildren(el('h2',{text:'Подбор упражнений'}),p('Не удалось загрузить библиотеку или рассчитать подбор.'),btn('Назад',back));}
+}
 export function openMatchDebrief(match,back=closeSheet){
  if(!match.detail)return;
- openSheet(stack([el('h2',{text:'Итоги и план работы · '+match.opponent}),p(fmtFull(match.date)),debriefCard(match.detail),btn('Отчёт Word / Excel / PDF',()=>openDocumentPreview(buildDocument('matchDebrief',matchDebriefInput(match)),()=>openMatchDebrief(match,back))),btn('Подробный тактический разбор',()=>openMatchTactics(match,()=>openMatchDebrief(match,back)),'primary'),btn('Закрыть',back)]));
+ openSheet(stack([el('h2',{text:'Итоги и план работы · '+match.opponent}),p(fmtFull(match.date)),debriefCard(match.detail),btn('Подобрать упражнения',()=>openTrainingRecommendations(match,()=>openMatchDebrief(match,back))),btn('Отчёт Word / Excel / PDF',()=>openDocumentPreview(buildDocument('matchDebrief',matchDebriefInput(match)),()=>openMatchDebrief(match,back))),btn('Подробный тактический разбор',()=>openMatchTactics(match,()=>openMatchDebrief(match,back)),'primary'),btn('Закрыть',back)]));
 }
