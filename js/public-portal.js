@@ -149,3 +149,18 @@ export function publicMatchMoments(match){
  }
  return result;
 }
+
+/** Only the public scoreboard and published suffix can be compared. This is
+ * not proof of identical private drafts. No unpublished data is returned. */
+export function checkHandoffMatch(local,remote){
+ if(!local||local.mode!=='dual'||!remote||!['live','break'].includes(remote.status))throw Error('Нужен локальный черновик текущего подробного матча');
+ const numbered=remote.events.some(e=>e.number!=null)||remote.stats.length>0;
+ const projected=projectMatch(local,{events:remote.events.length>0,numbers:numbered,stats:remote.stats.length>0,scheduledId:remote.scheduledId});
+ const keys=['id','opponent','startedAt','status','set','score','setsWon','sets','serve'];
+ const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ if(keys.some(k=>!equal(projected[k],remote[k])))throw Error('Локальный черновик и опубликованный счёт различаются. Передача остановлена.');
+ const suffix=projected.events.slice(-remote.events.length);
+ if(remote.events.length&&(!equal(suffix.map(e=>{const {number,...rest}=e;return rest;}),remote.events.map(e=>{const {number,...rest}=e;return rest;}))||remote.events.some((e,i)=>e.number!=null&&e.number!==suffix[i]?.number)))throw Error('Опубликованная история розыгрышей отличается от локального черновика.');
+ if(remote.stats.length&&!equal(projected.stats,remote.stats))throw Error('Опубликованная статистика отличается от локального черновика.');
+ return {id:remote.id,opponent:remote.opponent,set:remote.set,score:{...remote.score},setsWon:{...remote.setsWon},events:remote.events.length,stats:remote.stats.length};
+}

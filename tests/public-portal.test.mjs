@@ -40,3 +40,6 @@ test('Короткая ссылка указывает на действующу
 
 import {publicMatchMoments} from '../js/public-portal.js';
 test('visible rally moments are derived only from consecutive published scores',()=>{const e=(score,side,set=1)=>({set,score,side,actor:side,kind:'point'});const m={sets:[{ours:5,theirs:3}],events:[e('1:2','theirs'),e('2:2','ours'),e('3:2','ours'),e('4:2','ours'),e('4:3','theirs'),e('5:3','ours'),e('8:4','ours',2),e('9:4','ours',2)]};const rows=publicMatchMoments(m);assert.ok(rows[1].notes.includes('Счёт сравнялся'));assert.ok(rows[2].notes.includes('Смена лидера'));assert.match(rows[3].notes.join(' '),/Серия: 3/);assert.ok(rows[5].notes.includes('Партия завершена'));assert.deepEqual(rows[6].notes,[]);assert.deepEqual(rows[7].notes,[]);});
+
+import {checkHandoffMatch} from '../js/public-portal.js';
+test('handoff rejects differing score, public reason and serve; returns only public summary',()=>{const local=detailEvent(d,{type:'rally',side:'ours',kind:'point'}),remote=projectMatch(local);assert.equal(checkHandoffMatch(local,remote).score.ours,1);assert.throws(()=>checkHandoffMatch(d,remote));assert.throws(()=>checkHandoffMatch(local,{...remote,serve:'theirs'}));assert.throws(()=>checkHandoffMatch(local,{...remote,events:[{...remote.events[0],kind:'kill'}]}));assert.ok(!JSON.stringify(checkHandoffMatch(local,remote)).includes('PRIVATE'));});

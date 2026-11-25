@@ -90,3 +90,24 @@ test('two publishers cannot overwrite newer score; resolution never writes autom
  await P.acceptRemotePortal(id);assert.equal(P.portalInfo(id).data.team,'Второе устройство');assert.equal(P.portalInfo(id).conflict,false);assert.equal(P.portalInfo(id).data.settings.auto,false);
  P.disconnectPortal(id);a.close();b.close();
 });
+
+test('cooperative LIVE handoff pauses the first device, validates the published score and refuses stale preview',async()=>{
+ server=null;const map=new Map();globalThis.localStorage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};
+ const a='handoff-a',b='handoff-b',start=Date.parse('2026-11-25T12:00:00Z'),players=Array.from({length:6},(_,i)=>({id:'a'+i,number:i+1,name:'Synthetic '+i}));
+ const base={id:'local-match',teamId:a,date:localDay(start),mode:'dual',teamName:'Команда',opponent:'Гости',competition:'',venue:'',startedAt:new Date(start).toISOString(),ourPlayers:players,awayPlayers:[],roster:players.map(x=>x.id),lineup:players.map(x=>x.id),awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours',events:[]};
+ const credentials={origin,apiKey,email:'trainer@example.org',password:'password',slug:'handoff',team:'Команда'};
+ const {detailEvent}=await import('../js/match-protocol.js');const d=detailEvent(base,{type:'rally',side:'ours',kind:'point'});
+ await P.connectPortal(a,credentials,fake);P.setPortalEnabled(a,true,'Команда');P.syncPortalMatch(d,{start:true});await wait(()=>server?.match?.score.ours===1&&!P.portalInfo(a).dirty);await new Promise(r=>setTimeout(r,20));
+ P.pausePortalPublisher(a);assert.equal(P.portalInfo(a).data.publisherPaused,true);
+ const count=calls.filter(x=>x.method==='PUT').length;P.heartbeatPortal(a,d.id);assert.equal(P.syncPortalMatch(detailEvent(d,{type:'rally',side:'ours',kind:'point'})),false);assert.throws(()=>P.setPublicTeamName(a,'Blocked'),/приостановлена/);
+ await P.connectPortal(b,credentials,fake);assert.equal(P.portalInfo(b).data.publisherPaused,true);assert.equal(calls.filter(x=>x.method==='PUT').length,count);
+ const db={...d,teamId:b};await assert.rejects(P.previewPortalHandoff(b,{...base,teamId:b}),/различаются/);
+ let preview=await P.previewPortalHandoff(b,db);assert.equal(preview.score.ours,1);await assert.rejects(P.continuePortalHandoff(b,db,preview.etag),/Подтвердите/);
+ const session=await firebaseSignIn(apiKey,'trainer@example.org','password',fake),external=firebasePublisher(origin,'handoff',session,fake);
+ const v=await external.readVersion();await external.write({...v.data,team:'Новое название'},v.etag);
+ await assert.rejects(P.continuePortalHandoff(b,db,preview.etag,{confirmed:true}),/изменилась/);
+ preview=await P.previewPortalHandoff(b,db);const before=calls.filter(x=>x.method==='PUT').length;await P.continuePortalHandoff(b,db,preview.etag,{confirmed:true});assert.equal(calls.filter(x=>x.method==='PUT').length,before);
+ assert.equal(P.portalInfo(b).data.publisherPaused,false);assert.equal(P.portalInfo(b).data.activeId,db.id);
+ P.syncPortalMatch(detailEvent(db,{type:'rally',side:'ours',kind:'point'}));await wait(()=>server?.match?.score.ours===2&&!P.portalInfo(b).dirty);
+ P.disconnectPortal(a);await P.connectPortal(a,credentials,fake);assert.equal(P.portalInfo(a).data.publisherPaused,true);P.heartbeatPortal(a,d.id);assert.equal(server.match.score.ours,2);P.disconnectPortal(a);P.disconnectPortal(b);session.close();
+});

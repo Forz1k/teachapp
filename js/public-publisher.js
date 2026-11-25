@@ -1,10 +1,10 @@
 import {mediaTarget,readMediaVersion,writePublicMedia,mediaProjection} from './public-media.js';
 import {archiveTarget,archiveKey,readArchiveVersion,writeArchiveRecord,fetchArchivePage,equalArchiveResult} from './public-archive.js';
 /* Team portal state is separate from school/coach records. Opt-in publishing only. */
-import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures} from './public-portal.js';
+import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures,checkHandoffMatch} from './public-portal.js';
 import {firebaseSignIn,firebasePublisher,samePortalContent} from './firebase-portal.js';
 const PREFIX='teachapp:public-portal:',states=new Map();
-const initial=()=>({origin:'',apiKey:'',owner:'',slug:'',team:'',schedule:[],archive:[],match:null,activeId:null,enabled:false,pendingDelete:false,confirmedEtag:null,pendingWrite:null,settings:{events:true,numbers:false,stats:true,auto:true}});
+const initial=()=>({origin:'',apiKey:'',owner:'',slug:'',team:'',schedule:[],archive:[],match:null,activeId:null,enabled:false,publisherPaused:false,pendingDelete:false,confirmedEtag:null,pendingWrite:null,settings:{events:true,numbers:false,stats:true,auto:true}});
 const clone=x=>structuredClone(x);
 const key=id=>PREFIX+id;
 function save(e){try{localStorage.setItem(key(e.id),JSON.stringify(e.data));return true;}catch{e.status='Не удалось сохранить настройки на устройстве';return false;}}
@@ -14,7 +14,7 @@ function entry(id){
  // Migrate previously cached public snapshots before the next upload.
  if(data.match)data.match.id='match_'+data.match.startedAt;
  data.archive=data.archive.map(row=>({...row,id:row.id?.startsWith('result_')?row.id:'match_'+row.startedAt}));
- const e={id,data,session:null,publisher:null,status:data.enabled?'Войдите для синхронизации':'Не опубликовано',dirty:false,running:false,conflict:false,timer:null,epoch:0,listeners:new Set()};
+ const e={id,data,session:null,publisher:null,status:data.publisherPaused?'Отправка приостановлена на этом устройстве':data.enabled?'Войдите для синхронизации':'Не опубликовано',dirty:false,running:false,conflict:false,timer:null,epoch:0,listeners:new Set()};
  states.set(id,e);return e;
 }
 function notify(e){for(const f of e.listeners){try{f();}catch{}}}
@@ -32,16 +32,18 @@ export function defaultPageCode(id){
 }
 export function portalLink(id,base=location.href){const d=entry(id).data;return d.owner&&d.slug&&d.origin?shareUrl(base,d.origin,d.owner,d.slug):'';}
 function snapshot(e){const d=e.data;return buildPortal(d.team,d.schedule,d.match,d.archive);}
+function ensurePublishingAllowed(e){if(e.data.publisherPaused)throw Error('Отправка с этого устройства приостановлена. Сначала явно продолжите управление или примите завершённую серверную версию.');}
 function enqueue(e){
+ if(e.data.publisherPaused)return;
  e.dirty=true;if(!e.publisher){status(e,'Сохранено на устройстве · войдите для публикации');return;}
  if(e.conflict)return;
  if(e.timer){clearTimeout(e.timer);e.timer=null;}
  void flush(e);
 }
 async function flush(e){
- if(e.running||!e.dirty||!e.publisher||e.conflict)return;e.running=true;const epoch=e.epoch,client=e.publisher;
+ if(e.running||!e.dirty||!e.publisher||e.conflict||e.data.publisherPaused)return;e.running=true;const epoch=e.epoch,client=e.publisher;
  try{
-  while(e.dirty&&e.publisher===client&&e.epoch===epoch){
+  while(e.dirty&&e.publisher===client&&e.epoch===epoch&&!e.data.publisherPaused){
    e.dirty=false;status(e,'Синхронизация…');
    try{
     if(e.data.pendingDelete||e.data.enabled){
@@ -79,15 +81,15 @@ export async function connectPortal(id,{origin,apiKey,email,password,slug='',tea
   const first=!d.slug;
   if(first&&remote){
    // Existing published content wins over an unbound local draft.
-   d.team=remote.team;d.schedule=remote.schedule;d.archive=remote.archive;d.match=remote.match;d.enabled=false;d.activeId=remote.match&&['live','break'].includes(remote.match.status)?remote.match.id:null;
+   d.team=remote.team;d.schedule=remote.schedule;d.archive=remote.archive;d.match=remote.match;d.publisherPaused=!!remote.match&&['live','break'].includes(remote.match.status);d.enabled=d.publisherPaused;d.activeId=d.publisherPaused?remote.match.id:null;
   }
   const expected=d.confirmedEtag;
   const safe=first||expected===version.etag||samePortalContent(version.data,d.pendingDelete||!d.enabled?null:snapshot(e))||!!d.pendingWrite&&samePortalContent(version.data,d.pendingWrite.data);
   e.session?.close();e.epoch++;e.session=session;e.publisher=publisher;e.conflict=!safe;
   Object.assign(d,{origin,apiKey,owner:session.uid,slug:chosen,team:d.team||String(team).trim()});
   if(safe){d.confirmedEtag=version.etag;d.pendingWrite=null;}
-  save(e);status(e,e.conflict?'Конфликт публикации · проверьте серверную версию.':'Подключено · '+(d.enabled?'публикация включена':'публикация выключена'));
-  if(d.pendingDelete||d.enabled)enqueue(e);
+  save(e);status(e,d.publisherPaused?'Отправка приостановлена · продолжите из локального матча':e.conflict?'Конфликт публикации · проверьте серверную версию.':'Подключено · '+(d.enabled?'публикация включена':'публикация выключена'));
+  if(!d.publisherPaused&&(d.pendingDelete||d.enabled))enqueue(e);
   return portalInfo(id);
  }catch(err){session.close();throw err;}
 }
@@ -100,27 +102,53 @@ export async function acceptRemotePortal(id){
  const version=await client.readVersion();if(e.publisher!==client||e.epoch!==epoch||e.running)throw Error('Подключение изменилось. Повторите действие.');
  const remote=readPortal(version.data),d=e.data;
  if(e.timer)clearTimeout(e.timer);e.timer=null;
- Object.assign(d,{confirmedEtag:version.etag,pendingWrite:null,enabled:!!remote,pendingDelete:false,schedule:remote?.schedule||[],archive:remote?.archive||[],match:remote?.match||null,activeId:remote?.match&&['live','break'].includes(remote.match.status)?remote.match.id:null});
+ Object.assign(d,{confirmedEtag:version.etag,pendingWrite:null,enabled:!!remote,pendingDelete:false,schedule:remote?.schedule||[],archive:remote?.archive||[],match:remote?.match||null,activeId:remote?.match&&['live','break'].includes(remote.match.status)?remote.match.id:null,publisherPaused:!!remote?.match&&['live','break'].includes(remote.match.status)});
  if(remote)d.team=remote.team;
  d.settings.auto=false;e.conflict=false;e.dirty=false;save(e);
- status(e,'Принята серверная версия · автоматический запуск выключен');return portalInfo(id);
+ status(e,d.publisherPaused?'Принята серверная версия · отправка счёта приостановлена':'Принята серверная версия · автоматический запуск выключен');return portalInfo(id);
+}
+/** Cooperative handoff: no write after acknowledged pause. No server lease. */
+export function pausePortalPublisher(id){
+ const e=entry(id),d=e.data;if(!d.enabled||!d.match||!['live','break'].includes(d.match.status))throw Error('Нет активной трансляции');
+ if(e.running||e.dirty||d.pendingWrite||d.pendingDelete||e.conflict)throw Error('Сначала завершите текущий обмен и разрешите конфликт');
+ const old={publisherPaused:d.publisherPaused,auto:d.settings.auto};d.publisherPaused=true;d.settings.auto=false;
+ if(!save(e)){d.publisherPaused=old.publisherPaused;d.settings.auto=old.auto;throw Error('Не удалось сохранить остановку отправки');}
+ if(e.timer)clearTimeout(e.timer);e.timer=null;status(e,'Отправка остановлена · последний счёт остаётся на сайте');return portalInfo(id);
+}
+export async function previewPortalHandoff(id,local){
+ const e=entry(id),client=e.publisher,epoch=e.epoch;if(local?.teamId!==id||!client||e.running||!e.data.publisherPaused&&!e.conflict)throw Error('Подключите Firebase и приостановите отправку либо примите серверную версию');
+ const version=await client.readVersion();if(e.publisher!==client||e.epoch!==epoch||e.running)throw Error('Подключение изменилось');
+ const remote=readPortal(version.data);return {...checkHandoffMatch(local,remote?.match),etag:version.etag};
+}
+export async function continuePortalHandoff(id,local,expected,{confirmed=false}={}){
+ if(!confirmed)throw Error('Подтвердите передачу управления');const e=entry(id),client=e.publisher,epoch=e.epoch,d=e.data;
+ if(local?.teamId!==id||!client||e.running||!d.publisherPaused&&!e.conflict)throw Error('Передача недоступна');
+ const version=await client.readVersion();if(e.publisher!==client||e.epoch!==epoch||e.running||version.etag!==expected)throw Error('Опубликованная версия изменилась. Повторите предпросмотр.');
+ const remote=readPortal(version.data);checkHandoffMatch(local,remote?.match);
+ const before=clone(d),numbered=remote.match.events.some(x=>x.number!=null)||remote.match.stats.length>0;
+ Object.assign(d,{team:remote.team,schedule:remote.schedule,archive:remote.archive,match:remote.match,activeId:local.id,enabled:true,pendingDelete:false,pendingWrite:null,confirmedEtag:version.etag,publisherPaused:false});
+ // Never broaden public data permissions on takeover. Explicit opt-in can be
+ // restored in settings; no newly disclosed numbers or statistics on resume.
+ d.settings={...d.settings,auto:false,events:d.settings.events&&remote.match.events.length>0,numbers:d.settings.numbers&&numbered,stats:d.settings.stats&&d.settings.numbers&&numbered&&remote.match.stats.length>0};
+ if(!save(e)){Object.assign(d,before);throw Error('Не удалось сохранить передачу управления');}
+ if(e.timer)clearTimeout(e.timer);e.timer=null;e.dirty=false;e.conflict=false;status(e,'Управление продолжено · счёт подтверждён, запись при следующем событии');return portalInfo(id);
 }
 export function setPortalEnabled(id,enabled,team){
- const e=entry(id),d=e.data;if(e.conflict)throw Error('Сначала разрешите конфликт публикации.');if(enabled&&!e.publisher)throw Error('Сначала подключите Firebase');
+ const e=entry(id),d=e.data;ensurePublishingAllowed(e);if(e.conflict)throw Error('Сначала разрешите конфликт публикации.');if(enabled&&!e.publisher)throw Error('Сначала подключите Firebase');
  d.enabled=!!enabled;d.team=String(team||d.team).trim().slice(0,100);d.pendingDelete=!enabled; if(!enabled){d.activeId=null;d.match=null;}
  save(e);enqueue(e);return portalInfo(id);
 }
 export function setPortalSettings(id,patch){
- const e=entry(id),d=e.data;for(const k of ['events','numbers','stats','auto'])if(Object.hasOwn(patch,k))d.settings[k]=!!patch[k];
+ const e=entry(id),d=e.data;ensurePublishingAllowed(e);for(const k of ['events','numbers','stats','auto'])if(Object.hasOwn(patch,k))d.settings[k]=!!patch[k];
  if(d.match){if(!d.settings.events)d.match.events=[];if(!d.settings.numbers){d.match.events=d.match.events.map(({number,...x})=>x);d.match.stats=[];}if(!d.settings.stats)d.match.stats=[];}
  save(e);if(d.enabled)enqueue(e);else notify(e);
 }
 export function saveFixture(id,item){
- const e=entry(id),d=e.data,x=scheduleItem(item),next=d.schedule.filter(t=>t.id!==x.id);if(d.activeId&&d.match?.scheduledId===x.id)throw Error('Матч уже идёт');if(next.length>=20)throw Error('Не более 20 предстоящих матчей');d.schedule=sortedSchedule([...next,x]);save(e);if(d.enabled)enqueue(e);else notify(e);
+ const e=entry(id),d=e.data;ensurePublishingAllowed(e);const x=scheduleItem(item),next=d.schedule.filter(t=>t.id!==x.id);if(d.activeId&&d.match?.scheduledId===x.id)throw Error('Матч уже идёт');if(next.length>=20)throw Error('Не более 20 предстоящих матчей');d.schedule=sortedSchedule([...next,x]);save(e);if(d.enabled)enqueue(e);else notify(e);
 }
-export function removeFixture(id,fixtureId){const e=entry(id);if(e.data.match?.scheduledId===fixtureId&&['live','break'].includes(e.data.match.status))throw Error('Матч уже идёт');e.data.schedule=e.data.schedule.filter(x=>x.id!==fixtureId);save(e);if(e.data.enabled)enqueue(e);else notify(e);}
+export function removeFixture(id,fixtureId){const e=entry(id);ensurePublishingAllowed(e);if(e.data.match?.scheduledId===fixtureId&&['live','break'].includes(e.data.match.status))throw Error('Матч уже идёт');e.data.schedule=e.data.schedule.filter(x=>x.id!==fixtureId);save(e);if(e.data.enabled)enqueue(e);else notify(e);}
 export function syncPortalMatch(match,{start=false,finish=false,discard=false}={}){
- if(match?.mode!=='dual')return false;const e=entry(match.teamId),d=e.data;if(!d.enabled)return false;
+ if(match?.mode!=='dual')return false;const e=entry(match.teamId),d=e.data;if(d.publisherPaused){if(start)ensurePublishingAllowed(e);return false;}if(!d.enabled)return false;
  const scheduled=matchingSchedule(d.schedule,match);
  const publicId='match_'+Date.parse(match.startedAt);
  const continuing=d.activeId===match.id||d.activeId===publicId&&d.match?.id===publicId;
@@ -141,15 +169,15 @@ export function syncPortalMatch(match,{start=false,finish=false,discard=false}={
  }
  save(e);enqueue(e);return true;
 }
-export function heartbeatPortal(id,matchId){const e=entry(id);if(e.data.enabled&&e.data.activeId===matchId&&e.data.match&&['live','break'].includes(e.data.match.status))enqueue(e);}
-export function setPublicTeamName(id,team){const e=entry(id),name=String(team).trim().slice(0,100);if(!name)throw Error('Укажите публичное название');e.data.team=name;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
-export function stopPortalMatch(id){const e=entry(id);e.data.activeId=null;e.data.match=null;e.data.settings.auto=false;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
+export function heartbeatPortal(id,matchId){const e=entry(id);if(!e.data.publisherPaused&&e.data.enabled&&e.data.activeId===matchId&&e.data.match&&['live','break'].includes(e.data.match.status))enqueue(e);}
+export function setPublicTeamName(id,team){const e=entry(id);ensurePublishingAllowed(e);const name=String(team).trim().slice(0,100);if(!name)throw Error('Укажите публичное название');e.data.team=name;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
+export function stopPortalMatch(id){const e=entry(id);ensurePublishingAllowed(e);e.data.activeId=null;e.data.match=null;e.data.settings.auto=false;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
 
 export async function publishSavedResult(id,match,{fixtureId=null}={}){
- const e=entry(id),d=e.data;if(!d.enabled)throw Error('Сначала опубликуйте страницу команды');
+ const e=entry(id),d=e.data;ensurePublishingAllowed(e);if(!d.enabled)throw Error('Сначала опубликуйте страницу команды');
  if(match.teamId!==id)throw Error('Матч относится к другой команде');
  const result=await savedResult(match);
- if(!d.enabled||d.pendingDelete)throw Error('Публикация выключена');
+ ensurePublishingAllowed(e);if(!d.enabled||d.pendingDelete)throw Error('Публикация выключена');
  if(d.match?.id===result.id&&['live','break'].includes(d.match.status))throw Error('Сначала завершите текущую трансляцию');
  if(fixtureId&&!resultFixtures(d.schedule,match,['live','break'].includes(d.match?.status)?d.match?.scheduledId:null).some(x=>x.id===fixtureId))throw Error('Выбранная встреча недоступна или уже идёт');
  const next=sortedArchive([result,...d.archive.filter(x=>x.id!==result.id)]);
@@ -158,7 +186,7 @@ export async function publishSavedResult(id,match,{fixtureId=null}={}){
  save(e);enqueue(e);return result;
 }
 export function unpublishResult(id,resultId){
- const e=entry(id),d=e.data;
+ const e=entry(id),d=e.data;ensurePublishingAllowed(e);
  if(!d.enabled)throw Error('Сначала включите публикацию страницы');
  if(d.match?.id===resultId&&['live','break'].includes(d.match.status))throw Error('Нельзя убрать текущую трансляцию');
  if(!d.archive.some(x=>x.id===resultId)&&d.match?.id!==resultId)throw Error('Результат уже отсутствует');
@@ -168,9 +196,9 @@ export function unpublishResult(id,resultId){
 }
 
 function archiveSession(id){
- const e=entry(id),d=e.data;if(!e.session||!d.enabled||d.pendingDelete||e.conflict||e.dirty||e.running)throw Error('Сначала завершите синхронизацию публичной страницы');
+ const e=entry(id),d=e.data;ensurePublishingAllowed(e);if(!e.session||!d.enabled||d.pendingDelete||e.conflict||e.dirty||e.running)throw Error('Сначала завершите синхронизацию публичной страницы');
  const session=e.session,epoch=e.epoch,target=archiveTarget(portalAddress(d.origin,d.owner,d.slug));
- const stillAllowed=()=>{if(e.session!==session||e.epoch!==epoch||!d.enabled||d.pendingDelete||e.conflict||e.dirty||e.running)throw Error('Состояние публикации изменилось. Обновите список.');};
+ const stillAllowed=()=>{if(e.session!==session||e.epoch!==epoch||d.publisherPaused||!d.enabled||d.pendingDelete||e.conflict||e.dirty||e.running)throw Error('Состояние публикации изменилось. Обновите список.');};
  return {session,target,portal:portalAddress(d.origin,d.owner,d.slug),stillAllowed};
 }
 export async function listExtendedArchive(id,{cursor=null,fetcher=fetch}={}){
