@@ -27,3 +27,5 @@ test('Spectator result card rejects incomplete/inconsistent results and projects
  assert.throws(()=>publicResultCard('Наши',{...row(1),sets:[]}));
  assert.throws(()=>publicResultCard('Наши',{...row(1),setsWon:{ours:2,theirs:0}}));
 });
+
+test('Multi-term archive search matches word prefixes rather than letters inside an already matched word',()=>{const a={...row(1),opponent:'Победа А'},b={...row(2),opponent:'Победа Б'};assert.deepEqual(searchArchive([a,b],{query:'победа б'}),[b]);assert.deepEqual(searchArchive([a,b],{query:'обеда'}),[a,b]);});

@@ -33,7 +33,15 @@ const searchKey=value=>String(value??'').normalize('NFKC').toLocaleLowerCase('ru
 export function searchArchive(rows,{query='',season='all',outcome='all'}={}){
  if(!['all','win','loss','draw'].includes(outcome))throw Error('Некорректный фильтр');
  const words=searchKey(query).slice(0,200).split(' ').filter(Boolean);
- return filterArchiveSeason(rows,season).filter(r=>(outcome==='all'||resultOutcome(r)===outcome)&&words.every(w=>searchKey(r.opponent).includes(w)));
+ return filterArchiveSeason(rows,season).filter(r=>{
+  if(outcome!=='all'&&resultOutcome(r)!==outcome)return false;
+  const name=searchKey(r.opponent);
+  if(words.length<=1)return !words.length||name.includes(words[0]);
+  // For several terms use word prefixes. "победа б" must not match
+  // "победа а" just because the letter б is inside the first word.
+  const tokens=name.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return words.every(w=>tokens.some(token=>token.startsWith(w)));
+ });
 }
 /** Current public stream wins over an older fetched archive copy. Keep the
  * direct archive key only when the full public scores agree. */
