@@ -110,7 +110,7 @@ export function editTags(entity, isTopic, done) {
   const topic = S.state.topics.find(t => t.id === entity.topicId);
   const picker = tagPicker(entity.activityIds ?? topic?.activityIds);
   const save = async ids => {
-    if (isTopic) await S.updateTopic(entity.id,{activityIds:ids});
+    if (isTopic) await S.updateTopic(entity.id,{activityIds:ids,activitiesConfirmed:true});
     else await S.updateLesson(entity.id,{activityIds:ids});
     done();
   };

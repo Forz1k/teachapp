@@ -22,6 +22,11 @@ test('KTP manual checkpoint, comparison, automatic pre-replace and independent r
  const restored=await db.transaction(['topics'],'readonly',s=>s.topics.index('ktpId').getAll(result.plan.id));
  assert.deepEqual(restored.sort((a,b)=>a.ktpOrder-b.ktpOrder).map(t=>t.name),['Бег','Прыжок']);
  assert.ok(restored.every(t=>t.activitiesConfirmed===false&&![first.id,second.id].includes(t.id)));
+ await S.load();const restoredRun=restored.find(t=>t.name==='Бег');
+ const previewLesson={classId:'synthetic',date:'2026-11-25',topicId:restoredRun.id,activityIds:null};
+ assert.equal(S.lessonCheck(previewLesson).needsReview,true);
+ await S.updateTopic(restoredRun.id,{activityIds:['run'],activitiesConfirmed:true});
+ assert.equal(S.lessonCheck(previewLesson).needsReview,false);
  assert.deepEqual(await db.get('ktp',k.id),before.ktp.find(x=>x.id===k.id));
  assert.deepEqual((await db.getAll('topics')).filter(t=>t.ktpId===k.id),before.topics);
  const data=await db.dumpAll(),backup=await S.makeBackup();validateBackup(backup);

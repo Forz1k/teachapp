@@ -533,7 +533,7 @@ async function editMark(studentId, lessonId, edit,source='manual',undoEventId=nu
     const base = edit(priorBase, previous);
     if(source==='undo'&&undoEventId&&base?.value){
       const [restrictions,custom,topic]=await Promise.all([s.activityRestrictions.index('studentId').getAll(studentId),s.activityCategories.getAll(),lesson.topicId?s.topics.get(lesson.topicId):Promise.resolve(null)]);
-      const review=H.checkLessonRestrictions({lesson:{...lesson,activityIds:lesson.activityIds??topic?.activityIds},students:[student],activities:[...H.catalog,...custom],restrictions});
+      const review=H.checkLessonRestrictions({lesson:effectiveLessonLoad(lesson,topic),students:[student],activities:[...H.catalog,...custom],restrictions});
       const matches=[...review.matches,...review.potentialMatches];
       if(M.hasOsv(previous)||previous?.flag==='Н'||part?.mode==='paused'||part?.full||exemptions.some(e=>M.exemptionCovers(e,lesson.date))||matches.length)throw Error('Проверьте участие и ограничения в обычном журнале');
     }
@@ -1104,9 +1104,12 @@ export async function saveParticipation(studentId, lessonId, input, expectedRevi
 
 export const activities = () => [...H.catalog, ...state.activityCategories];
 export const healthGroups = () => [...new Set([...H.groups, ...(state.settings.healthGroups || [])])];
+function effectiveLessonLoad(lesson,topic){
+  return {...lesson,activityIds:lesson.activityIds??topic?.activityIds,activitiesConfirmed:lesson.activityIds==null&&topic?.activitiesConfirmed===false?false:lesson.activitiesConfirmed};
+}
 export function lessonCheck(lesson) {
   const topic = state.topics.find(t => t.id === lesson.topicId);
-  return H.checkLessonRestrictions({ lesson: { ...lesson, activityIds: lesson.activityIds ?? topic?.activityIds },
+  return H.checkLessonRestrictions({ lesson: effectiveLessonLoad(lesson,topic),
     activities: activities(), students: state.students, restrictions: state.activityRestrictions });
 }
 
@@ -1298,7 +1301,7 @@ export async function applyLessonBatch(lessonId,studentIds,action,value=null,con
       s.participation.index('lessonId').getAll(lessonId),s.exemptions.getAll(),s.activityRestrictions.getAll(),
       s.activityCategories.getAll(),lesson.topicId?s.topics.get(lesson.topicId):Promise.resolve(null)]);
     const ids=new Set(students.map(st=>st.id)),byMark=new Map(marks.map(m=>[m.studentId,m])),byPart=new Map(parts.map(p=>[p.studentId,p]));
-    const review=H.checkLessonRestrictions({lesson:{...lesson,activityIds:lesson.activityIds??topic?.activityIds},activities:[...H.catalog,...custom],students,restrictions});
+    const review=H.checkLessonRestrictions({lesson:effectiveLessonLoad(lesson,topic),activities:[...H.catalog,...custom],students,restrictions});
     const restricted=new Set([...review.matches,...review.potentialMatches].map(m=>m.studentId));
     const nextMarks=[],nextParts=[];
     for(const id of studentIds){

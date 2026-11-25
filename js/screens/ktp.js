@@ -241,7 +241,7 @@ export function openKtpDetail(ktpId, opts = {}) {
       topics.forEach((t, i) => {
         const row = el('div', { class: 'preview-item' }, [
           el('div', { style: 'width:26px;color:var(--text-3);font-size:12px;font-feature-settings:"tnum" 1', text: String(t.ktpOrder ?? i + 1) }),
-          el('div', { class: 'txt', text: t.name }),
+          el('div', { class: 'txt', text: t.name+(t.activitiesConfirmed===false?' · нагрузки не подтверждены':'') }),
           el('button', {
             class: 'btn small', type: 'button', text: '✎',
             onclick: async (e) => {
