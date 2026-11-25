@@ -715,6 +715,25 @@ export async function commitDeltaMigration(args){
 // Local-only Delta LAB binding and checkpoint are committed together. Credentials
 // stay in the operator's encrypted files; never change the ordinary TAP1/TAD2 profile.
 const migrationBindingKey=area=>'sync-checkpoint-migration-'+area;
+const migrationBinding=(data,area)=>data.meta.find(r=>r.id===migrationBindingKey(area))??null;
+const labAdapters=new WeakMap();
+function migrationGuardError(){return Object.assign(Error('Контур привязан к экспериментальному переносу Delta LAB. Обычный обмен запрещён; используйте проверенный файл переноса и согласованный возврат.'),{code:'migration-binding'});}
+function bindingMatches(binding,cp,area){
+ return binding?.protocol==='delta-lab-v1'&&[1,2].includes(binding.sourceProtocolVersion)&&binding.area===area&&typeof binding.migrationId==='string'&&uuid.test(binding.migrationId)&&binding.destinationWorkspaceId===binding.migrationId&&cp?.endpoint===binding.destinationEndpoint&&cp.workspaceId===binding.destinationWorkspaceId&&revision(cp.revision)&&cp.revision>=binding.destinationRevision&&binding.destinationRevision===1;
+}
+function guardBinding(data,area,endpoint,client){
+ const binding=migrationBinding(data,area);if(!binding)return null;
+ const adapter=labAdapters.get(client),cp=getCheckpoint(data,area);
+ if(!adapter||adapter.area!==area||adapter.endpoint!==endpoint||!bindingMatches(binding,cp,area)||cp.endpoint!==endpoint)throw migrationGuardError();
+ return binding;
+}
+// Read-only local metadata; no token, password, encrypted payload or endpoint exposed.
+export async function migrationBindingStatus(area,data){
+ check(validArea(area),'Выберите рабочую область');const current=data||{meta:await db.getAll('meta')},binding=migrationBinding(current,area);
+ if(!binding)return {area,status:'none'};
+ const cp=getCheckpoint(current,area);
+ return {area,status:bindingMatches(binding,cp,area)?'lab-bound':'review',revision:revision(cp?.revision)?cp.revision:null};
+}
 export async function cutoverDeltaMigrationDevice(args){
  check(args.synthetic===true,'Переключение доступно только для Delta LAB');
  check(args.sourceFenceToken===undefined,'Не передавайте административный ключ устройству');
@@ -823,10 +842,11 @@ export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synth
   check(!busy,'Дождитесь завершения обмена Delta LAB');busy=true;
   try{return await task();}finally{busy=false;}
  }
- return {
+ const adapter={
   get:()=>exclusive(async()=>{
    baseline=null;pending=null;
    const current=await readData(),cp=getCheckpoint(current,area);
+   guardBinding(current,area,endpoint,adapter);
    let checkpoint=null;
    if(cp){
     check(cp.endpoint===endpoint&&revision(cp.revision)&&uuid.test(cp.workspaceId),'Этот контур связан с другим сервером или повреждён');
@@ -844,6 +864,7 @@ export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synth
   put:(expectedRevision,envelope)=>exclusive(async()=>{
    check(baseline&&baseline.revision===expectedRevision,'Сначала прочитайте актуальную ревизию Delta LAB');
    const next=await readPacket(envelope,password,area,expectedRevision+1),current=await readData();
+   guardBinding(current,area,endpoint,adapter);
    combineScope(current,next.snapshot,area);
    check(!expectedRevision||baseline.workspaceId===next.workspaceId,'Неверное рабочее пространство Delta LAB');
    // A retry of the exact local envelope must reuse the same encrypted delta.
@@ -868,6 +889,7 @@ export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synth
    return copy(pending.ack);
   })
  };
+ labAdapters.set(adapter,{area,endpoint});return adapter;
 }
 
 export async function prepareSync({area,endpoint,password,client,data}){
@@ -876,6 +898,7 @@ export async function prepareSync({area,endpoint,password,client,data}){
  check(typeof password==='string'&&password.length>=12,'Пароль шифрования должен быть не короче 12 символов');
  const current=data||await db.dumpAll(),local=projectScope(current,area),checkpoint=getCheckpoint(current,area);
  if(checkpoint)check(checkpoint.endpoint===endpoint&&revision(checkpoint.revision)&&uuid.test(checkpoint.workspaceId),'Этот контур уже связан с другим сервером или повреждён');
+ const binding=guardBinding(current,area,endpoint,client);
  const remote=await client.get();
  check(Number.isSafeInteger(remote.revision)&&remote.revision>=0,'Некорректная ревизия');
  let base,remoteSnapshot,workspaceId;
@@ -902,9 +925,10 @@ export async function prepareSync({area,endpoint,password,client,data}){
   }
  }
  const draft=mergeScopes(base,local,remoteSnapshot,area);
- return {area,endpoint,workspaceId,revision:remote.revision,checkpoint,base,local,remote:remoteSnapshot,remoteEnvelope:remote.envelope,conflicts:draft.conflicts};
+ return {area,endpoint,workspaceId,revision:remote.revision,checkpoint,...(binding?{migrationBinding:binding}:{}),base,local,remote:remoteSnapshot,remoteEnvelope:remote.envelope,conflicts:draft.conflicts};
 }
 export function previewSync(current,plan,choices={}){
+ if(!same(migrationBinding(current,plan.area),plan.migrationBinding??null))throw migrationGuardError();
  check(same(projectScope(current,plan.area),plan.local)&&same(getCheckpoint(current,plan.area),plan.checkpoint),'Локальные данные изменились. Повторите предпросмотр.');
  const result=mergeScopes(plan.base,plan.local,plan.remote,plan.area,choices);
  if(result.conflicts.length)return {...result,counts:null};
@@ -919,7 +943,8 @@ function guardSync(stillAllowed,remoteMayHaveCommitted=false){
 export async function executeSync({plan,choices,password,client,confirmed=false,reuseRemote=false,stillAllowed=()=>true}){
  check(confirmed,'Подтвердите синхронизацию');
  guardSync(stillAllowed);
- const preview=previewSync(await db.dumpAll(),plan,choices);
+ const initial=await db.dumpAll();guardBinding(initial,plan.area,plan.endpoint,client);
+ const preview=previewSync(initial,plan,choices);
  guardSync(stillAllowed);
  check(!preview.conflicts.length,'Сначала разрешите все конфликты');
  const pullOnly=reuseRemote&&plan.revision>0&&same(preview.snapshot,plan.remote)&&isEncryptedBackup(plan.remoteEnvelope);
@@ -929,6 +954,8 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
   await db.transaction(stores,'readwrite',async s=>{
    guardSync(stillAllowed);
    const current=Object.fromEntries(await Promise.all(stores.map(async n=>[n,await s[n].getAll()])));
+   guardBinding(current,plan.area,plan.endpoint,client);
+   if(!same(migrationBinding(current,plan.area),plan.migrationBinding??null))throw migrationGuardError();
    const cp=getCheckpoint(current,plan.area);
    check(same(cp,plan.checkpoint)&&same(projectScope(current,plan.area),plan.local),'Локальные данные изменились. Повторите проверку.');
    guardSync(stillAllowed);await s.meta.put(successRecord(plan.area,cp));guardSync(stillAllowed);
@@ -940,7 +967,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
  const envelope=pullOnly?plan.remoteEnvelope:await encryptBackup(packetPayload(preview.snapshot,plan.area,plan.workspaceId,nextRevision),password);
  // Recheck after expensive encryption; the transaction below checks again after CAS.
  guardSync(stillAllowed);
- previewSync(await db.dumpAll(),plan,choices);
+ const beforeWrite=await db.dumpAll();guardBinding(beforeWrite,plan.area,plan.endpoint,client);previewSync(beforeWrite,plan,choices);
  guardSync(stillAllowed);
  if(!pullOnly){
   let committed;
@@ -953,6 +980,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
    guardSync(stillAllowed,!pullOnly);
    const current=Object.fromEntries(await Promise.all(names.map(async n=>[n,await s[n].getAll()])));
    guardSync(stillAllowed,!pullOnly);
+   guardBinding(current,plan.area,plan.endpoint,client);
    const final=previewSync(current,plan,choices);
    check(!final.conflicts.length&&same(final.snapshot,preview.snapshot),'Изменился результат слияния');
    const data=combineScope(current,final.snapshot,plan.area);
@@ -972,6 +1000,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
 }
 // Automatic sync only for an already confirmed workspace; never auto-propagate deletions.
 export async function syncPersonalArea({area,endpoint,password,client,stillAllowed=()=>true,initialize=false}){
+ const binding=await migrationBindingStatus(area);if(binding.status!=='none')return {area,status:'review',reason:'migration-binding'};
  if(!initialize&&!await syncStatus(area))return {area,status:'setup'};
  if(!stillAllowed())return {area,status:'paused'};
  const plan=await prepareSync({area,endpoint,password,client});
@@ -995,6 +1024,7 @@ export async function syncStatus(area){
 export async function localSyncState({area,endpoint,password,data}){
  check(validArea(area),'Выберите рабочую область');
  const current=data||await db.dumpAll(),cp=getCheckpoint(current,area);
+ if(migrationBinding(current,area))return {area,status:'review',reason:'migration-binding',revision:revision(cp?.revision)?cp.revision:null,successfulAt:null};
  if(!cp)return {area,status:'setup',revision:null,successfulAt:null};
  const record=current.meta.find(r=>r.id===statusKey(area));
  const successfulAt=record&&record.workspaceId===cp.workspaceId&&record.revision===cp.revision&&record.endpoint===cp.endpoint&&typeof record.successfulAt==='string'&&Number.isFinite(Date.parse(record.successfulAt))?record.successfulAt:null;
@@ -1009,6 +1039,7 @@ export async function localSyncState({area,endpoint,password,data}){
 export async function disconnectSync(area,confirmed=false){
  check(validArea(area)&&confirmed,'Подтвердите отключение');
  await db.transaction(['meta'],'readwrite',async s=>{
+  if(await s.meta.get(migrationBindingKey(area)))throw migrationGuardError();
   await s.meta.delete(keyOf(area));
   await s.meta.delete(statusKey(area));
  });

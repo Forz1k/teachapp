@@ -240,9 +240,10 @@ export async function dumpAll() {
 }
 
 /** Замена базы одной транзакцией. add отклоняет повторяющиеся ключи. */
-export function replaceAll(data) {
+export function replaceAll(data,{guardMigration=false}={}) {
   const names = Object.keys(STORES);
   return tx(names, 'readwrite', async stores => {
+    if(guardMigration&&(await stores.meta.getAll()).some(r=>typeof r.id==='string'&&r.id.startsWith('sync-checkpoint-migration-')))throw Error('Нельзя заменять базу во время незавершённого Delta LAB переноса. Сначала согласуйте возврат контрольной точки.');
     for (const name of names) {
       await stores[name].clear();
       for (const row of data[name]) await stores[name].add(row);

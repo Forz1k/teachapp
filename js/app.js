@@ -42,7 +42,7 @@ function clearAutoRetry(reset=false){if(autoRetryTimer!==null)clearTimeout(autoR
 function updateSyncIndicator(){
  const node=appRoot.querySelector('.personal-sync-action');if(!node)return;
  const report=autoSyncStatus(),problem=report.phase==='interrupted'||report.areas.some(x=>!['synced','setup'].includes(x.status)),setup=report.areas.some(x=>x.status==='setup');
- const label=navigator.onLine===false?'Нет сети · данные сохранены локально':syncHint||(report.areas.some(x=>x.reason==='remote-unconfirmed')?'Обмен остановлен · сравните ревизии перед повторной записью':report.areas.some(x=>x.reason==='packet-too-large')?'Пакет превышает лимит сервера · откройте настройки':problem?'Требуется проверка синхронизации':setup?'Нужно подтвердить первое подключение':report.at?'Последняя проверка: '+new Date(report.at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'Синхронизировать сейчас');
+ const label=navigator.onLine===false?'Нет сети · данные сохранены локально':syncHint||(report.areas.some(x=>x.reason==='remote-unconfirmed')?'Обмен остановлен · сравните ревизии перед повторной записью':report.areas.some(x=>x.reason==='migration-binding')?'Незавершённый перенос · откройте настройки':report.areas.some(x=>x.reason==='packet-too-large')?'Пакет превышает лимит сервера · откройте настройки':problem?'Требуется проверка синхронизации':setup?'Нужно подтвердить первое подключение':report.at?'Последняя проверка: '+new Date(report.at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'Синхронизировать сейчас');
  node.title=label;node.setAttribute('aria-label','Синхронизировать сейчас. '+label);node.dataset.status=navigator.onLine===false?'offline':problem?'review':report.at&&!setup?'ok':'idle';
 }
 function safeAutoRoute(){

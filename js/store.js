@@ -1033,7 +1033,7 @@ export async function restoreBackup(payload) {
   const copy = typeof structuredClone === 'function' ? structuredClone(payload) : JSON.parse(JSON.stringify(payload));
   const snapshot = validateBackup(copy);
   snapshot.meta=snapshot.meta.filter(r=>!r.id.startsWith('sync-checkpoint-'));
-  await db.replaceAll(snapshot);
+  await db.replaceAll(snapshot,{guardMigration:true});
   applySnapshot(snapshot);
   return true;
 }

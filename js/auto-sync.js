@@ -24,7 +24,7 @@ export async function runPersonalSync({getCode=readSyncIdentity,online=()=>globa
    const client=clientFactory(credentials.endpoint,area,credentials.token,{timeoutMs:7000,...(credentials.protocolVersion===2?{protocolVersion:2}:{})});
    const result=await runArea({...credentials,client,initialize,stillAllowed});
    areas.push(result.status==='synced'?{...result,successfulAt:new Date().toISOString()}:result);
-  }catch(error){const allowed=stillAllowed();areas.push({area,status:allowed?'error':'paused',...(allowed&&error?.retryable===true?{retryable:true}:{}),...(error?.remoteMayHaveCommitted?{reason:'remote-unconfirmed'}:allowed&&error?.code==='packet-too-large'?{reason:'packet-too-large'}:{})});}
+  }catch(error){const allowed=stillAllowed();areas.push({area,status:allowed?'error':'paused',...(allowed&&error?.retryable===true?{retryable:true}:{}),...(error?.remoteMayHaveCommitted?{reason:'remote-unconfirmed'}:allowed&&error?.code==='packet-too-large'?{reason:'packet-too-large'}:allowed&&error?.code==='migration-binding'?{reason:'migration-binding'}:{})});}
  }
  last={phase:stillAllowed()?'finished':'interrupted',areas,at:new Date().toISOString()};
  return autoSyncStatus();

@@ -3,7 +3,7 @@ import {openTrustedDevices} from './trusted-devices.js';
 import * as S from '../store.js';
 import * as db from '../db.js';
 import {ktpLinkIssues} from '../backup.js';
-import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,localSyncState,describeSyncConflict,disconnectSync,localScopeUploadSize,syncUploadBytes,syncDeltaEstimate,defaultCloudflarePacketLimit} from '../sync.js';
+import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,localSyncState,describeSyncConflict,disconnectSync,localScopeUploadSize,syncUploadBytes,syncDeltaEstimate,defaultCloudflarePacketLimit,migrationBindingStatus} from '../sync.js';
 import {createDeviceInvite,redeemDeviceInvite,parseInvite} from '../device-invite.js';
 import {autoSyncStatus,withSyncSession,runPersonalSync} from '../auto-sync.js';
 import {parsePersonalCode,personalCredentials,readPersonalCode,savePersonalCode,forgetPersonalCode} from '../personal-sync.js';
@@ -82,18 +82,18 @@ export function openSync(){
  async function refresh(){
   const n=++seq,selected=area.value;
   try{
-   const cp=await syncStatus(selected);if(n!==seq||closed)return;
+   const [cp,binding]=await Promise.all([syncStatus(selected),migrationBindingStatus(selected)]);if(n!==seq||closed)return;
    endpoint.value=cp?.endpoint||'';
    const saved=readSyncIdentity();
    if(saved&&identityAreas(saved).includes(selected)){const credentials=await identityCredentials(saved,selected);if(n!==seq||closed)return;
-    if(!cp||cp.endpoint===credentials.endpoint){endpoint.value=credentials.endpoint;token.value=credentials.token;password.value=credentials.password;}
+    if(binding.status==='none'&&(!cp||cp.endpoint===credentials.endpoint)){endpoint.value=credentials.endpoint;token.value=credentials.token;password.value=credentials.password;}
    }
-   const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)+(r.reason==='packet-too-large'?' (пакет слишком велик)':r.reason==='remote-unconfirmed'?' (сервер мог принять пакет; сравните ревизии)':'')).join(' · ');
+   const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)+(r.reason==='migration-binding'?' (нужен согласованный возврат Delta LAB)':r.reason==='packet-too-large'?' (пакет слишком велик)':r.reason==='remote-unconfirmed'?' (сервер мог принять пакет; сравните ревизии)':'')).join(' · ');
    const successes=report.areas.filter(r=>r.status==='synced'&&r.successfulAt).map(r=>syncAreas[r.area]+': '+new Date(r.successfulAt).toLocaleString('ru-RU')).join(' · ');
    personalStatus.textContent=saved?(readTrustedProfile()?'Индивидуальный профиль v2 сохранён.':'Личный код сохранён на этом устройстве.')+(report.phase==='offline'?' Нет сети.':report.phase==='running'?' Обмен выполняется.':report.phase==='interrupted'?' Обмен прерван.':'')+(report.at?' Последняя проверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:'')+(successes?' Успешный обмен в последней попытке: '+successes:''):'Личный код не сохранён.';
    personalForget.hidden=!saved&&!hasTrustedProfileRecord();inviteCreate.hidden=!saved||!!readTrustedProfile();both.hidden=!saved;inviteImport.hidden=Boolean(saved)||hasTrustedProfileRecord();personalConnect.hidden=hasTrustedProfileRecord();
-   status.textContent=cp?'Последняя подтверждённая ревизия: '+cp.revision:'Контур пока не подключён.';
-   detach.hidden=!cp;detach.style.display=cp?'':'none';
+   status.textContent=binding.status!=='none'?'Обмен этого контура остановлен: экспериментальный перенос Delta LAB. Не удаляйте контрольную точку и не восстанавливайте копию поверх базы.':cp?'Последняя подтверждённая ревизия: '+cp.revision:'Контур пока не подключён.';
+   detach.hidden=!cp||binding.status!=='none';detach.style.display=detach.hidden?'none':'';
    localStatus.hidden=!saved;
    if(saved){
     localStatus.textContent='Сравнение локальных записей с последней принятой ревизией…';
@@ -102,7 +102,7 @@ export function openSync(){
      const local=await Promise.all(identityAreas(saved).map(async scope=>localSyncState({...await identityCredentials(saved,scope),data})));
      if(n!==seq||closed||readSyncIdentity()!==saved)return;
      const labels={setup:'не подключён',clean:'локальных изменений нет',pending:'есть изменения, ещё не подтверждённые облаком',review:'нужна проверка подключения или данных'};
-     localStatus.textContent=local.map(x=>syncAreas[x.area]+': '+labels[x.status]+(x.successfulAt?' · последняя успешная проверка '+new Date(x.successfulAt).toLocaleString('ru-RU'):'')).join('\n');
+     localStatus.textContent=local.map(x=>syncAreas[x.area]+': '+labels[x.status]+(x.reason==='migration-binding'?' · незавершённый перенос Delta LAB':'')+(x.successfulAt?' · последняя успешная проверка '+new Date(x.successfulAt).toLocaleString('ru-RU'):'')).join('\n');
     }catch{if(n===seq&&!closed)localStatus.textContent='Не удалось сравнить локальные записи.';}
    }else localStatus.textContent='';
   }catch{if(n===seq)status.textContent='Не удалось прочитать состояние.';}
@@ -127,6 +127,7 @@ export function openSync(){
  const preview=btn('Получить и сравнить ревизии',async()=>{
   if(busy)return;
   const selected=area.value,t=token.value,pw=password.value;
+  try{if((await migrationBindingStatus(selected)).status!=='none'){toast('Сначала согласуйте возврат экспериментального переноса Delta LAB');return;}}catch(e){toast(e.message);return;}
   let address;
   try{address=normalizeEndpoint(endpoint.value);}catch(e){toast(e.message);return;}
   clear();busy=true;controls(true);

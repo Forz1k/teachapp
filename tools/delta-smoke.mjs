@@ -450,6 +450,10 @@ try{
   const switched=await cutoverDeltaMigrationDevice(confirmation);
   assert.equal(switched.status,'cutover-completed');assert.equal(switched.replayed,false);
   const afterSwitch=await db.dumpAll(),bound=await db.get('meta','sync-checkpoint-migration-coach'),checkpoint=await db.get('meta','sync-checkpoint-coach');
+  // Ordinary adapters cannot bypass the experimental marker, even if the endpoint matches.
+  let ordinaryReads=0;const ordinary={get:async()=>{ordinaryReads++;throw Error('unexpected network');}};
+  await assert.rejects(prepareSync({area:'coach',endpoint,password:newPass,client:ordinary}),e=>e.code==='migration-binding');
+  assert.equal(ordinaryReads,0);
   assert.equal(bound.migrationId,sourceFenceId);assert.equal(bound.protocol,'delta-lab-v1');
   assert.equal(checkpoint.endpoint,endpoint);assert.equal(checkpoint.workspaceId,sourceFenceId);assert.equal(checkpoint.revision,1);
   assert.equal(await db.get('meta','sync-checkpoint-status-coach'),undefined);
