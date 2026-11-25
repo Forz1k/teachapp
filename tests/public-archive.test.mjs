@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {archiveKey,archivePage,archiveProjection,archiveTarget,resultLink,fixtureCalendar,archiveSeasons,filterArchiveSeason,equalArchiveResult,fetchArchivePage,writeArchiveRecord,searchArchive,mergeLoadedResults,publicResultCard} from '../js/public-archive.js';import {viewerTarget} from '../js/public-portal.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {archiveKey,archivePage,archiveSeasonBounds,archiveProjection,archiveTarget,resultLink,fixtureCalendar,archiveSeasons,filterArchiveSeason,equalArchiveResult,fetchArchivePage,writeArchiveRecord,searchArchive,mergeLoadedResults,publicResultCard} from '../js/public-archive.js';import {viewerTarget} from '../js/public-portal.js';
 const row=i=>({id:'r'+i,opponent:'Гости',startedAt:1700000000000+i,setsWon:{ours:1,theirs:0},sets:[{ours:25,theirs:20}],private:'secret'});
 test('archive uses score-only data, stable cursor and pages beyond 20',()=>{const raw=Object.fromEntries(Array.from({length:45},(_,i)=>[archiveKey(row(i)),row(i)]));const a=archivePage(raw),b=archivePage(raw,{cursor:a.cursor}),c=archivePage(raw,{cursor:b.cursor});assert.equal(a.rows.length,20);assert.equal(b.rows.length,20);assert.equal(c.rows.length,5);assert.equal(c.cursor,null);assert.equal(new Set([...a.rows,...b.rows,...c.rows].map(x=>x.id)).size,45);assert.equal(Object.hasOwn(archiveProjection(row(1)),'private'),false);assert.throws(()=>archiveProjection({...row(1),setsWon:{ours:0,theirs:1}}));});
 test('archive URL and public deep link preserve canonical target',()=>{const t=viewerTarget('https://example.com/live/');const u=resultLink(t.share,{...row(1),archiveKey:archiveKey(row(1))});assert.equal(new URL(viewerTarget(u).share).searchParams.get('archive'),archiveKey(row(1)));assert.match(archiveTarget(t.address),/publicMatchArchive/);});
@@ -29,3 +29,15 @@ test('Spectator result card rejects incomplete/inconsistent results and projects
 });
 
 test('Multi-term archive search matches word prefixes rather than letters inside an already matched word',()=>{const a={...row(1),opponent:'Победа А'},b={...row(2),opponent:'Победа Б'};assert.deepEqual(searchArchive([a,b],{query:'победа б'}),[b]);assert.deepEqual(searchArchive([a,b],{query:'обеда'}),[a,b]);});
+
+test('Season-bounded archive pagination reaches old seasons directly and rejects foreign cursors',async()=>{
+ const at=(i,t)=>({...row(i),startedAt:Date.parse(t)}),before=at(90,'2024-08-31T23:59:59.999Z'),first=at(91,'2024-09-01T00:00:00.000Z'),last=at(92,'2025-08-31T23:59:59.999Z'),after=at(93,'2025-09-01T00:00:00.000Z');
+ const raw=Object.fromEntries([before,first,last,after].map(r=>[archiveKey(r),r]));
+ const bounds=archiveSeasonBounds('2024');const target=archiveTarget(viewerTarget('https://example.com/live/').address);
+ let calls=0;
+ const fetcher=async url=>{calls++;const q=new URL(url).searchParams;assert.equal(q.get('orderBy'),'"$key"');assert.equal(JSON.parse(q.get('startAt')),bounds.start);assert.equal(JSON.parse(q.get('endAt')),calls===1?bounds.end:archiveKey(last));assert.equal(q.get('limitToLast'),calls===1?'2':'3');return new Response(JSON.stringify(raw));};
+ const page=await fetchArchivePage(target,{season:'2024',limit:1,fetcher});assert.deepEqual(page.rows.map(r=>r.id),[last.id]);assert.equal(page.cursor,archiveKey(last));
+ const next=await fetchArchivePage(target,{season:'2024',cursor:page.cursor,limit:1,fetcher});assert.deepEqual(next.rows.map(r=>r.id),[first.id]);assert.equal(next.cursor,null);
+ assert.throws(()=>archivePage(raw,{season:'2024',cursor:archiveKey(after)}));assert.throws(()=>archiveSeasonBounds('2024.5'));assert.throws(()=>archiveSeasonBounds('1969'));assert.throws(()=>archiveSeasonBounds('9999'));assert.equal(archiveSeasonBounds('all'),null);
+ assert.deepEqual(archivePage(raw,{season:'2023'}),{rows:[],cursor:null});
+});
