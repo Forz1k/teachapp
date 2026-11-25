@@ -234,7 +234,13 @@ export async function clearAll() {
 
 /** Полная выгрузка базы в один объект — для JSON-бэкапа. */
 export async function dumpAll() {
-  const names = Object.keys(STORES);
+  return readSnapshot(Object.keys(STORES));
+}
+
+/** Atomic read of exactly the requested stores, without cloning unrelated archives.
+ * Full backup continues to use dumpAll; no schema or transaction changes. */
+export function readSnapshot(names) {
+  if (!Array.isArray(names) || !names.length || new Set(names).size !== names.length || names.some(n => !Object.hasOwn(STORES,n))) throw Error('Некорректный набор хранилищ');
   return tx(names, 'readonly', async stores => Object.fromEntries(await Promise.all(
     names.map(async name => [name, await stores[name].getAll()]))));
 }

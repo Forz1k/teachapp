@@ -25,6 +25,14 @@ export function lineupAnalysis(matches,{from='',to='',opponent='',source='all',m
  check(['all','live','imported'].includes(source)&&Number.isInteger(min)&&min>=1&&min<=500&&Number.isInteger(phaseMin)&&phaseMin>=1&&phaseMin<=500&&Number.isInteger(set)&&set>=0&&set<=5,'Проверьте фильтры составов');
  const selected=matches.filter(m=>(!from||m.date>=from)&&(!to||m.date<=to)&&(!opponent||norm(m.opponent)===opponent)&&(source==='all'||(source==='live'?m.detail:m.imported)));
  const pairs=new Map(),six=new Map(),starts=new Map(),orderedStarts=new Map();
+ // Same actual six appears across many rallies/rotations. Resolve the 16
+ // accumulator references once per ordered lineup, scoped to this calculation.
+ const groupCache=new Map();
+ const liveRows=ids=>{
+  const ordered=key(ids);let rows=groupCache.get(ordered);
+  if(!rows){const g=groups(ids);rows=[get(six,g.six),...g.pairs.map(p=>get(pairs,p))];groupCache.set(ordered,rows);}
+  return rows;
+ };
  let liveMatches=0,pdfMatches=0,pdfWithoutStarts=0,unknownMatches=0,liveRallies=0,pdfRallies=0,pdfSixRallies=0,pdfPairRallies=0,measuredMs=0,pdfSetCount=0,pdfKnownStarts=0,completedSets=0,knownStarts=0;
  for(const [i,m] of selected.entries()){
   // Internal unique index; no dependence on untrusted IDs as object properties.
@@ -40,9 +48,8 @@ export function lineupAnalysis(matches,{from='',to='',opponent='',source='all',m
     startAdd(starts,[...ids].sort(),mid,s.sets[j],'live',stable);startAdd(orderedStarts,ids,mid,s.sets[j],'live',stable);
    }
    for(const e of events){
-    const {six:ids,pairs:ps}=groups(e.before.lineups.ours);
     const won=Number(e.side==='ours'),phase=e.before.serve==='ours'?'serve':'receive';
-    for(const r of [get(six,ids),...ps.map(p=>get(pairs,p))]){
+    for(const r of liveRows(e.before.lineups.ours)){
      r.rallies++;r.won+=won;r.liveRallies++;r[phase]++;r[phase+'Won']+=won;r.matchIds.add(mid);
      if(e.clockRunning){r.timedRallies++;r.timedWon+=won;}
     }
@@ -50,8 +57,7 @@ export function lineupAnalysis(matches,{from='',to='',opponent='',source='all',m
    for(const [j,v] of t.sets.entries()){
     if(set&&j+1!==set)continue;measuredMs+=v.elapsedMs;
     for(const [k,ms] of Object.entries(v.six)){
-     const {six:ids,pairs:ps}=groups(JSON.parse(k));
-     for(const r of [get(six,ids),...ps.map(p=>get(pairs,p))]){r.measuredMs+=ms;r.matchIds.add(mid);r.timedMatchIds.add(mid);}
+     for(const r of liveRows(JSON.parse(k))){r.measuredMs+=ms;r.matchIds.add(mid);r.timedMatchIds.add(mid);}
     }
    }
   }else if(m.imported){

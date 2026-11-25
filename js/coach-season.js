@@ -1,4 +1,4 @@
-import {timedMatchPlayers,timedRate} from './coach.js';
+import {timedMatchPlayers,timedRate,indexPlayerRecords} from './coach.js';
 import {replayDetailed} from './match-protocol.js';
 import {definitionKey,testHistory,summarizeTests} from './coach-tests.js';
 export const sourceLabels={all:'Все матчи',live:'Подробные матчи TeachApp',imported:'VolleyPoint PDF',manual:'Ручные / прежние матчи'};
@@ -22,11 +22,11 @@ export function eligiblePlayers(players,filter={}){
 }
 export function matchComparison(view,metric,filter={}){
  if(!Object.hasOwn(matchMetrics,metric))throw Error('Неизвестный показатель');
- const matches=filteredMatches(view.matches,filter);
+ const matches=filteredMatches(view.matches,filter),rosters=indexPlayerRecords(matches);
  if(metric==='pointsPer10'){
   const data=new Map(matches.filter(m=>m.detail).map(m=>[m,timedMatchPlayers(replayDetailed(m.detail))]));
   return eligiblePlayers(view.players,filter).map(player=>{
-   const roster=matches.filter(m=>m.roster.includes(player.id)),history=[],sum={ms:0,rallies:0,points:0};let recorded=0;
+   const roster=(rosters.get(player.id)||[]),history=[],sum={ms:0,rallies:0,points:0};let recorded=0;
    for(const m of roster){const a=data.get(m)?.get(player.id);if(!a||a.ms<=0)continue;sum.ms+=a.ms;sum.rallies+=a.rallies;sum.points+=a.points;recorded+=Number(a.rallies>0);const value=timedRate(a);if(value!==null)history.push({date:m.date,label:m.opponent,value});}
    const value=timedRate(sum);
    return {player,value,recorded,total:roster.length,attempts:sum.rallies,success:sum.points,eligible:value!==null&&recorded>=2,history:history.sort((a,b)=>a.date.localeCompare(b.date)),lower:false,unit:'очк./10 мин',sample:sum.points+' очков · '+Math.round(sum.ms/60000*10)/10+' мин · '+sum.rallies+' роз. · матчей с розыгрышами '+recorded+'/'+roster.length};
@@ -34,7 +34,7 @@ export function matchComparison(view,metric,filter={}){
  }
  const pair={serveRate:['serves','serveErrors',true],receiveRate:['receptions','receptionGood',false],attackRate:['attacks','attackKills',false]}[metric];
  return eligiblePlayers(view.players,filter).map(player=>{
-  const roster=matches.filter(m=>m.roster.includes(player.id));
+  const roster=(rosters.get(player.id)||[]);
   const rows=[];let attempts=0,success=0;
   for(const m of roster){
    const s=m.stats[player.id];if(!s)continue;

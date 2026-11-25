@@ -65,7 +65,26 @@ export function validateCoachData(data){
   return data;
 }
 export async function loadCoach(){
-  return db.transaction(coachStores,'readonly',async s=>Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()]))));
+  return db.readSnapshot(coachStores);
+}
+/** Team picker and selected-team records from one consistent readonly snapshot.
+ * Do not use this partial view for backups, validation, or global search. */
+export async function loadCoachForView(teamId,{archived=false}={}){
+ return db.transaction(coachStores,'readonly',async s=>{
+  const coachTeams=await s.coachTeams.getAll(),visible=coachTeams.filter(t=>archived||!t.archived);
+  const selected=visible.find(t=>t.id===teamId)||visible[0]||null;
+  const rows=await Promise.all(coachStores.filter(n=>n!=='coachTeams').map(async n=>[n,selected?await s[n].index('teamId').getAll(selected.id):[]]));
+  return {selectedTeamId:selected?.id??null,data:{coachTeams,...Object.fromEntries(rows)}};
+ });
+}
+/** Local roster index preserves record order and original object references.
+ * Built anew for each calculation, no stale global cache across edits. */
+export function indexPlayerRecords(records){
+ const index=new Map();
+ for(const record of records)for(const id of new Set(record.roster)){
+  let rows=index.get(id);if(!rows)index.set(id,rows=[]);rows.push(record);
+ }
+ return index;
 }
 async function write(name,record,guard){
   return db.transaction(coachStores,'readwrite',async s=>{
@@ -237,17 +256,19 @@ function csvCell(value){
 }
 export function coachCsv(view){
   const rows=[['Дата','Соревнование','Соперник','Счёт','Партии','Игрок',...Object.values(metrics),'Время на площадке (измерено)','Полнота времени','VolleyPoint: время по длительности партий','VolleyPoint: партии с данными']];
+  const names=new Map();for(const p of view.players)if(!names.has(p.id))names.set(p.id,p.name);
   for(const m of view.matches){
     const score=matchScore(m),base=[m.date,m.competition,m.opponent,score.ours+':'+score.theirs,m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')];
     const timing=m.detail?courtTime(replayDetailed(m.detail)):null;
-    for(const id of m.roster){const historic=volleyPlayerTime(m,id);rows.push([...base,view.players.find(p=>p.id===id)?.name||'',...keys.map(k=>m.stats[id]?.[k]??''),timing?.measured?courtTimeLabel(timing.players.ours[id]||0):'',timing?.measured?(timing.partial?'Частично':'Измерено'):historic?'Восстановлено по PDF':'Нет данных',historic?volleyTimeLabel(historic):'',historic?historic.knownSets+'/'+historic.sets.length:'']);}
+    for(const id of m.roster){const historic=volleyPlayerTime(m,id);rows.push([...base,names.get(id)||'',...keys.map(k=>m.stats[id]?.[k]??''),timing?.measured?courtTimeLabel(timing.players.ours[id]||0):'',timing?.measured?(timing.partial?'Частично':'Измерено'):historic?'Восстановлено по PDF':'Нет данных',historic?volleyTimeLabel(historic):'',historic?historic.knownSets+'/'+historic.sets.length:'']);}
     if(!m.roster.length)rows.push([...base,'',...keys.map(()=> ''),'','','','']);
   }
   return '\uFEFF'+rows.map(r=>r.map(csvCell).join(';')).join('\r\n');
 }
 export function attendanceCsv(view){
   const rows=[['Дата','Время','Тренировка','Проведена','Игрок','Посещаемость']];
-  for(const t of view.trainings)for(const id of t.roster)rows.push([t.date,t.time,t.title,t.held?'Да':'Нет',view.players.find(p=>p.id===id)?.name||'',attendanceLabels[t.attendance[id]]||'Не отмечено']);
+  const names=new Map();for(const p of view.players)if(!names.has(p.id))names.set(p.id,p.name);
+  for(const t of view.trainings)for(const id of t.roster)rows.push([t.date,t.time,t.title,t.held?'Да':'Нет',names.get(id)||'',attendanceLabels[t.attendance[id]]||'Не отмечено']);
   return '\uFEFF'+rows.map(r=>r.map(csvCell).join(';')).join('\r\n');
 }
 

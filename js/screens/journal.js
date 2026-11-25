@@ -20,6 +20,7 @@ const { el, icon } = ui;
 /** Цвет класса бейджа по значению. */
 const valueClass = (v) => `v${v}`;
 
+function badgeKey(mark){return JSON.stringify([mark?.value??null,mark?.flag??null,Boolean(M.hasOsv(mark)),Boolean(mark)]);}
 function badgeFor(mark) {
   if (!mark) return el('span', { class: 'cell-empty-dash', text: '·' });
   const wrap = el('span', { class: 'badge-pair' });
@@ -171,7 +172,7 @@ export function renderJournal(root, ctx) {
 
   const tbody = el('tbody');
 
-  const rowByStudent = new Map();
+  const rowByStudent = new Map(),cellBadges=new WeakMap();
   const studentById=new Map(students.map(s=>[s.id,s]));
   const attTitle=a=>'Проведено: '+a.held+'; будущих: '+a.future+'; не подтверждено уроков: '+a.unconfirmed+'; не отмечено: '+a.unknown+'; Н: '+a.absent+'; ОСВ: '+a.exempt;
   for (const st of students) {
@@ -198,11 +199,7 @@ export function renderJournal(root, ctx) {
         tabindex:'0','aria-label':st.fullName+' · '+M.lessonLabel(lesson)+' · '+(mark?.value||mark?.flag||'нет отметки'),
       }, [el('div', { class: 'cell-inner' }, [badgeFor(mark)])]);
 
-      cell.addEventListener('click', () => {
-        ui.haptic(6);
-        openMarkSheet(st.id, lesson.id, classId);
-      });
-      cell.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openMarkSheet(st.id,lesson.id,classId);}});
+      cellBadges.set(cell,badgeKey(mark));
       tr_.append(cell);
     }
 
@@ -221,6 +218,10 @@ export function renderJournal(root, ctx) {
   }
 
   table.append(tbody);
+  // Delegate cell actions instead of allocating two listeners for every cell.
+  // Keep native keyboard focus and identical click/keyboard behavior.
+  tbody.addEventListener('click',e=>{const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell))return;ui.haptic(6);openMarkSheet(cell.dataset.student,cell.dataset.lesson,classId);});
+  tbody.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell))return;e.preventDefault();openMarkSheet(cell.dataset.student,cell.dataset.lesson,classId);});
   const filterStatus=el('p',{class:'empty',text:'Ученики не найдены',hidden:true});
   search.oninput=()=>{const q=search.value.trim().toLocaleLowerCase('ru');let count=0;for(const row of tbody.rows){row.hidden=!row.dataset.name.includes(q);if(!row.hidden)count++;}filterStatus.hidden=count!==0;};
   wrap.append(table,filterStatus);
@@ -253,11 +254,13 @@ export function renderJournal(root, ctx) {
       const cells = row.querySelectorAll('.cell');
       lessons.forEach((lesson,i) => {
         const mark = latest.get(lesson.id + '|' + id);
-        const old=cells[i].getAttribute('aria-label');
-        cells[i].classList.toggle('filled',Boolean(mark));
-        cells[i].firstChild.replaceChildren(badgeFor(mark));
-        cells[i].setAttribute('aria-label',studentById.get(id).fullName+' · '+M.lessonLabel(lesson)+' · '+(mark?.value||mark?.flag||'нет отметки'));
-        if(old!==cells[i].getAttribute('aria-label'))animateOnce(cells[i].firstChild,'pulse',{duration:180});
+        const cell=cells[i],next=badgeKey(mark);
+        if(cellBadges.get(cell)===next) return;
+        const old=cell.getAttribute('aria-label');
+        cellBadges.set(cell,next);cell.classList.toggle('filled',Boolean(mark));
+        cell.firstChild.replaceChildren(badgeFor(mark));
+        cell.setAttribute('aria-label',studentById.get(id).fullName+' · '+M.lessonLabel(lesson)+' · '+(mark?.value||mark?.flag||'нет отметки'));
+        if(old!==cell.getAttribute('aria-label'))animateOnce(cell.firstChild,'pulse',{duration:180});
       });
       const [avg,attendance] = row.querySelectorAll('.col-sum');
       const whole=periodMarks(periodLessons,latest,id);avg.textContent = whole===null?'—':M.fmtAvg(whole);

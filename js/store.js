@@ -75,9 +75,11 @@ export function notify(studentId = null) {
   }
 }
 
-/** Первичная загрузка всей базы в кэш. */
+/** School UI snapshot: coach archives and work records are read by their own
+ * consumers, not deserialized at every school load. Backups remain complete. */
+export const schoolViewStores=Object.freeze(['meta','classes','students','lessons','topics','ktp','schedule','scheduleOverrides','marks','exemptions','studentHealthProfiles','activityRestrictions','activityCategories','monthly','participation','norms','normResults','finalGrades']);
 export async function load() {
-  return applySnapshot(await db.dumpAll());
+  return applySnapshot(await db.readSnapshot(schoolViewStores));
 }
 
 function applySnapshot({ meta: settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides,

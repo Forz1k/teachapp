@@ -235,7 +235,8 @@ export async function renderCoach(root,ctx={}){
   async function refresh(){
     const seq=++sequence;
     try{
-      const data=await C.loadCoach();if(seq!==sequence)return;
+      const loaded=await C.loadCoachForView(selectedTeam,{archived:showArchived});if(seq!==sequence)return;
+      const data=loaded.data;selectedTeam=loaded.selectedTeamId;
       if(root.isConnected&&ctx.onSection)ctx.onSection(selectedSection);
       body.replaceChildren();
       const teams=data.coachTeams.filter(t=>showArchived||!t.archived);
@@ -278,7 +279,7 @@ export async function renderCoach(root,ctx={}){
         body.append(card('Тестирования',[testList(team,view,refresh)]));
         body.append(card('Тренировки',[btn('Библиотека и конспекты',()=>openLibrary('coach'),'wide'),team.archived?null:btn('+ Тренировка',()=>trainingForm(team,view,null,refresh),'primary wide'),team.archived?null:btn('Из конспекта',()=>chooseTrainingPlan((plan,exercises)=>trainingForm(team,view,null,refresh,{...plan,exercises})),'wide')]));
         const upcoming=view.trainings.filter(t=>!t.held&&t.date>=todayIso()).sort(dateSort);
-        const history=view.trainings.filter(t=>!upcoming.includes(t));
+        const upcomingSet=new Set(upcoming),history=view.trainings.filter(t=>!upcomingSet.has(t));
         for(const [title,list] of [['Расписание',upcoming],['История / не проведены',history]]){
           const nodes=list.map(t=>{
             const counts=Object.values(t.attendance);
@@ -309,8 +310,9 @@ export async function renderCoach(root,ctx={}){
           const lost=chosen.filter(m=>{const s=C.matchScore(m);return s.ours<s.theirs;}).length;
           stats.replaceChildren(p('Матчей: '+chosen.length+' · побед: '+won+' · поражений: '+lost+' · равный счёт: '+(chosen.length-won-lost)),
             metricTable(C.summarizeStats(chosen,id?[id]:null)));
+          const byPlayer=C.indexPlayerRecords(view.trainings);
           const attendanceRows=(id?view.players.filter(p=>p.id===id):view.players).map(player=>{
-            const a=C.playerAttendance(player.id,view.trainings);
+            const a=C.playerAttendance(player.id,byPlayer.get(player.id)||[]);
             return p(label(player)+' · '+format(a.pct)+(a.pct===null?'':'%')+' · явка '+(a.present+a.limited)+' · отсутствия '+a.absent+' · без отметки '+a.unknown);
           });
           stats.append(el('h3',{text:'Посещаемость'}),...attendanceRows);
