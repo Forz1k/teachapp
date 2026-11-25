@@ -14,7 +14,8 @@ const validId=(id,roster)=>typeof id==='string'&&roster.includes(id);
 const kinds={'Обычная замена':'regular','Замена либеро':'libero','Выход либеро':'libero','Возвращение либеро':'libero','Либеро':'libero'};
 const canonical=x=>Array.isArray(x)?'['+x.map(canonical).join(',')+']':x&&typeof x==='object'?'{'+Object.keys(x).sort().map(k=>JSON.stringify(k)+':'+canonical(x[k])).join(',')+'}':JSON.stringify(x);
 export const sameVolleyEvidence=(a,b)=>canonical(a)===canonical(b);
-const noRows=/^(?:нет (?:замен|тайм-аутов)|(?:замены|тайм-ауты) не (?:зафиксированы|проводились)|нет данных|—)$/i;
+const noSubs=/^(?:нет замен|замены не (?:зафиксированы|проводились)|замен не было)$/i;
+const noTimeouts=/^(?:нет тайм-аутов|тайм-ауты не (?:зафиксированы|проводились)|тайм-аутов не было)$/i;
 function stripCaptain(x){return x.replace(/\s*\([CС]\)\s*/gi,' ').trim();}
 function rosterPlayer(team,number,name){return team.players.find(p=>p.number===number&&nameFits(name,p.name));}
 function participants(lineup,changes){
@@ -60,7 +61,7 @@ export function parseVolleyTiming(lines,teams,setSeconds){
   }
   if(mode==='subs'){
    if(/^Сет Команда Тип Игрок Позиция$/.test(line))continue;
-   if(noRows.test(line)){explicitNoSubs=true;previousIncoming=null;continue;}
+   if(noSubs.test(line)){explicitNoSubs=true;previousIncoming=null;continue;}
    m=/^(\d) (.+?) #(\d{1,3}) (.+?)\s*(?:->|→)\s*(?:\([CС]\) )?#(\d{1,3}) (.+?) P([1-6])$/.exec(line);
    if(!m){
     // Dart PDF wraps the final given name to the next text row.
@@ -76,7 +77,7 @@ export function parseVolleyTiming(lines,teams,setSeconds){
   }
   if(mode==='timeouts'){
    if(/^Сет Команда # Длительность$/.test(line))continue;
-   if(noRows.test(line)){explicitNoTimeouts=true;continue;}
+   if(noTimeouts.test(line)){explicitNoTimeouts=true;continue;}
    m=/^(\d) (.+?) (\d+) (\d{1,3}:\d{2}(?::\d{2})?)$/.exec(line);
    if(!m){timeoutsOk=false;continue;}
    const n=+m[1],i=aliases.get(norm(m[2])),number=+m[3],seconds=timeoutDuration(m[4]),target=sets[n-1];
