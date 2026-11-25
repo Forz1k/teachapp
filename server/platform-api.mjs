@@ -95,14 +95,14 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
     const team=exists(s.teams,r[1]);require(team&&team.players.some(p=>p.id===athleteId),404,'resource');const record=s.athletes.find(a=>a.teamId===team.id&&a.id===athleteId);
     if(method==='PUT'&&!r[3]){
      require(allowed(s,actor,'team.write',resource(s,'team',{teamId:team.id})),403,'forbidden');validateAthlete(body);
-     require(body.expectedRevision===(record?.revision??0),409,'revision');const {expectedRevision,...content}=clone(body);const next={id:athleteId,teamId:team.id,...content,revision:expectedRevision+1,responses:(record?.responses||[]).filter(x=>body.assignments.some(a=>a.id===x.assignmentId))};
+     require(body.expectedRevision===(record?.revision??0),409,'revision');const {expectedRevision,...content}=clone(body);const next={id:athleteId,teamId:team.id,...content,revision:expectedRevision+1,responses:(record?.responses||[]).filter(x=>{const before=record?.assignments.find(a=>a.id===x.assignmentId),after=body.assignments.find(a=>a.id===x.assignmentId);return before&&after&&before.name===after.name&&before.due===after.due;})};
      if(record)s.athletes[s.athletes.indexOf(record)]=next;else s.athletes.push(next);audit(s,actor,'athlete.update',athleteId,now);return ok({record:athleteProjection(next),revision:next.revision,responses:next.responses},200,true);
     }
     if(method==='GET'&&!r[3]){
      require(allowed(s,actor,'athlete.self.read',ref)||allowed(s,actor,'athlete.read',ref),403,'forbidden');return ok({record:athleteProjection(record||{id:athleteId}),revision:record?.revision??0,responses:clone(record?.responses||[])});
     }
     if(method==='POST'&&r[3]){
-     require(allowed(s,actor,'athlete.self.respond',ref),403,'forbidden');require(exact(body,['assignmentId','response'])&&id(body.assignmentId)&&['seen','ready','question'].includes(body.response),400,'response');require(record&&record.assignments.some(a=>a.id===body.assignmentId&&a.status==='open'),404,'assignment');
+     require(allowed(s,actor,'athlete.self.respond',ref),403,'forbidden');require(exact(body,['assignmentId','response','expectedRevision'])&&id(body.assignmentId)&&int(body.expectedRevision)&&['seen','ready','question'].includes(body.response),400,'response');require(record&&record.assignments.some(a=>a.id===body.assignmentId&&a.status==='open'),404,'assignment');require(record.revision===body.expectedRevision,409,'revision');
      const old=record.responses.find(x=>x.assignmentId===body.assignmentId);if(old?.response===body.response)return ok({response:old});const next={assignmentId:body.assignmentId,response:body.response,at:now};record.responses=record.responses.filter(x=>x.assignmentId!==body.assignmentId).concat(next);record.revision++;audit(s,actor,'athlete.respond',athleteId,now);return ok({response:next},200,true);
     }
    }

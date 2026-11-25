@@ -430,3 +430,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 7.0 Platform — checkpoint (synthetic LAB only)
 - Owner-only listing and cancellation of unused invitations with audit entries, without revealing token hashes. Added authorization and redemption regression tests. Production identity/recovery and deployment remain open.
+
+### 7.1 Athlete — checkpoint (synthetic LAB only)
+- Assignment acknowledgements require the profile revision; changed assignment name/deadline invalidates earlier acknowledgement. The athlete cabinet sends the current revision. Added stale-response regression tests. No production student accounts.
