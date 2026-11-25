@@ -137,3 +137,37 @@ test('Opt-in archive queue survives disconnection, never overwrites conflicts, a
  await P.publishSavedResult(id,match);await wait(()=>!P.portalInfo(id).dirty&&P.portalInfo(id).status.startsWith('Опубликовано'));const retry=await P.sendPendingArchive(id,{confirm:()=>true,fetcher});assert.equal(retry.existing,1);assert.equal(archiveWrites,1);
  P.disconnectPortal(id);
 });
+
+test('all archive mutations share one in-tab lock, cancellation and failure release it',async()=>{
+ const P=await import('../js/public-publisher.js'),previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage'),data=new Map();
+ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:k=>data.get(k)??null,setItem:(k,v)=>data.set(k,v),removeItem:k=>data.delete(k),key:i=>[...data.keys()][i],get length(){return data.size;}}});
+ const id='archive-mutex-58',row={id:'result_mutex',opponent:'Synthetic',startedAt:1700000000000,setsWon:{ours:1,theirs:0},sets:[{ours:25,theirs:21}]};
+ const origin='https://demo.firebaseio.com',parent={schema:1,team:'Synthetic',updatedAt:1,schedule:[],archive:[]};
+ let publicData=parent,etag='"parent"',ready;
+ const fetcher=async(url,opt={})=>{
+  if(url.includes('identitytoolkit'))return new Response(JSON.stringify({localId:'owner',idToken:'token',refreshToken:'refresh',expiresIn:3600}));
+  if(url.includes('/publicTeams/')){
+   if(opt.method==='PUT'){publicData={...JSON.parse(opt.body),updatedAt:1};}
+   return new Response(JSON.stringify(publicData),{headers:{ETag:etag}});
+  }
+  if(url.includes('orderBy='))return new Response('null');
+  return new Response('null',{headers:{ETag:'"empty"'}});
+ };
+ data.set('teachapp:public-portal:'+id,JSON.stringify({origin,owner:'owner',slug:'slug',team:'Synthetic',enabled:true,confirmedEtag:etag}));
+ try{
+  await P.connectPortal(id,{origin,apiKey:'synthetic-key',email:'synthetic@example.test',password:'x',team:'Synthetic'},fetcher);
+  for(let i=0;i<20&&P.portalInfo(id).dirty;i++)await new Promise(r=>setTimeout(r,5));
+  // Allow the parent CAS loop to finish before starting archive operations.
+  await new Promise(r=>setTimeout(r,20));
+  const started=new Promise(r=>ready=r);let cancel;
+  const pending=P.publishExtendedResult(id,row,{fetcher,confirm:()=>{ready();return new Promise(r=>cancel=r);}});
+  await started;assert.equal(P.portalInfo(id).archiveSending,true);
+  await assert.rejects(P.removeExtendedResult(id,row,{fetcher}),/операцию архива/);
+  await assert.rejects(P.migrateExtendedArchive(id,{fetcher}),/операцию архива/);
+  await assert.rejects(P.sendPendingArchive(id,{fetcher}),/операцию архива/);
+  cancel(false);assert.equal(await pending,false);assert.equal(P.portalInfo(id).archiveSending,false);
+  await assert.rejects(P.publishExtendedResult(id,row,{fetcher,confirm:()=>{throw Error('cancelled-error');}}),/cancelled-error/);
+  assert.equal(P.portalInfo(id).archiveSending,false);
+  assert.equal(await P.publishExtendedResult(id,row,{fetcher,confirm:()=>false}),false);
+ }finally{P.disconnectPortal(id);if(previous)Object.defineProperty(globalThis,'localStorage',previous);else delete globalThis.localStorage;}
+});

@@ -155,7 +155,7 @@ async function tx(storeNames, mode, fn) {
         reject(error);
       });
     } catch (err) {
-      t.abort();
+      try { t.abort(); } catch { /* already inactive */ }
       reject(err);
       return;
     }
@@ -172,10 +172,14 @@ async function tx(storeNames, mode, fn) {
 
 /** Промис-обёртки над IDBRequest, чтобы внутри транзакции писать читаемо. */
 function req(r) {
-  return new Promise((resolve, reject) => {
+  const pending=new Promise((resolve, reject) => {
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
   });
+  // Some batched callers rely on transaction abort instead of awaiting every
+  // request. Observe the rejection without suppressing IDB's native abort.
+  pending.catch(()=>{});
+  return pending;
 }
 
 function wrapStore(store) {
@@ -202,8 +206,8 @@ function wrapStore(store) {
 /** Массовая запись одной транзакцией — для импорта и seed-данных. */
 export function bulkPut(storeName, items) {
   if (!items.length) return Promise.resolve();
-  return tx(storeName, 'readwrite', (s) => {
-    for (const item of items) s[storeName].put(item);
+  return tx(storeName, 'readwrite', async s => {
+    await Promise.all(items.map(item=>s[storeName].put(item)));
   });
 }
 
@@ -227,8 +231,8 @@ export function transaction(storeNames, mode, fn) {
 /** Полное стирание базы (для «стереть демо» и восстановления из бэкапа). */
 export async function clearAll() {
   const names = Object.keys(STORES);
-  return tx(names, 'readwrite', (s) => {
-    for (const n of names) s[n].clear();
+  return tx(names, 'readwrite', async s => {
+    await Promise.all(names.map(n=>s[n].clear()));
   });
 }
 

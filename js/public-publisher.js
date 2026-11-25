@@ -221,23 +221,36 @@ function archiveSession(id){
 export async function listExtendedArchive(id,{cursor=null,fetcher=fetch}={}){
  const access=archiveSession(id),page=await fetchArchivePage(access.target,{cursor,fetcher});access.stillAllowed();return page;
 }
-export async function publishExtendedResult(id,result,{confirm,fetcher=fetch}={}){
- if(entry(id).archiveSending)throw Error('Завершите отправку очереди');
+// Serialize every archive mutation in this tab, including the confirmation
+// dialog and all awaits. ETag CAS remains the cross-device record guard.
+async function withArchiveMutation(id,task){
+ const e=entry(id);if(e.archiveSending)throw Error('Завершите текущую операцию архива');
+ e.archiveSending=true;notify(e);
+ try{return await task();}finally{e.archiveSending=false;notify(e);}
+}
+export async function publishExtendedResult(id,result,options={}){
+ return withArchiveMutation(id,()=>publishExtendedResultCore(id,result,options));
+}
+async function publishExtendedResultCore(id,result,{confirm,fetcher=fetch}={}){
  const access=archiveSession(id),k=archiveKey(result),version=await readArchiveVersion(access.target,k,fetcher);
  access.stillAllowed();const existing=await fetchArchiveById(access.target,result.id,fetcher);access.stillAllowed();if(existing&&existing.archiveKey!==k)throw Error('Этот результат уже сохранён под другой датой. Проверьте архив.');if(!await confirm?.(version.value))return false;access.stillAllowed();
  const token=await access.session.getToken();access.stillAllowed();await writeArchiveRecord(access.target,k,result,token,version.etag,fetcher);return true;
 }
-export async function removeExtendedResult(id,result,{confirm,fetcher=fetch}={}){
- if(entry(id).archiveSending)throw Error('Завершите отправку очереди');
+export async function removeExtendedResult(id,result,options={}){
+ return withArchiveMutation(id,()=>removeExtendedResultCore(id,result,options));
+}
+async function removeExtendedResultCore(id,result,{confirm,fetcher=fetch}={}){
  const access=archiveSession(id),k=archiveKey(result),version=await readArchiveVersion(access.target,k,fetcher);
  access.stillAllowed();if(!version.value)return false;
  if(!equalArchiveResult(version.value,result))throw Error('Запись изменилась. Обновите список перед удалением.');
  if(!await confirm?.(version.value))return false;access.stillAllowed();
- const token=await access.session.getToken();access.stillAllowed();await writeArchiveRecord(access.target,k,null,token,version.etag,fetcher);const e=entry(id);e.data.archivePending=e.data.archivePending.filter(x=>x.id!==result.id);save(e);notify(e);return true;
+ const token=await access.session.getToken();access.stillAllowed();await writeArchiveRecord(access.target,k,null,token,version.etag,fetcher);access.stillAllowed();const e=entry(id);e.data.archivePending=e.data.archivePending.filter(x=>x.id!==result.id);save(e);notify(e);return true;
 }
 /** Copy only already-confirmed public score projections; never replace existing records. */
-export async function migrateExtendedArchive(id,{confirm,fetcher=fetch}={}){
- if(entry(id).archiveSending)throw Error('Завершите отправку очереди');
+export async function migrateExtendedArchive(id,options={}){
+ return withArchiveMutation(id,()=>migrateExtendedArchiveCore(id,options));
+}
+async function migrateExtendedArchiveCore(id,{confirm,fetcher=fetch}={}){
  const access=archiveSession(id),rows=clone(entry(id).data.archive);
  if(!await confirm?.(rows.length))return {cancelled:true,copied:0,existing:0,conflicts:0,failed:0};
  const report={cancelled:false,copied:0,existing:0,conflicts:0,failed:0};
@@ -261,13 +274,14 @@ export function discardPendingArchive(id,resultId){
  const before=e.data.archivePending;e.data.archivePending=before.filter(x=>x.id!==resultId);
  if(!save(e)){e.data.archivePending=before;throw Error('Не удалось сохранить очередь');}notify(e);
 }
-export async function sendPendingArchive(id,{confirm,fetcher=fetch}={}){
+export async function sendPendingArchive(id,options={}){
+ return withArchiveMutation(id,()=>sendPendingArchiveCore(id,options));
+}
+async function sendPendingArchiveCore(id,{confirm,fetcher=fetch}={}){
  const e=entry(id),access=archiveSession(id),rows=clone(e.data.archivePending);
- if(e.archiveSending)throw Error('Очередь уже отправляется');
  if(!rows.length)return {copied:0,existing:0,conflicts:0,failed:0};
- e.archiveSending=true;notify(e);
  const report={copied:0,existing:0,conflicts:0,failed:0};
- try{
+ {
   if(!await confirm?.(rows.length))return {...report,cancelled:true};
   access.stillAllowed();
   for(const row of rows){
@@ -288,5 +302,5 @@ export async function sendPendingArchive(id,{confirm,fetcher=fetch}={}){
    }catch(error){if(error.status===412)report.conflicts++;else report.failed++;}
   }
   return report;
- }finally{e.archiveSending=false;notify(e);}
+ }
 }
