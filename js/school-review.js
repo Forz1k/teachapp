@@ -35,17 +35,62 @@ export function workloadReview(s,{from,to,today=M.todayIso(),events=[]}){
 }
 export function periodReview(s,{classId,period,assignments=[],today=M.todayIso()}){
  check(s.classes.some(c=>c.id===classId)&&validPeriod(period?.from,period?.to)&&period.to,'Выберите класс и период');
- const idx=indexes(s),pupils=idx.pupils.get(classId)||[],lessons=M.sortLessons(s.lessons.filter(l=>l.classId===classId&&M.inRange(l.date,period.from,period.to))),confirmed=lessons.filter(l=>held(l,idx,today));
+ return reviewClassPeriod(s,{classId,period,assignments,today},indexes(s));
+}
+function reviewClassPeriod(s,{classId,period,assignments,today},idx){
+ const pupils=idx.pupils.get(classId)||[],lessons=M.sortLessons(s.lessons.filter(l=>l.classId===classId&&M.inRange(l.date,period.from,period.to))),confirmed=lessons.filter(l=>held(l,idx,today));
+ // Once the class has evidence of a held lesson, every pupil's empty row is unknown,
+ // even when the only evidence belongs to another pupil.
+ const attendanceLessons=confirmed.map(l=>l.held?l:{...l,held:true});
+ const lessonIssues=lessons.filter(l=>l.date<=today).map(l=>{
+  const a=attendanceDetails([l],pupils,idx.marks,idx.parts,today);
+  return {lesson:l,unconfirmed:!l.held,unknown:a.unknown,inferred:!l.held&&a.held>0};
+ }).filter(r=>r.unconfirmed||r.unknown);
  const results=pupils.map(student=>{
   let numerator=0,denominator=0,count=0;
   for(const l of confirmed){const m=idx.marks.get(key(l,student));if(m?.flag==='Н'||M.hasOsv(m)||!['1','2','3','4','5'].includes(String(m?.value)))continue;const w=m.weight===2?2:1;numerator+=Number(m.value)*w;denominator+=w;count++;}
   const mean=denominator?numerator/denominator:null;
-  const att=attendanceDetails(lessons,[student],idx.marks,idx.parts,today);
+  const att=attendanceDetails(attendanceLessons,[student],idx.marks,idx.parts,today);
   const final=s.finalGrades.find(r=>r.studentId===student.id&&r.from===period.from&&r.to===period.to)?.value??null;
   return {student,count,weight:denominator,mean,suggested:mean===null?null:String(M.rawToMark(mean)),unknown:att.unknown,absent:att.absent,final};
  });
- const tasks=assignments.filter(a=>a.classId===classId&&a.from<=period.to&&a.to>=period.from).map(a=>({name:a.name,...assignmentOverview(s,a,today)}));
- return {ended:period.to<=today,lessons:lessons.length,held:confirmed.length,unconfirmed:lessons.filter(l=>l.date<=today&&!held(l,idx,today)).length,future:lessons.filter(l=>l.date>today).length,unknown:results.reduce((n,r)=>n+r.unknown,0),withoutGrades:results.filter(r=>!r.count).length,withoutFinal:results.filter(r=>r.final===null).length,results,tasks};
+ const tasks=assignments.filter(a=>a.classId===classId&&a.from<=period.to&&a.to>=period.from).map(a=>({id:a.id,name:a.name,from:a.from,to:a.to,...assignmentOverview(s,a,today)}));
+ return {ended:period.to<=today,lessons:lessons.length,held:confirmed.length,explicitlyHeld:confirmed.filter(l=>l.held).length,unconfirmed:lessonIssues.filter(x=>x.unconfirmed).length,inferred:lessonIssues.filter(x=>x.inferred).length,future:lessons.filter(l=>l.date>today).length,unknown:results.reduce((n,r)=>n+r.unknown,0),withoutGrades:results.filter(r=>!r.count).length,withoutFinal:results.filter(r=>r.final===null).length,results,tasks,lessonIssues};
+}
+/** Missing slots through today, respecting holidays, substitutions and legacy
+ * lesson IDs. Schedule is evidence to review, not proof a lesson occurred. */
+export function periodMissingLessons(s,period,today=M.todayIso()){
+ check(validPeriod(period?.from,period?.to)&&period.to&&period.to<=M.addDays(period.from,370),'Выберите учебный период не длиннее 371 дня');
+ const classes=new Set(s.classes.map(c=>c.id)),byDate=new Map(),overrides=new Map(),result=[];
+ const from=period.from>s.settings.year.from?period.from:s.settings.year.from;
+ const to=[period.to,today,s.settings.year.to].sort()[0];
+ for(const l of s.lessons)if(M.inRange(l.date,from,to)){if(!byDate.has(l.date))byDate.set(l.date,[]);byDate.get(l.date).push(l);}
+ for(const o of s.scheduleOverrides||[])if(M.inRange(o.date,from,to)){if(!overrides.has(o.date))overrides.set(o.date,[]);overrides.get(o.date).push(o);}
+ for(let date=from;date<=to;date=M.addDays(date,1)){
+  if(M.isSchoolHoliday(date,s.settings.holidays||[]))continue;
+  const rows=M.scheduleForDate(s.schedule||[],overrides.get(date)||[],date).filter(r=>classes.has(r.classId));
+  const matched=M.matchScheduledLessons(rows,byDate.get(date)||[]);
+  for(const r of rows)if(!matched.has(r.id))result.push({id:r.id,classId:r.classId,date,slot:r.slot,time:r.time||''});
+ }
+ return result;
+}
+export const periodIssueLabels={missing:'Слоты без записи',unconfirmed:'Уроки без явного подтверждения',unknown:'Неизвестная явка (ученик × урок)',withoutGrades:'Ученики без оценок',withoutFinal:'Ученики без итогов',normPending:'Нормативы к сроку (ученик × назначение)',normReview:'Нормативы: проверить основания / шкалы',normUnavailable:'Недоступные назначения'};
+export function schoolPeriodOverview(s,{period,assignments=[],today=M.todayIso()}){
+ const missing=periodMissingLessons(s,period,today),idx=indexes(s),ended=period.to<=today,started=period.from<=today;
+ const rows=s.classes.map(cls=>{
+  const review=reviewClassPeriod(s,{classId:cls.id,period,assignments,today},idx);
+  const slots=missing.filter(r=>r.classId===cls.id);
+  // Only assignments whose deadline lies in this period and is reached are
+  // counted as due. Review candidates remain distinct from overdue work.
+  const due=review.tasks.filter(t=>t.to<=period.to&&t.to<=today&&!['archive','upcoming'].includes(t.state));
+  const stats={missing:slots.length,unconfirmed:review.unconfirmed,unknown:review.unknown,withoutGrades:review.withoutGrades,withoutFinal:review.withoutFinal,
+   normPending:due.reduce((n,t)=>n+t.pending,0),normReview:due.reduce((n,t)=>n+t.review,0),normUnavailable:due.filter(t=>t.state==='unavailable').length};
+  const issues=Object.keys(stats).filter(k=>stats[k]>0&&(ended||!['withoutGrades','withoutFinal'].includes(k)));
+  const status=!started?'future':!review.results.length?'empty':issues.length?'review':!ended?'progress':!review.held?'noLessons':'ready';
+  return {classId:cls.id,name:cls.name,pupils:review.results.length,held:review.held,explicitlyHeld:review.explicitlyHeld,stats,issues,status};
+ }).sort((a,b)=>Number(b.status==='review')-Number(a.status==='review')||a.name.localeCompare(b.name,'ru',{numeric:true}));
+ const total=Object.fromEntries(Object.keys(periodIssueLabels).map(k=>[k,rows.reduce((n,r)=>n+r.stats[k],0)]));
+ return {period,ended,started,rows,total,ready:rows.filter(r=>r.status==='ready').length,needsReview:rows.filter(r=>r.status==='review').length,withoutData:rows.filter(r=>['empty','noLessons'].includes(r.status)).length};
 }
 export function ktpForecast(s,classId,topics,today=M.todayIso()){
  const idx=indexes(s),lessons=s.lessons.filter(l=>l.classId===classId),done=new Set(lessons.filter(l=>held(l,idx,today)).map(l=>l.topicId).filter(Boolean)),remaining=topics.filter(t=>!done.has(t.id)),from=today>s.settings.year.from?today:s.settings.year.from,to=s.settings.year.to;

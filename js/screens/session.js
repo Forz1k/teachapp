@@ -47,11 +47,12 @@ export async function openLessonPlanReview(lessonId,back=ui.closeSheet){
       preview.append(el('h3',{text:plan.name}),p('Цель: '+(plan.goal||'Не указана')),p('Время упражнений: '+review.minutes+' / '+plan.minutes+' мин'),p('Инвентарь: '+(plan.equipment||'Не указан')),...(plan.resources||[]).map(r=>p(r.name+' · '+r.qty+' '+r.unit)),
         p('Документальные ОСВ: '+review.full.length+(review.full.length?' · '+review.full.map(id=>pupils.get(id)?.fullName).filter(Boolean).join(', '):'')),
         p('Сведения сверяются на дату урока. Отсутствие совпадений не является допуском. Проверьте фактическую нагрузку и основания.'));
-      for(const {item,matches,needsReview} of review.items){
+      for(const {item,matches,potentialMatches,needsReview} of review.items){
         const card=el('section',{class:'card-block'},[el('h3',{text:W.phases[item.phase]+' · '+item.exercise.name+' · '+item.minutes+' мин'}),p(item.exercise.description),item.exercise.equipment?p('Инвентарь: '+item.exercise.equipment):null,item.notes?p('Указания: '+item.notes):null]);
         if(needsReview)card.append(p('Категория нагрузки требует проверки.'));
         if(matches.length)for(const m of matches)card.append(el('p',{class:'session-warning has-warning',text:(pupils.get(m.studentId)?.fullName||'Ученик')+' · '+(H.types[m.restriction.type]||'Проверить')}));
-        else if(!needsReview)card.append(p('Совпадений по этому упражнению не найдено.'));
+        for(const m of potentialMatches)card.append(el('p',{class:'session-warning has-warning',text:(pupils.get(m.studentId)?.fullName||'Ученик')+' · возможное ограничение: '+(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'Уточните упражнение')}));
+        if(!matches.length&&!needsReview)card.append(p('Совпадений по этому упражнению не найдено.'));
         preview.append(card);
       }
     }

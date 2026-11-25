@@ -315,3 +315,7 @@ PR #94 не объединён, новый релиз не опубликова�
 ## Delta compaction checkpoint — 25.11.2026
 - `a590937`: explicit separate compactor privilege, atomic new anchor at the next revision, CAS vs concurrent append, stale-reader 410 restart, fresh-device reconstruction, checkpoint comparison and explicit stale history review. Local-only test Worker, no production deployment. Old intermediate history is intentionally superseded; verified backup required.
 - 367/367 tests, zero failures/skips; validate, Chromium/offline (65 screenshots), WebKit, Cloudflare, Platform and Delta synthetic PASS: [CI](https://github.com/Forz1k/teachapp/actions/runs/45569335998), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45569335948), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45569336033).
+
+## Delta laboratory integration checkpoint — 25.11.2026
+- `b77d074`: checkpoint-tail reads and explicit synthetic adapter to ordinary prepare/preview/execute. Real local workerd + two synthetic IndexedDB states, separate edits, delta-only uploads, pull without revision churn, stale compacted history review and explicit conflict resolution.
+- 368/368 tests, validation, Chromium/offline (65 screenshots), WebKit, Cloudflare, Platform and Delta synthetic successful: [CI](https://github.com/Forz1k/teachapp/actions/runs/45569921608), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45569921613), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45569921763). Production transport not changed.

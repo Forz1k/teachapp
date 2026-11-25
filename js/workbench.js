@@ -92,7 +92,7 @@ export function lessonPlanReview(plan,lesson,{students,activities,restrictions,e
  const full=new Set(exemptions.filter(e=>ids.has(e.studentId)&&exemptionCovers(e,lesson.date)).map(e=>e.studentId));
  const items=plan.items.map(item=>{
   const check=checkLessonRestrictions({lesson:{...lesson,activityIds:[item.exercise.activityId],activitiesConfirmed:true},activities,students:pupils,restrictions});
-  return {item,matches:check.matches,needsReview:check.needsReview};
+  return {item,matches:check.matches,potentialMatches:check.potentialMatches,needsReview:check.needsReview};
  });
  return {items,full:[...full],minutes:items.reduce((n,x)=>n+x.item.minutes,0),total:pupils.length};
 }

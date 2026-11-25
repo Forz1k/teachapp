@@ -718,3 +718,22 @@ test('Обзор классов проверяет все слоты, включ
  assert.match(rows[2].textContent,/№3.*Урок не создан/);
  rows[1].click();assert.match(doc.querySelector('.sheet').textContent,/Возможное ограничение: Спринт/);assert.match(doc.querySelector('.sheet').textContent,/Петрова Анна/);ui.closeSheet();
 });
+
+test('Центр закрытия периода показывает все классы, фильтрует и открывает детализацию без записи оценок',async()=>{
+ const {cls}=await seed(),other=await store.addClass('8Б');
+ await store.addStudent(other.id,'Тестовый ученик',1);
+ const M=await import('../js/model.js'),day=M.todayIso();
+ await store.setScheduleEntry({weekday:M.weekdayOf(day),slot:3,classId:other.id,time:'10:00'});
+ const review=await import('../js/screens/school-review.js');
+ const before=await db.dumpAll(),period=store.state.settings.trimesters.find(t=>t.from<=day&&day<=t.to)||store.state.settings.trimesters[0];
+ await review.openSchoolPeriodCenter(period.id);
+ const sheet=doc.querySelector('.sheet');assert.match(sheet.textContent,/Закрытие периода · все классы/);
+ assert.equal(sheet.querySelectorAll('.period-class-summary').length,2);
+ const filter=sheet.querySelectorAll('select')[1];filter.value='missing';filter.onchange();
+ assert.ok(sheet.querySelector('.period-class-summary[data-class-id="'+other.id+'"]'));
+ const row=sheet.querySelector('.period-class-summary[data-class-id="'+other.id+'"]');
+ row.querySelector('button').click();await tick(100);
+ assert.match(doc.querySelector('.sheet').textContent,/Проверить уроки/);
+ assert.match(doc.querySelector('.sheet').textContent,/слот без записи/);
+ assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
+});

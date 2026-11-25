@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {workloadReview,periodReview,ktpForecast,ktpRedistribution} from '../js/school-review.js';import {weekdayOf} from '../js/model.js';
+import {workloadReview,periodReview,ktpForecast,ktpRedistribution,schoolPeriodOverview,periodMissingLessons} from '../js/school-review.js';import {weekdayOf} from '../js/model.js';
 const date='2026-09-01',s={settings:{year:{from:'2026-09-01',to:'2026-09-03'},holidays:[]},classes:[{id:'c',name:'7А'}],students:[{id:'p',classId:'c',fullName:'Synthetic'}],schedule:[{id:'r1',classId:'c',weekday:weekdayOf(date),slot:1},{id:'r2',classId:'c',weekday:weekdayOf(date),slot:2}],scheduleOverrides:[],lessons:[{id:'l1',classId:'c',date,slot:1,held:true,topicId:'t1'},{id:'l2',classId:'c',date,slot:2,held:true,topicId:'t2'}],marks:[{lessonId:'l1',studentId:'p',value:'5',weight:2},{lessonId:'l2',studentId:'p',value:'2'}],participation:[],finalGrades:[],normResults:[]};
 test('workload distinguishes scheduled, confirmed and cancelled slots',()=>{
  const result=workloadReview(s,{from:date,to:date,today:date});
@@ -23,4 +23,38 @@ test('KTP suggestions preserve existing topics and marked or confirmed lessons',
  const next={...s,lessons:[...s.lessons,{id:'future',classId:'c',date:'2026-09-02',slot:2},{id:'assigned',classId:'c',date:'2026-09-03',slot:1,topicId:'t3'},{id:'recorded',classId:'c',date:'2026-09-03',slot:2}],marks:[...s.marks,{lessonId:'recorded',studentId:'p',value:'4'}]};
  const topics=[{id:'t1',name:'A'},{id:'t2',name:'B'},{id:'t3',name:'C'},{id:'t4',name:'D'},{id:'t5',name:'E'}],before=structuredClone(next);
  const r=ktpRedistribution(next,'c',topics,date);assert.equal(r.covered,3);assert.equal(r.rows.length,1);assert.equal(r.rows[0].lessonId,'future');assert.equal(r.rows[0].topicId,'t4');assert.deepEqual(r.unplaced,[{id:'t5',name:'E'}]);assert.deepEqual(next,before);
+});
+
+test('Period overview counts all slots, inferred lessons and unknown rows class-wide, respects holiday/cancellation and future dates',()=>{
+ const date2='2026-09-02',date3='2026-09-03',next=structuredClone(s);
+ next.classes.push({id:'b',name:'8Б'},{id:'empty',name:'6А'});
+ next.students.push({id:'q',classId:'c',fullName:'Q'},{id:'r',classId:'b',fullName:'R'});
+ next.lessons[0].held=false;
+ next.schedule.push({id:'r3',classId:'c',weekday:weekdayOf(date),slot:3},{id:'b1',classId:'b',weekday:weekdayOf(date),slot:4},{id:'b2',classId:'b',weekday:weekdayOf(date2),slot:1},{id:'c3',classId:'c',weekday:weekdayOf(date3),slot:1});
+ next.scheduleOverrides=[{id:'cancel',date,ruleId:'r3',action:'cancel'}];
+ next.settings.holidays=[{from:date2,to:date2}];
+ const before=structuredClone(next),period={from:date,to:date3};
+ const slots=periodMissingLessons(next,period,date2);assert.deepEqual(slots.map(r=>[r.classId,r.date,r.slot]),[['b',date,4]]);
+ const review=periodReview(next,{classId:'c',period,today:date2});
+ assert.equal(review.held,2);assert.equal(review.explicitlyHeld,1);assert.equal(review.unconfirmed,1);
+ assert.equal(review.results.find(r=>r.student.id==='q').unknown,2);assert.equal(review.unknown,2);
+ const overview=schoolPeriodOverview(next,{period,today:date2});
+ assert.equal(overview.total.missing,1);assert.equal(overview.total.unknown,2);
+ assert.equal(overview.total.unconfirmed,1);assert.equal(overview.needsReview,2);assert.equal(overview.ready,0);
+ assert.equal(overview.rows.find(r=>r.classId==='empty').status,'empty');
+ assert.ok(!overview.rows.find(r=>r.classId==='c').issues.includes('withoutFinal'));
+ const future=schoolPeriodOverview(next,{period:{from:date3,to:date3},today:date});
+ assert.equal(future.needsReview,0);assert.ok(future.rows.every(r=>r.status==='future'));
+ assert.deepEqual(next,before);
+});
+test('Period overview distinguishes ready classes from missing finals and due norm review',()=>{
+ const next=structuredClone(s);next.norms=[];next.activityCategories=[];next.activityRestrictions=[];next.exemptions=[];
+ const period={from:date,to:date};next.finalGrades=[{studentId:'p',from:date,to:date,value:'4'}];
+ assert.equal(schoolPeriodOverview(next,{period,today:date}).ready,1);
+ next.finalGrades=[];assert.equal(schoolPeriodOverview(next,{period,today:date}).rows[0].status,'review');
+ next.finalGrades=[{studentId:'p',from:date,to:date,value:'4'}];
+ const assignment={id:'a',kind:'normAssignment',name:'Недоступный норматив',classId:'c',normId:'missing',yearFrom:next.settings.year.from,yearTo:next.settings.year.to,from:date,to:date,targetGrade:null};
+ const upcoming={...assignment,id:'future',to:'2026-09-03'};
+ const overview=schoolPeriodOverview(next,{period,assignments:[assignment,upcoming],today:date});
+ assert.equal(overview.total.normUnavailable,1);assert.equal(overview.ready,0);assert.equal(overview.needsReview,1);
 });
