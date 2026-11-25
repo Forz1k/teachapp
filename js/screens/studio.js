@@ -1,5 +1,5 @@
 import {el,openSheet,closeSheet,toast,confirmDialog} from '../ui.js';
-import {templates,formats,paintStudio,studioStyle,readStudioStyle,saveStudioStyle,resetStudioStyle,studioPublication,canvasPng,studioBatch,studioLayouts,studioFocus,studioPresetList,saveStudioPreset,removeStudioPreset,studioStyleFile,parseStudioStyleFile} from '../media-studio.js';
+import {templates,formats,paintStudio,studioStyle,readStudioStyle,saveStudioStyle,resetStudioStyle,studioPublication,canvasPng,studioBatch,studioLayouts,studioFocus,studioPresetList,saveStudioPreset,removeStudioPreset,studioStyleFile,parseStudioStyleFile,studioMatchKit,studioMatchPackage} from '../media-studio.js';
 const btn=(text,onclick)=>el('button',{type:'button',class:'btn wide',text,onclick}),field=(name,node)=>el('label',{class:'field'},[el('span',{text:name}),node]),p=text=>el('p',{text});
 function download(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 export function openStudio(seed={},back=closeSheet){
@@ -10,11 +10,12 @@ export function openStudio(seed={},back=closeSheet){
  const publication=el('textarea',{rows:6,maxlength:4000,'aria-label':'Текст публикации'}),includeLink=el('input',{type:'checkbox'}),includeText=el('input',{type:'checkbox'});includeText.checked=true;
  const selected=Object.keys(formats).map(k=>{const n=el('input',{type:'checkbox','aria-label':'Экспорт '+k});n.checked=true;return [k,n];});
  const preset=el('select',{'aria-label':'Сохранённое оформление'}),presetName=el('input',{'aria-label':'Название оформления',maxlength:48,placeholder:'Например, домашняя серия'}),styleImport=el('input',{type:'file',accept:'.json,application/json','aria-label':'Импорт оформления'});
- const status=el('p',{role:'status',class:'studio-status'}),controls=[preset,presetName,styleImport,layout,focus,template,format,title,team,opponent,score,details,footer,accent,background,logo,photo,publication,includeLink,includeText,...selected.map(([,n])=>n)];
+ const eventDetails=el('textarea',{rows:2,maxlength:500,'aria-label':'Дата, время и место встречи',placeholder:'Например: 12 декабря · 16:00 · спортивный зал'}),kitSummary=el('p',{role:'status',class:'studio-kit-summary'});
+ const status=el('p',{role:'status',class:'studio-status'}),controls=[eventDetails,preset,presetName,styleImport,layout,focus,template,format,title,team,opponent,score,details,footer,accent,background,logo,photo,publication,includeLink,includeText,...selected.map(([,n])=>n)];
  let emblem=null,backdrop=null,closed=false,busy=false,pending=0,editedText=false;const body=el('div',{class:'coach-stack studio-editor'});
  const current=()=>({template:template.value,format:format.value,title:title.value,team:team.value,opponent:opponent.value,score:score.value,details:details.value,footer:footer.value,accent:accent.value,background:background.value,layout:layout.value,focus:focus.value});
  const writeText=()=>{publication.value=studioPublication(current(),includeLink.checked?seed.link||'':'');editedText=false;};
- const draw=()=>{if(closed)return;try{paintStudio(canvas,current(),{logo:emblem,backgroundImage:backdrop});if(!editedText)writeText();}catch(e){status.textContent=e.message;}};
+ const draw=()=>{if(closed)return;try{paintStudio(canvas,current(),{logo:emblem,backgroundImage:backdrop});if(!editedText)writeText();}catch(e){status.textContent=e.message;}refreshKit();};
  const dispose=()=>{if(closed)return;closed=true;emblem?.close();backdrop?.close();emblem=backdrop=null;canvas.width=canvas.height=1;};
  const load=(control,assign)=>{let generation=0;control.onchange=async()=>{const ticket=++generation;pending++;update();try{
   const file=control.files[0];if(!file){assign(null);draw();return;}
@@ -45,11 +46,18 @@ export function openStudio(seed={},back=closeSheet){
   const blob=await studioBatch(work,snapshot,selected.filter(([,n])=>n.checked).map(([k])=>k),{logo:emblem,backgroundImage:backdrop,text,cancelled:()=>closed||!body.isConnected});
   if(!closed&&body.isConnected)download(blob,'teachapp-'+snapshot.template+'.zip');
  }));
+ const kit=btn('Скачать комплект матча ZIP',()=>run('Подготовка комплекта матча…',async()=>{
+  const work=document.createElement('canvas'),snapshot=current(),chosen=selected.filter(([,n])=>n.checked).map(([k])=>k);
+  const blob=await studioMatchPackage(work,snapshot,chosen,{eventDetails:eventDetails.value,logo:emblem,backgroundImage:backdrop,includeText:includeText.checked,link:includeLink.checked?seed.link||'':'',cancelled:()=>closed||!body.isConnected});
+  if(!closed&&body.isConnected)download(blob,'teachapp-match-kit.zip');
+ }));
+ function refreshKit(){try{const models=studioMatchKit(current(),eventDetails.value),count=selected.filter(([,n])=>n.checked).length;if(!count)throw Error('Выберите хотя бы один формат');kitSummary.textContent=models[0].title+' + '+models[1].title+' · '+(count*2)+' PNG'+(includeText.checked?' + 2 TXT':'');kit.disabled=busy||pending>0;}catch(e){kitSummary.textContent=e.message;kit.disabled=true;}}
+ eventDetails.oninput=refreshKit;for(const [,n] of selected)n.onchange=refreshKit;includeText.onchange=refreshKit;
  const textDownload=btn('Скачать текст TXT',()=>download(new Blob(['\uFEFF'+publication.value],{type:'text/plain;charset=utf-8'}),'teachapp-publication.txt'));
  const backButton=btn('Назад',()=>{dispose();back();});
- const update=()=>{if(closed)return;for(const n of controls)n.disabled=busy;for(const n of [styleSave,styleReset,presetApply,presetSave,presetDelete,styleExport,regenerate,copy,textDownload])n.disabled=busy;png.disabled=batch.disabled=busy||pending>0;};
+ const update=()=>{if(closed)return;for(const n of controls)n.disabled=busy;for(const n of [styleSave,styleReset,presetApply,presetSave,presetDelete,styleExport,regenerate,copy,textDownload])n.disabled=busy;png.disabled=batch.disabled=busy||pending>0;refreshKit();};
  body.append(el('h2',{text:'TeachApp Studio'}),p('Изображения и текст создаются локально. Используйте только разрешённые к распространению сведения и фотографии.'),field('Шаблон',template),field('Формат',format),field('Дизайн',layout),canvas,field('Заголовок (пусто — название шаблона)',title),field('Команда / получатель',team),field('Соперник',opponent),field('Счёт / достижение',score),field('Описание',details),el('h3',{text:'Фирменное оформление'}),field('Подпись',footer),field('Акцент',accent),field('Фон',background),styleSave,styleReset,p('Сохраняются только параметры оформления для этой команды на данном устройстве. Фотографии, эмблемы, имена и текст публикации не сохраняются в настройках.'),el('h3',{text:'Пресеты оформления'}),field('Название пресета',presetName),presetSave,field('Сохранённое оформление',preset),presetApply,presetDelete,styleExport,field('Импорт оформления JSON',styleImport),field('Эмблема',logo),field('Фотография фона',photo),field('Положение фотографии',focus),png,el('h3',{text:'Текст публикации'}),p('Текст составляется из полей макета. После ручного редактирования обновляется только по вашей команде.'));
  if(seed.link)body.append(field('Добавить ссылку зрительской страницы (проверьте публикацию)',includeLink));
- body.append(publication,regenerate,copy,textDownload,el('h3',{text:'Пакетный экспорт'}),...selected.map(([k,n])=>field(formats[k].join(' × '),n)),field('Добавить текст публикации в архив',includeText),batch,status,backButton);
+ body.append(publication,regenerate,copy,textDownload,el('h3',{text:'Пакетный экспорт'}),...selected.map(([k,n])=>field(formats[k].join(' × '),n)),field('Добавить текст публикации в архив',includeText),batch,el('h3',{text:'Комплект матча'}),p('Афиша без счёта и итоговая карточка с введённым счётом. Используются текущие команды, оформление и выбранные форматы. Для афиши введите сведения отдельно; тексты для комплекта создаются из этих полей, а не из ручной правки текста выше.'),field('Дата, время и место встречи',eventDetails),kitSummary,kit,status,backButton);
  openSheet(body,{onClose:dispose,fullHeight:true});draw();update();
 }

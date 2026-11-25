@@ -72,18 +72,21 @@ export function paintStudio(canvas,raw,{logo=null,backgroundImage=null}={}){
  const x=canvas.getContext('2d');if(!x)throw Error('Canvas недоступен');
  const scale=Math.min(w,h),margin=w*.075,max=w-2*margin;
  x.fillStyle=d.background;x.fillRect(0,0,w,h);
- if(backgroundImage){const crop=studioCrop(backgroundImage.width,backgroundImage.height,w,h,d.focus);x.globalAlpha=.35;x.drawImage(backgroundImage,crop.x,crop.y,crop.width,crop.height);x.globalAlpha=1;}
- // An opaque text region guarantees contrast even with an arbitrary photo.
+ if(backgroundImage){const crop=studioCrop(backgroundImage.width,backgroundImage.height,w,h,d.focus);x.globalAlpha=.7;x.drawImage(backgroundImage,crop.x,crop.y,crop.width,crop.height);x.globalAlpha=1;}
+ // Opaque backing under text guarantees contrast while leaving the rest of a photo visible.
  const ink=studioInk(d.background),accentInk=studioInk(d.accent);
- if(backgroundImage){x.fillStyle=d.background;x.fillRect(margin*.55,h*.085,w-margin*1.1,h*.91);}
  x.fillStyle=d.accent;
  if(d.layout==='arena'){x.fillRect(0,0,w,h*.065);x.fillRect(0,0,scale*.022,h);}
  else if(d.layout==='editorial'){x.fillRect(margin,h*.065,max,Math.max(3,scale*.006));x.fillRect(margin,h*.875,max,Math.max(3,scale*.004));}
  else x.fillRect(margin,h*.07,w*.12,8);
  x.textAlign='left';x.textBaseline='top';
- const text=(str,y,size,weight,fill,maxLines=3,width=max)=>{
-  x.font=weight+' '+Math.round(size)+'px system-ui, sans-serif';x.fillStyle=fill;
-  const lines=wrapStudioText(x,str,width,maxLines);lines.forEach((l,i)=>x.fillText(l,margin,y+i*size*1.16));return y+lines.length*size*1.16;
+ const text=(str,y,size,weight,fill,maxLines=3,width=max,panel=d.background)=>{
+  x.font=weight+' '+Math.round(size)+'px system-ui, sans-serif';
+  const lines=wrapStudioText(x,str,width,maxLines);lines.forEach((l,i)=>{
+   const top=y+i*size*1.16,pad=scale*.008;
+   if(backgroundImage&&panel){x.fillStyle=panel;x.fillRect(margin-pad,top-pad,Math.min(width,x.measureText(l).width)+pad*2,size*1.16+pad*2);}
+   x.fillStyle=fill;x.fillText(l,margin,top);
+  });return y+lines.length*size*1.16;
  };
  const badge=scale*.105,gap=scale*.028,titleWidth=logo?max-badge-gap:max;
  let y=h*.11;
@@ -91,7 +94,7 @@ export function paintStudio(canvas,raw,{logo=null,backgroundImage=null}={}){
  y=Math.max(text(d.title,y,scale*.046,'700',ink,2,titleWidth),logo?y+badge:0)+scale*.024;
  y=text([d.team,d.opponent].filter(Boolean).join(' — '),y,scale*.065,'800',ink,3)+scale*.02;
  if(d.score){
-  if(d.layout==='arena'){x.fillStyle=d.accent;x.fillRect(margin,y,max,scale*.145);y=text(d.score,y+scale*.008,scale*.101,'900',accentInk,1,max-scale*.02)+scale*.04;}
+  if(d.layout==='arena'){x.fillStyle=d.accent;x.fillRect(margin,y,max,scale*.145);y=text(d.score,y+scale*.008,scale*.101,'900',accentInk,1,max-scale*.02,null)+scale*.04;}
   else y=text(d.score,y,scale*.112,'900',ink,1)+scale*.025;
  }
  // Never move details back over the headline; reserve the footer's own space.
@@ -107,7 +110,7 @@ export function canvasPng(canvas){
 const crcTable=Uint32Array.from({length:256},(_,n)=>{for(let i=0;i<8;i++)n=n&1?0xedb88320^(n>>>1):n>>>1;return n>>>0;});
 export function studioCrc32(bytes){let n=0xffffffff;for(const b of bytes)n=crcTable[(n^b)&255]^(n>>>8);return (n^0xffffffff)>>>0;}
 export async function studioZip(entries){
- if(!Array.isArray(entries)||!entries.length||entries.length>4)throw Error('Выберите до четырёх файлов');
+ if(!Array.isArray(entries)||!entries.length||entries.length>8)throw Error('Выберите до восьми файлов');
  const encoder=new TextEncoder(),parts=[],central=[],names=new Set();let offset=0,centralSize=0,total=0;
  for(const {name,blob} of entries){
   if(typeof name!=='string'||!/^[-a-z0-9_]{1,80}\.(?:png|txt)$/.test(name)||names.has(name)||!(blob instanceof Blob))throw Error('Некорректный файл архива');
@@ -133,6 +136,37 @@ export async function studioBatch(canvas,raw,selected,{logo=null,backgroundImage
   }
   if(cancelled())throw Error('Экспорт отменён');
   if(text.trim())entries.push({name:'publication.txt',blob:new Blob(['\uFEFF'+text],{type:'text/plain;charset=utf-8'})});
+  return await studioZip(entries);
+ }finally{canvas.width=1;canvas.height=1;}
+}
+
+/** A match package uses the explicit team names and result, never a guessed winner/date.
+ * Matchday and result details are separate to avoid exposing the score on the poster. */
+export function studioMatchKit(raw={},eventDetails=''){
+ const m=studioModel(raw);
+ if(!m.team||!m.opponent)throw Error('Укажите обе команды');
+ const score=m.score.match(/^(\d{1,2})\s*:\s*(\d{1,2})$/);
+ if(!score||Number(score[1])===Number(score[2]))throw Error('Укажите итоговый счёт в формате 3:1 (без ничьей)');
+ const event=clean(eventDetails,500);
+ if(!event)throw Error('Укажите дату, время или место встречи для афиши');
+ const base={...studioStyle(m),team:m.team,opponent:m.opponent};
+ return [studioModel({...base,template:'matchday',details:event}),studioModel({...base,template:'result',score:m.score,details:m.details})];
+}
+export async function studioMatchPackage(canvas,raw,selected,{eventDetails='',logo=null,backgroundImage=null,includeText=false,link='',cancelled=()=>false}={}){
+ const entries=[],models=studioMatchKit(raw,eventDetails);
+ if(!Array.isArray(selected)||!selected.length||new Set(selected).size!==selected.length||selected.some(k=>!Object.hasOwn(formats,k)))throw Error('Выберите форматы экспорта');
+ let total=0;
+ const add=(name,blob)=>{total+=blob.size;if(total>32*1024*1024)throw Error('Архив превышает 32 МБ. Выберите меньше форматов или другую фотографию.');entries.push({name,blob});};
+ try{
+  for(const model of models){
+   for(const format of selected){
+    if(cancelled())throw Error('Экспорт отменён');
+    paintStudio(canvas,{...model,format},{logo,backgroundImage});
+    add('teachapp-'+model.template+'-'+format+'.png',await canvasPng(canvas));
+   }
+   if(includeText){const text=studioPublication(model,link);add(model.template+'-publication.txt',new Blob(['\uFEFF'+text],{type:'text/plain;charset=utf-8'}));}
+  }
+  if(cancelled())throw Error('Экспорт отменён');
   return await studioZip(entries);
  }finally{canvas.width=1;canvas.height=1;}
 }
