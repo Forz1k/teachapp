@@ -1,3 +1,5 @@
+import {makeDraftTransfer,openDraftTransfer,importDraftTransfer,draftSummary} from '../match-transfer.js';
+import {holdPortalForImportedDraft} from '../public-publisher.js';
 import * as C from '../coach.js';
 import * as V from '../volleyball.js';
 import {openDetailedSetup,openDetailedMatch} from './match-protocol.js';
@@ -38,11 +40,11 @@ export async function openMatchCenter(team,refresh,options={}){
  const setupOptions={matches:data.coachMatches,presets:data.coachLineups};
  const portal=portalInfo(team.id).data,fixtures=portal.schedule.filter(x=>localDay(x.startAt)===todayIso()&&x.id!==portal.match?.scheduledId&&!data.coachLive.some(d=>d.teamId===team.id&&d.date===todayIso()&&d.opponent.trim().toLocaleLowerCase('ru')===x.opponent.trim().toLocaleLowerCase('ru')));
  if(fixtures.length)body.append(el('section',{class:'card-block vb-stack'},[el('h3',{text:'Сегодня по расписанию'}),...fixtures.map(f=>el('div',{class:'vb-stack'},[p(new Intl.DateTimeFormat('ru-RU',{timeStyle:'short'}).format(f.startAt)+' · '+f.opponent),btn('Подготовить матч · '+f.opponent,()=>openDetailedSetup(team,active,back,refresh,null,{...setupOptions,fixture:f}),'primary wide')]))]));
- body.append(btn('+ Новый подробный матч',()=>openDetailedSetup(team,active,back,refresh,null,setupOptions),'primary wide'),btn('Прежний режим матча',()=>setup(team,active,null,refresh),'wide'),btn('+ Сохранить расстановку',()=>setup(team,active,{preset:true},refresh),'wide'),btn('Помощник состава',()=>openLineupAssistant(team,C.teamView(data,team.id),back),'wide'),btn('Тактическая доска',()=>openTacticBoards(team),'wide'),btn('Публичная страница команды',()=>openPublicPortal(team,back),'wide'));
+ body.append(btn('+ Новый подробный матч',()=>openDetailedSetup(team,active,back,refresh,null,setupOptions),'primary wide'),btn('Прежний режим матча',()=>setup(team,active,null,refresh),'wide'),btn('+ Сохранить расстановку',()=>setup(team,active,{preset:true},refresh),'wide'),btn('Помощник состава',()=>openLineupAssistant(team,C.teamView(data,team.id),back),'wide'),btn('Тактическая доска',()=>openTacticBoards(team),'wide'),btn('Публичная страница команды',()=>openPublicPortal(team,back),'wide'),btn('Импорт защищённого черновика',()=>openDraftImport(team,back),'wide'));
  for(const x of data.coachLineups.filter(x=>x.teamId===team.id))body.append(el('div',{class:'card-block vb-stack'},[p(x.name+' · '+V.schemes[x.scheme]),court(players,x.lineup,x.libero,null,null,null),
    btn('Начать с этой расстановкой',()=>openDetailedSetup(team,active,back,refresh,x,setupOptions),'wide'),btn('Удалить расстановку',async()=>{if(await ui.confirmDialog({title:'Удалить расстановку?',text:'Матчи не меняются.',ok:'Удалить'})){await C.deleteLineup(x.id);openMatchCenter(team,refresh);}},'wide')]));
  for(const d of data.coachLive.filter(x=>x.teamId===team.id)){
-  const s=V.replay(d);body.append(el('div',{class:'card-block vb-stack'},[p(d.date+' · '+d.opponent+' · '+(s.score?.ours??s.ours)+':'+(s.score?.theirs??s.theirs)),btn('Продолжить матч',()=>d.mode==='dual'?openDetailedMatch(d,back,refresh):live(team,players,d,refresh),'primary wide')]));
+  const s=V.replay(d);body.append(el('div',{class:'card-block vb-stack'},[p(d.date+' · '+d.opponent+' · '+(s.score?.ours??s.ours)+':'+(s.score?.theirs??s.theirs)),btn('Продолжить матч',()=>d.mode==='dual'?openDetailedMatch(d,back,refresh):live(team,players,d,refresh),'primary wide'),d.mode==='dual'&&!s.finished?btn('Экспорт черновика для передачи',()=>exportDraft(d),'wide'):null]));
  }
  body.append(btn('Закрыть',ui.closeSheet,'wide'));openSheet(body);
  }catch(e){toast(e.message);}
@@ -110,4 +112,22 @@ function live(team,players,initial,refresh){
    btn('Удалить черновик',async()=>{if(busy||!await ui.confirmDialog({title:'Удалить черновик?',text:'Действия этого матча будут удалены.',ok:'Удалить',danger:true}))return;busy=true;try{await C.discardLiveMatch(d.id,d.revision);openMatchCenter(team,refresh);}catch(e){toast(e.message);}finally{busy=false;}},'wide'));
  }
  draw();openSheet(body,{fullHeight:true,match:true});
+}
+
+async function exportDraft(d){try{
+ if(!await ui.confirmDialog({title:'Экспортировать защищённый черновик?',text:'Файл содержит составы и историю розыгрышей одного матча. Если передаёте LIVE, сначала приостановите отправку и перестаньте изменять матч на исходном устройстве. Передавайте только уполномоченному тренеру; не передавайте пароль вместе с файлом.',ok:'Продолжить'}))return;
+ const password=await ui.promptDialog({title:'Пароль черновика',text:'Не менее 12 символов.',password:true,ok:'Далее'});if(password===null)return;
+ const again=await ui.promptDialog({title:'Повторите пароль',password:true,ok:'Экспортировать'});if(again===null)return;if(again!==password)throw Error('Пароли не совпадают');
+ const value=await makeDraftTransfer(d.id,d.revision,password);ui.downloadBlob(new Blob([value],{type:'application/json'}),'teachapp-live-draft.json');toast('Файл сформирован. Проверьте сохранение.');
+ }catch(e){toast(e.message);}}
+function openDraftImport(team,back){
+ const file=el('input',{type:'file',accept:'.json,application/json','aria-label':'Защищённый черновик матча'}),notice=p(''),save=btn('Проверить и импортировать',async()=>{
+ save.disabled=true;try{const selected=file.files[0];if(!selected||selected.size>8*1024*1024)throw Error('Выберите защищённый файл до 8 МБ');
+ const password=await ui.promptDialog({title:'Пароль черновика',password:true,ok:'Открыть'});if(password===null)return;
+ const draft=await openDraftTransfer(await selected.text(),password),summary=draftSummary(draft);
+ if(summary.teamId!==team.id)throw Error('Черновик относится к другой команде. Сначала синхронизируйте состав.');
+ if(!await ui.confirmDialog({title:'Импортировать черновик?',text:summary.team+' — '+summary.opponent+' · партия '+summary.set+' · '+summary.score.ours+':'+summary.score.theirs+' · событий '+summary.events+'. Существующие черновики не заменяются. Отправка публичной страницы на этом устройстве будет приостановлена даже если импорт не удастся; это не изменяет опубликованный счёт.',ok:'Импортировать'}))return;
+ holdPortalForImportedDraft(team.id);const result=await importDraftTransfer(draft,team.id,{confirmed:true});toast(result.existing?'Такой черновик уже есть':'Черновик импортирован. Подключите Firebase и подтвердите передачу из матча.');await back();
+ }catch(e){notice.textContent=e.message;toast(e.message);}finally{save.disabled=false;}},'primary wide');
+ openSheet(el('div',{class:'vb-stack'},[el('h2',{text:'Перенос черновика матча'}),p('Импорт сохраняет только одну подробную встречу. Требуется та же команда и те же идентификаторы игроков. Не открывайте импортированный черновик на двух устройствах одновременно.'),field('Защищённый файл',file),save,notice,btn('Назад',back,'wide')]));
 }

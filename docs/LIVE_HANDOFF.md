@@ -5,3 +5,7 @@ Acknowledge all public writes, then pause on device A. The published score remai
 This is cooperative coordination, NOT an enforceable server lease or proof of equal private logs. The current Firebase owner account is shared; older clients and other sessions cannot be forcibly stopped by this action. A server-enforced per-device lease needs separately authorized identity/lease infrastructure. No production rules or database changes.
 
 The separate persisted pause marker is checked before subsequent writes, even if an older updated tab has a stale local draft. Close other tabs before handing off: this does not cancel a request that another tab already sent or revoke other devices. The only concurrency guarantee on the current server is ETag CAS.
+
+## Encrypted draft transfer
+
+The match center exports a single existing detailed, unfinished match as an encrypted password-protected JSON file. Import requires the exact team and player IDs, verifies replay and all coach links in a single IndexedDB transaction, refuses conflicting drafts and already-saved matches, and treats identical imports as idempotent. No existing record is overwritten. The user explicitly holds local publication before import; on failure it remains held. No credentials, private roster health records or unrelated data are exported. Names and events are private; only transfer to an authorized coach with the password communicated separately. The file is not a server lease or full-device backup.

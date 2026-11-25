@@ -120,6 +120,14 @@ export function pausePortalPublisher(id){
  if(!save(e))throw Error('Отправка остановлена, но не удалось сохранить настройки. Проверьте хранилище.');
  if(e.timer)clearTimeout(e.timer);e.timer=null;status(e,'Отправка остановлена · последний счёт остаётся на сайте');return portalInfo(id);
 }
+/** Before importing an active draft, explicitly hold publication on this client.
+ * Nothing is written remotely; accepting a finished/null remote releases it. */
+export function holdPortalForImportedDraft(id){
+ const e=entry(id),d=e.data;if(e.running||e.dirty||d.pendingWrite||d.pendingDelete)throw Error('Сначала завершите обмен публичной страницы');
+ persistPause(e,true);d.publisherPaused=true;d.settings.auto=false;
+ if(!save(e))throw Error('Отправка приостановлена, но настройки не сохранились');
+ if(e.timer)clearTimeout(e.timer);e.timer=null;status(e,'Отправка остановлена до подтверждения передачи');return portalInfo(id);
+}
 export async function previewPortalHandoff(id,local){
  const e=entry(id),client=e.publisher,epoch=e.epoch;if(local?.teamId!==id||!client||e.running||!isPaused(e)&&!e.conflict)throw Error('Подключите Firebase и приостановите отправку либо примите серверную версию');
  const version=await client.readVersion();if(e.publisher!==client||e.epoch!==epoch||e.running)throw Error('Подключение изменилось');
