@@ -55,3 +55,12 @@ export function captureZoneSummary(timeline,{side='ours',action='serve',set=0,pl
  }}
  return {zones,total,known,unknown:total-known};
 }
+
+// Across matches, sum counts rather than averaging percentages. IDs on the
+// opponent side are match-local; only our stable player IDs can be combined.
+export function seasonCapture(timelines,{side='ours',action='serve',player=null,rotation=null,set=0}={}){
+ if(side!=='ours'&&side!=='theirs'||side==='theirs'&&player)throw Error('Выберите игрока своей команды');
+ const all=timelines.flatMap(t=>t.filter(e=>e.type==='rally'&&(!set||e.set===set)&&(rotation===null||e.rotation?.[side]===rotation)));
+ const summary=captureSummary(all,{side,player}),zones=captureZoneSummary(all,{side,action,player});
+ return {matches:timelines.length,recordedMatches:timelines.filter(t=>t.some(e=>e.type==='rally'&&(!set||e.set===set)&&(rotation===null||e.rotation?.[side]===rotation)&&e.touches?.some(x=>x.side===side&&(!player||x.player===player)&&x.action===action))).length,summary,zones};
+}

@@ -54,3 +54,17 @@ export function ktpForecast(s,classId,topics,today=M.todayIso()){
  const scheduled=planned.length,available=missing.length+lessons.filter(l=>M.inRange(l.date,from,to)&&!held(l,idx,today)).length;
  return {total:topics.length,completed:topics.filter(t=>done.has(t.id)).length,remaining:remaining.length,scheduled,available,shortfall:Math.max(0,remaining.length-available),unassigned:remaining.filter(t=>!lessons.some(l=>l.date>=from&&l.topicId===t.id&&!held(l,idx,today))).map(t=>t.name)};
 }
+
+/** Read-only proposal. Preserve every existing assigned topic and every lesson
+ * with any mark, attendance, test result, or explicit confirmation. */
+export function ktpRedistribution(s,classId,topics,today=M.todayIso()){
+ const lessons=s.lessons.filter(l=>l.classId===classId),idx=indexes(s),year=s.settings.year,from=today>year.from?today:year.from;
+ const locked=new Set([...s.marks,...s.participation,...(s.normResults||[])].map(r=>r.lessonId));
+ const covered=new Set(lessons.filter(l=>l.topicId&&(held(l,idx,today)||l.held||locked.has(l.id)||l.date>=from)).map(l=>l.topicId));
+ const missing=topics.filter(t=>!covered.has(t.id));
+ const eligible=from<=year.to?M.planLessonEntries({classId,from,to:year.to,rules:s.schedule,overrides:s.scheduleOverrides,holidays:s.settings.holidays||[],days:new Set()}):[];
+ const free=M.missingLessonEntries(eligible,lessons).map(r=>({...r,lessonId:null}));
+ const existing=M.sortLessons(lessons.filter(l=>l.date>=from&&l.date<=year.to&&!l.topicId&&!l.held&&!locked.has(l.id)&&!M.isSchoolHoliday(l.date,s.settings.holidays||[]))).map(l=>({...l,lessonId:l.id}));
+ const slots=[...free,...existing].sort((a,b)=>a.date.localeCompare(b.date)||(a.slot??0)-(b.slot??0));
+ return {rows:missing.slice(0,slots.length).map((topic,i)=>({topicId:topic.id,topic:topic.name,date:slots[i].date,slot:slots[i].slot??null,time:slots[i].time||'',lessonId:slots[i].lessonId})),unplaced:missing.slice(slots.length).map(t=>({id:t.id,name:t.name})),covered:topics.filter(t=>covered.has(t.id)).length};
+}
