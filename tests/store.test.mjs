@@ -248,3 +248,12 @@ test('данные переживают перезагрузку (чтение �
   const mark = store.state.marks.find((m) => m.studentId === st.id);
   assert.equal(mark?.value, '3');
 });
+
+test('bulk writes reject unique index conflict atomically without unhandled request rejections',async()=>{
+ await reset();await db.put('marks',{id:'original',lessonId:'l',studentId:'p',value:'4'});
+ await assert.rejects(db.bulkPut('marks',[{id:'new',lessonId:'l2',studentId:'q',value:'5'},{id:'duplicate',lessonId:'l',studentId:'p',value:'2'}]),{name:'ConstraintError'});
+ assert.deepEqual(await db.getAll('marks'),[{id:'original',lessonId:'l',studentId:'p',value:'4'}]);
+ await assert.rejects(db.transaction(['marks'],'readwrite',s=>{s.marks.put({id:'temp',lessonId:'l3',studentId:'z'});s.marks.add({id:'original',lessonId:'l',studentId:'p'});}),{name:'ConstraintError'});
+ assert.equal(await db.count('marks'),1);
+ await db.put('marks',{id:'original',lessonId:'l',studentId:'p',value:'5'});assert.equal((await db.get('marks','original')).value,'5');
+});

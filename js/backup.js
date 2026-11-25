@@ -3,10 +3,13 @@ import { validateNorm, validateNormSnapshot, validNormGroup, validGradeLevel, gr
 import { validateCoachData, coachStores } from './coach.js';
 import {validateArchive} from './school-archive.js';
 import {validateWorkRecord} from './workbench.js';
+import {validateOlympiadSeries} from './teacher-portfolio.js';
+import {assignmentsOverlap} from './school-tools.js';
 import { SCHEMA } from './db.js';
 import {validLessonSlot,validLessonTime} from './model.js';
 
-export const BACKUP_VERSION = 21;
+// 22 fences older clients that do not understand new record/event types.
+export const BACKUP_VERSION = 22;
 const legacyCore = ['meta','classes','students','lessons','topics','marks','exemptions','monthly'];
 const text = s => typeof s === 'string' && s.trim().length > 0;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -23,7 +26,7 @@ export function ktpLinkIssues(data){
 }
 export function validateBackup(payload) {
   if (payload?.app !== 'teachapp' || !object(payload.data)) throw new Error('Файл не похож на резервную копию TeachApp');
-  if (![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
+  if (![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
   if(payload.scope!==undefined&&(!object(payload.scope)||!['class','team','archive'].includes(payload.scope.kind)||!text(payload.scope.id)||!Number.isInteger(payload.scope.omitted)||payload.scope.omitted<0))throw Error('Повреждена область выборочной копии');
   const data = payload.data;
   const names = Object.keys(SCHEMA);
@@ -109,6 +112,10 @@ export function validateBackup(payload) {
     && (!r.lastBackupAt || typeof r.lastBackupAt === 'string')));
   validateCoachData(tables);
   for(const r of tables.workRecords){if(r.kind==='archive')validateArchive(r);else validateWorkRecord(r);if(r.kind==='coachGoal'&&(!index.coachTeams.has(r.teamId)||index.coachPlayers.get(r.playerId)?.teamId!==r.teamId))throw Error('Некорректная связь индивидуальной цели');if(r.kind==='tacticBoard'&&!index.coachTeams.has(r.teamId))throw Error('Некорректная связь тактической схемы');if(r.kind==='seasonPlan'&&!index.coachTeams.has(r.teamId))throw Error('Некорректная связь плана сезона');}
+  validateOlympiadSeries(tables.workRecords.filter(r=>r.kind==='schoolCompetition'));
+  // Existing legacy overlaps remain readable. Reject newly introduced overlaps after a cross-device merge.
+  const assignments=tables.workRecords.filter(r=>r.kind==='normAssignment'),groups=new Map();
+  for(const a of assignments){const k=JSON.stringify([a.classId,a.normId,a.yearFrom,a.yearTo]);if(!groups.has(k))groups.set(k,[]);const group=groups.get(k);if(group.some(b=>(a.revision!==undefined||b.revision!==undefined)&&assignmentsOverlap(a,b)))throw Error('Пересекающиеся назначения нормативов. Согласуйте назначения на устройствах.');group.push(a);}
   const historical=[tables,...tables.workRecords.filter(r=>r.kind==='archive').map(r=>r.snapshot)];
   for(const r of tables.workRecords.filter(r=>r.kind==='gradeHistory'))if(!historical.some(d=>{const st=d.students.find(p=>p.id===r.studentId);return st&&(r.scope==='final'||d.lessons.some(l=>l.id===r.lessonId&&l.classId===st.classId));}))throw Error('История оценки не связана с учеником и уроком');
   return tables;

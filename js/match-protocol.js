@@ -1,3 +1,4 @@
+import {createCourtClock,clockAdvance,clockEvent,clockPause,clockRally,clockNext,clockSummary} from './court-time.js';
 import {validateCapture} from './match-capture.js';
 import {validMatchFormat,regulationOf,isSetWon} from './match-rules.js';
 /* TeachApp — detailed event-sourced indoor match. No external service. */
@@ -76,10 +77,12 @@ export function replayDetailed(d){
  const rosters={ours:d.ourPlayers,theirs:d.awayPlayers};
  const s={lineup:[...d.lineup],awayLineup:[...d.awayLineup],liberoFor:null,liberoId:null,serve:d.firstServe,score:{ours:0,theirs:0},sets:[],setDetails:[],timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(d.lineup,d.awayLineup),rotations:{ours:0,theirs:0},sides:{ours:sideData(),theirs:sideData()},timeline:[],setEnded:false,finished:false,endsSwapped:false,endsAtBreak:false,deciderEndsChanged:false,rallyCount:0,lastLiberoRally:null,changeDue:false};
  let setStarted=d.startedAt,lastAt=d.startedAt;
+ const clock=createCourtClock(d.startedAt);
  const setNo=()=>s.sets.length+1;
  const lineupFor=side=>side==='ours'?s.lineup:s.awayLineup;
  const visible=side=>lineupFor(side).map(id=>side==='ours'&&id===s.liberoFor?s.liberoId:id);
  const server=side=>visible(side)[0]||null;
+ const clockLineups=()=>({ours:visible('ours'),theirs:visible('theirs')});
  const startLineups=()=>({ours:[...s.lineup],theirs:[...s.awayLineup]});
  let starting=startLineups();
  const flush=side=>{const a=s.sides[side];if(a.activeRun){a.runs.push(a.activeRun);a.activeRun=null;}};
@@ -93,20 +96,24 @@ export function replayDetailed(d){
  function timeline(ev,extra={}){s.timeline.push({set:setNo(),score:score(s),...ev,...extra});}
  for(const ev of d.events){
   fail(ev&&typeof ev==='object'&&!s.finished&&timestamp(ev.at)&&Date.parse(ev.at)>=Date.parse(lastAt),'Некорректная последовательность событий');lastAt=ev.at;
+  clockAdvance(clock,ev.at,clockLineups());
+  if(ev.type==='clock'){
+   fail(!s.setEnded,'Нельзя запускать время между партиями');clockEvent(clock,ev);timeline(ev);continue;
+  }
   if(ev.type==='next'){
    fail(s.setEnded&&validLine(ev.lineup,d.ourPlayers)&&!liberoIds(d).some(id=>ev.lineup.includes(id))&&validLine(ev.awayLineup,d.awayPlayers,true)&&(!d.awayPlayers.length||ev.awayLineup.length===6)&&sides.includes(ev.serve),'Проверьте расстановку следующей партии');
    Object.assign(s,{lineup:[...ev.lineup],awayLineup:[...ev.awayLineup],liberoFor:null,liberoId:null,serve:ev.serve,score:{ours:0,theirs:0},timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(ev.lineup,ev.awayLineup),rotations:{ours:0,theirs:0},setEnded:false,endsAtBreak:false,deciderEndsChanged:false,lastLiberoRally:null});
    for(const side of sides){s.sides[side].run=0;flush(side);}
-   setStarted=ev.at;starting=startLineups();continue;
+   clockNext(clock);setStarted=ev.at;starting=startLineups();continue;
   }
   if(ev.type==='changeEnds'){
-   s.endsSwapped=!s.endsSwapped;if(s.setEnded)s.endsAtBreak=true;
+   clockPause(clock);s.endsSwapped=!s.endsSwapped;if(s.setEnded)s.endsAtBreak=true;
    if(!s.setEnded&&d.bestOf>1&&s.sets.length===d.bestOf-1&&Math.max(s.score.ours,s.score.theirs)>=regulationOf(d).deciderSwitchAt)s.deciderEndsChanged=true;
    s.timeline.push({...ev,set:s.setEnded?s.sets.length:setNo(),score:score(s),endsSwapped:s.endsSwapped});continue;
   }
   fail(!s.setEnded,'Начните следующую партию');
   if(ev.type==='timeout'){
-   fail(sides.includes(ev.side)&&s.timeouts[ev.side]<matchLimits(d).timeouts,'Лимит тайм-аутов ('+matchLimits(d).timeouts+')');s.timeouts[ev.side]++;timeline(ev,{number:s.timeouts[ev.side]});continue;
+   fail(sides.includes(ev.side)&&s.timeouts[ev.side]<matchLimits(d).timeouts,'Лимит тайм-аутов ('+matchLimits(d).timeouts+')');s.timeouts[ev.side]++;clockPause(clock);timeline(ev,{number:s.timeouts[ev.side]});continue;
   }
   if(ev.type==='sub'){
    fail(sides.includes(ev.side),'Выберите команду');
@@ -141,6 +148,7 @@ export function replayDetailed(d){
    timeline(ev);continue;
   }
   fail(ev.type==='rally'&&sides.includes(ev.side)&&Object.hasOwn(reasons,ev.kind),'Неизвестное действие');
+  clockRally(clock);
   const winner=ev.side,actor=rallyActor(winner,ev.kind),player=ev.player??null,before={lineups:{ours:visible('ours'),theirs:visible('theirs')},serve:s.serve};
   fail(ev.kind!=='point'||player===null,'Для неуточнённого очка не указывайте игрока');
   fail(ev.placement==null||canPlace(ev.kind)&&integer(ev.placement,1,6),'Зона завершения — 1–6 для эйса, атаки, скидки, ошибки приёма или защиты');
@@ -175,7 +183,7 @@ export function replayDetailed(d){
   if(ev.kind==='ace')serving.activeRun.aces++;
   if(ev.kind==='serveError')serving.activeRun.errors++;
   s.score[winner]++;s.rallyCount++;
-  timeline(ev,{actor,player,before,rotation:{...s.rotations}});
+  timeline(ev,{actor,player,before,rotation:{...s.rotations},clockRunning:clock.running});
   if(winner!==s.serve){
    flush(s.serve);s.rotations[winner]=(s.rotations[winner]+1)%6;
    if(winner==='ours')s.lineup=rotate(s.lineup);else s.awayLineup=rotate(s.awayLineup);
@@ -184,7 +192,7 @@ export function replayDetailed(d){
   if(isSetWon(d,s.sets.length,s.score)){
    for(const side of sides)flush(side);
    s.setDetails.push({set:setNo(),lineups:starting,startedAt:setStarted,endedAt:ev.at});
-   s.sets.push({...s.score});s.setEnded=true;
+   s.sets.push({...s.score});s.setEnded=true;clockPause(clock);
    const wins=s.sets.filter(x=>x.ours>x.theirs).length;
    s.finished=Math.max(wins,s.sets.length-wins)>=Math.ceil(d.bestOf/2);
   }
@@ -195,7 +203,7 @@ export function replayDetailed(d){
    const allowed=['serves','serveErrors','aces','receptions','receptionGood','attacks','attackKills','blocks','points'];
    stats[id]=Object.fromEntries(Object.entries(r).filter(([k])=>allowed.includes(k)));
  }
- return {...s,ours:s.score.ours,theirs:s.score.theirs,stats,subs:s.subCounts.ours};
+ return {...s,ours:s.score.ours,theirs:s.score.theirs,stats,subs:s.subCounts.ours,courtClock:clock};
 }
 export function detailEvent(d,event,now=new Date().toISOString()){
  if(event===null)return {...d,events:d.events.slice(0,-1)};
@@ -230,10 +238,14 @@ export function detailEvent(d,event,now=new Date().toISOString()){
  }
  const next={...d,events};replayDetailed(next);return next;
 }
+export function courtTime(state,asOf=state.courtClock.lastAt){
+ const lineups={ours:state.lineup.map(id=>id===state.liberoFor?state.liberoId:id),theirs:state.awayLineup};
+ return clockSummary(state.courtClock,{lineups,asOf});
+}
 export function reportData(d){
  const s=replayDetailed(d);
  const duration=(a,b)=>Math.max(0,Math.floor((Date.parse(b)-Date.parse(a))/1000));
- return {state:s,duration:d.events.length?duration(d.startedAt,d.events.at(-1).at):0,
+ return {state:s,courtTime:courtTime(s),duration:d.events.length?duration(d.startedAt,d.events.at(-1).at):0,
   sets:s.setDetails.map((x,i)=>({...x,...s.sets[i],seconds:duration(x.startedAt,x.endedAt)}))};
 }
 

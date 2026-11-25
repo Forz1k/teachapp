@@ -1,0 +1,47 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as db from '../js/db.js';
+import * as S from '../js/store.js';
+import {defaultSettings} from '../js/model.js';
+import {projectScope,prepareSync,executeSync,previewSync,syncPersonalArea,localSyncState,disconnectSync,migrationBindingStatus} from '../js/sync.js';
+import {encryptBackup} from '../js/privacy.js';
+import {BACKUP_VERSION} from '../js/backup.js';
+const endpoint='http://127.0.0.1:9001',source='http://127.0.0.1:9002',password='synthetic-test-password',area='coach',workspaceId='12345678-1234-4000-8000-123456789abc';
+const key='sync-checkpoint-coach',marker='sync-checkpoint-migration-coach';
+const fresh=()=>({...Object.fromEntries(Object.keys(db.SCHEMA).map(n=>[n,[]])),meta:[defaultSettings()],coachTeams:[{id:'test-team',name:'Synthetic',archived:false}]});
+const bind={id:marker,protocol:'delta-lab-v1',sourceProtocolVersion:2,area,migrationId:workspaceId,sourceEndpoint:source,sourceWorkspaceId:'22345678-1234-4000-8000-123456789abc',sourceRevision:2,destinationEndpoint:endpoint,destinationWorkspaceId:workspaceId,destinationRevision:1,digest:'a'.repeat(64)};
+test('ordinary sync, detach and full restore fail closed on LAB binding; other area remains available',async()=>{
+ await db.clearAll();const data=fresh(),snapshot=projectScope(data,area),envelope=await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area,workspaceId,revision:1,snapshot},password);
+ const cp={id:key,endpoint,workspaceId,revision:1,envelope};data.meta.push(cp,bind);await db.replaceAll(data);
+ let reads=0,writes=0;const ordinary={get:async()=>{reads++;return {revision:1,envelope};},put:async()=>{writes++;throw Error('unexpected write');}};
+ const before=await db.dumpAll();
+ assert.deepEqual(await migrationBindingStatus(area),{area,status:'lab-bound',revision:1});
+ assert.deepEqual(await migrationBindingStatus('school'),{area:'school',status:'none'});
+ await assert.rejects(prepareSync({area,endpoint,password,client:ordinary}),e=>e.code==='migration-binding');
+ assert.deepEqual(await syncPersonalArea({area,endpoint,password,client:ordinary,initialize:true}),{area,status:'review',reason:'migration-binding'});
+ assert.equal((await localSyncState({area,endpoint,password})).reason,'migration-binding');
+ await assert.rejects(disconnectSync(area,true),e=>e.code==='migration-binding');
+ const backup=await S.makeBackup();assert.ok(!JSON.stringify(backup).includes(marker));
+ await assert.rejects(S.restoreBackup(backup),/незавершённого Delta LAB/);
+ assert.deepEqual(await db.dumpAll(),before);
+ const schoolClient={get:async()=>({revision:0,envelope:null})};
+ assert.equal((await prepareSync({area:'school',endpoint:source,password,client:schoolClient})).revision,0);
+ // Missing checkpoint must not make the marker look like a new workspace.
+ await db.del('meta',key);
+ assert.deepEqual(await migrationBindingStatus(area),{area,status:'review',revision:null});
+ await assert.rejects(prepareSync({area,endpoint,password,client:ordinary}),e=>e.code==='migration-binding');
+ assert.equal(reads,0);assert.equal(writes,0);
+ await db.put('meta',{id:marker,protocol:'delta-lab-v1'});
+ assert.deepEqual(await migrationBindingStatus(area),{area,status:'review',revision:null});
+ await assert.rejects(prepareSync({area,endpoint,password,client:ordinary}),e=>e.code==='migration-binding');
+});
+test('a plan prepared before migration cannot write after binding change',async()=>{
+ await db.clearAll();const data=fresh();await db.replaceAll(data);
+ let writes=0;const ordinary={get:async()=>({revision:0,envelope:null}),put:async()=>{writes++;throw Error('unexpected write');}};
+ const plan=await prepareSync({area,endpoint,password,client:ordinary});
+ await db.put('meta',bind);
+ assert.throws(()=>previewSync({...data,meta:[...data.meta,bind]},plan),e=>e.code==='migration-binding');
+ await assert.rejects(executeSync({plan,choices:{},password,client:ordinary,confirmed:true}),e=>e.code==='migration-binding');
+ assert.equal(writes,0);
+});

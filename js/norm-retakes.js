@@ -13,7 +13,7 @@ export async function saveNormRetake(input){
   const old=input.id?await s.workRecords.get(input.id):null;
   require(!input.id||old?.kind==='normRetake'&&old.revision===input.revision&&old.assignmentId===input.assignmentId&&old.studentId===input.studentId,'Запись изменилась. Откройте заново');
   const a=await s.workRecords.get(input.assignmentId),student=await s.students.get(input.studentId),settings=await s.meta.get('settings');
-  require(a?.kind==='normAssignment'&&student?.classId===a.classId,'Назначение или ученик недоступны');
+  require(a?.kind==='normAssignment'&&student?.classId===a.classId&&(!a.studentIds||a.studentIds.includes(student.id)),'Назначение или ученик недоступны');
   require(!settings?.year||settings.year.from===a.yearFrom&&settings.year.to===a.yearTo,'Назначение относится к архивному году');
   require(inRange(input.date,a.from,a.yearTo),'Дата должна быть в учебном году, не раньше назначения');
   const row={...input,id:input.id||uid('retake'),kind:'normRetake',revision:old?old.revision+1:0};validateNormRetake(row);

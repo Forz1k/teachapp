@@ -42,3 +42,26 @@ function newPeriod(){return schoolPeriodOverview(state,{period,today}).rows.map(
 assert.deepEqual(newPeriod(),oldPeriod());
 const periodOld=median(oldPeriod),periodNew=median(newPeriod);
 console.log('PERIOD REVIEW BENCHMARK '+JSON.stringify({classes,pupils:allPupils.length,lessons:allLessons.length,finals:state.finalGrades.length,beforeMs:+periodOld.toFixed(2),afterMs:+periodNew.toFixed(2),speedup:+(periodOld/periodNew).toFixed(2),identical:true}));
+
+import 'fake-indexeddb/auto';
+import * as DB from '../js/db.js';
+import {schoolViewStores} from '../js/store.js';
+import {loadCoach,loadCoachForView,teamView,indexPlayerRecords} from '../js/coach.js';
+const teamCount=12,matchCount=100,eventsPerMatch=180,roster=Array.from({length:14},(_,i)=>'p'+i);
+const teams=Array.from({length:teamCount},(_,i)=>({id:'team'+i,name:'Synthetic '+i,archived:false}));
+const logs=Array.from({length:eventsPerMatch},(_,i)=>({type:'rally',side:i%2?'ours':'theirs',kind:'point',at:'2026-11-01T12:00:00Z'}));
+await DB.bulkPut('coachTeams',teams);
+await DB.bulkPut('coachMatches',teams.flatMap(t=>Array.from({length:matchCount},(_,i)=>({id:t.id+'_'+i,teamId:t.id,date:'2026-11-01',opponent:'Synthetic',roster,stats:{},sets:[{ours:25,theirs:19}],detail:{events:logs}}))));
+await DB.bulkPut('classes',state.classes);await DB.bulkPut('students',allPupils);await DB.bulkPut('lessons',allLessons);await DB.bulkPut('marks',allMarks.map((m,i)=>({...m,id:'m'+i})));await DB.bulkPut('participation',allParts.map((p,i)=>({...p,id:'p'+i})));
+const schoolOld=async()=>{const all=await DB.dumpAll();return Object.fromEntries(schoolViewStores.map(n=>[n,all[n]]));};
+const schoolNew=()=>DB.readSnapshot(schoolViewStores);
+const teamOld=async()=>teamView(await loadCoach(),teams.at(-1).id);
+const teamNew=async()=>teamView((await loadCoachForView(teams.at(-1).id)).data,teams.at(-1).id);
+assert.deepEqual(await schoolNew(),await schoolOld());assert.deepEqual(await teamNew(),await teamOld());
+async function medianAsync(fn){const times=[];await fn();for(let i=0;i<5;i++){const start=performance.now();await fn();times.push(performance.now()-start);}return times.sort((a,b)=>a-b)[2];}
+const schoolBefore=await medianAsync(schoolOld),schoolAfter=await medianAsync(schoolNew),teamBefore=await medianAsync(teamOld),teamAfter=await medianAsync(teamNew);
+console.log('SCOPED IDB BENCHMARK '+JSON.stringify({engine:'fake-indexeddb (synthetic, not device latency)',teams:teamCount,matches:teamCount*matchCount,events:teamCount*matchCount*eventsPerMatch,schoolBeforeMs:+schoolBefore.toFixed(2),schoolAfterMs:+schoolAfter.toFixed(2),teamBeforeMs:+teamBefore.toFixed(2),teamAfterMs:+teamAfter.toFixed(2),teamMatchesReadBefore:teamCount*matchCount,teamMatchesReadAfter:matchCount,schoolCoachMatchesReadBefore:teamCount*matchCount,schoolCoachMatchesReadAfter:0,identical:true}));
+const archive=Array.from({length:8000},(_,i)=>({id:'r'+i,roster:roster.map((_,j)=>'p'+((i+j)%80))})),ids=Array.from({length:80},(_,i)=>'p'+i);
+const rosterOld=()=>ids.map(id=>archive.filter(m=>m.roster.includes(id)));
+const rosterNew=()=>{const index=indexPlayerRecords(archive);return ids.map(id=>index.get(id)||[]);};
+assert.deepEqual(rosterNew(),rosterOld());const rb=median(rosterOld),ra=median(rosterNew);console.log('ROSTER INDEX BENCHMARK '+JSON.stringify({matches:archive.length,players:ids.length,beforeMs:+rb.toFixed(2),afterMs:+ra.toFixed(2),speedup:+(rb/ra).toFixed(2),identical:true}));

@@ -1,0 +1,67 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';import assert from 'node:assert/strict';
+import * as db from '../js/db.js';import * as S from '../js/store.js';import * as M from '../js/model.js';import * as W from '../js/workbench.js';
+import {saveSchoolCompetition,advanceOlympiad,validateOlympiadSeries,schoolCompetitionCalendar,competitionDocument} from '../js/teacher-portfolio.js';
+import {saveLessonAlternative,lessonAlternatives} from '../js/lesson-alternatives.js';
+import {assignmentOverview} from '../js/school-tools.js';
+import {saveNormRetake} from '../js/norm-retakes.js';
+import {validateBackup} from '../js/backup.js';
+import {makeScopedBackup} from '../js/selective-backup.js';
+import {projectScope} from '../js/sync.js';
+const date=M.todayIso(),future=M.addDays(date,1);
+async function setup(){await db.clearAll();await S.load();await S.setYear(M.addDays(date,-30),M.addDays(date,90));const c=await S.addClass('7А'),p=await S.addStudent(c.id,'Синтетический ученик',1,'girls'),q=await S.addStudent(c.id,'Другой ученик',2,'boys');return {c,p,q};}
+test('Olympiad advances only explicitly selected actual participants, deadline and prior stage preserved',async()=>{
+ const {p,q}=await setup();
+ const r=await saveSchoolCompetition({name:'Синтетическая олимпиада',eventType:'olympiad',stage:'school',date,time:'',venue:'',status:'completed',note:'',participants:[{studentId:p.id,className:'',status:'participated',result:'10',place:1},{studentId:q.id,className:'',status:'absent',result:'',place:null}]});
+ const input={sourceId:r.id,revision:r.revision,studentIds:[p.id],date:future,applicationDeadline:date,confirmed:true};
+ await assert.rejects(advanceOlympiad({...input,confirmed:false}),/Подтвердите/);
+ await assert.rejects(advanceOlympiad({...input,studentIds:[q.id]}),/фактических/);
+ const child=await advanceOlympiad(input);assert.equal(child.stage,'city');assert.equal(child.previousStageId,r.id);assert.equal(child.participants[0].result,'');assert.equal(child.participants[0].place,null);assert.equal(child.applicationStatus,'draft');
+ assert.deepEqual(await db.get('workRecords',r.id),r);await assert.rejects(advanceOlympiad(input),/уже создан/);await assert.rejects(W.deleteWork(r.id,r.kind),/следующий этап/);
+ await assert.rejects(saveSchoolCompetition({...r,status:'planned',participants:[]}),/следующий этап/);
+ validateOlympiadSeries([r,child]);assert.throws(()=>validateOlympiadSeries([child]),/цепочка/);
+ const calendar=schoolCompetitionCalendar([child],date,future);assert.equal(calendar.length,2);assert.ok(calendar.some(e=>e.exportTitle==='Срок подачи заявки'));
+ assert.equal(competitionDocument(child,new Map()).personal,true);validateBackup(await S.makeBackup());
+});
+test('Alternative task persists without marks; new restrictions or exemption block physical task',async()=>{
+ const {c,p,q}=await setup(),lesson=await S.addLesson(c.id,date),input={studentId:p.id,lessonId:lesson.id,date,type:'theory',task:'Разобрать правила',status:'planned'};
+ await assert.rejects(saveLessonAlternative(input),/Подтвердите/);
+ const r=await saveLessonAlternative(input,true);assert.equal((await lessonAlternatives(lesson.id)).length,1);
+ await assert.rejects(saveLessonAlternative(input,true),/изменилось/);
+ await S.saveRestriction({studentId:p.id,activityId:'volley',type:'avoid',dateFrom:date,dateTo:null});
+ await assert.rejects(saveLessonAlternative({...input,revision:r.revision,type:'exercise',activityId:'pass'},true),/ограничение/);
+ await assert.rejects(saveLessonAlternative({...input,revision:r.revision,type:'exercise',activityId:'unknown'},true),/неизвестная/);
+ await db.put('exemptions',{id:'synthetic-exemption',studentId:q.id,dateFrom:date,dateTo:future});
+ await assert.rejects(saveLessonAlternative({...input,studentId:q.id,type:'exercise',activityId:'pass'},true),/освобождение/);
+ await db.del('exemptions','synthetic-exemption');
+ const saved=await saveLessonAlternative({...input,revision:r.revision,status:'completed'},true);assert.equal(saved.status,'completed');
+ assert.equal((await db.getAll('marks')).length,0);assert.equal((await db.getAll('participation')).length,0);
+ const backup=await S.makeBackup();validateBackup(backup);
+ assert.ok(makeScopedBackup(backup,{kind:'class',id:c.id}).payload.data.workRecords.some(x=>x.id===saved.id));
+ assert.ok(projectScope(backup.data,'school').workRecords.some(x=>x.id===saved.id));assert.ok(!projectScope(backup.data,'coach').workRecords.some(x=>x.id===saved.id));
+});
+test('Targeted norm assignment and late retake: original deadline unchanged and actual result criteria',async()=>{
+ const {c,p,q}=await setup(),n=await S.saveNorm({name:'Прыжок',activityId:'standing',unit:'см',direction:'max',scale:[100,120,140,160,180]}),year=S.state.settings.year;
+ const a=await W.saveWork({kind:'normAssignment',name:'Выборочно',classId:c.id,normId:n.id,yearFrom:year.from,yearTo:year.to,from:M.addDays(date,-5),to:M.addDays(date,-1),targetGrade:4,studentIds:[p.id],minAttempts:2,retakeUntil:future});
+ const v=assignmentOverview(S.state,a,date);assert.equal(v.state,'retake');assert.equal(v.rows.length,1);assert.equal(v.overdue,0);
+ const other=await W.saveWork({...a,id:undefined,revision:undefined,studentIds:[q.id]});assert.ok(other.id);
+ await assert.rejects(W.saveWork({...a,id:undefined,studentIds:[p.id]}),/пересекающееся/);
+ await assert.rejects(saveNormRetake({assignmentId:a.id,studentId:q.id,date,time:'',status:'planned'}),/недоступны/);
+ const retake=await saveNormRetake({assignmentId:a.id,studentId:p.id,date,time:'',status:'planned'});
+ const synthetic={...S.state,normResults:[{id:'r1',studentId:p.id,normId:n.id,date:a.to,status:'done',grade:4,value:160},{id:'r2',studentId:p.id,normId:n.id,date,status:'done',grade:5,value:180}]};
+ assert.equal(assignmentOverview(synthetic,a,date).rows[0].late,true);
+ assert.equal(assignmentOverview(synthetic,a,date).lateDone,1);assert.equal(a.to,M.addDays(date,-1));
+ const changed=await W.saveWork({...a,minAttempts:3});assert.equal(changed.revision,1);await assert.rejects(W.saveWork({...a,minAttempts:4}),/изменилось/);
+ const backup=await S.makeBackup(),part=makeScopedBackup(backup,{kind:'class',id:c.id}).payload;
+ assert.ok(part.data.workRecords.some(r=>r.id===retake.id));validateBackup(backup);
+ const corrupt=structuredClone(backup);corrupt.data.workRecords.push({...a,id:'conflicting-assignment'});assert.throws(()=>validateBackup(corrupt),/Пересекающиеся назначения/);
+});
+test('Station templates are independent snapshots; reused equipment and capacity recalculated',async()=>{
+ await setup();const e=await W.saveWork({...W.builtinExercises[1],id:undefined,name:'Синтетическое упражнение'}),template=await W.saveStationTemplate({name:'Станция',exercise:e,capacity:5,notes:'Пары',resources:[{itemId:'ball',name:'Мячи',unit:'шт.',qty:3}]});
+ const copy=W.stationFromTemplate(template);copy.exercise.name='Изменённая копия';copy.resources[0].qty=2;assert.equal((await db.get('workRecords',template.id)).exercise.name,e.name);
+ await W.deleteWork(e.id,'exercise');const reused=W.stationFromTemplate(await db.get('workRecords',template.id));
+ const plan=W.circuitDraft({name:'Круг',minutes:45,rounds:1,work:3,transition:1,warmup:{exercise:W.builtinExercises[0],minutes:5},cooldown:{exercise:W.builtinExercises[3],minutes:5},stations:[reused,reused],pupilCount:12,inventory:[]});
+ assert.equal(plan.plan.resources[0].qty,6);assert.equal(plan.capacityIssues.length,2);assert.equal(plan.total,18);
+ const backup=await S.makeBackup();validateBackup(backup);assert.ok(projectScope(backup.data,'school').workRecords.some(r=>r.id===template.id));assert.ok(!projectScope(backup.data,'coach').workRecords.some(r=>r.id===template.id));
+ await W.deleteWork(template.id,'stationTemplate');assert.equal(reused.exercise.name,e.name);
+});

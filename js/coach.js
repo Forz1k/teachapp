@@ -4,7 +4,9 @@ import * as db from './db.js';
 import {uid,todayIso} from './model.js';
 import {catalog,validPeriod,active,ancestorIds} from './health.js';
 import {replay,appendEvent,undoEvent,validateLiveData} from './volleyball.js';
-import {replayDetailed,validBoardColors,validBoardLogos} from './match-protocol.js';
+import {courtTimeLabel} from './court-time.js';
+import {replayDetailed,courtTime,validBoardColors,validBoardLogos} from './match-protocol.js';
+import {volleyPlayerTime,volleyTimeLabel,mergeVolleyTiming,sameVolleyEvidence} from './volleypoint-time.js';
 import {validateVolleyImport,duplicateVolleyMatch} from './volleypoint-import.js';
 import {validateCoachTests,guardTestWrite} from './coach-tests.js';
 export const coachStores=['coachTeams','coachPlayers','coachTrainings','coachMatches','coachLive','coachLineups','coachTests'];
@@ -63,7 +65,26 @@ export function validateCoachData(data){
   return data;
 }
 export async function loadCoach(){
-  return db.transaction(coachStores,'readonly',async s=>Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()]))));
+  return db.readSnapshot(coachStores);
+}
+/** Team picker and selected-team records from one consistent readonly snapshot.
+ * Do not use this partial view for backups, validation, or global search. */
+export async function loadCoachForView(teamId,{archived=false}={}){
+ return db.transaction(coachStores,'readonly',async s=>{
+  const coachTeams=await s.coachTeams.getAll(),visible=coachTeams.filter(t=>archived||!t.archived);
+  const selected=visible.find(t=>t.id===teamId)||visible[0]||null;
+  const rows=await Promise.all(coachStores.filter(n=>n!=='coachTeams').map(async n=>[n,selected?await s[n].index('teamId').getAll(selected.id):[]]));
+  return {selectedTeamId:selected?.id??null,data:{coachTeams,...Object.fromEntries(rows)}};
+ });
+}
+/** Local roster index preserves record order and original object references.
+ * Built anew for each calculation, no stale global cache across edits. */
+export function indexPlayerRecords(records){
+ const index=new Map();
+ for(const record of records)for(const id of new Set(record.roster)){
+  let rows=index.get(id);if(!rows)index.set(id,rows=[]);rows.push(record);
+ }
+ return index;
 }
 async function write(name,record,guard){
   return db.transaction(coachStores,'readwrite',async s=>{
@@ -107,6 +128,22 @@ export async function saveVolleyImport(input){
  assert(r.date<=todayIso(),'Результат будущего матча недоступен');
  return write('coachMatches',r,(d,old)=>{teamGuard(d,old,r);validateVolleyImport(r);assert(!duplicateVolleyMatch(d.coachMatches,r),'Такой матч уже есть в истории');});
 }
+// Enrich exactly the already imported source; do not replace its identity, user labels,
+ // roster mapping, scores or historical statistics. Re-read inside the write transaction.
+export async function enrichVolleyImport(input,{confirmed=false}={}){
+ assert(confirmed,'Подтвердите дополнение существующего матча');validateVolleyImport(input);
+ return db.transaction(coachStores,'readwrite',async s=>{
+  const data=Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()])));
+  const matches=data.coachMatches.filter(m=>m.teamId===input.teamId&&m.imported?.hash===input.imported.hash);
+  assert(matches.length===1,'Исходный импорт не найден или неоднозначен');const old=matches[0];
+  const evidence=m=>{const {timing,...imported}=m.imported;return {roster:m.roster,sets:m.sets,stats:m.stats,imported};};
+  assert(sameVolleyEvidence(evidence(old),evidence(input)),'PDF или сопоставление игроков отличается от сохранённого матча');
+  const timing=mergeVolleyTiming(old.imported.timing,input.imported.timing);
+  const r={...old,imported:{...old.imported,timing}};
+  if(sameVolleyEvidence(old,r))return old;
+  data.coachMatches=data.coachMatches.map(m=>m.id===r.id?r:m);validateCoachData(data);await s.coachMatches.put(r);return r;
+ });
+}
 export async function removeEvent(name,id){
   assert(['coachTrainings','coachMatches'].includes(name),'Нельзя удалить состав этой командой');
   await db.del(name,id);
@@ -149,21 +186,42 @@ export function summarizeStats(matches,playerIds=null){
 }
 // Aggregate only comparable observations. A terminal-action protocol does not
 // provide the denominator of all attacks or receptions.
+export function timedMatchPlayers(state){
+ const t=courtTime(state),rows=new Map();
+ for(const [id,ms] of Object.entries(t.players.ours))rows.set(id,{ms,rallies:0,won:0,lost:0,points:0,unattributedWins:0});
+ for(const e of state.timeline){
+  if(e.type!=='rally'||!e.clockRunning)continue;
+  for(const id of e.before.lineups.ours){
+   if(!rows.has(id))rows.set(id,{ms:0,rallies:0,won:0,lost:0,points:0,unattributedWins:0});
+   const r=rows.get(id);r.rallies++;if(e.side==='ours'){r.won++;if(e.kind==='point'||e.player==null)r.unattributedWins++;if(e.actor==='ours'&&e.player===id&&['ace','kill','tip','block'].includes(e.kind))r.points++;}else r.lost++;
+  }
+ }
+ return rows;
+}
+export function timedRate(r){return r.ms>=600000&&r.rallies>=10?r.points*600000/r.ms:null;}
 export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
  const chosen=matches.filter(m=>m.roster.includes(playerId)&&(!from||m.date>=from)&&(!to||m.date<=to));
  const summary=summarizeStats(chosen,[playerId]);
  const errors={serve:0,attack:0,receive:0,other:0};
  let detailedMatches=0,rallies=0,serviceRallies=0,serviceWins=0,serviceAces=0,serviceErrors=0,unclassifiedServiceLosses=0,unknownOnCourt=0;
+ const playingTime={measuredMatches:0,partialMatches:0,unknownMatches:0,totalMs:0,teamMs:0,timedRallies:0,timedPoints:0,timedWon:0,timedLost:0,unattributedTimedWins:0,rateMatches:0,rateMs:0,ratePoints:0,rateRallies:0,rows:[],historicalMatches:0,historicalPartialMatches:0,historicalMinMs:0,historicalMaxMs:0,historicalRows:[]};
  let importedMatches=0,importedServiceWins=0,importedLongestSeries=0,importedErrors=0;
  const importedBreakdown={serve:0,attack:0,receive:0,other:0};
  const rates={serve:{total:0,success:0},receive:{total:0,success:0},attack:{total:0,success:0}};
  for(const m of chosen){
+  if(!m.detail&&!m.imported)playingTime.unknownMatches++;
   if(m.imported){
+   const t=volleyPlayerTime(m,playerId);if(t){playingTime.historicalMatches++;playingTime.historicalPartialMatches+=Number(t.partial);playingTime.historicalMinMs+=t.minMs;playingTime.historicalMaxMs+=t.maxMs;playingTime.historicalRows.push({matchId:m.id,date:m.date,opponent:m.opponent,...t});}else playingTime.unknownMatches++;
    const p=m.imported.players[playerId];if(p){importedMatches++;importedErrors+=p.errors;importedBreakdown.serve+=p.serveErrors;importedBreakdown.attack+=p.attackErrors;importedBreakdown.receive+=p.receiveErrors;importedBreakdown.other+=p.otherErrors;for(const s of p.serviceSeries){importedServiceWins+=s.wins;importedLongestSeries=Math.max(importedLongestSeries,s.wins);}}
    continue;
   }
   if(m.detail){
    const state=replayDetailed(m.detail);detailedMatches++;
+   const t=courtTime(state);
+   if(t.measured){const ms=t.players.ours[playerId]||0;playingTime.measuredMatches++;if(t.partial)playingTime.partialMatches++;playingTime.totalMs+=ms;playingTime.teamMs+=t.elapsedMs;playingTime.rows.push({matchId:m.id,date:m.date,opponent:m.opponent,ms,teamMs:t.elapsedMs,partial:t.partial,sets:t.sets.map(s=>({measured:s.started,ms:s.started?(s.players.ours[playerId]||0):null,teamMs:s.elapsedMs,partial:s.untrackedRallies>0}))});}else playingTime.unknownMatches++;
+   const tm=timedMatchPlayers(state).get(playerId);
+   if(tm){playingTime.timedRallies+=tm.rallies;playingTime.timedPoints+=tm.points;playingTime.timedWon+=tm.won;playingTime.timedLost+=tm.lost;playingTime.unattributedTimedWins+=tm.unattributedWins;
+    if(tm.ms>0){playingTime.rateMs+=tm.ms;playingTime.rateRallies+=tm.rallies;playingTime.ratePoints+=tm.points;playingTime.rateMatches+=Number(tm.rallies>0);}}
    const stat=state.sides.ours.stats[playerId]||{};
    errors.serve+=stat.serveErrors||0;errors.attack+=stat.attackErrors||0;errors.receive+=stat.receiveErrors||0;errors.other+=stat.otherErrors||0;
    for(const e of state.timeline){
@@ -184,7 +242,8 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
    rates[key].total+=x[total];rates[key].success+=complement?x[total]-x[success]:x[success];
   }
  }
- return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,importedMatches,importedErrors,importedBreakdown,importedServiceWins,importedLongestSeries,rates,chosen};
+ playingTime.pointsPer10=timedRate({ms:playingTime.rateMs,rallies:playingTime.rateRallies,points:playingTime.ratePoints});
+ return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,importedMatches,importedErrors,importedBreakdown,importedServiceWins,importedLongestSeries,rates,chosen,playingTime};
 }
 export function teamView(data,teamId){
   return {players:data.coachPlayers.filter(p=>p.teamId===teamId),trainings:data.coachTrainings.filter(t=>t.teamId===teamId).sort(dateOrder),
@@ -196,17 +255,20 @@ function csvCell(value){
   return '"'+s.replaceAll('"','""')+'"';
 }
 export function coachCsv(view){
-  const rows=[['Дата','Соревнование','Соперник','Счёт','Партии','Игрок',...Object.values(metrics)]];
+  const rows=[['Дата','Соревнование','Соперник','Счёт','Партии','Игрок',...Object.values(metrics),'Время на площадке (измерено)','Полнота времени','VolleyPoint: время по длительности партий','VolleyPoint: партии с данными']];
+  const names=new Map();for(const p of view.players)if(!names.has(p.id))names.set(p.id,p.name);
   for(const m of view.matches){
     const score=matchScore(m),base=[m.date,m.competition,m.opponent,score.ours+':'+score.theirs,m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')];
-    for(const id of m.roster)rows.push([...base,view.players.find(p=>p.id===id)?.name||'',...keys.map(k=>m.stats[id]?.[k]??'')]);
-    if(!m.roster.length)rows.push([...base,'',...keys.map(()=> '')]);
+    const timing=m.detail?courtTime(replayDetailed(m.detail)):null;
+    for(const id of m.roster){const historic=volleyPlayerTime(m,id);rows.push([...base,names.get(id)||'',...keys.map(k=>m.stats[id]?.[k]??''),timing?.measured?courtTimeLabel(timing.players.ours[id]||0):'',timing?.measured?(timing.partial?'Частично':'Измерено'):historic?'Восстановлено по PDF':'Нет данных',historic?volleyTimeLabel(historic):'',historic?historic.knownSets+'/'+historic.sets.length:'']);}
+    if(!m.roster.length)rows.push([...base,'',...keys.map(()=> ''),'','','','']);
   }
   return '\uFEFF'+rows.map(r=>r.map(csvCell).join(';')).join('\r\n');
 }
 export function attendanceCsv(view){
   const rows=[['Дата','Время','Тренировка','Проведена','Игрок','Посещаемость']];
-  for(const t of view.trainings)for(const id of t.roster)rows.push([t.date,t.time,t.title,t.held?'Да':'Нет',view.players.find(p=>p.id===id)?.name||'',attendanceLabels[t.attendance[id]]||'Не отмечено']);
+  const names=new Map();for(const p of view.players)if(!names.has(p.id))names.set(p.id,p.name);
+  for(const t of view.trainings)for(const id of t.roster)rows.push([t.date,t.time,t.title,t.held?'Да':'Нет',names.get(id)||'',attendanceLabels[t.attendance[id]]||'Не отмечено']);
   return '\uFEFF'+rows.map(r=>r.map(csvCell).join(';')).join('\r\n');
 }
 

@@ -7,8 +7,8 @@ import {webkit,devices} from 'playwright';
 
 const candidate=process.cwd(),baseline=resolve(process.argv[2]||'');
 const readVersion=async root=>JSON.parse(await readFile(resolve(root,'package.json'),'utf8')).version;
-assert.equal(await readVersion(baseline),'5.1.0');
-const expected=await readVersion(candidate);assert.notEqual(expected,'5.1.0');
+const baselineVersion=await readVersion(baseline);assert.ok(['5.1.0','5.1.1'].includes(baselineVersion));
+const expected=await readVersion(candidate);assert.notEqual(expected,baselineVersion);
 let root=baseline;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png'};
 const server=createServer(async(req,res)=>{
@@ -31,7 +31,7 @@ try{
  await page.goto(origin+'/index.html');await page.locator('.workspace-nav').waitFor();
  await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller),undefined,{timeout:45000});
  const installed=await page.evaluate(async()=>({version:(await import('./js/version.js')).APP_VERSION,db:(await (await import('./js/db.js')).open()).version,caches:await caches.keys()}));
- assert.equal(installed.version,'5.1.0');assert.equal(installed.db,10);assert.ok(installed.caches.some(x=>x.endsWith(':v5.1.0')));
+ assert.equal(installed.version,baselineVersion);assert.equal(installed.db,10);assert.ok(installed.caches.some(x=>x.endsWith(':v'+baselineVersion)));
  const fixture=await page.evaluate(async()=>{
   const S=await import('./js/store.js'),M=await import('./js/model.js'),C=await import('./js/coach.js'),W=await import('./js/workbench.js'),db=await import('./js/db.js'),sync=await import('./js/sync.js'),{encryptBackup}=await import('./js/privacy.js');
   const date=M.todayIso(),from=date.slice(0,4)+'-01-01',to=date.slice(0,4)+'-12-31';await S.setYear(from,to);
@@ -52,8 +52,20 @@ try{
   const plan=await sync.prepareSync({area,endpoint,password,client});await sync.executeSync({plan,choices:{},password,client,confirmed:true});
   // No saved bearer or external network request. This is a real old-format encrypted checkpoint.
   localStorage.setItem('teachapp.upgrade-test','local-preference');
-  const backup=await S.makeBackup();return {data:await db.dumpAll(),backupData:backup.data,protectedBackup:await encryptBackup(backup,password),remote,matchId:d.id,password,endpoint};
+  // v2 profile is scoped to coach, which has no sync checkpoint, so automatic
+  // exchange must not initialize or contact its endpoint after upgrading.
+  const trust=await import('./js/device-trust.js'),secret=()=>btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
+  const profile=trust.saveTrustedProfile({version:2,endpoint:'https://synthetic-profile.example.test',deviceId:crypto.randomUUID(),name:'Synthetic upgrade device',areas:{coach:{token:secret(),password:secret()}}});
+  const backup=await S.makeBackup();
+  // An older published client must reject a newer authenticated format even
+  // when the contents would otherwise be valid; no local write is allowed.
+  const oldPacket=await (await import('./js/privacy.js')).decryptBackup(remote.envelope,password);
+  const futureEnvelope=await encryptBackup({...oldPacket,backupVersion:22},password);
+  let oldRejected=false;try{await sync.verifySyncSnapshot({revision:1,envelope:futureEnvelope},password,area);}catch{oldRejected=true;}
+  let oldBackupRejected=false;try{(await import('./js/backup.js')).validateBackup({...backup,version:22});}catch{oldBackupRejected=true;}
+  return {profile,data:await db.dumpAll(),backupData:backup.data,protectedBackup:await encryptBackup(backup,password),remote,matchId:d.id,password,endpoint,futureEnvelope,oldRejected,oldBackupRejected};
  });
+ assert.equal(fixture.oldRejected,true,'old published client must reject v22 sync packet');assert.equal(fixture.oldBackupRejected,true,'old client must reject v22 backup');
  assert.equal(fixture.remote.revision,1);assert.equal(fixture.data.lessons.length,2);assert.equal(fixture.data.coachLive.length,1);
  assert.equal(fixture.backupData.meta.some(x=>x.id.startsWith('sync-checkpoint-')),false);
  root=candidate; // Same origin and browser context; only static server content changes.
@@ -71,15 +83,18 @@ try{
  await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller),undefined,{timeout:45000});
  const newDocument=await page.evaluate(async()=>({old:!!window.__oldUpgradeDocument,time:performance.timeOrigin,version:(await import('./js/version.js')).APP_VERSION}));
  assert.equal(newDocument.old,false);assert.notEqual(newDocument.time,oldDocument);assert.equal(newDocument.version,expected);
- const upgraded=await page.evaluate(async()=>{const db=await import('./js/db.js');return {data:await db.dumpAll(),version:(await db.open()).version,caches:await caches.keys(),pref:localStorage.getItem('teachapp.upgrade-test')};});
+ const upgraded=await page.evaluate(async()=>{const db=await import('./js/db.js');return {data:await db.dumpAll(),version:(await db.open()).version,caches:await caches.keys(),pref:localStorage.getItem('teachapp.upgrade-test'),profile:(await import('./js/device-trust.js')).readTrustedProfile()};});
  assert.deepEqual(upgraded.data,fixture.data,'upgrade must preserve every stored record including checkpoint and draft');
- assert.equal(upgraded.version,10);assert.equal(upgraded.pref,'local-preference');assert.ok(upgraded.caches.some(x=>x.endsWith(':v'+expected)));assert.ok(!upgraded.caches.some(x=>x.endsWith(':v5.1.0')));
+ assert.equal(upgraded.version,10);assert.equal(upgraded.pref,'local-preference');assert.ok(upgraded.caches.some(x=>x.endsWith(':v'+expected)));assert.ok(!upgraded.caches.some(x=>x.endsWith(':v'+baselineVersion)));assert.deepEqual(upgraded.profile,fixture.profile,'v2 profile must remain exactly unchanged');assert.equal(upgraded.data.meta.some(x=>x.id==='sync-checkpoint-coach'),false,'upgrade must not initialize unconfirmed scope');
  const reconcile=await page.evaluate(async({remote,password,endpoint})=>{
   const sync=await import('./js/sync.js');let writes=0;const client={get:async()=>remote,put:async()=>{writes++;throw Error('Unnecessary write');}};
   const plan=await sync.prepareSync({area:'school',endpoint,password,client});const result=await sync.executeSync({plan,choices:{},password,client,confirmed:true,reuseRemote:true});
   return {revision:result.revision,writes,status:(await sync.localSyncState({area:'school',endpoint,password})).status};
  },fixture);
  assert.deepEqual(reconcile,{revision:1,writes:0,status:'clean'});
+ const compat=await page.evaluate(async({futureEnvelope,password})=>{const sync=await import('./js/sync.js'),S=await import('./js/store.js');return {remote:await sync.verifySyncSnapshot({revision:1,envelope:futureEnvelope},password,'school'),backup:(await S.makeBackup()).version};},fixture);
+ assert.deepEqual(compat,{remote:{revision:1,empty:false},backup:22});
+ console.log('FORMAT FENCE PASS: published v21 refuses v22, new client reads both, preserved old checkpoint without PUT.');
  await context.setOffline(true);await page.reload();await page.locator('.workspace-nav').waitFor();
  const offline=await page.evaluate(async id=>{
   const db=await import('./js/db.js'),C=await import('./js/coach.js'),{replayDetailed}=await import('./js/match-protocol.js'),draft=await db.get('coachLive',id);
@@ -93,5 +108,5 @@ try{
  const restored=await fresh.evaluate(async({protectedBackup,password})=>{const S=await import('./js/store.js'),db=await import('./js/db.js'),{decryptBackup}=await import('./js/privacy.js');await S.restoreBackup(await decryptBackup(protectedBackup,password));return db.dumpAll();},fixture);
  assert.deepEqual(restored,fixture.backupData,'old encrypted backup must restore in a separate new-version context');
  assert.deepEqual(errors,[]);await restoredContext.close();
- console.log('PWA UPGRADE PASS: actual 5.1.0 → '+expected+'; IndexedDB v10, both lesson slots and grades, norm assignment, team/training/match, unfinished score, preserved encrypted checkpoint, zero redundant PUT, previous cache removed, offline edit, encrypted backup restored independently.');
+ console.log('PWA UPGRADE PASS: actual '+baselineVersion+' → '+expected+'; preserved v2 identity, no automatic initialization, IndexedDB v10, both lesson slots and grades, norm assignment, team/training/match, unfinished score, preserved encrypted checkpoint, zero redundant PUT, previous cache removed, offline edit, encrypted backup restored independently.');
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

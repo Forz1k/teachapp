@@ -11,6 +11,7 @@ import * as M from './model.js';
 import {appendGradeHistory,gradeState,finalState,lessonHistoryKey,finalHistoryKey,checkUndo} from './grade-history.js';
 import * as A from './assessment.js';
 import {planNormImport} from './norm-import.js';
+import {recordKtpVersion,orderKtpTopics} from './ktp-history.js';
 
 /** Кэш в памяти. Грузим один раз при старте — база маленькая (сотни записей). */
 export const state = {
@@ -74,9 +75,11 @@ export function notify(studentId = null) {
   }
 }
 
-/** Первичная загрузка всей базы в кэш. */
+/** School UI snapshot: coach archives and work records are read by their own
+ * consumers, not deserialized at every school load. Backups remain complete. */
+export const schoolViewStores=Object.freeze(['meta','classes','students','lessons','topics','ktp','schedule','scheduleOverrides','marks','exemptions','studentHealthProfiles','activityRestrictions','activityCategories','monthly','participation','norms','normResults','finalGrades']);
 export async function load() {
-  return applySnapshot(await db.dumpAll());
+  return applySnapshot(await db.readSnapshot(schoolViewStores));
 }
 
 function applySnapshot({ meta: settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides,
@@ -532,7 +535,7 @@ async function editMark(studentId, lessonId, edit,source='manual',undoEventId=nu
     const base = edit(priorBase, previous);
     if(source==='undo'&&undoEventId&&base?.value){
       const [restrictions,custom,topic]=await Promise.all([s.activityRestrictions.index('studentId').getAll(studentId),s.activityCategories.getAll(),lesson.topicId?s.topics.get(lesson.topicId):Promise.resolve(null)]);
-      const review=H.checkLessonRestrictions({lesson:{...lesson,activityIds:lesson.activityIds??topic?.activityIds},students:[student],activities:[...H.catalog,...custom],restrictions});
+      const review=H.checkLessonRestrictions({lesson:effectiveLessonLoad(lesson,topic),students:[student],activities:[...H.catalog,...custom],restrictions});
       const matches=[...review.matches,...review.potentialMatches];
       if(M.hasOsv(previous)||previous?.flag==='Н'||part?.mode==='paused'||part?.full||exemptions.some(e=>M.exemptionCovers(e,lesson.date))||matches.length)throw Error('Проверьте участие и ограничения в обычном журнале');
     }
@@ -743,7 +746,7 @@ export function ktpOfClass(classId) {
 export function topicsOfKtp(ktpId) {
   return state.topics
     .filter((t) => t.ktpId === ktpId)
-    .sort((a, b) => (a.ktpOrder || 0) - (b.ktpOrder || 0));
+     .sort((a,b)=>(a.ktpOrder||0)-(b.ktpOrder||0)||a.id.localeCompare(b.id));
 }
 
 /** Все темы, доступные для класса (из всех его КТП), плюс общие без КТП. */
@@ -803,24 +806,17 @@ export async function repairKtpPlan(expected, name, classIds, confirmed=false){
  await load();
 }
 
-/** Удалить КТП вместе с его темами. Темы в уроках обнуляются. */
+/** Never detach a topic from an existing lesson. Snapshot before deletion. */
 export async function deleteKtp(id) {
-  const topics = state.topics.filter((t) => t.ktpId === id);
-  const topicIds = new Set(topics.map((t) => t.id));
-  const affectedLessons = state.lessons.filter((l) => topicIds.has(l.topicId));
-
-  await db.transaction(['ktp', 'topics', 'lessons'], 'readwrite', (s) => {
-    for (const l of affectedLessons) {
-      s.lessons.put({ ...l, topicId: null });
-    }
-    for (const t of topics) s.topics.delete(t.id);
-    s.ktp.delete(id);
+  await db.transaction(['ktp','topics','lessons','workRecords'],'readwrite',async s=>{
+    const plan=await s.ktp.get(id);if(!plan)throw Error('КТП недоступно');
+    const topics=await s.topics.index('ktpId').getAll(id),ids=new Set(topics.map(t=>t.id));
+    if((await s.lessons.getAll()).some(l=>ids.has(l.topicId)))throw Error('Темы КТП используются в уроках. Сохраните план для истории, снимите привязку к классам или создайте новую версию.');
+    await recordKtpVersion(s,plan,topics,{label:'Перед удалением КТП',reason:'deletePlan'});
+    for(const t of topics)await s.topics.delete(t.id);
+    await s.ktp.delete(id);
   });
-
-  for (const l of affectedLessons) l.topicId = null;
-  state.topics = state.topics.filter((t) => !topicIds.has(t.id));
-  state.ktp = state.ktp.filter((k) => k.id !== id);
-  notify();
+  await load();notify();
 }
 
 export async function addTopic(name, ktpOrder, ktpId = null) {
@@ -847,13 +843,28 @@ export async function updateTopic(id, patch) {
 }
 
 export async function deleteTopic(id) {
-  await db.del('topics', id);
-  state.topics = state.topics.filter((t) => t.id !== id);
-  for (const l of state.lessons.filter((x) => x.topicId === id)) {
-    l.topicId = null;
-    await db.put('lessons', l);
-  }
-  notify();
+  await db.transaction(['ktp','topics','lessons','workRecords'],'readwrite',async s=>{
+    const topic=await s.topics.get(id);if(!topic)throw Error('Тема недоступна');
+    if((await s.lessons.getAll()).some(l=>l.topicId===id))throw Error('Тема используется в уроках. Удаление запрещено: сохраните историю уроков.');
+    if(topic.ktpId){
+      const plan=await s.ktp.get(topic.ktpId);if(!plan)throw Error('КТП недоступно');
+      await recordKtpVersion(s,plan,await s.topics.index('ktpId').getAll(plan.id),{label:'Перед удалением темы',reason:'deleteTopic'});
+    }
+    await s.topics.delete(id);
+  });
+  await load();notify();
+}
+/** Reorder by an explicit full permutation; stale order from another tab is rejected. */
+export async function reorderKtpTopics(ktpId,expectedIds,nextIds){
+  if(!Array.isArray(expectedIds)||!Array.isArray(nextIds)||expectedIds.length!==nextIds.length||new Set(nextIds).size!==nextIds.length||nextIds.some(id=>!expectedIds.includes(id)))throw Error('Некорректный порядок тем');
+  await db.transaction(['ktp','topics'],'readwrite',async s=>{
+    if(!await s.ktp.get(ktpId))throw Error('КТП недоступно');
+    const old=orderKtpTopics(await s.topics.index('ktpId').getAll(ktpId));
+    if(JSON.stringify(old.map(t=>t.id))!==JSON.stringify(expectedIds))throw Error('Порядок тем изменился. Откройте КТП заново.');
+    const byId=new Map(old.map(t=>[t.id,t]));
+    for(const [i,id] of nextIds.entries())await s.topics.put({...byId.get(id),ktpOrder:i+1});
+  });
+  await load();notify();
 }
 
 /** Массовая замена тем в КТП — одной транзакцией (для импорта из Excel). */
@@ -863,12 +874,13 @@ function importedTopics(items){
 }
 export async function replaceKtpTopics(ktpId, items) {
   const names=importedTopics(items);
-  const created=await db.transaction(['ktp','topics','lessons'],'readwrite',async s=>{
-    if(!await s.ktp.get(ktpId))throw new Error('КТП недоступен');
+  const created=await db.transaction(['ktp','topics','lessons','workRecords'],'readwrite',async s=>{
+    const plan=await s.ktp.get(ktpId);if(!plan)throw new Error('КТП недоступен');
     const old=await s.topics.index('ktpId').getAll(ktpId),oldIds=new Set(old.map(t=>t.id));
     const lessons=await s.lessons.getAll();
     if(lessons.some(l=>oldIds.has(l.topicId)))throw new Error('Темы уже используются в уроках. Допишите темы или создайте новую версию КТП.');
     const rows=names.map((name,i)=>({id:M.uid('top'),name,ktpOrder:i+1,ktpId}));
+    if(old.length)await recordKtpVersion(s,plan,old,{label:'Перед заменой тем',reason:'replace'});
     for(const t of old)await s.topics.delete(t.id);
     for(const t of rows)await s.topics.add(t);
     return rows;
@@ -1033,7 +1045,7 @@ export async function restoreBackup(payload) {
   const copy = typeof structuredClone === 'function' ? structuredClone(payload) : JSON.parse(JSON.stringify(payload));
   const snapshot = validateBackup(copy);
   snapshot.meta=snapshot.meta.filter(r=>!r.id.startsWith('sync-checkpoint-'));
-  await db.replaceAll(snapshot);
+  await db.replaceAll(snapshot,{guardMigration:true});
   applySnapshot(snapshot);
   return true;
 }
@@ -1094,9 +1106,12 @@ export async function saveParticipation(studentId, lessonId, input, expectedRevi
 
 export const activities = () => [...H.catalog, ...state.activityCategories];
 export const healthGroups = () => [...new Set([...H.groups, ...(state.settings.healthGroups || [])])];
+function effectiveLessonLoad(lesson,topic){
+  return {...lesson,activityIds:lesson.activityIds??topic?.activityIds,activitiesConfirmed:lesson.activityIds==null&&topic?.activitiesConfirmed===false?false:lesson.activitiesConfirmed};
+}
 export function lessonCheck(lesson) {
   const topic = state.topics.find(t => t.id === lesson.topicId);
-  return H.checkLessonRestrictions({ lesson: { ...lesson, activityIds: lesson.activityIds ?? topic?.activityIds },
+  return H.checkLessonRestrictions({ lesson: effectiveLessonLoad(lesson,topic),
     activities: activities(), students: state.students, restrictions: state.activityRestrictions });
 }
 
@@ -1288,7 +1303,7 @@ export async function applyLessonBatch(lessonId,studentIds,action,value=null,con
       s.participation.index('lessonId').getAll(lessonId),s.exemptions.getAll(),s.activityRestrictions.getAll(),
       s.activityCategories.getAll(),lesson.topicId?s.topics.get(lesson.topicId):Promise.resolve(null)]);
     const ids=new Set(students.map(st=>st.id)),byMark=new Map(marks.map(m=>[m.studentId,m])),byPart=new Map(parts.map(p=>[p.studentId,p]));
-    const review=H.checkLessonRestrictions({lesson:{...lesson,activityIds:lesson.activityIds??topic?.activityIds},activities:[...H.catalog,...custom],students,restrictions});
+    const review=H.checkLessonRestrictions({lesson:effectiveLessonLoad(lesson,topic),activities:[...H.catalog,...custom],students,restrictions});
     const restricted=new Set([...review.matches,...review.potentialMatches].map(m=>m.studentId));
     const nextMarks=[],nextParts=[];
     for(const id of studentIds){

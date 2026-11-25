@@ -113,3 +113,61 @@ test('cooperative LIVE handoff pauses the first device, validates the published 
 });
 
 test('persistent pause marker prevents stale local publisher from sending after a pause in another tab',async()=>{server=null;const map=new Map();globalThis.localStorage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};const id='cross-tab-pause';await P.connectPortal(id,{origin,apiKey,email:'trainer@example.org',password:'password',slug:'pause',team:'Команда'},fake);P.setPortalEnabled(id,true,'Команда');await wait(()=>server?.team==='Команда'&&!P.portalInfo(id).dirty);map.set('teachapp:portal-paused:'+id,'1');assert.equal(P.portalInfo(id).data.publisherPaused,true);assert.throws(()=>P.setPublicTeamName(id,'Blocked'),/приостановлена/);assert.equal(server.team,'Команда');P.disconnectPortal(id);});
+
+test('Opt-in archive queue survives disconnection, never overwrites conflicts, and retries idempotently',async()=>{
+ server=null;const map=new Map();globalThis.localStorage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};
+ const id='archive-queue-test',credentials={origin,apiKey,email:'trainer@example.org',password:'password',slug:'queue',team:'Команда'},records=new Map();let archiveWrites=0;
+ const fetcher=async(url,opt={})=>{
+  if(!url.includes('/publicMatchArchive/'))return fake(url,opt);
+  const u=new URL(url),k=u.pathname.split('/').at(-1).replace(/\.json$/,'');
+  if(u.searchParams.has('equalTo'))return json(Object.fromEntries([...records].filter(([,r])=>r.id===JSON.parse(u.searchParams.get('equalTo')))));
+  if(opt.method==='PUT'){if(opt.headers['If-Match']!==(records.has(k)?'present':'empty'))return json(null,412);archiveWrites++;records.set(k,JSON.parse(opt.body));return json(records.get(k));}
+  return new Response(JSON.stringify(records.get(k)||null),{headers:{ETag:records.has(k)?'present':'empty'}});
+ };
+ await P.connectPortal(id,credentials,fetcher);P.setPortalEnabled(id,true,'Команда');await wait(()=>!P.portalInfo(id).dirty&&P.portalInfo(id).status.startsWith('Опубликовано'));
+ const match={id:'private_id',teamId:id,date:'2025-11-01',opponent:'Гости',sets:[{ours:25,theirs:20}],privateNote:'secret'};
+ await P.publishSavedResult(id,match);await wait(()=>!P.portalInfo(id).dirty&&P.portalInfo(id).status.startsWith('Опубликовано'));assert.equal(P.portalInfo(id).data.archivePending.length,0);
+ P.setPortalSettings(id,{permanent:true});await wait(()=>!P.portalInfo(id).dirty&&P.portalInfo(id).status.startsWith('Опубликовано'));
+ P.disconnectPortal(id);const result=await P.publishSavedResult(id,match);assert.equal(P.portalInfo(id).data.archivePending.length,1);assert.equal([...map.values()].join('').includes('privateNote'),false);
+ await P.connectPortal(id,credentials,fetcher);await wait(()=>!P.portalInfo(id).dirty&&P.portalInfo(id).status.startsWith('Опубликовано'));
+ const cancelled=await P.sendPendingArchive(id,{confirm:()=>false,fetcher});assert.equal(cancelled.cancelled,true);assert.equal(archiveWrites,0);
+ const key=String(result.startedAt).padStart(16,'0')+'_'+result.id;records.set(key,{...result,opponent:'Other'});
+ const conflict=await P.sendPendingArchive(id,{confirm:()=>true,fetcher});assert.equal(conflict.conflicts,1);assert.equal(archiveWrites,0);assert.equal(P.portalInfo(id).data.archivePending.length,1);
+ records.delete(key);const sent=await P.sendPendingArchive(id,{confirm:()=>true,fetcher});assert.equal(sent.copied,1);assert.equal(archiveWrites,1);assert.equal(P.portalInfo(id).data.archivePending.length,0);
+ await P.publishSavedResult(id,match);await wait(()=>!P.portalInfo(id).dirty&&P.portalInfo(id).status.startsWith('Опубликовано'));const retry=await P.sendPendingArchive(id,{confirm:()=>true,fetcher});assert.equal(retry.existing,1);assert.equal(archiveWrites,1);
+ P.disconnectPortal(id);
+});
+
+test('all archive mutations share one in-tab lock, cancellation and failure release it',async()=>{
+ const P=await import('../js/public-publisher.js'),previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage'),data=new Map();
+ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:k=>data.get(k)??null,setItem:(k,v)=>data.set(k,v),removeItem:k=>data.delete(k),key:i=>[...data.keys()][i],get length(){return data.size;}}});
+ const id='archive-mutex-58',row={id:'result_mutex',opponent:'Synthetic',startedAt:1700000000000,setsWon:{ours:1,theirs:0},sets:[{ours:25,theirs:21}]};
+ const origin='https://demo.firebaseio.com',parent={schema:1,team:'Synthetic',updatedAt:1,schedule:[],archive:[]};
+ let publicData=parent,etag='"parent"',ready;
+ const fetcher=async(url,opt={})=>{
+  if(url.includes('identitytoolkit'))return new Response(JSON.stringify({localId:'owner',idToken:'token',refreshToken:'refresh',expiresIn:3600}));
+  if(url.includes('/publicTeams/')){
+   if(opt.method==='PUT'){publicData={...JSON.parse(opt.body),updatedAt:1};}
+   return new Response(JSON.stringify(publicData),{headers:{ETag:etag}});
+  }
+  if(url.includes('orderBy='))return new Response('null');
+  return new Response('null',{headers:{ETag:'"empty"'}});
+ };
+ data.set('teachapp:public-portal:'+id,JSON.stringify({origin,owner:'owner',slug:'slug',team:'Synthetic',enabled:true,confirmedEtag:etag}));
+ try{
+  await P.connectPortal(id,{origin,apiKey:'synthetic-key',email:'synthetic@example.test',password:'x',team:'Synthetic'},fetcher);
+  for(let i=0;i<20&&P.portalInfo(id).dirty;i++)await new Promise(r=>setTimeout(r,5));
+  // Allow the parent CAS loop to finish before starting archive operations.
+  await new Promise(r=>setTimeout(r,20));
+  const started=new Promise(r=>ready=r);let cancel;
+  const pending=P.publishExtendedResult(id,row,{fetcher,confirm:()=>{ready();return new Promise(r=>cancel=r);}});
+  await started;assert.equal(P.portalInfo(id).archiveSending,true);
+  await assert.rejects(P.removeExtendedResult(id,row,{fetcher}),/операцию архива/);
+  await assert.rejects(P.migrateExtendedArchive(id,{fetcher}),/операцию архива/);
+  await assert.rejects(P.sendPendingArchive(id,{fetcher}),/операцию архива/);
+  cancel(false);assert.equal(await pending,false);assert.equal(P.portalInfo(id).archiveSending,false);
+  await assert.rejects(P.publishExtendedResult(id,row,{fetcher,confirm:()=>{throw Error('cancelled-error');}}),/cancelled-error/);
+  assert.equal(P.portalInfo(id).archiveSending,false);
+  assert.equal(await P.publishExtendedResult(id,row,{fetcher,confirm:()=>false}),false);
+ }finally{P.disconnectPortal(id);if(previous)Object.defineProperty(globalThis,'localStorage',previous);else delete globalThis.localStorage;}
+});

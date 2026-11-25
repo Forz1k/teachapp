@@ -1,7 +1,8 @@
 import * as S from '../store.js';
 import * as H from '../health.js';
 import * as M from '../model.js';
-import { el, openSheet, toast } from '../ui.js';
+import { el, openSheet, toast, confirmDialog } from '../ui.js';
+import {alternativeStatuses,alternativeTypes,saveLessonAlternative,lessonAlternatives} from '../lesson-alternatives.js';
 import { openParticipation } from './participation.js';
 import {alternativeExerciseCandidates,builtinExercises,listWork} from '../workbench.js';
 
@@ -110,7 +111,7 @@ export function editTags(entity, isTopic, done) {
   const topic = S.state.topics.find(t => t.id === entity.topicId);
   const picker = tagPicker(entity.activityIds ?? topic?.activityIds);
   const save = async ids => {
-    if (isTopic) await S.updateTopic(entity.id,{activityIds:ids});
+    if (isTopic) await S.updateTopic(entity.id,{activityIds:ids,activitiesConfirmed:true});
     else await S.updateLesson(entity.id,{activityIds:ids});
     done();
   };
@@ -155,7 +156,7 @@ export function openLessonRestrictions(lesson,studentId,onBack){
   const reopen=()=>openLessonRestrictions(S.state.lessons.find(l=>l.id===lesson.id)||lesson,studentId,onBack);
   if(lesson.id&&S.state.lessons.some(l=>l.id===lesson.id)){
     if(topic)panel.append(btn('Настроить нагрузки темы КТП',()=>editTags(topic,true,reopen)));
-    panel.append(btn('Настроить нагрузки этого урока',()=>editTags(lesson,false,reopen)));
+    panel.append(btn('Настроить нагрузки этого урока',()=>editTags(lesson,false,reopen)),btn('Альтернативные задания урока',()=>openAlternativeList(lesson,reopen)));
   }else if(!lesson.id)panel.append(el('p',{text:'Сначала создайте урок и назначьте тему в журнале.'}));
   for(const {studentId:id,activityId,restriction:r} of rows){
     const student=S.state.students.find(s=>s.id===id);
@@ -193,9 +194,24 @@ export function prepareTest(lesson) {
 }
 
 async function openAlternatives(lesson,id,back){
- const exercises=[...builtinExercises,...await listWork('exercise')],student=S.state.students.find(s=>s.id===id),result=alternativeExerciseCandidates(lesson,id,exercises,{students:S.state.students,activities:S.activities(),restrictions:S.state.activityRestrictions,exemptions:S.state.exemptions});
- const panel=el('div',{},[el('h2',{text:'Варианты задания · '+student.fullName}),el('p',{text:'Это черновики для рассмотрения учителем, не медицинская рекомендация и не разрешение на нагрузку. Проверяются только внесённые категории и даты. Учтите все указания специалиста и фактическое состояние ученика.'}),el('h3',{text:'Теоретические задания для рассмотрения'}),...result.theoretical.map(text=>el('p',{text}))]);
+ const exercises=[...builtinExercises,...await listWork('exercise')],student=S.state.students.find(s=>s.id===id);if(!student)return toast('Ученик недоступен');const topic=S.state.topics.find(t=>t.id===lesson.topicId),effective={...lesson,activityIds:lesson.activityIds??topic?.activityIds},result=alternativeExerciseCandidates(effective,id,exercises,{students:S.state.students,activities:S.activities(),restrictions:S.state.activityRestrictions,exemptions:S.state.exemptions});
+ const panel=el('div',{},[el('h2',{text:'Варианты задания · '+student.fullName}),el('p',{text:'Это черновики для рассмотрения учителем, не медицинская рекомендация и не разрешение на нагрузку. Проверяются только внесённые категории и даты. Учтите все указания специалиста и фактическое состояние ученика.'}),el('h3',{text:'Теоретические задания для рассмотрения'}),...result.theoretical.map(text=>el('div',{},[el('p',{text}),lesson.id?btn('Выбрать теоретическое задание',()=>alternativeForm(lesson,id,{type:'theory',task:text},()=>openAlternatives(lesson,id,back))):null]))]);
  if(result.full)panel.append(el('p',{text:'Действует освобождение: физические упражнения не предлагаются.'}));
- else panel.append(el('h3',{text:'Библиотека · нет совпадений по указанным категориям'}),el('p',{text:'Упражнения с известным совпадением или неизвестной категорией исключены. Отсутствие совпадения не подтверждает допустимость нагрузки.'}),...result.rows.slice(0,50).map(({exercise:e})=>el('div',{class:'card-block'},[el('strong',{text:e.name}),el('p',{text:nameOf(e.activityId)+' · '+e.description})])),...(result.rows.length?[]:[el('p',{text:'Подходящие записи библиотеки не найдены.'})]));
+ else panel.append(el('h3',{text:'Библиотека · нет совпадений по указанным категориям'}),el('p',{text:'Упражнения с известным совпадением или неизвестной категорией исключены. Отсутствие совпадения не подтверждает допустимость нагрузки.'}),...result.rows.slice(0,50).map(({exercise:e})=>el('div',{class:'card-block'},[el('strong',{text:e.name}),el('p',{text:nameOf(e.activityId)+' · '+e.description}),lesson.id?btn('Выбрать упражнение',()=>alternativeForm(lesson,id,{type:'exercise',activityId:e.activityId,task:e.name+' · '+e.description},()=>openAlternatives(lesson,id,back))):null])),...(result.rows.length?[]:[el('p',{text:'Подходящие записи библиотеки не найдены.'})]));
+ if(lesson.id){const old=(await lessonAlternatives(lesson.id)).find(r=>r.studentId===id);if(old)panel.append(el('div',{class:'card-block'},[el('strong',{text:'Сохранённое задание · '+alternativeStatuses[old.status]}),el('p',{text:old.task}),btn('Изменить / отметить выполнение',()=>alternativeForm(lesson,id,old,()=>openAlternatives(lesson,id,back)))]));panel.append(btn('Своё теоретическое задание',()=>alternativeForm(lesson,id,{type:'theory',task:''},()=>openAlternatives(lesson,id,back))));}
  panel.append(btn('Назад к проверке',back));openSheet(panel);
+}
+
+async function openAlternativeList(lesson,back){
+ const rows=await lessonAlternatives(lesson.id),pupils=S.studentsOfClass(lesson.classId),panel=el('div',{class:'coach-form'},[el('h2',{text:'Альтернативные задания урока'}),el('p',{text:M.lessonLabel(lesson)+' · записи не меняют оценки и не являются медицинским допуском.'})]);
+ for(const student of pupils){const r=rows.find(x=>x.studentId===student.id);panel.append(el('div',{class:'card-block'},[el('strong',{text:student.fullName}),el('p',{text:r?alternativeStatuses[r.status]+' · '+r.task:'Нет задания'}),btn(r?'Изменить задание':'Подобрать задание',()=>openAlternatives(lesson,student.id,()=>openAlternativeList(lesson,back)))]));}
+ panel.append(btn('Назад',back));openSheet(panel,{fullHeight:true});
+}
+async function alternativeForm(lesson,id,draft,back){
+ const old=(await lessonAlternatives(lesson.id)).find(r=>r.studentId===id),task=el('textarea',{rows:4,maxlength:2000},[(draft.task||'').slice(0,2000)]),status=select(Object.entries(alternativeStatuses).filter(([k])=>k!=='cancelled'||old),draft.status||'planned');
+ const save=btn('Сохранить задание',async()=>{save.disabled=true;try{
+  if(!await confirmDialog({title:'Подтвердить задание?',text:'Вы проверили ограничения и указания специалиста. Это запись задания, а не допуск, оценка или отметка посещаемости.',ok:'Сохранить'}))return;
+  await saveLessonAlternative({lessonId:lesson.id,studentId:id,date:lesson.date,revision:old?.revision,type:draft.type,activityId:draft.activityId??null,task:task.value,status:status.value},true);toast('Задание сохранено');await back();
+ }finally{save.disabled=false;}});
+ openSheet(el('div',{class:'coach-form'},[el('h2',{text:'Альтернативное задание'}),el('p',{text:alternativeTypes[draft.type]+(draft.activityId?' · '+nameOf(draft.activityId):'')}),field('Задание',task),field('Статус',status),save,btn('Назад',back)]));
 }

@@ -1,3 +1,7 @@
+import {openTrainingDynamics} from './training-dynamics.js';
+import {openLineupAnalysis} from './lineup-analysis.js';
+import {volleyTimeLabel} from '../volleypoint-time.js';
+import {courtTimeLabel} from '../court-time.js';
 import {openOpponents,openTrainingOverview,openPreMatchDossier} from './coach-opponents.js';
 import {openAssistant} from './assistant.js';
 import {openStudio} from './studio.js';
@@ -93,16 +97,19 @@ function playerCard(team,player,view,refresh){
     const a=C.playerAttendance(player.id,view.trainings.filter(t=>(!range.from||t.date>=range.from)&&(!range.to||t.date<=range.to)));
     const load=C.playerTrainingLoad(player.id,view.trainings,range);
     const s=C.playerSeasonStats(view.matches,player.id,range);
-    const n=s.errors;
+    const n=s.errors,t=s.playingTime;
     content.replaceChildren(
       el('div',{class:'dashboard-metrics'},[metric('Личные очки',format(s.summary.sums.points),'trophy','Зафиксировано'),metric('Эйсы',format(s.summary.sums.aces),'quick','Зафиксировано'),metric('Атаки',format(s.summary.sums.attackKills),'chart','Результативные'),metric('Блоки',format(s.summary.sums.blocks),'shield','Зафиксировано')]),
       card('Матчи · выбранный период',[p('В заявке: '+s.rosterMatches+' · подробных протоколов: '+s.detailedMatches),p('Розыгрышей на площадке по подробным протоколам: '+s.rallies),trendChart(s.chosen.filter(m=>Number.isFinite(m.stats[player.id]?.points)).map(m=>({date:m.date,value:m.stats[player.id].points})).sort((a,b)=>a.date.localeCompare(b.date)).slice(-20),{unit:'очки',label:'Личные очки в матчах'}),p('График: последние 20 матчей с известным показателем.')]),
+      card('Игровое время',[el('div',{class:'dashboard-metrics'},[metric('Измерено LIVE',t.measuredMatches?courtTimeLabel(t.totalMs):'—','quick','Фактические замеры'),metric('Среднее LIVE',t.measuredMatches?courtTimeLabel(t.totalMs/t.measuredMatches):'—','chart','По замерам')]),p('LIVE-замеры: '+t.measuredMatches+' · частичные: '+t.partialMatches+' · доля измеренного времени команды: '+ratio(t.totalMs,t.teamMs)),card('Результативность за 10 минут LIVE',[p(t.pointsPer10==null?'Недостаточно данных: минимум 10 минут и 10 розыгрышей с включённым учётом.':'Отмеченные личные очки за 10 минут: '+Math.round(t.pointsPer10*100)/100),p('Выборка: '+courtTimeLabel(t.rateMs)+' · '+t.rateRallies+' розыгрышей · '+t.ratePoints+' личных очков · '+t.rateMatches+' матчей с розыгрышами'),p('При включённом учёте: выиграно командой '+t.timedWon+'/'+t.timedRallies+' · разница '+(t.timedWon-t.timedLost)+' · выигранных без полной атрибуции '+t.unattributedTimedWins),p('Только зафиксированные личные эйсы, атаки и блоки в измеренных интервалах. Не показатель качества всех попыток и не сравнение с PDF.')]),
+      t.rows.length?el('details',{},[el('summary',{text:'LIVE · по матчам и партиям · '+t.rows.length}),...t.rows.map(r=>el('div',{class:'profile-result'},[p(fmtFull(r.date)+' · '+r.opponent+' · '+courtTimeLabel(r.ms)+(r.partial?' · частично':'')),p(r.sets.map((v,i)=>'П'+(i+1)+' '+courtTimeLabel(v.ms)+(v.partial?'*':'')).join(' · '))]))]):p('Включите измерение в подробном LIVE-матче.'),
+      el('h3',{text:'VolleyPoint · восстановлено по PDF'}),p('По длительности партий: '+(t.historicalMatches?volleyTimeLabel({minMs:t.historicalMinMs,maxMs:t.historicalMaxMs}):'—')+' · матчей: '+t.historicalMatches+' · диапазон или неполные партии: '+t.historicalPartialMatches),p('Матчей без данных времени: '+t.unknownMatches+' из '+s.rosterMatches+'.'),t.historicalRows.length?el('details',{},[el('summary',{text:'VolleyPoint · по матчам и партиям · '+t.historicalRows.length}),...t.historicalRows.map(r=>el('div',{class:'profile-result'},[p(fmtFull(r.date)+' · '+r.opponent+' · '+volleyTimeLabel(r)+' · '+r.knownSets+'/'+r.sets.length+' партий'),p(r.sets.map(v=>'П'+v.set+' '+volleyTimeLabel(v)+(v.kind==='changed'?' (замена)':'')).join(' · '))]))]):p('Для старых матчей повторно выберите исходный PDF в протоколе.'),p('LIVE и PDF не суммируются как точный замер: в длительности партий PDF могут учитываться тайм-ауты и паузы. При заменах без меток времени — диапазон, при неполном составе — нет данных.')]),
       card('Подача · подробные матчи',[p('Розыгрышей на своей подаче: '+(s.detailedMatches?s.serviceRallies:'—')),p('Выиграно командой на подаче: '+ratio(s.serviceWins,s.serviceRallies)),p('Эйсы: '+(s.detailedMatches?s.serviceAces:'—')+' · отмеченные ошибки подачи: '+(s.detailedMatches?s.serviceErrors:'—')),p('Проигрыши на подаче без указанной причины: '+s.unclassifiedServiceLosses),p('Выигрыш розыгрыша на подаче — командный показатель, не личная точность подачи.')]),
       card('Ошибки · подробные матчи',[p(s.detailedMatches?'Подача '+n.serve+' · атака '+n.attack+' · приём '+n.receive+' · прочие '+n.other:'Нет подробных протоколов'),p('Розыгрыши без полной атрибуции на площадке: '+s.unknownOnCourt),p('Ноль отмеченных ошибок не доказывает отсутствие ошибок.')]),
       card('Данные прежних и ручных матчей',[p('Доля успешных среди записанных действий (не гарантирует полноту):'),p('Подача '+ratio(s.rates.serve.success,s.rates.serve.total)),p('Приём '+ratio(s.rates.receive.success,s.rates.receive.total)),p('Атака '+ratio(s.rates.attack.success,s.rates.attack.total)),p('Событийные протоколы не содержат все попытки атаки и приёма; их проценты здесь не вычисляются.')]),
       ...(s.importedMatches?[card('VolleyPoint · импортированные матчи',[p('Протоколов: '+s.importedMatches+' · ошибок по итогам: '+s.importedErrors),p('Зафиксированные ошибки: подача '+s.importedBreakdown.serve+' · атака '+s.importedBreakdown.attack+' · приём '+s.importedBreakdown.receive+' · прочие '+s.importedBreakdown.other),p('Очки в записанных сериях подачи: '+s.importedServiceWins+' · максимальная записанная серия: '+s.importedLongestSeries),p('Полное число попыток и выходы на площадку неизвестны; проценты не вычисляются.')])]:[]),
       card('Тренировки · посещаемость',[p(format(a.pct)+(a.pct==null?'':'%')+' · посещено '+(a.present+a.limited)+' · пропущено '+a.absent+' · не отмечено '+a.unknown)]),
-      card('Тренировочная нагрузка',[p('Заполнено '+load.known+' из '+load.attended+' посещённых тренировок · неизвестно '+load.unknown),p('Сумма по записанным занятиям: '+(load.total??'—')+' усл. ед.'),trendChart(load.rows.slice(-30),{unit:'усл. ед.',label:'Фактическая длительность × субъективная сложность'}),p('Фактические минуты × субъективная сложность 1–10. Не диагностика усталости или медицинский допуск.'),el('details',{},[el('summary',{text:'Записанные занятия · '+load.known}),...load.rows.map(r=>p(fmtFull(r.date)+' · '+r.title+' · '+r.minutes+' мин × '+r.rpe+' = '+r.value))])]),
+      card('Тренировочная нагрузка',[btn('Недельная динамика подготовки',()=>openTrainingDynamics(view,{playerId:player.id,back:()=>playerCard(team,player,view,refresh),initial:range}),'wide'),p('Заполнено '+load.known+' из '+load.attended+' посещённых тренировок · неизвестно '+load.unknown),p('Сумма по записанным занятиям: '+(load.total??'—')+' усл. ед.'),trendChart(load.rows.slice(-30),{unit:'усл. ед.',label:'Фактическая длительность × субъективная сложность'}),p('Фактические минуты × субъективная сложность 1–10. Не диагностика усталости или медицинский допуск.'),el('details',{},[el('summary',{text:'Записанные занятия · '+load.known}),...load.rows.map(r=>p(fmtFull(r.date)+' · '+r.title+' · '+r.minutes+' мин × '+r.rpe+' = '+r.value))])]),
       card('Тренировочные тесты и физподготовка',[...playerTestCards(view,player.id,range),!team.archived&&!player.archived?btn('+ Индивидуальный тест',()=>openTestForm(team,view,null,refresh,player.id),'wide'):null]),
       card('Индивидуальное развитие',[btn('Спортивные достижения',()=>openAchievements({area:'coach',subjectType:'player',subjectId:player.id},()=>playerCard(team,player,view,refresh)),'wide'),btn('Цели и план развития',()=>openPlayerGoals(team,player,()=>playerCard(team,player,view,refresh)),'primary wide')]),
       playerInsightCard(view,player.id,range),
@@ -216,7 +223,7 @@ export function openCoachSearchResult(data,r,refresh){
  const view=C.teamView(data,team.id);selectedTeam=team.id;
  if(r.kind==='player'){const player=view.players.find(p=>p.id===r.id&&!p.archived);if(player)playerCard(team,player,view,refresh);}
  else if(r.kind==='training'){const training=view.trainings.find(t=>t.id===r.id);if(training)trainingForm(team,view,training,refresh);}
- else if(r.kind==='match'){const match=view.matches.find(m=>m.id===r.id);if(match){if(match.imported)openImportedReport(match,view);else if(match.detail)openMatchReport(match,ui.closeSheet);else matchForm(team,view,match,refresh);}}
+ else if(r.kind==='match'){const match=view.matches.find(m=>m.id===r.id);if(match){if(match.imported)openImportedReport(match,view,()=>openVolleyImport(team,view,refresh,{matchId:match.id}));else if(match.detail)openMatchReport(match,ui.closeSheet);else matchForm(team,view,match,refresh);}}
  else{ui.closeSheet();refresh();}
 }
 export async function renderCoach(root,ctx={}){
@@ -228,7 +235,8 @@ export async function renderCoach(root,ctx={}){
   async function refresh(){
     const seq=++sequence;
     try{
-      const data=await C.loadCoach();if(seq!==sequence)return;
+      const loaded=await C.loadCoachForView(selectedTeam,{archived:showArchived});if(seq!==sequence)return;
+      const data=loaded.data;selectedTeam=loaded.selectedTeamId;
       if(root.isConnected&&ctx.onSection)ctx.onSection(selectedSection);
       body.replaceChildren();
       const teams=data.coachTeams.filter(t=>showArchived||!t.archived);
@@ -271,7 +279,7 @@ export async function renderCoach(root,ctx={}){
         body.append(card('Тестирования',[testList(team,view,refresh)]));
         body.append(card('Тренировки',[btn('Библиотека и конспекты',()=>openLibrary('coach'),'wide'),team.archived?null:btn('+ Тренировка',()=>trainingForm(team,view,null,refresh),'primary wide'),team.archived?null:btn('Из конспекта',()=>chooseTrainingPlan((plan,exercises)=>trainingForm(team,view,null,refresh,{...plan,exercises})),'wide')]));
         const upcoming=view.trainings.filter(t=>!t.held&&t.date>=todayIso()).sort(dateSort);
-        const history=view.trainings.filter(t=>!upcoming.includes(t));
+        const upcomingSet=new Set(upcoming),history=view.trainings.filter(t=>!upcomingSet.has(t));
         for(const [title,list] of [['Расписание',upcoming],['История / не проведены',history]]){
           const nodes=list.map(t=>{
             const counts=Object.values(t.attendance);
@@ -291,10 +299,10 @@ export async function renderCoach(root,ctx={}){
         body.append(historyPanel(view.matches,m=>{
           const s=C.matchScore(m);
           return card(m.opponent+' · '+s.ours+':'+s.theirs,[p(fmtFull(m.date)+(m.competition?' · '+m.competition:'')),p(m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),p('Игроков в составе: '+m.roster.length),
-            m.imported?btn('Импортированный протокол VolleyPoint',()=>openImportedReport(m,view),'primary wide'):m.detail?btn('Протокол матча · PDF / печать',()=>openMatchReport(m,ui.closeSheet),'primary wide'):btn('Состав, партии и статистика',()=>matchForm(team,view,m,refresh),'wide'),m.detail?btn('Выводы и план работы',()=>openMatchDebrief(m),'wide'):null,m.detail?btn('Тактический разбор',()=>openMatchTactics(m),'wide'):null,m.detail?btn('Видеоразбор',()=>openVideoReview(m),'wide'):null,team.archived?null:btn('Результат на зрительский сайт',()=>openPublicResult(team,m),'wide'),btn('Удалить матч',()=>confirm('Удалить матч?','Локальный результат и статистика будут удалены. Если он опубликован, уберите его отдельно в настройках зрительской страницы.',()=>C.removeEvent('coachMatches',m.id),refresh),'wide')]);
+            m.imported?btn('Импортированный протокол VolleyPoint',()=>openImportedReport(m,view,()=>openVolleyImport(team,view,refresh,{matchId:m.id})),'primary wide'):m.detail?btn('Протокол матча · PDF / печать',()=>openMatchReport(m,ui.closeSheet),'primary wide'):btn('Состав, партии и статистика',()=>matchForm(team,view,m,refresh),'wide'),m.detail?btn('Выводы и план работы',()=>openMatchDebrief(m),'wide'):null,m.detail?btn('Тактический разбор',()=>openMatchTactics(m),'wide'):null,m.detail||m.imported?btn('Видеоразбор',()=>openVideoReview(m,{players:view.players}),'wide'):null,team.archived?null:btn('Результат на зрительский сайт',()=>openPublicResult(team,m),'wide'),btn('Удалить матч',()=>confirm('Удалить матч?','Локальный результат и статистика будут удалены. Если он опубликован, уберите его отдельно в настройках зрительской страницы.',()=>C.removeEvent('coachMatches',m.id),refresh),'wide')]);
         }));
       }else{
-        body.append(card('Сезонная статистика',[p('Рейтинги по отдельным показателям, сравнение игроков, динамика и тренерские подсказки.'),btn('Открыть сезонную аналитику',()=>openSeasonAnalytics(view),'primary wide'),btn('Развитие команды и цели',()=>openTeamGoals(team),'wide'),btn('Тактическая аналитика матчей',()=>openTeamTactics(view),'wide')]));
+        body.append(card('Сезонная статистика',[p('Рейтинги по отдельным показателям, сравнение игроков, динамика и тренерские подсказки.'),btn('Открыть сезонную аналитику',()=>openSeasonAnalytics(view),'primary wide'),btn('Развитие команды и цели',()=>openTeamGoals(team),'wide'),btn('Тактическая аналитика матчей',()=>openTeamTactics(view),'wide'),btn('Аналитика игровых составов',()=>openLineupAnalysis(view),'primary wide'),btn('Недельная динамика подготовки',()=>openTrainingDynamics(view),'wide')]));
         const filter=select([['','Вся команда'],...view.players.map(p=>[p.id,label(p)])]),stats=el('div',{class:'coach-stack'});
         function draw(){
           const id=filter.value,chosen=id?view.matches.filter(m=>m.roster.includes(id)):view.matches;
@@ -302,8 +310,9 @@ export async function renderCoach(root,ctx={}){
           const lost=chosen.filter(m=>{const s=C.matchScore(m);return s.ours<s.theirs;}).length;
           stats.replaceChildren(p('Матчей: '+chosen.length+' · побед: '+won+' · поражений: '+lost+' · равный счёт: '+(chosen.length-won-lost)),
             metricTable(C.summarizeStats(chosen,id?[id]:null)));
+          const byPlayer=C.indexPlayerRecords(view.trainings);
           const attendanceRows=(id?view.players.filter(p=>p.id===id):view.players).map(player=>{
-            const a=C.playerAttendance(player.id,view.trainings);
+            const a=C.playerAttendance(player.id,byPlayer.get(player.id)||[]);
             return p(label(player)+' · '+format(a.pct)+(a.pct===null?'':'%')+' · явка '+(a.present+a.limited)+' · отсутствия '+a.absent+' · без отметки '+a.unknown);
           });
           stats.append(el('h3',{text:'Посещаемость'}),...attendanceRows);

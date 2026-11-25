@@ -2,6 +2,7 @@ name: TeachApp Firebase archive
 on:
   pull_request:
     paths:
+      - 'package.json'
       - 'firebase-portal-v2.rules.json'
       - 'firebase-archive-dev.json'
       - 'tools/firebase-archive-emulator.mjs'

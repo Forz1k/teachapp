@@ -43,7 +43,7 @@ if (!list) {
 
 /* 3. Синтаксис JS */
 console.log('\nСинтаксис модулей:');
-const modules = [...readdirSync('js',{recursive:true}).filter(p=>p.endsWith('.js')).map(p=>'js/'+p.replaceAll('\\','/')),'sw.js'];
+const modules = [...['js','platform-dev','delta-dev'].flatMap(dir=>readdirSync(dir,{recursive:true}).filter(p=>p.endsWith('.js')).map(p=>dir+'/'+p.replaceAll('\\','/'))),'sw.js'];
 for (const m of modules) {
   const r = spawnSync(process.execPath, ['--check', m], { encoding: 'utf8' });
   if (r.status === 0) ok(m);

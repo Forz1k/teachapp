@@ -47,3 +47,25 @@ test('Pinned fixture follows only its published match and scoreboard survives up
   stream.emit({...payload,schedule:[],match});assert.match(document.body.textContent,/Встреча недоступна/);assert.equal(document.querySelector('.team-score'),null);
  }finally{w.dispatchEvent(new w.Event('pagehide'));w.close();}
 });
+
+test('Spectator can open a previously unknown season and ignores an older pending response',async()=>{
+ const dom=new JSDOM('<header id="connection"></header><nav id="portal-nav"></nav><main id="portal"></main>',{url:'https://example.com/live/'});
+ const w=dom.window,originalFetch=globalThis.fetch;Object.assign(globalThis,{document:w.document,window:w,location:w.location});let stream;
+ globalThis.EventSource=class{constructor(){this.listeners={};stream=this;}addEventListener(type,fn){this.listeners[type]=fn;}close(){}emit(data){this.listeners.put({type:'put',data:JSON.stringify({path:'/',data})});}};
+ const pending=[];globalThis.fetch=url=>new Promise(resolve=>pending.push({url,resolve}));
+ const wait=()=>new Promise(resolve=>setImmediate(resolve));
+ const row=(year,id)=>({id,opponent:'Соперник '+year,startedAt:Date.UTC(year,9,1),setsWon:{ours:1,theirs:0},sets:[{ours:25,theirs:21}]});
+ const reply=(i,r)=>pending[i].resolve(new Response(JSON.stringify({[String(r.startedAt).padStart(16,'0')+'_'+r.id]:r})));
+ try{
+  await import('../js/public-view.js?season-test=1');stream.onopen();
+  stream.emit({schema:1,team:'Команда',updatedAt:Date.now(),schedule:[],archive:[row(2026,'recent')]});
+  document.querySelector('[data-tab=results]').click();
+  const choose=year=>{document.querySelector('.archive-season-year').value=String(year);[...document.querySelectorAll('button')].find(n=>n.textContent==='Загрузить сезон').click();};
+  choose(2023);choose(2024);assert.equal(pending.length,2);
+  assert.equal(JSON.parse(new URL(pending[1].url).searchParams.get('startAt')),String(Date.UTC(2024,8,1)).padStart(16,'0')+'_');
+  reply(1,row(2024,'old24'));await wait();
+  assert.match(document.querySelector('.result-card').textContent,/Соперник 2024/);assert.equal(document.querySelector('.season-filter').value,'2024');
+  reply(0,row(2023,'old23'));await wait();assert.equal(document.querySelectorAll('.result-card').length,1);assert.match(document.querySelector('.result-card').textContent,/Соперник 2024/);
+  assert.match(document.querySelector('.result-card a').href,/archive=/);
+ }finally{globalThis.fetch=originalFetch;w.dispatchEvent(new w.Event('pagehide'));w.close();}
+});

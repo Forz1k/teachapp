@@ -240,9 +240,9 @@
     "publicMatchArchive": {
       "$uid": {
         "$slug": {
-          ".read": "root.child('publicTeams').child($uid).child($slug).exists() && query.orderByKey && query.limitToLast != null && query.limitToLast <= 42",
+          ".read": "root.child('publicTeams').child($uid).child($slug).exists() && ((query.orderByKey && query.limitToLast != null && query.limitToLast <= 42) || (query.orderByChild === 'id' && query.equalTo != null && query.limitToFirst != null && query.limitToFirst <= 2))",
           "$key": {
-            ".validate": "$key.matches(/^[0-9]{16}_[A-Za-z0-9_-]{1,100}$/) && newData.hasChildren(['id','opponent','startedAt','setsWon','sets'])",
+            ".validate": "$key.matches(/^[0-9]{16}_[A-Za-z0-9_-]{1,100}$/) && newData.hasChildren(['id','opponent','startedAt','setsWon','sets']) && ($key === ('' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('0' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('00' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('0000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('00000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('000000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('0000000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('00000000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('000000000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('0000000000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('00000000000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('000000000000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('0000000000000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('00000000000000' + newData.child('startedAt').val() + '_' + newData.child('id').val()) || $key === ('000000000000000' + newData.child('startedAt').val() + '_' + newData.child('id').val())) && newData.child('setsWon/ours').val() === ((newData.child('sets/0').exists() && newData.child('sets/0/ours').val() > newData.child('sets/0/theirs').val() ? 1 : 0) + (newData.child('sets/1').exists() && newData.child('sets/1/ours').val() > newData.child('sets/1/theirs').val() ? 1 : 0) + (newData.child('sets/2').exists() && newData.child('sets/2/ours').val() > newData.child('sets/2/theirs').val() ? 1 : 0) + (newData.child('sets/3').exists() && newData.child('sets/3/ours').val() > newData.child('sets/3/theirs').val() ? 1 : 0) + (newData.child('sets/4').exists() && newData.child('sets/4/ours').val() > newData.child('sets/4/theirs').val() ? 1 : 0)) && newData.child('setsWon/theirs').val() === ((newData.child('sets/0').exists() && newData.child('sets/0/theirs').val() > newData.child('sets/0/ours').val() ? 1 : 0) + (newData.child('sets/1').exists() && newData.child('sets/1/theirs').val() > newData.child('sets/1/ours').val() ? 1 : 0) + (newData.child('sets/2').exists() && newData.child('sets/2/theirs').val() > newData.child('sets/2/ours').val() ? 1 : 0) + (newData.child('sets/3').exists() && newData.child('sets/3/theirs').val() > newData.child('sets/3/ours').val() ? 1 : 0) + (newData.child('sets/4').exists() && newData.child('sets/4/theirs').val() > newData.child('sets/4/ours').val() ? 1 : 0))",
             "id": {
               ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,100}$/)"
             },
@@ -250,15 +250,15 @@
               ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
             },
             "startedAt": {
-              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 8640000000000000"
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 8640000000000000 && newData.val() % 1 === 0"
             },
             "setsWon": {
               ".validate": "newData.hasChildren(['ours','theirs'])",
               "ours": {
-                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5 && newData.val() % 1 === 0"
               },
               "theirs": {
-                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5 && newData.val() % 1 === 0"
               },
               "$other": {
                 ".validate": false
@@ -266,25 +266,28 @@
             },
             "sets": {
               "$i": {
-                ".validate": "$i.matches(/^[0-4]$/) && (newData.hasChildren(['ours','theirs']))",
+                ".validate": "$i.matches(/^[0-4]$/) && (newData.hasChildren(['ours','theirs'])) && newData.child('ours').val() !== newData.child('theirs').val()",
                 "ours": {
-                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999 && newData.val() % 1 === 0"
                 },
                 "theirs": {
-                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999"
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9999 && newData.val() % 1 === 0"
                 },
                 "$other": {
                   ".validate": false
                 }
               },
-              ".validate": "newData.hasChildren()"
+              ".validate": "newData.hasChildren(['0']) && (!newData.child('4').exists() || newData.child('3').exists()) && (!newData.child('3').exists() || newData.child('2').exists()) && (!newData.child('2').exists() || newData.child('1').exists())"
             },
             "$other": {
               ".validate": false
             },
             ".read": "root.child('publicTeams').child($uid).child($slug).exists()",
             ".write": "root.child('publicTeams').child($uid).child($slug).exists() && auth != null && auth.uid === $uid && root.child('publishers').child(auth.uid).val() === true"
-          }
+          },
+          ".indexOn": [
+            "id"
+          ]
         }
       }
     },

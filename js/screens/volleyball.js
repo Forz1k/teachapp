@@ -87,7 +87,7 @@ function live(team,players,initial,refresh){
   const ids=s.lineup.map(id=>id===s.liberoFor?d.libero:id);
   if(!ids.includes(selected))selected=null;
   body.replaceChildren(el('h2',{text:team.name+' — '+d.opponent}),p('Партии: '+won+':'+(s.sets.length-won)+' · '+s.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),
-   el('div',{class:'vp-scoreboard'},[['ours',team.name,s.ours,won],['theirs',d.opponent,s.theirs,s.sets.length-won]].map(([side,name,value,sets])=>el('div',{class:'vp-score-side '+side+(s.serve===side?' score-serving':'')},[el('span',{text:name}),el('strong',{text:String(value)}),el('small',{text:(s.serve===side?'● Подача · ':'')+'Партии '+sets})]))),p('Схема '+V.schemes[d.scheme]),
+   el('div',{class:'vp-scoreboard'},[['ours',team.name,s.ours,won],['theirs',d.opponent,s.theirs,s.sets.length-won]].map(([side,name,value,sets])=>el('div',{class:'vp-score-side '+side+(s.serve===side?' score-serving':'')},[el('span',{text:name}),el('strong',{text:String(value)}),el('small',{text:(s.serve===side?'● Подача · ':'')+'Партии '+sets})]))),p('Схема '+V.schemes[d.scheme]),p('Учёт игрового времени доступен в подробном режиме матча.'),
    court(players,s.lineup,d.libero,s.liberoFor,s.serve,id=>{selected=id;draw();}),p('Выбран: '+name(players,selected)));
   if(s.finished)body.append(p('Матч завершён'),btn('Сохранить в историю матчей',async()=>{
     if(busy||!await ui.confirmDialog({title:'Сохранить матч?',text:'Счёт и отмеченные действия будут перенесены в историю. Черновик будет закрыт.',ok:'Сохранить'}))return;

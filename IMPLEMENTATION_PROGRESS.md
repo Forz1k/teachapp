@@ -365,3 +365,26 @@ PR #94 не объединён, новый релиз не опубликова�
 - `52c5b1c`: 5.1.1-rc.1, actual pinned 5.1.0 PWA upgrade via update banner, complete IndexedDB comparison, encrypted checkpoint reconciliation with zero redundant PUT, offline match edit, old encrypted backup restored independently.
 - 404/404, 0 failures/skips, both full CI runs, 75 Chromium screenshots, WebKit upgrade, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45592416145), [upgrade](https://github.com/Forz1k/teachapp/actions/runs/45592415996).
 - The first upgrade test raced controllerchange navigation; fixed by waiting for actual navigation and fresh document. Owner explicitly authorized static 5.1.1 publication; physical device acceptance not claimed. No production worker or rules deployment.
+
+## 5.1.1 publication
+- Main `1bd6998` merged [PR #94](https://github.com/Forz1k/teachapp/pull/94) after 404/404 tests, both CI runs, WebKit real 5.1.0 → 5.1.1 update and encrypted restore, all synthetic workflows. [Release CI](https://github.com/Forz1k/teachapp/actions/runs/45594579857), [upgrade](https://github.com/Forz1k/teachapp/actions/runs/45594579882).
+- [Pages deployment](https://github.com/Forz1k/teachapp/actions/runs/45594932845) and [main CI](https://github.com/Forz1k/teachapp/actions/runs/45594934574) successful. Physical owner verification outstanding; no production Firebase/Worker change.
+
+## 5.2 multipart checkpoint
+- `7dc9c6f`: 406/406, both full CI, WebKit, Cloudflare and real workerd multipart pass (1,952,776 ciphertext characters / 4 parts), restart, compaction and later delta. [CI](https://github.com/Forz1k/teachapp/actions/runs/45595852928), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45595852817).
+
+## 5.2 rotation checkpoint
+- `3b2d515`: synthetic rotation of encryption and device access keys, separate privilege, encrypted owner recovery file, CAS, durable atomic credential epoch, old token rejection; 407/407, both CI, 75 Chromium screenshots, WebKit and Cloudflare/Delta synthetic pass. [CI](https://github.com/Forz1k/teachapp/actions/runs/45599304095), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45599303864).
+
+## 5.2 offline device checkpoint
+- `eaa4098`: encrypted single-device recovery, old checkpoint preview/rebind, explicit historical-base consent and three-way merge. 407/407, both CI, WebKit, Cloudflare, Delta; real IndexedDB/workerd preserved offline edits and conflict choices. [CI](https://github.com/Forz1k/teachapp/actions/runs/45600038333), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45600038340).
+
+## 5.2 operator console checkpoint
+- `ec4bcf8`: loopback diagnostic/rotation/recovery UI, real browser and workerd test, individual device login, verified owner file, zero browser storage. 407/407, both CI, WebKit, Cloudflare and Delta pass. [CI](https://github.com/Forz1k/teachapp/actions/runs/45619583195), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45619583231).
+
+## 5.8 reliability checkpoint
+- `0863ce0`: atomic request failures, archive mutation mutex. 449/449, all six triggered workflows passed. [Checks](https://github.com/Forz1k/teachapp/commit/0863ce012d17ffb03a68029dec5b69967526d7f3/checks).
+
+## 5.9 compatibility checkpoint
+- `fff158f`: backup 22, old formats, all synthetic workflows on version changes. 451/451 and all seven workflows passed, including actual published 5.1.1 WebKit upgrade and v21 rejecting v22. [Checks](https://github.com/Forz1k/teachapp/commit/fff158f5a52d2f2241f55b2a215920043cdb4e2a/checks).
+- Owner authorized the final static publication after checks. Production LAB/Worker/Firebase migration and physical acceptance remain separate.

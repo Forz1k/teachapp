@@ -1,4 +1,4 @@
-const VERSION = 'v5.1.1';
+const VERSION = 'v6.0.0';
 const PREFIX = `teachapp:${self.registration.scope}:`;
 const CACHE = PREFIX + VERSION;
 
@@ -19,7 +19,7 @@ const PRECACHE = [
   './js/device-trust.js','./js/screens/trusted-devices.js','./js/privacy-shield.js',
   './js/app.js','./js/search.js','./js/screens/search.js',
   './js/version.js',
-  './js/db.js',
+  './js/delta-anchor.js','./js/db.js',
   './js/backup.js',
   './js/sync.js','./js/sync-pairing.js','./js/personal-sync.js','./js/device-invite.js','./js/auto-sync.js',
   './js/screens/sync.js',
@@ -32,7 +32,7 @@ const PRECACHE = [
   './js/screens/session.js',
   './js/team-generator.js',
   './js/screens/team-generator.js',
-  './js/coach.js','./js/coach-opponents.js','./js/screens/coach-opponents.js','./js/media-studio.js','./js/screens/studio.js',
+  './js/coach.js','./js/training-dynamics.js','./js/screens/training-dynamics.js','./js/coach-opponents.js','./js/screens/coach-opponents.js','./js/media-studio.js','./js/screens/studio.js',
   './js/workbench.js','./js/methodical.js','./js/portable-library.js','./js/library-materials.js','./js/student-goals.js','./js/norm-retakes.js','./js/teacher-portfolio.js','./js/screens/teacher-portfolio.js',
   './js/tournaments.js',
   './js/screens/tournaments.js',
@@ -60,11 +60,11 @@ const PRECACHE = [
   './js/screens/coach-season.js',
   './js/screens/coach-tests.js',
   './js/volleypoint-pdf.js',
-  './js/volleypoint-import.js',
+  './js/volleypoint-import.js','./js/volleypoint-time.js',
   './js/screens/volleypoint-import.js',
   './js/volleyball.js',
   './js/match-protocol.js','./js/match-rules.js','./js/match-transfer.js','./js/match-capture.js','./js/video-review.js','./js/video-clip.js','./js/screens/video-review.js',
-  './js/match-tactics.js','./js/match-history.js','./js/screens/match-history.js',
+  './js/match-tactics.js','./js/lineup-analysis.js','./js/screens/lineup-analysis.js','./js/match-history.js','./js/screens/match-history.js',
   './js/screens/match-tactics.js',
   './js/screens/match-protocol.js',
   './js/screens/lineup-picker.js',
@@ -77,7 +77,7 @@ const PRECACHE = [
   './js/screens/norms.js',
   './js/screens/health.js',
   './js/ui.js',
-  './js/export.js','./js/ktp-docx.js','./js/journal-filters.js',
+  './js/export.js','./js/ktp-docx.js','./js/ktp-history.js','./js/lesson-alternatives.js','./js/court-time.js','./js/journal-filters.js',
   './js/demo.js',
   './js/screens/classes.js',
   './js/screens/today.js',

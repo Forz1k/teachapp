@@ -1,3 +1,4 @@
+import {parseVolleyTiming,mapVolleyTiming,validateVolleyTiming} from './volleypoint-time.js';
 const fail=msg=>{throw Error('VolleyPoint: '+msg);};
 const check=(ok,msg)=>{if(!ok)fail(msg);};
 const norm=s=>String(s).toLowerCase().replace(/ё/g,'е').trim().split(/\s+/).sort().join(' ');
@@ -10,12 +11,12 @@ export function parseVolleyRows(rows){
  const dateLine=lines.find(x=>x.includes('Дата:'))||'',d=/Дата:\s*(\d{2})\.(\d{2})\.(\d{4})/.exec(dateLine),hash=/Отпечаток SHA-256:\s*([a-f\d]{64})\b/i.exec(lines.join('\n'));
  check(d&&hash,'не найдены дата или отпечаток');const date=d[3]+'-'+d[2]+'-'+d[1];check(Number.isFinite(Date.parse(date))&&new Date(date).toISOString().slice(0,10)===date,'некорректная дата');
  const competition=(lines.find(x=>x.includes('Турнир:'))||'').split('Турнир:')[1]?.trim()||'';
- const sets=[];let mode='',team=null;const teams=[],rallies=[];
+ const sets=[],setSeconds=[];let mode='',team=null;const teams=[],rallies=[];
  for(const line of lines){let m;
   if(line==='Результаты сетов'){mode='sets';continue;}if(line==='Расстановки'){mode='';continue;}
   if((m=/^(.+?) Выиграно очков:\s*(\d+)$/.exec(line))){team={name:m[1],points:+m[2],players:[],series:[],totals:null};teams.push(team);mode='players';continue;}
   if(line==='Серии подач'){mode='series';continue;}if(line==='Детали очка'){mode='rallies';continue;}if(line==='Подписи'){mode='';continue;}
-  if(mode==='sets'&&(m=/^(\d) (\d+) (\d+) \d+:\d+:\d+$/.exec(line))){check(+m[1]===sets.length+1&&+m[2]!==+m[3],'некорректная партия');sets.push([+m[2],+m[3]]);}
+  if(mode==='sets'&&(m=/^(\d) (\d+) (\d+) (\d{1,3}):([0-5]\d):([0-5]\d)$/.exec(line))){check(+m[1]===sets.length+1&&+m[2]!==+m[3],'некорректная партия');sets.push([+m[2],+m[3]]);setSeconds.push(+m[4]*3600+ +m[5]*60+ +m[6]);}
   if(mode==='players'&&team){if((m=/^Итого по команде (\d+) (\d+) (\d+) (\d+)$/.exec(line)))team.totals=m.slice(1).map(Number);
    if((m=/^(?:\(C\) )?#(\d+) (.+?) - .+? (\d+) (\d+) (\d+) (\d+)$/.exec(line)))team.players.push({number:+m[1],name:m[2],attackKills:+m[3],blocks:+m[4],aces:+m[5],errors:+m[6]});
    if(line.startsWith('Очки на ошибках соперника'))mode='';}
@@ -27,7 +28,8 @@ export function parseVolleyRows(rows){
  const progress=sets.map(()=>[0,0]);let previous=1;
  for(const r of rallies){check(r.set>=previous&&r.set<=previous+1&&r.set<=sets.length,'порядок партий');previous=r.set;const score=progress[r.set-1];score[r.winner]++;check(score.every((n,i)=>n===r.score[i]),'пропущен или повторён розыгрыш');const side=r.kind.endsWith('Errors')?1-r.winner:r.winner;if(r.number!=null)check(teams[side].players.some(p=>p.number===r.number&&norm(p.name)===norm(r.name)),'автор не найден в составе');}
  check(progress.every((s,i)=>s.every((n,j)=>n===sets[i][j])),'журнал очков неполный');
- return {date,competition,hash:hash[1].toLowerCase(),sets,teams,rallies};
+ check(setSeconds.every(s=>s<=86400),'некорректная длительность партии');
+ return {date,competition,hash:hash[1].toLowerCase(),sets,teams,rallies,timing:parseVolleyTiming(lines,teams,setSeconds)};
 }
 export function suggestPlayer(source,players){const names=players.filter(p=>norm(p.name)===norm(source.name));return names.length===1&&names[0].number===source.number?names[0].id:'';}
 export function buildVolleyImport(report,side,mapping){
@@ -36,11 +38,11 @@ export function buildVolleyImport(report,side,mapping){
  const players=Object.fromEntries(team.players.map(p=>[mapping[p.number],{errors:p.errors,serveErrors:0,attackErrors:0,receiveErrors:0,otherErrors:0,serviceSeries:[]}]));
  for(const s of team.series)players[mapping[s.number]].serviceSeries.push({set:s.set,wins:s.wins,aces:s.aces,errors:s.errors});
  const rallies=report.rallies.map(r=>{const actorSide=r.kind.endsWith('Errors')?1-r.winner:r.winner;const playerId=r.number!=null&&actorSide===side?mapping[r.number]:null;if(playerId&&r.kind.endsWith('Errors'))players[playerId][r.kind]++;return {set:r.set,ours:r.score[side],theirs:r.score[1-side],winner:r.winner===side?'ours':'theirs',kind:r.kind,playerId};});
- return {date:report.date,opponent:report.teams[1-side].name,competition:report.competition,sets:report.sets.map(s=>({ours:s[side],theirs:s[1-side]})),roster,stats,imported:{source:'volleypoint',hash:report.hash,players,rallies}};
+ return {date:report.date,opponent:report.teams[1-side].name,competition:report.competition,sets:report.sets.map(s=>({ours:s[side],theirs:s[1-side]})),roster,stats,imported:{source:'volleypoint',hash:report.hash,players,rallies,...(report.timing?{timing:mapVolleyTiming(report,side,mapping,rallies)}:{})}};
 }
 export function validateVolleyImport(m){
  const v=m.imported;
- check(!m.detail&&only(v,['source','hash','players','rallies'])&&v.source==='volleypoint'&&/^[a-f\d]{64}$/.test(v.hash)&&only(v.players,m.roster)&&Object.keys(v.players).length===m.roster.length&&Array.isArray(v.rallies)&&v.rallies.length<=10000,'некорректный импорт');
+ check(!m.detail&&only(v,['source','hash','players','rallies','timing'])&&v.source==='volleypoint'&&/^[a-f\d]{64}$/.test(v.hash)&&only(v.players,m.roster)&&Object.keys(v.players).length===m.roster.length&&Array.isArray(v.rallies)&&v.rallies.length<=10000,'некорректный импорт');
  const progress=m.sets.map(()=>({ours:0,theirs:0}));let previous=1;
  const errors=new Map(m.roster.map(id=>[id,Object.fromEntries(errorKeys.map(k=>[k,0]))]));
  for(const r of v.rallies){
@@ -54,7 +56,7 @@ export function validateVolleyImport(m){
   check(only(p,['errors',...errorKeys,'serviceSeries'])&&count(p.errors)&&errorKeys.every(k=>count(p[k])&&p[k]===errors.get(id)[k])&&errorKeys.reduce((n,k)=>n+p[k],0)<=p.errors&&Array.isArray(p.serviceSeries)&&p.serviceSeries.length<=10000,'некорректные ошибки игрока');
   check(p.serviceSeries.every(s=>only(s,['set','wins','aces','errors'])&&Number.isInteger(s.set)&&s.set>=1&&s.set<=m.sets.length&&count(s.wins)&&count(s.aces)&&count(s.errors)&&s.aces<=s.wins),'некорректная серия');
  }
- return m;
+ validateVolleyTiming(m);return m;
 }
 export function duplicateVolleyMatch(matches,m){
  const clean=s=>String(s).trim().toLowerCase().replace(/ё/g,'е').replace(/\s+/g,' ');

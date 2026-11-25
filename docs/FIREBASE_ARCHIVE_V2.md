@@ -15,3 +15,17 @@ The owner can list bounded pages, open permanent links, copy already-published r
 Candidate rules also implement `publicMedia/{uid}/{slug}`, separate from the live heartbeat. Up to 20 explicitly published news records and one tournament projection (up to 32 teams, 500 matches) are supported. Private drafts remain in IndexedDB; the public reader has no dependency on the draft or private tournament modules. The publisher uses conditional ETag writes. The parent portal must be published to read the media record. Removal of the parent hides retained content, which can become visible again after republication; review and remove stale records explicitly before republishing. Referee names and private identifiers are not exported. The candidate does not include photo/video hosting or fan voting. Authors must not publish students' personal or sensitive data in free text. Production rules were not changed.
 
 Emulator tests cover owner/foreign/guest permissions, limits, unknown fields, invalid results, stale ETags and removal. A real migration and publication require separate owner approval.
+
+## 5.5 stage 1 — direct season browsing
+
+The spectator may query a UTC September–August season by its starting year, including a year absent from the latest 20 matches. Both key bounds and the cursor are validated; each query remains bounded to at most 42 records. Changing seasons invalidates in-flight page responses. Legacy recent results are still merged and filtered; summaries and search cover only loaded data. No production rules, publication or migration changed.
+
+## 5.5 stages 2–6 — persistent result queue and historical viewer
+
+Opt-in local outbox queues only explicitly published scores, including finished LIVE and manually published recent matches. No automatic remote writes: after parent synchronization the owner confirms the pending batch. Each score-only entry is written conditionally, exact retries acknowledge existing records, differing records or same ID under another date stay unresolved; disabling queue/publication, accepting remote state or removing a recent result clears corresponding pending entries. Existing remote archive entries are independent; parent removal hides but does not erase them. No tokens, private player data or raw events are queued. A local device must keep its storage; the queue is not a cross-device or background delivery guarantee.
+
+Legacy match links can resolve through a bounded exact-ID index; ambiguous IDs are rejected. Permanent links use original timestamp keys. Historical pages contain exact score/sets/point differential and loaded head-to-head history; no invented rally timelines, playing time, names or individual stats. Candidate rules constrain key/body equality, integer scores, continuous set indexes, non-tied sets, exact set totals and bounded indexed lookups. Production rules remain unchanged; explicit migration and physical-device acceptance required.
+
+The exact-ID lookup protects normal sequential operations; independent clients can race when correcting the same ID to different timestamps. The viewer fails closed if an ID lookup returns two rows, while direct timestamp links stay valid. Resolve duplicates explicitly. Outbox consent and storage are device-local; simultaneous tabs should not operate the same publisher.
+
+5.8: все операции изменения расширенного архива теперь сериализуются в одной вкладке, включая диалоги подтверждения. Это не глобальный серверный индекс уникальности и не гарантия для разных устройств/вкладок.
