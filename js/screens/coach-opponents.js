@@ -1,3 +1,4 @@
+import {openTrainingDynamics} from './training-dynamics.js';
 import * as ui from '../ui.js';
 import {listWork,saveWork} from '../workbench.js';
 import {opponentProfiles,trainingOverview,preMatchDossier} from '../coach-opponents.js';
@@ -47,5 +48,5 @@ export async function openOpponents(team,view){
 export function openTrainingOverview(team,view){
  const from=el('input',{type:'date'}),to=el('input',{type:'date',value:todayIso()}),content=el('div',{class:'vp-stack'});
  const render=()=>{if(from.value&&to.value&&from.value>to.value){content.replaceChildren(p('Начальная дата позже конечной'));return;}const report=trainingOverview(view,{from:from.value,to:to.value,today:todayIso()});content.replaceChildren(p('Тренировок в выборке: '+report.count+' · проведено: '+report.held),...report.players.map(({player,attendance:a,load:l})=>card(player.name,[p('Явка: '+(a.pct===null?'—':a.pct+'%')+' · присутствие '+a.present+' · ограниченная нагрузка '+a.limited+' · отсутствие '+a.absent+' · неизвестно '+a.unknown),p('Нагрузка RPE × мин: '+(l.total===null?'не записана':l.total)+' · измерений '+l.known+' из '+l.attended),...l.rows.map(r=>p(fmtFull(r.date)+' · '+r.title+' · '+r.minutes+' мин × '+r.rpe+' = '+r.value))])));};
- from.onchange=to.onchange=render;openSheet(el('div',{class:'vp-stack'},[el('h2',{text:'Тренировочная нагрузка · '+team.name}),p('Сумма только фактически записанных RPE и минут. Пропуски не заменяются нулями.'),el('label',{},[p('С даты'),from]),el('label',{},[p('По дату'),to]),content]));render();
+ from.onchange=to.onchange=render;openSheet(el('div',{class:'vp-stack'},[el('h2',{text:'Тренировочная нагрузка · '+team.name}),btn('Недельная динамика подготовки',()=>openTrainingDynamics(view,{back:()=>openTrainingOverview(team,view),initial:{from:from.value,to:to.value}}),'primary wide'),p('Сумма только фактически записанных RPE и минут. Пропуски не заменяются нулями.'),el('label',{},[p('С даты'),from]),el('label',{},[p('По дату'),to]),content]));render();
 }
