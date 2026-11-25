@@ -1,6 +1,10 @@
 /* Real local workerd; exclusively synthetic data, no production deployment. */
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
+import {createServer as httpServer} from 'node:http';
+import {readFile} from 'node:fs/promises';
+import {resolve,sep,extname} from 'node:path';
+import {chromium} from 'playwright';
 import {once} from 'node:events';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -17,8 +21,10 @@ import {encryptBackup,decryptBackup} from '../js/privacy.js';
 import {splitDeltaAnchor} from '../js/delta-anchor.js';
 import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation,createDeltaDeviceRecovery,openDeltaDeviceRecovery,rebindDeltaDevice} from '../js/sync.js';
 
-const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),coachAdmin='E'.repeat(43),rotator='F'.repeat(43),coachRotator='G'.repeat(43),origin='http://127.0.0.1:8099',area='school',password='synthetic-delta-test-password';
+const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),coachAdmin='E'.repeat(43),rotator='F'.repeat(43),coachRotator='G'.repeat(43),area='school',password='synthetic-delta-test-password';
 const workspaceId='00000000-0000-4000-8000-000000000001';
+const webRoot=process.cwd(),site=httpServer(async(req,res)=>{try{const u=new URL(req.url,'http://127.0.0.1'),path=resolve(webRoot,'.'+decodeURIComponent(u.pathname));if(!path.startsWith(webRoot+sep))throw Error();const bytes=await readFile(path);res.writeHead(200,{'Content-Type':{'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'}[extname(path)]||'application/octet-stream','Cache-Control':'no-store'});res.end(bytes);}catch{if(!res.headersSent)res.writeHead(404);res.end();}});
+await new Promise(r=>site.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+site.address().port;
 const state=await mkdtemp(join(tmpdir(),'teachapp-delta-')),socket=createServer();
 await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address().port;await new Promise(r=>socket.close(r));
 const endpoint='http://127.0.0.1:'+port;let proc,output='';
@@ -308,7 +314,49 @@ try{
  assert.ok(await db.get('classes','offline-school'));
  assert.deepEqual((await readDeltaLab({client:secondClient,area:scope,password:device.password,current:await db.dumpAll()})).snapshot,projectScope(await db.dumpAll(),scope));
  console.log('DELTA DEVICE REBIND PASS: scoped encrypted device file, old checkpoint re-encrypted only after explicit review, offline edit preserved, conflict choice, new remote edits, school isolation, verified merged revision.');
+ // Browser workflow on school contour. No ordinary DB storage is opened.
+ const binary=['google-chrome','google-chrome-stable','chromium','chromium-browser'].map(x=>spawnSync('which',[x],{encoding:'utf8'})).find(r=>r.status===0)?.stdout.trim();assert.ok(binary,'Chromium required');
+ const browser=await chromium.launch({executablePath:binary,args:['--no-sandbox']});
+ try{
+  const errors=[],ownerContext=await browser.newContext({viewport:{width:1280,height:900},acceptDownloads:true}),ownerPage=await ownerContext.newPage();
+  ownerPage.on('pageerror',e=>errors.push(e.message));
+  await ownerPage.goto(origin+'/delta-dev/index.html');
+  const fill=async(label,v)=>ownerPage.getByLabel(label,{exact:true}).fill(v);
+  const click=async name=>ownerPage.getByRole('button',{name,exact:true}).click();
+  await fill('Адрес тестового Worker',endpoint);await fill('Ключ доступа',a);await fill('Пароль шифрования',password);await fill('Ключ компактизации',admin);await fill('Ключ ротации',rotator);
+  await ownerPage.getByLabel('Подтверждаю: только синтетические данные',{exact:true}).check();
+  await click('Подключиться');await ownerPage.getByRole('heading',{name:'Диагностика · Школа'}).waitFor();
+  await click('Проверить зашифрованный снимок');await ownerPage.getByText(/Снимок проверен · записей/).waitFor();
+  await fill('Пароль файла владельца','browser-owner-recovery-password');await click('Подготовить ротацию');await ownerPage.getByRole('heading',{name:'Подготовленная ротация'}).waitFor();
+  assert.equal((await client.head()).revision,conflictA.revision);
+  const ownerDownload=ownerPage.waitForEvent('download');await click('Скачать файл владельца');const ownerFile=await ownerDownload,ownerPath=await ownerFile.path();
+  await click('Сменить ключи');await ownerPage.getByText('Сначала проверьте файл и подтвердите отзыв',{exact:true}).waitFor();
+  assert.equal((await client.head()).revision,conflictA.revision);
+  await ownerPage.getByLabel('Сохранённый файл владельца',{exact:true}).setInputFiles(ownerPath);
+  await click('Проверить сохранённый файл');await ownerPage.getByText('Сохранённый файл проверен',{exact:true}).waitFor();
+  await ownerPage.getByLabel('Я сохранил и проверил файл; понимаю, что старые ключи будут отозваны',{exact:true}).check();
+  await click('Сменить ключи');await ownerPage.getByRole('heading',{name:'Файлы устройств'}).waitFor();
+  assert.equal((await call('head')).status,401);
+  await ownerPage.getByLabel('Устройство',{exact:true}).selectOption('1');await fill('Пароль файла устройства','browser-device-recovery-password');
+  const deviceDownload=ownerPage.waitForEvent('download');await click('Скачать файл устройства');const devicePath=await (await deviceDownload).path();
+  const deviceContext=await browser.newContext({viewport:{width:390,height:844}}),devicePage=await deviceContext.newPage();devicePage.on('pageerror',e=>errors.push(e.message));
+  await devicePage.goto(origin+'/delta-dev/index.html');
+  await devicePage.getByLabel('Адрес тестового Worker',{exact:true}).fill(endpoint);await devicePage.getByLabel('Подтверждаю: только синтетические данные',{exact:true}).check();
+  await devicePage.getByLabel('Файл восстановления',{exact:true}).setInputFiles(devicePath);await devicePage.getByLabel('Пароль файла',{exact:true}).fill('browser-device-recovery-password');
+  await devicePage.getByRole('button',{name:'Войти по файлу',exact:true}).click();await devicePage.getByRole('heading',{name:'Диагностика · Школа'}).waitFor();
+  await devicePage.getByRole('button',{name:'Проверить зашифрованный снимок',exact:true}).click();await devicePage.getByText(/Снимок проверен · записей/).waitFor();
+  assert.equal(await devicePage.getByRole('heading',{name:'Смена ключей'}).count(),0);assert.equal(await devicePage.getByRole('heading',{name:'Уплотнение истории'}).count(),0);
+  assert.ok(await devicePage.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=2));
+  for(const page of [ownerPage,devicePage])assert.deepEqual(await page.evaluate(async()=>[localStorage.length,sessionStorage.length,(await indexedDB.databases()).length]),[0,0,0]);
+  await devicePage.getByRole('button',{name:'Отключиться'}).click();await devicePage.getByRole('heading',{name:'Подключение',exact:true}).waitFor();assert.equal(await devicePage.getByLabel('Ключ доступа',{exact:true}).inputValue(),'');
+  await click('Отключиться');await ownerPage.getByRole('heading',{name:'Подключение',exact:true}).waitFor();
+  // Restore owner session from downloaded encrypted file, without old tokens.
+  await fill('Адрес тестового Worker',endpoint);await ownerPage.getByLabel('Подтверждаю: только синтетические данные',{exact:true}).check();await ownerPage.getByLabel('Тип файла',{exact:true}).selectOption('owner');await ownerPage.getByLabel('Файл восстановления',{exact:true}).setInputFiles(ownerPath);await fill('Пароль файла','browser-owner-recovery-password');
+  await click('Войти по файлу');await ownerPage.getByRole('heading',{name:'Файлы устройств'}).waitFor();
+  assert.deepEqual(errors,[]);await ownerContext.close();await deviceContext.close();
+  console.log('DELTA LAB BROWSER PASS: real Worker, verified diagnostic, explicit saved owner file, rotation, scoped device download/login, owner recovery, mobile overflow and zero browser credential/DB storage.');
+ }finally{await browser.close();}
  const sizes=syncDeltaEstimate(base,next,{area,workspaceId,baseRevision:1});assert.ok(sizes.bytes<sizes.fullBytes);
  console.log('DELTA SIZE '+JSON.stringify(sizes));
  console.log('DELTA WORKER PASS: real workerd, opaque encrypted anchor and deltas, two scoped devices, CAS race and exact retry, bounds, isolation, restart persistence and verified reconstruction');
-}finally{await stop();await rm(state,{recursive:true,force:true});}
+}finally{await stop();await rm(state,{recursive:true,force:true});await new Promise(r=>site.close(r));}

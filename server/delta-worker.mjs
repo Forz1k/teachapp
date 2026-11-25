@@ -45,7 +45,11 @@ async function bodyOf(request){
 }
 export default {async fetch(request,env){
  const u=new URL(request.url),settings=config(env,u);
- if(u.pathname==='/healthz'&&request.method==='GET')return json(settings?200:503,{status:settings?'synthetic-ready':'disabled'});
+ if(u.pathname==='/healthz'&&request.method==='GET'){
+  const origin=request.headers.get('Origin');
+  if(origin&&origin!==settings?.origin)return json(403,{error:'origin'});
+  return json(settings?200:503,{status:settings?'synthetic-ready':'disabled'},origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{});
+ }
  if(!settings)return json(503,{error:'disabled'});
  const route=/^\/v1\/delta\/(school|coach)(\/.*)$/.exec(u.pathname);
  if(!route||u.search)return json(404,{error:'route'});

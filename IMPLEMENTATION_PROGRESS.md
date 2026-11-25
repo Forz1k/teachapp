@@ -375,3 +375,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ## 5.2 rotation checkpoint
 - `3b2d515`: synthetic rotation of encryption and device access keys, separate privilege, encrypted owner recovery file, CAS, durable atomic credential epoch, old token rejection; 407/407, both CI, 75 Chromium screenshots, WebKit and Cloudflare/Delta synthetic pass. [CI](https://github.com/Forz1k/teachapp/actions/runs/45599304095), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45599303864).
+
+## 5.2 offline device checkpoint
+- `eaa4098`: encrypted single-device recovery, old checkpoint preview/rebind, explicit historical-base consent and three-way merge. 407/407, both CI, WebKit, Cloudflare, Delta; real IndexedDB/workerd preserved offline edits and conflict choices. [CI](https://github.com/Forz1k/teachapp/actions/runs/45600038333), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45600038340).
