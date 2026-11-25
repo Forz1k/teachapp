@@ -360,3 +360,8 @@ PR #94 не объединён, новый релиз не опубликова�
 - `3b01829`: structural JSON equality (canonical digests unchanged), per-class lesson and final-grade indices, reuse of attendance assessment.
 - 404/404, 0 failures/skips, both full CI runs, 75 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45589869415).
 - Synthetic medians: 23,064 records equality 89.63 → 3.61 ms; period review 24 classes / 720 pupils / 864 lessons 15.80 → 12.39 ms. Calculation-only, identical compared outputs.
+
+## Release candidate checkpoint
+- `52c5b1c`: 5.1.1-rc.1, actual pinned 5.1.0 PWA upgrade via update banner, complete IndexedDB comparison, encrypted checkpoint reconciliation with zero redundant PUT, offline match edit, old encrypted backup restored independently.
+- 404/404, 0 failures/skips, both full CI runs, 75 Chromium screenshots, WebKit upgrade, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45592416145), [upgrade](https://github.com/Forz1k/teachapp/actions/runs/45592415996).
+- The first upgrade test raced controllerchange navigation; fixed by waiting for actual navigation and fresh document. Owner explicitly authorized static 5.1.1 publication; physical device acceptance not claimed. No production worker or rules deployment.
