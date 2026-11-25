@@ -62,3 +62,9 @@ export function calendarIcs(entries,{includeTitles=false,now=new Date()}={}){
  }
  return lines.concat('END:VCALENDAR').map(fold).join('\r\n')+'\r\n';
 }
+
+/** One generic foreground alert for new due events. No names, notes or account data. */
+export function foregroundReminderBatch(entries,seen,now=new Date()){
+ const keys=[...new Set(dueReminders(entries,now).map(e=>JSON.stringify([e.source,e.id,e.date,e.time,e.remind])))].filter(k=>!seen.has(k));
+ return {keys,title:'TeachApp',body:keys.length?'Есть актуальные напоминания: '+keys.length:''};
+}

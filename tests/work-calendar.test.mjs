@@ -23,3 +23,6 @@ test('Календарь: сохранение, завершение и пров
  const b=await S.makeBackup();await S.restoreBackup(b);assert.equal((await W.listWork('event')).length,1);
  const bad=structuredClone(b);bad.data.workRecords[0].remind=-1;await assert.rejects(S.restoreBackup(bad));assert.equal((await W.listWork('event')).length,1);
 });
+
+import {foregroundReminderBatch} from '../js/work-calendar.js';
+test('Foreground reminders deduplicate due events and contain only generic count',()=>{const now=new Date(2026,10,24,11,45),e={id:'private-id',source:'custom',date:'2026-11-24',time:'12:00',remind:30,title:'Private name',note:'Private note',done:false},seen=new Set(),first=foregroundReminderBatch([e,e,{...e,id:'done',done:true}],seen,now);assert.equal(first.keys.length,1);assert.equal(first.body,'Есть актуальные напоминания: 1');assert.doesNotMatch(first.body,/Private|private-id/);for(const key of first.keys)seen.add(key);assert.equal(foregroundReminderBatch([e],seen,now).keys.length,0);assert.equal(foregroundReminderBatch([{...e,time:'14:00'}],seen,now).keys.length,0);});
