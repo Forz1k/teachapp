@@ -465,6 +465,8 @@ try{
   const switchedAdapter=deltaLabSyncAdapter({endpoint,area:'coach',token:c,password:newPass,synthetic:true,readData:()=>db.dumpAll()});
   const newPlan=await prepareSync({area:'coach',endpoint,password:newPass,client:switchedAdapter});
   assert.equal(newPlan.revision,1);assert.equal(newPlan.workspaceId,sourceFenceId);assert.equal(newPlan.conflicts.length,0);
+  await assert.rejects(executeSync({plan:newPlan,choices:{},password:newPass,client:ordinary,confirmed:true,reuseRemote:true}),e=>e.code==='migration-binding');
+  assert.equal(ordinaryReads,0);
   assert.equal((await executeSync({plan:newPlan,choices:{},password:newPass,client:switchedAdapter,confirmed:true,reuseRemote:true})).revision,1);
   assert.equal((await target.head()).revision,1);
   await assert.rejects(prepareSync({area:'coach',endpoint:sourceEndpoint,password:oldPass,client:legacyCoach}),/другим сервером/);

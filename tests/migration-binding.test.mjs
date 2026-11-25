@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import * as db from '../js/db.js';
 import * as S from '../js/store.js';
 import {defaultSettings} from '../js/model.js';
-import {projectScope,prepareSync,executeSync,previewSync,syncPersonalArea,localSyncState,disconnectSync,migrationBindingStatus,deltaLabSyncAdapter} from '../js/sync.js';
+import {projectScope,prepareSync,executeSync,previewSync,syncPersonalArea,localSyncState,disconnectSync,migrationBindingStatus} from '../js/sync.js';
 import {encryptBackup} from '../js/privacy.js';
 import {BACKUP_VERSION} from '../js/backup.js';
 const endpoint='http://127.0.0.1:9001',source='http://127.0.0.1:9002',password='synthetic-test-password',area='coach',workspaceId='12345678-1234-4000-8000-123456789abc';
@@ -32,8 +32,11 @@ test('ordinary sync, detach and full restore fail closed on LAB binding; other a
  assert.deepEqual(await migrationBindingStatus(area),{area,status:'review',revision:null});
  await assert.rejects(prepareSync({area,endpoint,password,client:ordinary}),e=>e.code==='migration-binding');
  assert.equal(reads,0);assert.equal(writes,0);
+ await db.put('meta',{id:marker,protocol:'delta-lab-v1'});
+ assert.deepEqual(await migrationBindingStatus(area),{area,status:'review',revision:null});
+ await assert.rejects(prepareSync({area,endpoint,password,client:ordinary}),e=>e.code==='migration-binding');
 });
-test('a plan prepared before migration cannot write after binding change; wrong client cannot execute a LAB plan',async()=>{
+test('a plan prepared before migration cannot write after binding change',async()=>{
  await db.clearAll();const data=fresh();await db.replaceAll(data);
  let writes=0;const ordinary={get:async()=>({revision:0,envelope:null}),put:async()=>{writes++;throw Error('unexpected write');}};
  const plan=await prepareSync({area,endpoint,password,client:ordinary});
