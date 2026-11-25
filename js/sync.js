@@ -14,7 +14,22 @@ const check=(ok,message)=>{if(!ok)throw Error(message);};
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const copy=v=>JSON.parse(JSON.stringify(v));
 const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':plain(v)?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
-const same=(a,b)=>canonical(a)===canonical(b);
+// Equality of JSON records, not their serialized strings. Keep canonical()
+// solely for cryptographic digests so the wire format/hash stays unchanged.
+export function syncValuesEqual(a,b){
+ if(a===b)return true;
+ if(a===null||b===null||typeof a!=='object'||typeof b!=='object')return false;
+ if(Array.isArray(a)||Array.isArray(b)){
+  if(!Array.isArray(a)||!Array.isArray(b)||a.length!==b.length)return false;
+  for(let i=0;i<a.length;i++)if(Object.hasOwn(a,i)!==Object.hasOwn(b,i)||!syncValuesEqual(a[i],b[i]))return false;
+  return true;
+ }
+ const ak=Object.keys(a),bk=Object.keys(b);
+ if(ak.length!==bk.length)return false;
+ for(const k of ak)if(!Object.hasOwn(b,k)||!syncValuesEqual(a[k],b[k]))return false;
+ return true;
+}
+const same=syncValuesEqual;
 const sorted=rows=>copy(rows).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
 const keyOf=area=>'sync-checkpoint-'+area;
 // Small local-only metadata: excluded from backups and scoped cloud snapshots.

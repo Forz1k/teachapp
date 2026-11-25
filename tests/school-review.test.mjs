@@ -77,3 +77,17 @@ test('Lesson preparation is slot-specific, read-only, date-aware and keeps possi
  const specific=lessonPreparation(state,{...slot,activityIds:['long']},{today:date});assert.equal(specific.potentialMatches.length,0);
  assert.deepEqual(state,before);assert.equal(slot.id,undefined);
 });
+
+test('Indexed period review matches single-class summaries and isolates finals by exact period',()=>{
+ const state=structuredClone(s),period={from:date,to:date},today=date;
+ state.classes.push({id:'b',name:'8Б'});state.students.push({id:'q',classId:'b',fullName:'Q'});
+ state.lessons.push({id:'lb',classId:'b',date,held:true},{id:'future',classId:'b',date:'2026-09-02',held:true});
+ state.marks.push({lessonId:'lb',studentId:'q',value:'3',weight:1});
+ state.finalGrades=[{studentId:'q',from:'2026-08-01',to:date,value:'2'},{studentId:'q',from:date,to:date,value:'3'},{studentId:'p',from:date,to:'2026-09-03',value:'5'}];
+ const before=structuredClone(state),summary=schoolPeriodOverview(state,{period,today});
+ for(const cls of state.classes){const a=periodReview(state,{classId:cls.id,period,today}),b=summary.rows.find(r=>r.classId===cls.id);
+  assert.equal(b.held,a.held);assert.equal(b.stats.unknown,a.unknown);assert.equal(b.stats.withoutFinal,a.withoutFinal);assert.equal(b.stats.withoutGrades,a.withoutGrades);
+ }
+ assert.equal(summary.rows.find(r=>r.classId==='b').status,'ready');assert.equal(summary.rows.find(r=>r.classId==='c').stats.withoutFinal,1);
+ assert.deepEqual(state,before);
+});

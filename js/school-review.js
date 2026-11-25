@@ -6,11 +6,16 @@ import {assignmentOverview} from './school-tools.js';
 const check=(ok,msg)=>{if(!ok)throw Error(msg);};
 const key=(l,s)=>l.id+'|'+s.id;
 function indexes(s){
- const pupils=new Map(),marks=new Map(),parts=new Map();
+ const pupils=new Map(),marks=new Map(),parts=new Map(),lessons=new Map(),finals=new Map();
  for(const p of s.students){if(!pupils.has(p.classId))pupils.set(p.classId,[]);pupils.get(p.classId).push(p);}
  for(const m of s.marks)marks.set(m.lessonId+'|'+m.studentId,m);
  for(const p of s.participation)parts.set(p.lessonId+'|'+p.studentId,p);
- return {pupils,marks,parts};
+ for(const l of s.lessons){if(!lessons.has(l.classId))lessons.set(l.classId,[]);lessons.get(l.classId).push(l);}
+ for(const r of s.finalGrades||[]){
+  const k=JSON.stringify([r.studentId,r.from,r.to]);
+  if(!finals.has(k))finals.set(k,r); // preserve original first-match semantics
+ }
+ return {pupils,marks,parts,lessons,finals};
 }
 function held(l,index,today){return attendanceDetails([l],index.pupils.get(l.classId)||[],index.marks,index.parts,today).held>0;}
 export function workloadReview(s,{from,to,today=M.todayIso(),events=[]}){
@@ -38,20 +43,19 @@ export function periodReview(s,{classId,period,assignments=[],today=M.todayIso()
  return reviewClassPeriod(s,{classId,period,assignments,today},indexes(s));
 }
 function reviewClassPeriod(s,{classId,period,assignments,today},idx){
- const pupils=idx.pupils.get(classId)||[],lessons=M.sortLessons(s.lessons.filter(l=>l.classId===classId&&M.inRange(l.date,period.from,period.to))),confirmed=lessons.filter(l=>held(l,idx,today));
+ const pupils=idx.pupils.get(classId)||[],lessons=M.sortLessons((idx.lessons.get(classId)||[]).filter(l=>M.inRange(l.date,period.from,period.to)));
+ const assessed=lessons.filter(l=>l.date<=today).map(l=>({lesson:l,attendance:attendanceDetails([l],pupils,idx.marks,idx.parts,today)}));
+ const confirmed=assessed.filter(r=>r.attendance.held>0).map(r=>r.lesson);
  // Once the class has evidence of a held lesson, every pupil's empty row is unknown,
  // even when the only evidence belongs to another pupil.
  const attendanceLessons=confirmed.map(l=>l.held?l:{...l,held:true});
- const lessonIssues=lessons.filter(l=>l.date<=today).map(l=>{
-  const a=attendanceDetails([l],pupils,idx.marks,idx.parts,today);
-  return {lesson:l,unconfirmed:!l.held,unknown:a.unknown,inferred:!l.held&&a.held>0};
- }).filter(r=>r.unconfirmed||r.unknown);
+ const lessonIssues=assessed.map(({lesson:l,attendance:a})=>({lesson:l,unconfirmed:!l.held,unknown:a.unknown,inferred:!l.held&&a.held>0})).filter(r=>r.unconfirmed||r.unknown);
  const results=pupils.map(student=>{
   let numerator=0,denominator=0,count=0;
   for(const l of confirmed){const m=idx.marks.get(key(l,student));if(m?.flag==='Н'||M.hasOsv(m)||!['1','2','3','4','5'].includes(String(m?.value)))continue;const w=m.weight===2?2:1;numerator+=Number(m.value)*w;denominator+=w;count++;}
   const mean=denominator?numerator/denominator:null;
   const att=attendanceDetails(attendanceLessons,[student],idx.marks,idx.parts,today);
-  const final=s.finalGrades.find(r=>r.studentId===student.id&&r.from===period.from&&r.to===period.to)?.value??null;
+  const final=idx.finals.get(JSON.stringify([student.id,period.from,period.to]))?.value??null;
   return {student,count,weight:denominator,mean,suggested:mean===null?null:String(M.rawToMark(mean)),unknown:att.unknown,absent:att.absent,final};
  });
  const tasks=assignments.filter(a=>a.classId===classId&&a.from<=period.to&&a.to>=period.from).map(a=>({id:a.id,name:a.name,from:a.from,to:a.to,...assignmentOverview(s,a,today)}));
@@ -76,14 +80,15 @@ export function periodMissingLessons(s,period,today=M.todayIso()){
 }
 export const periodIssueLabels={missing:'Слоты без записи',unconfirmed:'Уроки без явного подтверждения',unknown:'Неизвестная явка (ученик × урок)',withoutGrades:'Ученики без оценок',withoutFinal:'Ученики без итогов',normPending:'Нормативы к сроку (ученик × назначение)',normReview:'Нормативы: проверить основания / шкалы',normUnavailable:'Недоступные назначения'};
 export function schoolPeriodOverview(s,{period,assignments=[],today=M.todayIso()}){
- const missing=periodMissingLessons(s,period,today),idx=indexes(s),ended=period.to<=today,started=period.from<=today;
+ const missing=periodMissingLessons(s,period,today),idx=indexes(s),ended=period.to<=today,started=period.from<=today,missingCounts=new Map(),byClass=new Map();
+ for(const r of missing)missingCounts.set(r.classId,(missingCounts.get(r.classId)||0)+1);
+ for(const a of assignments){if(!byClass.has(a.classId))byClass.set(a.classId,[]);byClass.get(a.classId).push(a);}
  const rows=s.classes.map(cls=>{
-  const review=reviewClassPeriod(s,{classId:cls.id,period,assignments,today},idx);
-  const slots=missing.filter(r=>r.classId===cls.id);
+  const review=reviewClassPeriod(s,{classId:cls.id,period,assignments:byClass.get(cls.id)||[],today},idx);
   // Only assignments whose deadline lies in this period and is reached are
   // counted as due. Review candidates remain distinct from overdue work.
   const due=review.tasks.filter(t=>t.to<=period.to&&t.to<=today&&!['archive','upcoming'].includes(t.state));
-  const stats={missing:slots.length,unconfirmed:review.unconfirmed,unknown:review.unknown,withoutGrades:review.withoutGrades,withoutFinal:review.withoutFinal,
+  const stats={missing:missingCounts.get(cls.id)||0,unconfirmed:review.unconfirmed,unknown:review.unknown,withoutGrades:review.withoutGrades,withoutFinal:review.withoutFinal,
    normPending:due.reduce((n,t)=>n+t.pending,0),normReview:due.reduce((n,t)=>n+t.review,0),normUnavailable:due.filter(t=>t.state==='unavailable').length};
   const issues=Object.keys(stats).filter(k=>stats[k]>0&&(ended||!['withoutGrades','withoutFinal'].includes(k)));
   const status=!started?'future':!review.results.length?'empty':issues.length?'review':!ended?'progress':!review.held?'noLessons':'ready';

@@ -350,3 +350,8 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ## Public archive search checkpoint
 - `cdff237`: loaded-results search, bounded rendering, score-only PNG, current stream precedence and exact archive-key retention. 398/398, both CI runs, 75 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45582561893).
+
+## Synchronization interruption checkpoint
+- `0898ce8`: latched foreground/identity guard before upload, after acknowledgement and in local transaction; late remote acceptance leaves checkpoint unchanged for reconciliation. Identical authenticated envelope avoids redundant PBKDF2. Clean-status fast path rechecks actual local scope atomically.
+- 401/401, 0 failures/skips, both full CI runs, 75 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45589132164).
+- Guard is cooperative; cannot undo an already accepted server write, remotely revoke a bearer, or encrypt the browser profile at rest.
