@@ -195,6 +195,12 @@ async function readPacket(envelope,password,area,rev){
  validateScope(p.snapshot,area);
  return p;
 }
+/** Read-only verification for recovery: never merges, uploads, or accepts a checkpoint. */
+export async function verifySyncSnapshot(remote,password,area){
+ check(validArea(area)&&Number.isSafeInteger(remote?.revision)&&remote.revision>=0,'Некорректная ревизия');
+ if(!remote.revision){check(remote.envelope===null,'Некорректный пустой снимок');return {revision:0,empty:true};}
+ await readPacket(remote.envelope,password,area,remote.revision);return {revision:remote.revision,empty:false};
+}
 const snapshotLimit=90*1024*1024;
 export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeoutMs=45000,protocolVersion=1}={}){
  endpoint=normalizeEndpoint(endpoint);

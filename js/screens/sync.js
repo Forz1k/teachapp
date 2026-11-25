@@ -1,4 +1,4 @@
-import {readSyncIdentity,identityCredentials,identityAreas,readTrustedProfile,forgetTrustedProfile,trustedCredentials} from '../device-trust.js';
+import {readSyncIdentity,identityCredentials,identityAreas,readTrustedProfile,forgetTrustedProfile,trustedCredentials,hasTrustedProfileRecord} from '../device-trust.js';
 import {openTrustedDevices} from './trusted-devices.js';
 import * as S from '../store.js';
 import * as db from '../db.js';
@@ -86,7 +86,7 @@ export function openSync(){
    const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)).join(' · ');
    const successes=report.areas.filter(r=>r.status==='synced'&&r.successfulAt).map(r=>syncAreas[r.area]+': '+new Date(r.successfulAt).toLocaleString('ru-RU')).join(' · ');
    personalStatus.textContent=saved?(readTrustedProfile()?'Индивидуальный профиль v2 сохранён.':'Личный код сохранён на этом устройстве.')+(report.phase==='offline'?' Нет сети.':report.phase==='running'?' Обмен выполняется.':report.phase==='interrupted'?' Обмен прерван.':'')+(report.at?' Последняя проверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:'')+(successes?' Успешный обмен в последней попытке: '+successes:''):'Личный код не сохранён.';
-   personalForget.hidden=!saved;inviteCreate.hidden=!saved||!!readTrustedProfile();both.hidden=!saved;inviteImport.hidden=Boolean(saved);personalConnect.hidden=!!readTrustedProfile();
+   personalForget.hidden=!saved&&!hasTrustedProfileRecord();inviteCreate.hidden=!saved||!!readTrustedProfile();both.hidden=!saved;inviteImport.hidden=Boolean(saved)||hasTrustedProfileRecord();personalConnect.hidden=hasTrustedProfileRecord();
    status.textContent=cp?'Последняя подтверждённая ревизия: '+cp.revision:'Контур пока не подключён.';
    detach.hidden=!cp;detach.style.display=cp?'':'none';
    localStatus.hidden=!saved;
@@ -121,7 +121,7 @@ export function openSync(){
   clear();busy=true;controls(true);
   try{
    if(!await confirmDialog({title:'Подключиться к своему серверу?',text:'Адрес: '+address+'. На этом этапе передаётся ключ доступа и запрашивается только зашифрованная ревизия. Используйте согласованный сервер и закройте другие окна TeachApp. Не используйте реальные данные до отдельной проверки безопасности.',ok:'Сравнить'}))return;
-   const profile=readTrustedProfile();if(profile){const v=trustedCredentials(profile,selected);if(v.endpoint!==address||v.token!==t||v.password!==pw)throw Error('Используйте параметры сохранённого индивидуального профиля');}client=relayClient(address,selected,t,{protocolVersion:profile?2:1});secret=pw;
+   const profile=readTrustedProfile();if(hasTrustedProfileRecord()&&!profile)throw Error('Индивидуальный профиль повреждён; откройте доверенные устройства');if(profile){const v=trustedCredentials(profile,selected);if(v.endpoint!==address||v.token!==t||v.password!==pw)throw Error('Используйте параметры сохранённого индивидуального профиля');}client=relayClient(address,selected,t,{protocolVersion:profile?2:1});secret=pw;
    plan=await prepareSync({area:selected,endpoint:address,password:secret,client});
    if(!active()){clear();return;}
    status.textContent='Ревизия на сервере: '+plan.revision+' · '+syncAreas[selected];
@@ -231,7 +231,7 @@ export function openSync(){
  const personalForget=btn('Забыть личный код',async()=>{
   if(busy)return;
   if(!await confirmDialog({title:'Забыть личный код?',text:'Код удалится только из этого браузера. Локальные записи, ревизии и серверная копия останутся. Код на другом устройстве продолжит работать.',ok:'Забыть',danger:true}))return;
-  try{if(readTrustedProfile())forgetTrustedProfile();else forgetPersonalCode();clear();await refresh();S.notify();}catch(e){toast(e.message);}
+  try{if(hasTrustedProfileRecord())forgetTrustedProfile();else forgetPersonalCode();clear();await refresh();S.notify();}catch(e){toast(e.message);}
  });
  const pairCreate=btn('Создать код для другого устройства',async()=>{
   if(busy)return;
