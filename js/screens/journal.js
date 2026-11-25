@@ -1,4 +1,4 @@
-import {filterJournalLessons,lessonFilterLabels,periodMarks} from '../journal-filters.js';
+import {filterJournalLessons,lessonFilterLabels,periodMarks,journalDensityLabels,readJournalDensity,saveJournalDensity} from '../journal-filters.js';
 import {animateOnce} from '../motion.js';
 import { openHealth, warning, checkGrade } from './health.js';
 /* screens/journal.js — сетка журнала класса: ученики × даты уроков.
@@ -123,7 +123,7 @@ export function renderJournal(root, ctx) {
   }
 
   /* ---- сетка ---- */
-  const wrap = el('div', { class: 'grid-wrap journal-grid',tabindex:'0','aria-label':'Таблица журнала. Прокрутите для просмотра дат.' });
+  const wrap = el('div', { class: 'grid-wrap journal-grid',tabindex:'0','data-density':readJournalDensity(),'aria-label':'Таблица журнала. Прокрутите для просмотра дат.' });
 
   if (!lessons.length) {
     wrap.append(el('div', { class: 'empty' }, [
@@ -227,6 +227,7 @@ export function renderJournal(root, ctx) {
   wrap.append(table,filterStatus);
   wrap.addEventListener('keydown',e=>{if(e.key==='Escape'&&wrap.classList.contains('journal-expanded')){wrap.querySelector('.journal-close-expanded')?.click();return;}const cell=e.target.closest?.('.cell');if(!cell||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;const row=cell.parentElement,col=cell.cellIndex;let target=null;if(e.key==='ArrowLeft'||e.key==='ArrowRight')target=row.cells[col+(e.key==='ArrowLeft'?-1:1)];else{let r=e.key==='ArrowUp'?row.previousElementSibling:row.nextElementSibling;while(r?.hidden)r=e.key==='ArrowUp'?r.previousElementSibling:r.nextElementSibling;target=r?.cells[col];}if(target?.classList.contains('cell')){e.preventDefault();target.focus();}});
   tools.append(el('button',{type:'button',class:'btn small',text:'Сегодня',onclick:()=>{const th=table.querySelector('th.journal-today');if(!th)return ui.toast('Сегодня нет урока в выбранном периоде');const left=th.getBoundingClientRect().left-wrap.getBoundingClientRect().left;wrap.scrollLeft+=left-(table.querySelector('.col-num').offsetWidth+table.querySelector('.col-name').offsetWidth);syncScroll();}}));
+  const density=el('select',{'aria-label':'Масштаб журнала',class:'journal-density'},Object.entries(journalDensityLabels).map(([value,text])=>el('option',{value,text})));density.value=readJournalDensity();density.onchange=()=>{try{const value=saveJournalDensity(density.value);const left=wrap.scrollLeft;wrap.dataset.density=value;wrap.scrollLeft=left;syncScroll();}catch(e){density.value=readJournalDensity();ui.toast(e.message);}};tools.append(density);
   const full=el('button',{type:'button',class:'btn small',text:'Развернуть',onclick:()=>{wrap.classList.toggle('journal-expanded');if(wrap.classList.contains('journal-expanded')){const close=el('button',{type:'button',class:'btn wide journal-close-expanded',text:'Свернуть журнал',onclick:()=>{wrap.classList.remove('journal-expanded');close.remove();full.textContent='Развернуть';syncScroll();}});wrap.prepend(close);close.focus();}else wrap.querySelector('.journal-close-expanded')?.remove();full.textContent=wrap.classList.contains('journal-expanded')?'Свернуть':'Развернуть';syncScroll();}});tools.append(full);
   // Horizontal navigation is visible even when native scrollbars are hidden by the OS.
   const range=el('input',{type:'range',min:'0',max:'1000',step:'1',value:'0','aria-label':'Горизонтальная прокрутка журнала'});
