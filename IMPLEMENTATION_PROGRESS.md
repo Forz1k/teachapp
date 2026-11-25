@@ -339,3 +339,7 @@ PR #94 не объединён, новый релиз не опубликова�
 ## Pre-match dossier and training drafts checkpoint
 - `dfe3e48`: private team/opponent-scoped preparation, 14-day actual load, restrictions and goals; editable exercise selection with no automatic assignment or private metadata in plan. Coach potential restriction and no-test review corrected.
 - 386/386, zero failures/skips, both CI runs, 71 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45577502848).
+
+## Viewer fixture links and scoreboard checkpoint
+- `091250e`: canonical public fixture links and exact scheduledId matching, grouped schedule, scoreboard mode and prefilled matchday poster. Existing public schema unchanged. Once current finished match is replaced the fixture route directs to results, not a guessed match.
+- 389/389, zero failures/skips; both full CI runs, 73 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45578515703).
