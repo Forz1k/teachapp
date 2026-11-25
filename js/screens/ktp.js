@@ -1,4 +1,5 @@
 import {ktpMaterial,saveMaterial} from '../library-materials.js';
+import {saveKtpVersion,listKtpVersions,compareKtpVersion,restoreKtpVersionCopy,deleteKtpVersion,versionReasons} from '../ktp-history.js';
 import { editTags, warning } from './health.js';
 /* screens/ktp.js — управление КТП: отдельный список на класс (или несколько классов).
    Каждое КТП — своя нумерация тем. Один и тот же КТП можно привязать к нескольким классам:
@@ -29,6 +30,7 @@ export function renderKtp(root, opts = {}) {
 
   const body = el('div', { class: 'list ktp-directory', style: 'gap:10px;padding-top:12px' });
   root.append(body);
+  body.append(el('button',{class:'btn wide',type:'button',text:'История версий КТП',onclick:()=>openKtpHistory(null,opts)}));
 
   if (!store.state.ktp.length) {
     body.append(el('div', { class: 'empty' }, [
@@ -254,8 +256,8 @@ export function openKtpDetail(ktpId, opts = {}) {
             class: 'btn small danger', type: 'button', text: '✕',
             onclick: async (e) => {
               e.stopPropagation();
-              await store.deleteTopic(t.id);
-              draw();
+              if(!await ui.confirmDialog({title:'Удалить тему?',text:'Перед удалением сохранится версия КТП. Если тема используется в уроке, удаление будет запрещено.',ok:'Удалить',danger:true}))return;
+              try{await store.deleteTopic(t.id);draw();}catch(err){ui.toast(err.message,null,7000);}
             },
           }),
         ]);
@@ -278,6 +280,7 @@ export function openKtpDetail(ktpId, opts = {}) {
       }),
     ]), list);
 
+    sheet.append(el('button',{class:'btn wide',type:'button',text:'Сохранить контрольную версию',onclick:async()=>{const label=await ui.promptDialog({title:'Название версии',value:'Контрольная · '+M.todayIso()});if(!label?.trim())return;try{await saveKtpVersion(ktpId,label.trim());ui.toast('Версия сохранена в истории КТП');}catch(err){ui.toast(err.message);}}}),el('button',{class:'btn wide',type:'button',text:'История и сравнение версий',onclick:()=>openKtpHistory(ktpId,opts)}));
     sheet.append(el('button',{class:'btn wide',type:'button',text:'Сохранить версию в библиотеку',onclick:async()=>{const name=await ui.promptDialog({title:'Название версии КТП',value:current.name+' · '+M.todayIso()});if(!name?.trim())return;try{await saveMaterial(ktpMaterial(current,topics,name.trim()));ui.toast('Версия сохранена. Уроки и исходные темы не изменены.');}catch(e){ui.toast(e.message);}}}));
     const newTopic = el('input', { type: 'text', placeholder: 'Название новой темы' });
     sheet.append(
@@ -303,13 +306,11 @@ export function openKtpDetail(ktpId, opts = {}) {
           onclick: async () => {
             const ok = await ui.confirmDialog({
               title: `Удалить «${current.name}»?`,
-              text: `Удалятся ${topics.length} тем. В уроках, где они стояли, тема станет пустой — оценки сохранятся.`,
+              text: `Перед удалением ${topics.length} тем сохранится версия. Если хотя бы одна тема используется в уроках, удаление будет запрещено.`,
               ok: 'Удалить', danger: true,
             });
             if (!ok) return;
-            await store.deleteKtp(ktpId);
-            ui.closeSheet();
-            ui.toast('КТП удалено');
+            try{await store.deleteKtp(ktpId);ui.closeSheet();ui.toast('КТП удалено, версия сохранена в истории');}catch(err){ui.toast(err.message,null,8000);}
           },
         }),
       ]),
@@ -340,24 +341,16 @@ function openReorder(ktpId, onDone) {
           class: 'btn small', type: 'button', text: '↑', disabled: i === 0,
           onclick: async () => {
             if (i === 0) return;
-            const prev = topics[i - 1];
-            const o1 = t.ktpOrder ?? i + 1;
-            const o2 = prev.ktpOrder ?? i;
-            await store.updateTopic(t.id, { ktpOrder: o2 });
-            await store.updateTopic(prev.id, { ktpOrder: o1 });
-            draw();
+            const before=topics.map(t=>t.id),after=before.slice();[after[i-1],after[i]]=[after[i],after[i-1]];
+            try{await store.reorderKtpTopics(ktpId,before,after);draw();}catch(err){ui.toast(err.message);}
           },
         }),
         el('button', {
           class: 'btn small', type: 'button', text: '↓', disabled: i === topics.length - 1,
           onclick: async () => {
             if (i === topics.length - 1) return;
-            const next = topics[i + 1];
-            const o1 = t.ktpOrder ?? i + 1;
-            const o2 = next.ktpOrder ?? i + 2;
-            await store.updateTopic(t.id, { ktpOrder: o2 });
-            await store.updateTopic(next.id, { ktpOrder: o1 });
-            draw();
+            const before=topics.map(t=>t.id),after=before.slice();[after[i+1],after[i]]=[after[i],after[i+1]];
+            try{await store.reorderKtpTopics(ktpId,before,after);draw();}catch(err){ui.toast(err.message);}
           },
         }),
       ]));
@@ -460,7 +453,7 @@ function showTopicsPreview(ktpId, parsed, onDone) {
       onclick: async e => {
         const button=e.currentTarget;button.disabled=true;
         try{
-        if(!append){const existing=store.topicsOfKtp(ktpId);const used=store.state.lessons.filter(l=>existing.some(t=>t.id===l.topicId));if(used.length)return ui.toast('Существующие темы используются в уроках. Допишите темы или создайте новую версию КТП.');if(!await ui.confirmDialog({title:'Заменить темы?',text:'Старые темы этого КТП будут удалены. Проверьте предпросмотр. Для сохранения старых тем используйте дописывание.',ok:'Заменить',danger:true}))return;}
+        if(!append){const existing=store.topicsOfKtp(ktpId);const used=store.state.lessons.filter(l=>existing.some(t=>t.id===l.topicId));if(used.length)return ui.toast('Существующие темы используются в уроках. Допишите темы или создайте новую версию КТП.');if(!await ui.confirmDialog({title:'Заменить темы?',text:'Старые темы этого КТП будут удалены. Проверьте предпросмотр. Перед заменой автоматически сохранится версия старых тем. Если они уже используются в уроках, замена запрещена.',ok:'Заменить',danger:true}))return;}
         const { applyKtpTopics } = await import('../export.js');
         const n = await applyKtpTopics(ktpId, items, { append });
         ui.closeSheet();
@@ -474,4 +467,40 @@ function showTopicsPreview(ktpId, parsed, onDone) {
   ]));
 
   ui.openSheet(sheet);
+}
+
+/** Plan snapshots remain available even after deletion or school-year rollover. */
+export async function openKtpHistory(planId=null,opts={}){
+ try{
+  const rows=await listKtpVersions(planId),sheet=el('div',{class:'coach-form'},[el('h2',{text:'История версий КТП'}),el('p',{text:'Контрольные версии и копии до удаления или замены. История не содержит учеников, оценок и уроков. Восстановление создаёт новый план без классов.'})]);
+  let limit=30;
+  const list=el('div',{class:'coach-stack'}),more=el('button',{class:'btn wide',type:'button',text:'Показать ещё',onclick:()=>{limit+=30;draw();}});
+  function draw(){
+   list.replaceChildren();
+   if(!rows.length)list.append(el('p',{text:'Сохранённых версий пока нет.'}));
+   for(const r of rows.slice(0,limit)){
+    const date=new Date(r.createdAt).toLocaleString('ru-RU'),current=store.state.ktp.find(k=>k.id===r.sourcePlanId);
+    const card=el('section',{class:'card-block coach-card'},[el('h3',{text:r.label}),el('p',{text:r.name+' · '+r.topics.length+' тем · '+date}),el('p',{class:'sub',text:versionReasons[r.reason]+(current?'':' · исходный план отсутствует')})]);
+    if(current){
+     const cmp=compareKtpVersion(r,current,store.topicsOfKtp(current.id));
+     const changes=el('details',{},[el('summary',{text:'Сравнение: +'+cmp.added.length+' / −'+cmp.removed.length+' / изменено '+cmp.changed.length+(cmp.renamed?' · название изменено':'')})]);
+     const descriptions=[...cmp.added.map(t=>'Добавлено: '+t.name),...cmp.removed.map(t=>'Удалено: '+t.name),...cmp.changed.map(t=>'Изменено: '+t.before.name+' → '+t.after.name+' (порядок '+t.before.order+' → '+t.after.order+'; нагрузки: '+(JSON.stringify(t.before.activityIds)!==JSON.stringify(t.after.activityIds)?'изменены':'без изменений')+')')];
+     for(const text of descriptions.slice(0,40))changes.append(el('p',{text}));if(descriptions.length>40)changes.append(el('p',{text:'Ещё изменений: '+(descriptions.length-40)}));
+     card.append(changes);
+    }
+    card.append(el('button',{class:'btn wide',type:'button',text:'Создать новый КТП из версии',onclick:async e=>{
+     const button=e.currentTarget;button.disabled=true;
+     try{
+      const name=await ui.promptDialog({title:'Название нового КТП',value:(r.name+' · копия').slice(0,200)});if(!name?.trim())return;
+      if(!await ui.confirmDialog({title:'Создать независимую копию?',text:'Исходный план, уроки и оценки сохранятся. Новый план не будет привязан к классам. Виды нагрузки нужно проверить заново.',ok:'Создать'}))return;
+      const result=await restoreKtpVersionCopy(r.id,{name:name.trim(),confirmed:true});await store.load();
+      ui.toast('Копия создана'+(result.missingTags?' · недоступных тегов: '+result.missingTags:''));openKtpDetail(result.plan.id,opts);
+     }catch(err){ui.toast(err.message);}finally{button.disabled=false;}
+    }}),el('button',{class:'btn wide danger',type:'button',text:'Удалить сохранённую версию',onclick:async()=>{if(!await ui.confirmDialog({title:'Удалить версию?',text:'Будет удалена только эта сохранённая копия, а не исходный КТП.',ok:'Удалить',danger:true}))return;try{await deleteKtpVersion(r.id,true);await openKtpHistory(planId,opts);}catch(err){ui.toast(err.message);}}}));
+    list.append(card);
+   }
+   more.hidden=rows.length<=limit;
+  }
+  sheet.append(list,more,el('button',{class:'btn wide',type:'button',text:'Назад',onclick:()=>{if(planId&&store.state.ktp.some(k=>k.id===planId))openKtpDetail(planId,opts);else ui.closeSheet();}}));draw();ui.openSheet(sheet);
+ }catch(err){ui.toast(err.message);}
 }

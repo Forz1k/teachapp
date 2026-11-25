@@ -1,4 +1,5 @@
 import {validateMatchRegulation} from './match-rules.js';
+import {validateKtpVersion} from './ktp-history.js';
 import {validateNormRetake} from './norm-retakes.js';
 import {validateNewsDraft} from './public-media-drafts.js';
 import {validateSchoolCompetition,validateTeacherPortfolio} from './teacher-portfolio.js';
@@ -38,6 +39,7 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='ktpVersion'){validateKtpVersion(r);return;}
  if(r.kind==='matchRegulation'){validateMatchRegulation(r);return;}
  if(r.kind==='normRetake'){validateNormRetake(r);return;}
  if(r.kind==='publicNewsDraft'){validateNewsDraft(r);return;}
