@@ -40,3 +40,10 @@ export function clipAround(seconds,duration,before=5,after=5){
  if(!Number.isFinite(seconds)||!Number.isFinite(duration)||seconds<0||seconds>duration)throw Error('Некорректное положение видео');
  return clipRange(Math.max(0,seconds-before),Math.min(duration,seconds+after),duration);
 }
+
+/** Time-based stepping, not a frame-number guarantee (video FPS may vary). */
+export const videoReviewRates=[0.25,0.5,0.75,1,1.25,1.5,2];
+export function videoSeekStep(current,duration,delta){
+ if(![current,duration,delta].every(Number.isFinite)||duration<=0||current<0||current>duration||Math.abs(delta)>30)throw Error('Некорректное положение видео');
+ return Math.min(duration,Math.max(0,current+delta));
+}
