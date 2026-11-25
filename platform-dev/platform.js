@@ -14,7 +14,7 @@ let api=null,member=null,serial=0,busy=false,scoreTimer=null,active=null,pending
 const stopTimer=()=>{if(scoreTimer)clearInterval(scoreTimer);scoreTimer=null;};
 function close(){serial++;stopTimer();api?.close();api=null;member=null;active=null;pending=null;busy=false;login();}
 function status(text,error=false){const n=root.querySelector('#status');if(n){n.textContent=text;n.className=error?'status error':'status';}}
-async function run(fn){if(busy)return;busy=true;const epoch=serial;try{await fn(epoch);if(epoch===serial)status('Готово');}catch(err){if(epoch===serial){status(err.message,true);if(err.status===401){stopTimer();}}}finally{if(epoch===serial)busy=false;}}
+async function run(fn){if(busy)return;busy=true;const epoch=serial;try{await fn(epoch);if(epoch===serial)status('Готово');}catch(err){if(epoch===serial){status(err.message,true);if(err.status===401&&api){close();status('Сессия недействительна или отозвана. Войдите заново.',true);}}}finally{if(epoch===serial)busy=false;}}
 function login(){
  if(!isLocalPlatformPage()){root.replaceChildren(box('Недоступно',p('Кабинеты LAB запускаются только локально. Рабочие данные не принимаются.')));return;}
  const endpoint=input('Адрес тестового Worker','http://127.0.0.1:8788'),workspace=input('ID пространства','demo'),secret=input('Секретный код','','password'),name=input('Название пространства','Синтетическая команда');
@@ -23,14 +23,14 @@ function login(){
  async function connect(mode){await run(async(epoch)=>{const temp=platformClient(endpoint.value,workspace.value,secret.value);let result,issued=null;try{
   if(mode==='login'){result=await temp.request('me');if(epoch!==serial){temp.close();return;}api=temp;}
   else{issued=await temp.request(mode,'POST',mode==='bootstrap'?{name:name.value.trim()}:{});temp.close();if(epoch!==serial)return;api=platformClient(endpoint.value,workspace.value,issued.token);result=await api.request('me');}
-  if(epoch!==serial)return;member=result.member;secret.value='';render(result.name,issued?.token);
+  if(epoch!==serial)return;member=result.member;secret.value='';await render(result.name,issued?.token);
  }catch(err){temp.close();if(mode!=='login')api?.close();throw err;}});}
 }
 function showSecret(title,value){const n=input(title,value,'password');n.readOnly=true;n.className='secret';return box(title,p('Показывается только сейчас. Храните тестовый код отдельно; не отправляйте его через общие каналы.'),n,row(button('Показать / скрыть',()=>{n.type=n.type==='password'?'text':'password';}),button('Скрыть код',()=>{n.value='';n.closest('.card').remove();}))); }
-function render(name,issued){
+async function render(name,issued){
  stopTimer();root.replaceChildren(box(name,p(roles[member.role]||member.role),button('Выйти',close)),e('p','',{id:'status',role:'status',class:'status'}));
  if(issued)root.append(showSecret('Код новой сессии',issued));
- if(member.role==='athlete'){const section=box('Мой кабинет',p('Доступ только к собственным заданиям и расписанию.'));root.append(section);void run(()=>athlete(section));return;}
+ if(member.role==='athlete'){const section=box('Мой кабинет',p('Доступ только к собственным заданиям и расписанию.'));root.append(section);await athlete(section);return;}
  const grid=e('div','',{class:'grid'});root.append(grid);
  if(member.role==='owner'){grid.append(ownerTeams(),ownerInvites());}
  if(['owner','coach'].includes(member.role))grid.append(coachProfile(),newMatch());
@@ -72,7 +72,7 @@ function liveCard(){
  async function retry(){if(!pending||pending.matchId!==selector.value.trim())throw Error('Нет запроса для этого матча');try{await modify(pending.action,pending.body);pending=null;draw();}catch(err){if(err.status>=400&&err.status<500)pending=null;draw();throw err;}}
  function draw(){
   stopTimer();if(!active)return;const own=active.lease?.holderId===member.id&&active.lease.until>Date.now()&&active.status==='live';
-  body.replaceChildren(e('h3',active.opponent),e('div',active.score.ours+' : '+active.score.theirs,{class:'score','aria-label':'Счёт'}),p('Партия '+active.set+' · ревизия '+active.revision+' · '+(active.status==='finished'?'Завершён':active.lease?own?'Управление у вас':'Другой участник управляет':'Свободно')),row(button('Обновить счёт',()=>run(load)),button('Получить управление',()=>run(()=>modify('acquire',{expectedRevision:active.revision})),true)),own?row(button('+ Наши',()=>run(()=>op('score','ours')),true),button('+ Соперник',()=>run(()=>op('score','theirs')),true)):null,own?row(button('Следующая партия',()=>run(()=>op('next'))),member.role!=='assistant'?button('Завершить матч',()=>run(()=>op('finish'))):null,button('Передать управление',()=>run(()=>modify('release',{generation:active.generation})))):null,pending?row(button('Повторить последний запрос',()=>run(retry)),button('Отменить повтор',()=>{pending=null;void run(load);})):null);
+  body.replaceChildren(e('h3',active.opponent),e('div',active.score.ours+' : '+active.score.theirs,{class:'score','aria-label':'Счёт'}),p('Партия '+active.set+' · ревизия '+active.revision+' · '+(active.status==='finished'?'Завершён':active.lease&&active.lease.until>Date.now()?own?'Управление у вас':'Другой участник управляет':'Свободно')),row(button('Обновить счёт',()=>run(load)),button('Получить управление',()=>run(()=>modify('acquire',{expectedRevision:active.revision})),true)),own?row(button('+ Наши',()=>run(()=>op('score','ours')),true),button('+ Соперник',()=>run(()=>op('score','theirs')),true)):null,own?row(button('Следующая партия',()=>run(()=>op('next'))),member.role!=='assistant'?button('Завершить матч',()=>run(()=>op('finish'))):null,button('Передать управление',()=>run(async()=>{if(pending)throw Error('Сначала подтвердите результат предыдущей операции');await modify('release',{generation:active.generation});}))):null,pending?row(button('Повторить последний запрос',()=>run(retry)),button('Отменить повтор',()=>{pending=null;void run(load);})):null);
   // Lease lives only in the foreground. Revocation or network failure ends renewals.
   if(own)scoreTimer=setInterval(()=>{if(document.visibilityState!=='visible'||busy)return;void run(()=>modify('renew',{generation:active.generation}));},15000);
  }
