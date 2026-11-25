@@ -137,6 +137,14 @@ try{
  await theme('light');await viewport(375,812);await capture('375-large-journal-light');
  // Keyboard navigation between cells in the actual table.
  await evalJs('document.querySelector("table.journal .cell").focus()');await send('Input.dispatchKeyEvent',{type:'rawKeyDown',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});await send('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});assert.equal(await evalJs('document.activeElement.cellIndex'),3);
+ // The delegated Enter handler opens the correct cell and the incremental
+ // mark patch keeps the table and all unchanged badge nodes alive.
+ await evalJs('document.querySelector("table.journal td[data-student=perf-p0][data-lesson=perf-l0]").focus()');
+ await send('Input.dispatchKeyEvent',{type:'rawKeyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await ready('.sheet.show .sheet-buttons');await closeSheet();
+ await evalJs(`(async()=>{const S=await import('./js/store.js');const table=document.querySelector('table.journal'),cells=[...table.querySelectorAll('td.cell')],target=cells.find(c=>c.dataset.student==='perf-p0'&&c.dataset.lesson==='perf-l0');window.__journalPatch={table,target,unchanged:cells.filter(c=>c!==target).map(c=>[c,c.firstChild.firstChild])};await S.setMark('perf-p0','perf-l0',{value:'5'});return true;})()`);
+ await wait(()=>evalJs('document.querySelector("td[data-student=perf-p0][data-lesson=perf-l0] .badge")?.textContent==="5"'),'incremental journal mark');
+ assert.deepEqual(await evalJs('(()=>{const p=window.__journalPatch;return {sameTable:p.table===document.querySelector("table.journal"),sameCell:p.target.isConnected,unchanged:p.unchanged.every(([c,n])=>c.isConnected&&c.firstChild.firstChild===n),count:p.unchanged.length};})()'),{sameTable:true,sameCell:true,unchanged:true,count:1079});await evalJs('delete window.__journalPatch');
+ console.log('JOURNAL PATCH PASS: delegated keyboard action, 1079 unchanged badge nodes retained after one saved grade.');
  console.log('LARGE JOURNAL PASS: 30 pupils x 36 lessons, 8 viewport sizes, light/dark, scroll to totals and keyboard navigation; DOM cells '+await evalJs('document.querySelectorAll("table.journal td").length'));
  await evalJs(`(async()=>{const S=await import('./js/store.js');await S.deleteClass('perf-synthetic-class');S.state.currentClassId=window.__smoke.oldClass;S.notify();return true})()`);await wait(()=>evalJs('document.querySelectorAll("table.journal tbody tr").length===8'),'restore original synthetic fixture');
  await viewport(1280,900);await theme('dark');await nav('Главная');await capture('1280-school-dark');
