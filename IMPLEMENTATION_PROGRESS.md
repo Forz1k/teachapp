@@ -427,3 +427,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 6.9 Performance — checkpoint
 - School analytics now reuses attendance contexts, indexes final grades and topic counts, and resolves student names via a map. Added result equivalence test; no device latency claim. Remaining module decomposition is open.
+
+### 7.0 Platform — checkpoint (synthetic LAB only)
+- Owner-only listing and cancellation of unused invitations with audit entries, without revealing token hashes. Added authorization and redemption regression tests. Production identity/recovery and deployment remain open.
