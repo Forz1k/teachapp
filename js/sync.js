@@ -4,6 +4,7 @@ import {validateBackup,BACKUP_VERSION} from './backup.js';
 import {defaultSettings,exemptionCovers,hasOsv} from './model.js';
 import {gradeState,finalState} from './grade-history.js';
 import {encryptBackup,decryptBackup,isEncryptedBackup,encryptedEnvelopeBytes} from './privacy.js';
+import {DELTA_MAX_DATA,splitDeltaAnchor,joinDeltaAnchor,normalizeAnchorManifest} from './delta-anchor.js';
 
 export const syncAreas={school:'Школа',coach:'Тренер'};
 const names=Object.keys(db.SCHEMA);
@@ -368,9 +369,11 @@ export function deltaLabClient(endpoint,area,token,{compactToken,fetcher=globalT
  check(validToken(token)&&(compactToken===undefined||validToken(compactToken)&&compactToken!==token),'Проверьте отдельные тестовые ключи');
  const url=endpoint+'/v1/delta/'+area+'/';
  async function request(path,body,secret=token){
+  const encoded=body===undefined?undefined:JSON.stringify(body);
+  check(encoded===undefined||new TextEncoder().encode(encoded).length<=defaultCloudflarePacketLimit,'Пакет Delta LAB превышает лимит запроса');
   const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),timeoutMs);
   try{
-   const res=await fetcher(url+path,{method:body?'PUT':'GET',headers:{Authorization:'Bearer '+secret,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:ctl.signal});
+   const res=await fetcher(url+path,{method:body?'PUT':'GET',headers:{Authorization:'Bearer '+secret,...(body?{'Content-Type':'application/json'}:{})},body:encoded,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:ctl.signal});
    if(!res.ok)throw Object.assign(Error(res.status===410?'История уплотнена, повторите чтение':'Delta LAB: HTTP '+res.status),{status:res.status});
    const limit=defaultCloudflarePacketLimit+4096;
    check(Number(res.headers.get('content-length')||0)<=limit,'Слишком большой ответ Delta LAB');
@@ -381,10 +384,35 @@ export function deltaLabClient(endpoint,area,token,{compactToken,fetcher=globalT
    return JSON.parse(text);
   }finally{clearTimeout(timer);}
  }
- return {head:()=>request('head'),getRevision:rev=>{check(revision(rev),'Некорректная ревизия');return request('revision/'+rev);},
-  anchor:envelope=>request('anchor',{expectedRevision:0,envelope}),
+ async function writeAnchor(kind,expectedRevision,envelope,secret){
+  const body={expectedRevision,envelope};
+  if(new TextEncoder().encode(JSON.stringify(body)).length<=defaultCloudflarePacketLimit)return request(kind,body,secret);
+  const {uploadId,manifest,chunks}=await splitDeltaAnchor(envelope,{kind,expectedRevision}),path='multipart/'+kind+'/'+uploadId+'/';
+  const begun=await request(path+'begin',{manifest},secret);
+  if(begun?.revision===expectedRevision+1&&begun.replayed===true)return {revision:begun.revision,replayed:true};
+  check(begun?.uploadId===uploadId&&Number.isSafeInteger(begun.expiresAt),'Сервер не подтвердил начало загрузки');
+  for(let index=0;index<chunks.length;index++){
+   const ack=await request(path+'part/'+index,{data:chunks[index]},secret);
+   check(ack?.index===index&&typeof ack.replayed==='boolean','Сервер не подтвердил часть снимка');
+  }
+  const ack=await request(path+'commit',{},secret);
+  check(ack?.revision===expectedRevision+1&&typeof ack.replayed==='boolean','Сервер не подтвердил снимок');
+  return ack;
+ }
+ return {head:()=>request('head'),getRevision:async rev=>{
+   check(revision(rev),'Некорректная ревизия');const row=await request('revision/'+rev);
+   if(!Object.hasOwn(row,'multipart'))return row;
+   const manifest=normalizeAnchorManifest(row.multipart);
+   check(row.revision===rev&&row.kind==='anchor'&&manifest?.expectedRevision===rev-1,'Некорректный multipart снимок');
+   const envelope=await joinDeltaAnchor(manifest,row.uploadId,async index=>{
+    const part=await request('revision/'+rev+'/part/'+index);
+    check(part?.revision===rev&&part.index===index,'Подмена части снимка');return part.data;
+   });
+   return {revision:rev,kind:'anchor',envelope};
+  },
+  anchor:envelope=>writeAnchor('anchor',0,envelope,token),
   append:(expectedRevision,envelope)=>request('append',{expectedRevision,envelope}),
-  compact:(expectedRevision,envelope)=>{check(validToken(compactToken),'Нужен отдельный ключ компактизации');return request('compact',{expectedRevision,envelope},compactToken);}
+  compact:(expectedRevision,envelope)=>{check(validToken(compactToken),'Нужен отдельный ключ компактизации');return writeAnchor('compact',expectedRevision,envelope,compactToken);}
  };
 }
 function validDeltaHead(h){
@@ -437,8 +465,9 @@ export async function compactDeltaLab({client,area,password,current,checkpoint=n
  const remote=await readDeltaLab({client,area,password,current,checkpoint});
  check(remote.revision===expectedRevision&&remote.anchorRevision<remote.revision,'История изменилась или уже уплотнена');
  check(!remote.compactedPastCheckpoint,'Локальная контрольная точка старше базового снимка; сначала согласуйте данные');
- check(syncUploadBytes(remote.snapshot,{area,workspaceId:remote.workspaceId,expectedRevision})<=defaultCloudflarePacketLimit,'Полный снимок превышает лимит компактизации; история сохранена');
+ check(syncUploadBytes(remote.snapshot,{area,workspaceId:remote.workspaceId,expectedRevision})<=DELTA_MAX_DATA+1024,'Полный снимок превышает ограниченный лимит multipart; история сохранена');
  const envelope=await encryptBackup(packetPayload(remote.snapshot,area,remote.workspaceId,expectedRevision+1),password);
+ check(envelope.data.length<=DELTA_MAX_DATA,'Полный снимок превышает лимит multipart; история сохранена');
  const result=await client.compact(expectedRevision,envelope);
  check(result?.revision===expectedRevision+1,'Сервер не подтвердил компактизацию');
  return {revision:result.revision,workspaceId:remote.workspaceId,snapshot:remote.snapshot,envelope};
@@ -492,7 +521,7 @@ export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synth
      const delta=await buildSyncDelta(baseline.snapshot,next.snapshot,{area,workspaceId:next.workspaceId,baseRevision:expectedRevision});
      await applySyncDelta(baseline.snapshot,delta,{area,workspaceId:next.workspaceId,baseRevision:expectedRevision,current});
      payload=await encryptBackup(delta,password);
-    }else check(new TextEncoder().encode(JSON.stringify({expectedRevision,envelope})).length<=defaultCloudflarePacketLimit,'Первичный снимок превышает лимит; данные не отправлены');
+    }else check(envelope.data.length<=DELTA_MAX_DATA,'Первичный снимок превышает лимит multipart; данные не отправлены');
     pending={expectedRevision,envelope:copy(envelope),payload,ack:null};
    }
    if(!pending.ack){

@@ -14,16 +14,17 @@ import {SCHEMA} from '../js/db.js';
 import {defaultSettings} from '../js/model.js';
 import {BACKUP_VERSION} from '../js/backup.js';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
+import {splitDeltaAnchor} from '../js/delta-anchor.js';
 import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync} from '../js/sync.js';
 
-const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),origin='http://127.0.0.1:8099',area='school',password='synthetic-delta-test-password';
+const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),coachAdmin='E'.repeat(43),origin='http://127.0.0.1:8099',area='school',password='synthetic-delta-test-password';
 const workspaceId='00000000-0000-4000-8000-000000000001';
 const state=await mkdtemp(join(tmpdir(),'teachapp-delta-')),socket=createServer();
 await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address().port;await new Promise(r=>socket.close(r));
 const endpoint='http://127.0.0.1:'+port;let proc,output='';
 async function start(){
  const hashes={school:[await digestToken(a),await digestToken(b)],coach:[await digestToken(c)]};
- proc=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.delta-dev.jsonc','--local','--ip','127.0.0.1','--port',String(port),'--persist-to',state,'--var','TEACHAPP_DELTA_SYNTHETIC:true','--var','TEACHAPP_DELTA_ORIGIN:'+origin,'--var','TEACHAPP_DELTA_TOKEN_HASHES:'+JSON.stringify(hashes),'--var','TEACHAPP_DELTA_COMPACT_HASHES:'+JSON.stringify({school:await digestToken(admin)})],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
+ proc=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.delta-dev.jsonc','--local','--ip','127.0.0.1','--port',String(port),'--persist-to',state,'--var','TEACHAPP_DELTA_SYNTHETIC:true','--var','TEACHAPP_DELTA_ORIGIN:'+origin,'--var','TEACHAPP_DELTA_TOKEN_HASHES:'+JSON.stringify(hashes),'--var','TEACHAPP_DELTA_COMPACT_HASHES:'+JSON.stringify({school:await digestToken(admin),coach:await digestToken(coachAdmin)})],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
  proc.stdout.on('data',x=>output=(output+x).slice(-8000));proc.stderr.on('data',x=>output=(output+x).slice(-8000));
  for(let i=0;i<150;i++){if(proc.exitCode!==null)throw Error(output);try{if((await fetch(endpoint+'/healthz',{signal:AbortSignal.timeout(1000)})).ok)return;}catch{}await sleep(500);}
  throw Error('Startup timeout '+output);
@@ -178,6 +179,46 @@ try{
  assert.equal((await db.get('students','s7')).fullName,'Конфликт A');
  assert.equal((await client.head()).revision,conflictA.revision);
  console.log('DELTA SYNC INTEGRATION PASS: actual IndexedDB prepare/preview/execute, independent device edits, delta-only PUT, pull without revision churn, explicit compacted-history review and conflict resolution');
+ // Large initial anchor, staged parts invisible until atomic commit; real
+ // persisted chunk rows survive a worker restart and privileged compaction.
+ const largeData=freshDb();largeData.coachTeams=Array.from({length:3500},(_,i)=>({id:'large-team-'+i,name:'Синтетическая команда '+i+' '+('Т'.repeat(160)),archived:false}));
+ const scope='coach',large=projectScope(largeData,scope);
+ const largeAnchor=await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:scope,workspaceId,revision:1,snapshot:large},password);
+ assert.ok(new TextEncoder().encode(JSON.stringify({expectedRevision:0,envelope:largeAnchor})).length>1024*1024);
+ const split=await splitDeltaAnchor(largeAnchor),prefix='multipart/anchor/'+split.uploadId+'/';
+ const request=(path,method='GET',body,token=c)=>call(path,token,method,body,scope);
+ assert.equal((await request(prefix+'begin','PUT',{manifest:split.manifest},a)).status,401);
+ assert.equal((await request(prefix+'begin','PUT',{manifest:split.manifest},coachAdmin)).status,401);
+ assert.equal((await request(prefix+'begin','PUT',{manifest:split.manifest})).status,201);
+ assert.equal((await request(prefix+'part/0','PUT',{data:split.chunks[0]})).status,201);
+ assert.equal((await request(prefix+'part/0','PUT',{data:split.chunks[0]})).replayed,true);
+ assert.equal((await request(prefix+'part/0','PUT',{data:'A'.repeat(split.chunks[0].length)})).status,400);
+ assert.equal((await request(prefix+'commit','PUT',{})).status,409);
+ assert.equal((await request('head')).revision,0);
+ assert.equal((await request('revision/1/part/0')).status,404);
+ await stop();await start();
+ // Same ciphertext resumes staged upload, not a second revision.
+ const coachClient=deltaLabClient(endpoint,scope,c,{compactToken:coachAdmin});
+ assert.deepEqual(await coachClient.anchor(largeAnchor),{revision:1,replayed:false});
+ assert.deepEqual(await coachClient.anchor(largeAnchor),{revision:1,replayed:true});
+ assert.deepEqual((await readDeltaLab({client:coachClient,area:scope,password,current:freshDb()})).snapshot,large);
+ const largeNext=structuredClone(largeData);largeNext.coachTeams[0].name='Изменение большой базы';
+ const nextLarge=projectScope(largeNext,scope),largeDelta=await encryptBackup(await buildSyncDelta(large,nextLarge,{area:scope,workspaceId,baseRevision:1}),password);
+ assert.equal((await coachClient.append(1,largeDelta)).revision,2);
+ const compEnvelope=await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:scope,workspaceId,revision:3,snapshot:nextLarge},password);
+ const comp=await splitDeltaAnchor(compEnvelope,{kind:'compact',expectedRevision:2});
+ assert.equal((await request('multipart/compact/'+comp.uploadId+'/begin','PUT',{manifest:comp.manifest})).status,401);
+ const compactedLarge=await compactDeltaLab({client:coachClient,area:scope,password,current:freshDb(),expectedRevision:2,confirmed:true});
+ assert.equal(compactedLarge.revision,3);assert.equal((await coachClient.head()).count,1);
+ assert.equal((await request('revision/1/part/0')).status,410);
+ await stop();await start();
+ const recoveredLarge=await readDeltaLab({client:coachClient,area:scope,password,current:freshDb()});
+ assert.deepEqual(recoveredLarge.snapshot,nextLarge);assert.equal(recoveredLarge.revision,3);
+ const largeAfter=structuredClone(largeNext);largeAfter.coachTeams[1].name='После компактизации';
+ const afterLarge=projectScope(largeAfter,scope),afterDelta=await encryptBackup(await buildSyncDelta(nextLarge,afterLarge,{area:scope,workspaceId,baseRevision:3}),password);
+ assert.equal((await coachClient.append(3,afterDelta)).revision,4);
+ assert.deepEqual((await readDeltaLab({client:coachClient,area:scope,password,current:freshDb()})).snapshot,afterLarge);
+ console.log('DELTA MULTIPART PASS: '+split.chunks.length+' parts, '+largeAnchor.data.length+' ciphertext characters; staged invisibility, exact retry, auth separation, restart/resume, atomic compaction, old part removal and post-compaction delta.');
  const sizes=syncDeltaEstimate(base,next,{area,workspaceId,baseRevision:1});assert.ok(sizes.bytes<sizes.fullBytes);
  console.log('DELTA SIZE '+JSON.stringify(sizes));
  console.log('DELTA WORKER PASS: real workerd, opaque encrypted anchor and deltas, two scoped devices, CAS race and exact retry, bounds, isolation, restart persistence and verified reconstruction');

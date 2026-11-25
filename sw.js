@@ -19,7 +19,7 @@ const PRECACHE = [
   './js/device-trust.js','./js/screens/trusted-devices.js','./js/privacy-shield.js',
   './js/app.js','./js/search.js','./js/screens/search.js',
   './js/version.js',
-  './js/db.js',
+  './js/delta-anchor.js','./js/db.js',
   './js/backup.js',
   './js/sync.js','./js/sync-pairing.js','./js/personal-sync.js','./js/device-invite.js','./js/auto-sync.js',
   './js/screens/sync.js',
