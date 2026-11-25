@@ -7,7 +7,7 @@ const H={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-
 const json=(status,body,cors={})=>new Response(JSON.stringify(body),{status,headers:{...H,...cors}});
 function config(env,url){
  try{
-  const origin=new URL(env.TEACHAPP_DELTA_ORIGIN),hashes=JSON.parse(env.TEACHAPP_DELTA_TOKEN_HASHES||'{}'),seen=new Set();
+  const origin=new URL(env.TEACHAPP_DELTA_ORIGIN),hashes=JSON.parse(env.TEACHAPP_DELTA_TOKEN_HASHES||'{}'),compactors=JSON.parse(env.TEACHAPP_DELTA_COMPACT_HASHES||'{}'),seen=new Set();
   if(env.TEACHAPP_DELTA_SYNTHETIC!=='true'||!loopback.includes(url.hostname)||origin.protocol!=='http:'||!loopback.includes(origin.hostname)||origin.origin!==env.TEACHAPP_DELTA_ORIGIN||!hashes||typeof hashes!=='object'||Array.isArray(hashes)||Object.keys(hashes).some(k=>!areas.includes(k)))return null;
   for(const area of areas){
    const list=hashes[area]??[];
@@ -15,7 +15,14 @@ function config(env,url){
    for(const h of list){if(typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)||seen.has(h))return null;seen.add(h);}
    hashes[area]=list;
   }
-  return seen.size?{origin:origin.origin,hashes}:null;
+  if(!compactors||typeof compactors!=='object'||Array.isArray(compactors)||Object.keys(compactors).some(k=>!areas.includes(k)))return null;
+  const readCount=seen.size;
+  for(const area of areas){
+   const h=compactors[area];if(h===undefined)continue;
+   if(typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)||seen.has(h)||!hashes[area].length)return null;
+   seen.add(h);
+  }
+  return readCount?{origin:origin.origin,hashes,compactors}:null;
  }catch{return null;}
 }
 function equal(a,b){let d=0;for(let i=0;i<64;i++)d|=a.charCodeAt(i)^b.charCodeAt(i);return d===0;}
@@ -37,15 +44,15 @@ export default {async fetch(request,env){
  const u=new URL(request.url),settings=config(env,u);
  if(u.pathname==='/healthz'&&request.method==='GET')return json(settings?200:503,{status:settings?'synthetic-ready':'disabled'});
  if(!settings)return json(503,{error:'disabled'});
- const route=/^\/v1\/delta\/(school|coach)\/(head|anchor|append|revision\/[1-9]\d{0,14})$/.exec(u.pathname);
+ const route=/^\/v1\/delta\/(school|coach)\/(head|anchor|append|compact|revision\/[1-9]\d{0,14})$/.exec(u.pathname);
  if(!route||u.search)return json(404,{error:'route'});
  const [,area,path]=route,origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};
  if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
  if(request.method==='OPTIONS')return origin===settings.origin?new Response(null,{status:204,headers:{...cors,'Access-Control-Allow-Methods':'GET, PUT, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'}}):json(403,{error:'origin'});
- const write=path==='anchor'||path==='append';
+ const write=['anchor','append','compact'].includes(path);
  if(request.method!==(write?'PUT':'GET'))return json(405,{error:'method'},cors);
  try{
-  if(!await authorized(request,settings.hashes[area]))return json(401,{error:'unauthorized'},cors);
+  if(!await authorized(request,path==='compact'?[settings.compactors[area]].filter(Boolean):settings.hashes[area]))return json(401,{error:'unauthorized'},cors);
   const input=write?await bodyOf(request):{body:null};
   if(input.error)return json(input.error,{error:'packet'},cors);
   const stub=env.DELTA_LEDGERS.get(env.DELTA_LEDGERS.idFromName(area));
@@ -55,26 +62,31 @@ export default {async fetch(request,env){
 }};
 export class DeltaLedger extends DurableObject{
  constructor(ctx,env){super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;this.sql.exec('CREATE TABLE IF NOT EXISTS revisions (revision INTEGER PRIMARY KEY, kind TEXT NOT NULL, envelope TEXT NOT NULL, bytes INTEGER NOT NULL)');}
- head(){return this.sql.exec('SELECT COALESCE(MAX(revision),0) AS revision, COUNT(*) AS count, COALESCE(SUM(bytes),0) AS bytes FROM revisions').toArray()[0];}
+ head(){return this.sql.exec('SELECT COALESCE(MAX(revision),0) AS revision, COALESCE(MIN(revision),0) AS anchorRevision, COUNT(*) AS count, COALESCE(SUM(bytes),0) AS bytes FROM revisions').toArray()[0];}
  async fetch(request){
   const path=new URL(request.url).pathname;
   try{
    if(request.method==='GET'){
     if(path==='/head'){
-     const h=this.head();return json(200,{revision:h.revision,anchorRevision:h.count?1:0,count:h.count,bytes:h.bytes,maxEntries:MAX_DELTA_ENTRIES+1,maxBytes:MAX_LEDGER_BYTES});
+     const h=this.head();return json(200,{revision:h.revision,anchorRevision:h.anchorRevision,count:h.count,bytes:h.bytes,maxEntries:MAX_DELTA_ENTRIES+1,maxBytes:MAX_LEDGER_BYTES});
     }
     const m=/^\/revision\/([1-9]\d{0,14})$/.exec(path);
     if(!m)return json(404,{error:'route'});
     const row=this.sql.exec('SELECT revision,kind,envelope FROM revisions WHERE revision=?',Number(m[1])).toArray()[0];
-    return row?json(200,{revision:row.revision,kind:row.kind,envelope:JSON.parse(row.envelope)}):json(404,{error:'revision'});
+    if(row)return json(200,{revision:row.revision,kind:row.kind,envelope:JSON.parse(row.envelope)});
+    const h=this.head();return h.anchorRevision&&Number(m[1])<h.anchorRevision?json(410,{error:'compacted',anchorRevision:h.anchorRevision}):json(404,{error:'revision'});
    }
-   if(request.method!=='PUT'||!['/anchor','/append'].includes(path))return json(404,{error:'route'});
-   const packet=normalizeDeltaWrite(await request.json()),kind=path==='/anchor'?'anchor':'delta';
+   if(request.method!=='PUT'||!['/anchor','/append','/compact'].includes(path))return json(404,{error:'route'});
+   const packet=normalizeDeltaWrite(await request.json()),kind=path==='/anchor'?'anchor':path==='/compact'?'compact':'delta';
    if(!packet)return json(400,{error:'packet'});
    const result=this.storage.transactionSync(()=>{
     const h=this.head(),last=this.sql.exec('SELECT revision,kind,envelope AS serialized FROM revisions WHERE revision=?',h.revision).toArray()[0];
     const decision=decideDeltaWrite(h,kind,packet,last);
-    if(decision.status===201)this.sql.exec('INSERT INTO revisions(revision,kind,envelope,bytes) VALUES(?,?,?,?)',decision.revision,kind,packet.serialized,packet.bytes);
+    if(decision.status===201){
+     // Both the new anchor and removal of its superseded chain are atomic.
+     this.sql.exec('INSERT INTO revisions(revision,kind,envelope,bytes) VALUES(?,?,?,?)',decision.revision,decision.compact?'anchor':kind,packet.serialized,packet.bytes);
+     if(decision.compact)this.sql.exec('DELETE FROM revisions WHERE revision<?',decision.revision);
+    }
     return decision;
    });
    return json(result.status,result.error?{error:result.error}:{revision:result.revision,replayed:result.replayed});

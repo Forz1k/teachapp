@@ -11,6 +11,13 @@ The current v1/v2 relays and automatic synchronization remain unchanged. This ch
 ## Synthetic durable relay
 `wrangler.delta-dev.jsonc` defines a separate, loopback-only Worker with no public routes or binding to the live snapshot service. Explicit synthetic flag, loopback origin, and separate scoped test token hashes are required. Each scope uses an independent SQLite Durable Object.
 - GET head, GET one revision, PUT initial anchor, PUT append. Writes use transactional expected-revision CAS; an exact retry of the last accepted ciphertext is idempotent. No overwrite or automatic history deletion.
-- Maximum 1 MiB per PUT, one anchor plus 128 changes, 16 MiB ledger. Reaching the cap stops writes; there is deliberately no automatic compaction yet.
+- Maximum 1 MiB per PUT, one anchor plus 128 changes, 16 MiB ledger. Reaching the cap stops ordinary writes; explicit privileged compaction is available if a complete anchor fits.
 - Only the authenticated client can interpret or validate encrypted content. The server checks envelope shape, bounds, authorization and sequence.
 - The real local workerd test uses two scoped devices, races writes, restarts the worker, fetches a contiguous chain and reconstructs the full snapshot with the client codec. This is not a production migration or a normal application sync option.
+
+## Explicit compaction and test client
+`TEACHAPP_DELTA_COMPACT_HASHES` is an optional JSON object of separate per-area SHA-256 token hashes (must not equal ordinary access hashes). A compactor token cannot read or append, and an ordinary token cannot compact. The synthetic client uses both credentials only in memory and accepts HTTP loopback endpoints only.
+
+The client reconstructs the remote state (not dirty local data), verifies the workspace, each revision, relationships and any retained local checkpoint, then encrypts a complete anchor at the next revision. Explicit confirmation and expected head revision are required. The Worker atomically inserts the anchor and removes superseded revisions using CAS; concurrent append and compaction cannot both succeed. Old revision requests return 410 and bounded readers restart from the new anchor. An exact retry is accepted while that anchor is the latest revision. After compaction, a fresh device reads the new anchor plus later deltas; an offline device with an older checkpoint keeps its own base and must reconcile explicitly. A checkpoint older than the retained anchor cannot independently verify the removed chain, and is marked as such. No local records are written by the LAB helpers.
+
+This is a **trusted-client** operation: the opaque server cannot prove that a privileged writer's ciphertext contains the same state. Keep a verified encrypted backup before compaction; the prototype does not provide an immutable historical audit or Byzantine protection. No automatic compaction or normal sync integration, no chunked anchors above 1 MiB, no production deployment.

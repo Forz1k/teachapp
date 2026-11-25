@@ -20,3 +20,15 @@ test('Opaque ledger append-only CAS, exact retry, anchor and storage limits',()=
  assert.equal(decideDeltaWrite({...head,count:MAX_DELTA_ENTRIES+1},'delta',packet(1),last).status,507);
  assert.equal(decideDeltaWrite({...head,bytes:MAX_LEDGER_BYTES},'delta',packet(1),last).status,507);
 });
+
+test('Privileged compaction advances revision even at capacity, preserves CAS and permits only an exact retry',()=>{
+ const old={revision:3,count:3,bytes:MAX_LEDGER_BYTES},last={revision:3,kind:'delta',serialized:packet(2).serialized};
+ assert.deepEqual(decideDeltaWrite(old,'compact',packet(3),last),{status:201,revision:4,replayed:false,compact:true});
+ assert.equal(decideDeltaWrite(old,'compact',packet(2),last).status,409);
+ assert.equal(decideDeltaWrite({revision:0,count:0,bytes:0},'compact',packet(0)).status,409);
+ const compacted={revision:4,count:1,bytes:packet(3).bytes},anchor={revision:4,kind:'anchor',serialized:packet(3).serialized};
+ assert.deepEqual(decideDeltaWrite(compacted,'compact',packet(3),anchor),{status:200,revision:4,replayed:true});
+ assert.equal(decideDeltaWrite(compacted,'compact',packet(4),anchor).status,409);
+ assert.equal(decideDeltaWrite(compacted,'delta',packet(3),anchor).status,409);
+ assert.equal(decideDeltaWrite(compacted,'delta',packet(4),anchor).status,201);
+});

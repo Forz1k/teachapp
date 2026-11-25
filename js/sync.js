@@ -341,6 +341,82 @@ export async function replaySyncDeltas({base,baseRevision,area,workspaceId,entri
  return {snapshot,revision:rev};
 }
 
+/* Local synthetic relay only. No change to the production v1/v2 client.
+   Keep credential roles separate; never persist tokens or plaintext snapshots. */
+export function deltaLabClient(endpoint,area,token,{compactToken,fetcher=globalThis.fetch,timeoutMs=15000}={}){
+ endpoint=normalizeEndpoint(endpoint);
+ check(validArea(area)&&['localhost','127.0.0.1','[::1]'].includes(new URL(endpoint).hostname)&&new URL(endpoint).protocol==='http:','Delta LAB доступен только на localhost');
+ const validToken=t=>typeof t==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(t);
+ check(validToken(token)&&(compactToken===undefined||validToken(compactToken)&&compactToken!==token),'Проверьте отдельные тестовые ключи');
+ const url=endpoint+'/v1/delta/'+area+'/';
+ async function request(path,body,secret=token){
+  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),timeoutMs);
+  try{
+   const res=await fetcher(url+path,{method:body?'PUT':'GET',headers:{Authorization:'Bearer '+secret,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:ctl.signal});
+   if(!res.ok)throw Object.assign(Error(res.status===410?'История уплотнена, повторите чтение':'Delta LAB: HTTP '+res.status),{status:res.status});
+   const limit=defaultCloudflarePacketLimit+4096;
+   check(Number(res.headers.get('content-length')||0)<=limit,'Слишком большой ответ Delta LAB');
+   check(res.body?.getReader,'Пустой ответ Delta LAB');
+   const reader=res.body.getReader(),decoder=new TextDecoder('utf-8',{fatal:true});let size=0,text='';
+   try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>limit){await reader.cancel();throw Error('Слишком большой ответ Delta LAB');}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}
+   finally{reader.releaseLock();}
+   return JSON.parse(text);
+  }finally{clearTimeout(timer);}
+ }
+ return {head:()=>request('head'),getRevision:rev=>{check(revision(rev),'Некорректная ревизия');return request('revision/'+rev);},
+  anchor:envelope=>request('anchor',{expectedRevision:0,envelope}),
+  append:(expectedRevision,envelope)=>request('append',{expectedRevision,envelope}),
+  compact:(expectedRevision,envelope)=>{check(validToken(compactToken),'Нужен отдельный ключ компактизации');return request('compact',{expectedRevision,envelope},compactToken);}
+ };
+}
+function validDeltaHead(h){
+ return plain(h)&&Number.isSafeInteger(h.revision)&&h.revision>=0&&Number.isSafeInteger(h.anchorRevision)&&Number.isInteger(h.count)&&h.count>=0&&h.count<=129&&
+  (h.revision===0?h.anchorRevision===0&&h.count===0:revision(h.anchorRevision)&&h.anchorRevision<=h.revision&&h.count===h.revision-h.anchorRevision+1);
+}
+// Read an immutable prefix. If compaction removed a requested revision, restart
+// from the new anchor at most twice. No silent fallback after an integrity error.
+export async function readDeltaLab({client,area,password,current,checkpoint=null}){
+ check(validArea(area)&&typeof password==='string'&&password.length>=12,'Проверьте параметры Delta LAB');
+ if(checkpoint){check(revision(checkpoint.revision)&&uuid.test(checkpoint.workspaceId),'Некорректная локальная ревизия');combineScope(current,checkpoint.snapshot,area);}
+ for(let attempt=0;attempt<3;attempt++){
+  try{
+   const head=await client.head();check(validDeltaHead(head),'Некорректная цепочка Delta LAB');
+   check(!checkpoint||head.revision>=checkpoint.revision,'Сервер вернул устаревшую ревизию');
+   if(!head.revision)return {revision:0,anchorRevision:0,workspaceId:null,snapshot:null,compactedPastCheckpoint:false};
+   const first=await client.getRevision(head.anchorRevision);
+   check(first?.kind==='anchor'&&first.revision===head.anchorRevision,'Отсутствует базовый снимок Delta LAB');
+   const initial=await readPacket(first.envelope,password,area,head.anchorRevision);
+   const workspaceId=initial.workspaceId;
+   check(!checkpoint||workspaceId===checkpoint.workspaceId,'Сервер заменил рабочее пространство');
+   let snapshot=initial.snapshot;combineScope(current,snapshot,area);
+   const checkKnown=rev=>{
+    if(checkpoint?.revision===rev)check(same(snapshot,checkpoint.snapshot),'Содержимое ранее принятой ревизии изменилось');
+   };
+   checkKnown(head.anchorRevision);
+   for(let rev=head.anchorRevision+1;rev<=head.revision;rev++){
+    const row=await client.getRevision(rev);
+    check(row?.kind==='delta'&&row.revision===rev,'Пропущена или подменена ревизия изменений');
+    snapshot=await applySyncDelta(snapshot,await decryptBackup(row.envelope,password),{area,workspaceId,baseRevision:rev-1,current});
+    checkKnown(rev);
+   }
+   return {revision:head.revision,anchorRevision:head.anchorRevision,workspaceId,snapshot,compactedPastCheckpoint:!!checkpoint&&checkpoint.revision<head.anchorRevision};
+  }catch(e){if(e.status!==410||attempt===2)throw e;}
+ }
+}
+// Compaction never takes its snapshot from local edits. Reconstruct the remote
+// chain first, then submit a full anchor at the next revision under an explicit CAS.
+export async function compactDeltaLab({client,area,password,current,checkpoint=null,expectedRevision,confirmed=false}){
+ check(confirmed&&revision(expectedRevision),'Подтвердите компактизацию проверенной ревизии');
+ const remote=await readDeltaLab({client,area,password,current,checkpoint});
+ check(remote.revision===expectedRevision&&remote.anchorRevision<remote.revision,'История изменилась или уже уплотнена');
+ check(!remote.compactedPastCheckpoint,'Локальная контрольная точка старше базового снимка; сначала согласуйте данные');
+ check(syncUploadBytes(remote.snapshot,{area,workspaceId:remote.workspaceId,expectedRevision})<=defaultCloudflarePacketLimit,'Полный снимок превышает лимит компактизации; история сохранена');
+ const envelope=await encryptBackup(packetPayload(remote.snapshot,area,remote.workspaceId,expectedRevision+1),password);
+ const result=await client.compact(expectedRevision,envelope);
+ check(result?.revision===expectedRevision+1,'Сервер не подтвердил компактизацию');
+ return {revision:result.revision,workspaceId:remote.workspaceId,snapshot:remote.snapshot,envelope};
+}
+
 export async function prepareSync({area,endpoint,password,client,data}){
  endpoint=normalizeEndpoint(endpoint);
  check(validArea(area),'Выберите рабочую область');

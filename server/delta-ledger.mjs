@@ -1,4 +1,4 @@
-/* Opaque append-only ledger for the synthetic delta relay. Never decrypts. */
+/* Opaque ledger for the synthetic delta relay. Never decrypts. Explicit privileged compaction replaces the anchor atomically. */
 import {LIMIT} from './cloudflare-protocol.mjs';
 export const MAX_DELTA_ENTRIES=128, MAX_LEDGER_BYTES=16*1024*1024;
 const exact=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===keys.length&&keys.every(k=>Object.hasOwn(v,k));
@@ -16,12 +16,17 @@ export function normalizeDeltaWrite(body){
 }
 // This decision must be evaluated within the same transaction as the append.
 export function decideDeltaWrite({revision,count,bytes},kind,packet,last){
- if(!packet||!['anchor','delta'].includes(kind))return {status:400,error:'packet'};
+ if(!packet||!['anchor','delta','compact'].includes(kind))return {status:400,error:'packet'};
  const wanted=packet.expectedRevision+1;
- if(revision===wanted&&last?.revision===wanted&&last.kind===kind&&last.serialized===packet.serialized)
+ if(revision===wanted&&last?.revision===wanted&&last.kind===(kind==='compact'?'anchor':kind)&&last.serialized===packet.serialized&&(kind!=='compact'||packet.expectedRevision>0))
   return {status:200,revision,replayed:true};
  if(packet.expectedRevision!==revision)return {status:409,error:'revision-conflict'};
- if((kind==='anchor'&&revision!==0)||(kind==='delta'&&revision===0))return {status:409,error:'anchor-required-or-exists'};
+ if((kind==='anchor'&&revision!==0)||(kind!=='anchor'&&revision===0))return {status:409,error:'anchor-required-or-exists'};
+ // Compaction is allowed even at the history cap. It has a separate credential.
+ if(kind==='compact'){
+  if(count<2)return {status:409,error:'no-history-to-compact'};
+  return {status:201,revision:wanted,replayed:false,compact:true};
+ }
  if(count>=MAX_DELTA_ENTRIES+1||bytes+packet.bytes>MAX_LEDGER_BYTES)return {status:507,error:'ledger-full'};
  return {status:201,revision:wanted,replayed:false};
 }
