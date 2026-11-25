@@ -1,3 +1,4 @@
+import {validateSchoolCompetition,validateTeacherPortfolio} from './teacher-portfolio.js';
 import {validateStudentGoal} from './student-goals.js';
 import {validateMaterial,materialKinds} from './library-materials.js';
 import {validateOpponentNote} from './coach-opponents.js';
@@ -34,6 +35,8 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='schoolCompetition'){validateSchoolCompetition(r);return;}
+ if(r.kind==='teacherPortfolio'){validateTeacherPortfolio(r);return;}
  if(r.kind==='studentGoal'){validateStudentGoal(r);return;}
  if(materialKinds.includes(r.kind)){validateMaterial(r);return;}
  if(r.kind==='opponentNote'){validateOpponentNote(r);return;}

@@ -1,3 +1,4 @@
+import {schoolCompetitionCalendar} from './teacher-portfolio.js';
 import {tournamentCalendar} from './tournaments.js';
 import {fixtureCalendar} from './competition-center.js';
 import * as M from './model.js';
@@ -8,7 +9,7 @@ const timeOK=t=>typeof t==='string'&&(t===''||/^([01]\d|2[0-3]):[0-5]\d$/.test(t
 export function validateEvent(r){
  require(only(r,['id','kind','name','date','time','minutes','eventType','note','remind','done'])&&txt(r.id)&&r.kind==='event'&&txt(r.name)&&validPeriod(r.date,null)&&timeOK(r.time)&&Number.isInteger(r.minutes)&&r.minutes>=0&&r.minutes<=600&&(!r.minutes||r.time!=='')&&Object.hasOwn(eventTypes,r.eventType)&&opt(r.note,2000)&&[null,0,15,30,60,120,1440].includes(r.remind)&&typeof r.done==='boolean','Проверьте событие, дату, время и напоминание');
 }
-export function calendarEntries(school,coach,events,from,to,tournaments=[],portalByTeam={}){
+export function calendarEntries(school,coach,events,from,to,tournaments=[],portalByTeam={},schoolCompetitions=[]){
  require(validPeriod(from,to)&&!!to&&M.addDays(from,62)>=to,'Выберите период до 63 дней');
  const out=[],classes=new Map(school.classes.map(c=>[c.id,c.name])),teams=new Map(coach.coachTeams.map(t=>[t.id,t.name]));
  for(let date=from;date<=to;date=M.addDays(date,1)){
@@ -24,7 +25,7 @@ export function calendarEntries(school,coach,events,from,to,tournaments=[],porta
  for(const t of coach.coachTrainings){if(!M.inRange(t.date,from,to))continue;out.push({id:'training-'+t.id,source:'coach',date:t.date,time:t.time,minutes:t.minutes,title:t.title+' · '+(teams.get(t.teamId)||'Команда'),exportTitle:'Тренировка',done:t.held,remind:30});}
  for(const m of coach.coachMatches){if(!M.inRange(m.date,from,to))continue;out.push({id:'match-'+m.id,source:'coach',date:m.date,time:'',minutes:0,title:'Матч · '+m.opponent,exportTitle:'Волейбольный матч',done:true,remind:null});}
  for(const e of events){if(!M.inRange(e.date,from,to))continue;out.push({id:e.id,source:'custom',date:e.date,time:e.time,minutes:e.minutes,title:e.name,exportTitle:eventTypes[e.eventType],done:e.done,remind:e.remind,record:e});}
- out.push(...tournamentCalendar(tournaments,from,to),...fixtureCalendar(coach.coachTeams,portalByTeam,from,to));
+ out.push(...tournamentCalendar(tournaments,from,to),...fixtureCalendar(coach.coachTeams,portalByTeam,from,to),...schoolCompetitionCalendar(schoolCompetitions,from,to));
  const last=school.settings.lastBackupAt;
  let backupDue=last&&Number.isFinite(Date.parse(last))?M.addDays(M.iso(new Date(last)),7):M.todayIso();
  const postponed=school.settings.backupReminderAfter;
@@ -41,7 +42,7 @@ export function dueReminders(entries,now=new Date()){
  });
 }
 export function timeConflicts(entries){
- const times=entries.filter(e=>e.time&&!e.done&&['school','coach','custom','tournament'].includes(e.source)),out=[];
+ const times=entries.filter(e=>e.time&&!e.done&&['school','coach','custom','tournament','schoolCompetition'].includes(e.source)),out=[];
  for(let i=0;i<times.length;i++)for(let j=i+1;j<times.length;j++){const a=times[i],b=times[j];if(a.date!==b.date)continue;const x=M.parseTime(a.time),y=M.parseTime(b.time);if(x===null||y===null)continue;if(x===y||x<y+Math.max(1,b.minutes)&&y<x+Math.max(1,a.minutes))out.push([a,b]);}
  return out;
 }
