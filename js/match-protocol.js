@@ -1,4 +1,5 @@
 import {validateCapture} from './match-capture.js';
+import {validMatchFormat,regulationOf,isSetWon} from './match-rules.js';
 /* TeachApp — detailed event-sourced indoor match. No external service. */
 const fail=(ok,msg)=>{if(!ok)throw Error(msg);};
 const sides=['ours','theirs'],other=s=>s==='ours'?'theirs':'ours';
@@ -62,6 +63,7 @@ export function legalSubstitutions(d,s,side,out){
  if(!line.includes(out)||side==='ours'&&out===s.liberoFor)return [];
  return roster.filter(p=>!line.includes(p.id)&&(side!=='ours'||!liberoIds(d).includes(p.id))&&(d.substitutionMode!=='paired'||allowedPair(s.substitutionState[side],out,p.id)));
 }
+export function liberoIntervalPending(d,s){return regulationOf(d).liberoInterval==='oneRally'&&s.lastLiberoRally===s.rallyCount;}
 export function replayDetailed(d){
  fail(d.mode==='dual'&&text(d.teamName)&&text(d.opponent)&&typeof d.competition==='string'&&d.competition.length<=200&&typeof d.venue==='string'&&d.venue.length<=200&&
    timestamp(d.startedAt)&&validRoster(d.ourPlayers)&&validRoster(d.awayPlayers)&&Array.isArray(d.roster)&&uniq(d.roster)&&
@@ -69,10 +71,10 @@ export function replayDetailed(d){
    validLine(d.lineup,d.ourPlayers)&&validLine(d.awayLineup,d.awayPlayers,true)&&(!d.awayPlayers.length||d.awayLineup.length===6)&&
    (d.libero===null||d.ourPlayers.some(p=>p.id===d.libero)&&!d.lineup.includes(d.libero))&&
    (d.libero2==null||d.libero&&d.libero2!==d.libero&&d.ourPlayers.some(p=>p.id===d.libero2)&&!d.lineup.includes(d.libero2))&&
-   [3,5].includes(d.bestOf)&&[15,21,25].includes(d.target)&&[15,21,25].includes(d.decider)&&sides.includes(d.firstServe)&&
+   validMatchFormat(d)&&sides.includes(d.firstServe)&&
    (d.limits===undefined||validMatchLimits(d.limits))&&(d.boardColors===undefined||validBoardColors(d.boardColors))&&(d.boardLogos===undefined||validBoardLogos(d.boardLogos))&&['5-1','4-2','free'].includes(d.scheme)&&(d.substitutionMode===undefined||['simple','paired'].includes(d.substitutionMode))&&Array.isArray(d.events)&&d.events.length<=5000,'Проверьте параметры матча');
  const rosters={ours:d.ourPlayers,theirs:d.awayPlayers};
- const s={lineup:[...d.lineup],awayLineup:[...d.awayLineup],liberoFor:null,liberoId:null,serve:d.firstServe,score:{ours:0,theirs:0},sets:[],setDetails:[],timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(d.lineup,d.awayLineup),rotations:{ours:0,theirs:0},sides:{ours:sideData(),theirs:sideData()},timeline:[],setEnded:false,finished:false};
+ const s={lineup:[...d.lineup],awayLineup:[...d.awayLineup],liberoFor:null,liberoId:null,serve:d.firstServe,score:{ours:0,theirs:0},sets:[],setDetails:[],timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(d.lineup,d.awayLineup),rotations:{ours:0,theirs:0},sides:{ours:sideData(),theirs:sideData()},timeline:[],setEnded:false,finished:false,endsSwapped:false,endsAtBreak:false,deciderEndsChanged:false,rallyCount:0,lastLiberoRally:null,changeDue:false};
  let setStarted=d.startedAt,lastAt=d.startedAt;
  const setNo=()=>s.sets.length+1;
  const lineupFor=side=>side==='ours'?s.lineup:s.awayLineup;
@@ -93,9 +95,14 @@ export function replayDetailed(d){
   fail(ev&&typeof ev==='object'&&!s.finished&&timestamp(ev.at)&&Date.parse(ev.at)>=Date.parse(lastAt),'Некорректная последовательность событий');lastAt=ev.at;
   if(ev.type==='next'){
    fail(s.setEnded&&validLine(ev.lineup,d.ourPlayers)&&!liberoIds(d).some(id=>ev.lineup.includes(id))&&validLine(ev.awayLineup,d.awayPlayers,true)&&(!d.awayPlayers.length||ev.awayLineup.length===6)&&sides.includes(ev.serve),'Проверьте расстановку следующей партии');
-   Object.assign(s,{lineup:[...ev.lineup],awayLineup:[...ev.awayLineup],liberoFor:null,liberoId:null,serve:ev.serve,score:{ours:0,theirs:0},timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(ev.lineup,ev.awayLineup),rotations:{ours:0,theirs:0},setEnded:false});
+   Object.assign(s,{lineup:[...ev.lineup],awayLineup:[...ev.awayLineup],liberoFor:null,liberoId:null,serve:ev.serve,score:{ours:0,theirs:0},timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(ev.lineup,ev.awayLineup),rotations:{ours:0,theirs:0},setEnded:false,endsAtBreak:false,deciderEndsChanged:false,lastLiberoRally:null});
    for(const side of sides){s.sides[side].run=0;flush(side);}
    setStarted=ev.at;starting=startLineups();continue;
+  }
+  if(ev.type==='changeEnds'){
+   s.endsSwapped=!s.endsSwapped;if(s.setEnded)s.endsAtBreak=true;
+   if(!s.setEnded&&d.bestOf>1&&s.sets.length===d.bestOf-1&&Math.max(s.score.ours,s.score.theirs)>=regulationOf(d).deciderSwitchAt)s.deciderEndsChanged=true;
+   s.timeline.push({...ev,set:s.setEnded?s.sets.length:setNo(),score:score(s),endsSwapped:s.endsSwapped});continue;
   }
   fail(!s.setEnded,'Начните следующую партию');
   if(ev.type==='timeout'){
@@ -116,7 +123,9 @@ export function replayDetailed(d){
    l[i]=ev.in;s.subCounts[ev.side]++;timeline(ev,{zone:i+1});continue;
   }
   if(ev.type==='libero'){
-   const previous=s.liberoId;
+   const previous=s.liberoId,blocked=liberoIntervalPending(d,s);
+   fail(!blocked||text(ev.exception,200),'Между записанными сменами либеро нужен завершённый розыгрыш или подтверждённое судейское исключение');
+   fail(ev.exception===undefined||blocked&&text(ev.exception,200),'Укажите причину исключения только при действующем интервале');
    if(ev.for===null){fail(s.liberoFor!==null,'Либеро не на площадке');s.liberoFor=null;s.liberoId=null;}
    else{
     const z=s.lineup.indexOf(ev.for)+1,player=ev.player??d.libero;
@@ -124,7 +133,7 @@ export function replayDetailed(d){
     fail(s.liberoFor===null||s.liberoFor===ev.for&&s.liberoId!==player,'На площадке может быть только один либеро');
     s.liberoFor=ev.for;s.liberoId=player;
    }
-   timeline(ev,{side:'ours',player:s.liberoId,previousLibero:previous});continue;
+   s.lastLiberoRally=s.rallyCount;timeline(ev,{side:'ours',player:s.liberoId,previousLibero:previous});continue;
   }
   if(ev.type==='sanction'){
    fail(sides.includes(ev.side)&&Object.hasOwn(sanctionTypes,ev.category)&&(ev.player===null||rosters[ev.side].some(p=>p.id===ev.player))&&typeof ev.note==='string'&&ev.note.length<=500,'Проверьте санкцию и участника');
@@ -165,15 +174,14 @@ export function replayDetailed(d){
   if(winner===s.serve){serving.onServe++;serving.activeRun.won++;}
   if(ev.kind==='ace')serving.activeRun.aces++;
   if(ev.kind==='serveError')serving.activeRun.errors++;
-  s.score[winner]++;
+  s.score[winner]++;s.rallyCount++;
   timeline(ev,{actor,player,before,rotation:{...s.rotations}});
   if(winner!==s.serve){
    flush(s.serve);s.rotations[winner]=(s.rotations[winner]+1)%6;
    if(winner==='ours')s.lineup=rotate(s.lineup);else s.awayLineup=rotate(s.awayLineup);
   }
   s.serve=winner;clearLibero();
-  const target=s.sets.length===d.bestOf-1?d.decider:d.target;
-  if(Math.max(s.score.ours,s.score.theirs)>=target&&Math.abs(s.score.ours-s.score.theirs)>=2){
+  if(isSetWon(d,s.sets.length,s.score)){
    for(const side of sides)flush(side);
    s.setDetails.push({set:setNo(),lineups:starting,startedAt:setStarted,endedAt:ev.at});
    s.sets.push({...s.score});s.setEnded=true;
@@ -181,6 +189,7 @@ export function replayDetailed(d){
    s.finished=Math.max(wins,s.sets.length-wins)>=Math.ceil(d.bestOf/2);
   }
  }
+ const rule=regulationOf(d);s.changeDue=!s.finished&&(rule.ends!=='manual'&&s.setEnded&&!s.endsAtBreak||rule.ends==='betweenSetsDecider'&&!s.setEnded&&d.bestOf>1&&s.sets.length===d.bestOf-1&&!s.deciderEndsChanged&&Math.max(s.score.ours,s.score.theirs)>=rule.deciderSwitchAt);
  const stats={};
  for(const [id,r] of Object.entries(s.sides.ours.stats)){
    const allowed=['serves','serveErrors','aces','receptions','receptionGood','attacks','attackKills','blocks','points'];
