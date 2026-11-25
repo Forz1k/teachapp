@@ -157,7 +157,8 @@ export function checkHandoffMatch(local,remote){
  const numbered=remote.events.some(e=>e.number!=null)||remote.stats.length>0;
  const projected=projectMatch(local,{events:remote.events.length>0,numbers:numbered,stats:remote.stats.length>0,scheduledId:remote.scheduledId});
  const keys=['id','opponent','startedAt','status','set','score','setsWon','sets','serve'];
- const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ const canonical=x=>Array.isArray(x)?'['+x.map(canonical).join(',')+']':x&&typeof x==='object'?'{'+Object.keys(x).sort().map(k=>JSON.stringify(k)+':'+canonical(x[k])).join(',')+'}':JSON.stringify(x);
+ const equal=(a,b)=>canonical(a)===canonical(b);
  if(keys.some(k=>!equal(projected[k],remote[k])))throw Error('Локальный черновик и опубликованный счёт различаются. Передача остановлена.');
  const suffix=projected.events.slice(-remote.events.length);
  if(remote.events.length&&(!equal(suffix.map(e=>{const {number,...rest}=e;return rest;}),remote.events.map(e=>{const {number,...rest}=e;return rest;}))||remote.events.some((e,i)=>e.number!=null&&e.number!==suffix[i]?.number)))throw Error('Опубликованная история розыгрышей отличается от локального черновика.');
