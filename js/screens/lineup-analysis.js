@@ -12,17 +12,17 @@ const name=(players,id)=>{const a=players.find(p=>p.id===id);return a?(a.number=
 const count=(n,total)=>total?n+'/'+total+' · '+percent(100*n/total):'—';
 const phase=(r,k)=>r[k]?count(r[k+'Won'],r[k])+(r[k+'Eligible']?'':' · мало данных'):'нет данных';
 const modes=[['six','Фактические шестёрки'],['pairs','Сочетания двух игроков'],['starts','Стартовые шестёрки (состав)'],['orderedStarts','Стартовые шестёрки (P1–P6)']];
-export function openLineupAnalysis(view,{match=null,back=closeSheet}={}){
+export function openLineupAnalysis(view,{match=null,back=closeSheet,initial=null}={}){
  const matches=match?[match]:view.matches,players=view.players;
  const now=todayIso(),year=Number(now.slice(0,4))-(Number(now.slice(5,7))<9?1:0);
- const from=el('input',{type:'date',value:match?'':year+'-09-01'}),to=el('input',{type:'date',value:match?'':(year+1)+'-08-31'});
+ const from=el('input',{type:'date',value:match?'':(initial?.from??year+'-09-01')}),to=el('input',{type:'date',value:match?'':(initial?.to??(year+1)+'-08-31')});
  const norm=s=>String(s||'').trim().replace(/\s+/g,' ').toLocaleLowerCase('ru');
  const opponents=new Map(matches.map(m=>[norm(m.opponent),m.opponent]));
- const opponent=select('Соперник',[['','Все соперники'],...[...opponents].map(([v,t])=>[v,t])]);
+ const opponent=select('Соперник',[['','Все соперники'],...[...opponents].map(([v,t])=>[v,t])],initial?.opponent??'');
  const source=select('Источник составов',[['all','LIVE + PDF'],['live','Только TeachApp LIVE'],['imported','Только VolleyPoint PDF']]);
  const mode=select('Вид состава',modes),player=select('Игрок в составе',[['','Все игроки'],...players.map(a=>[a.id,name(players,a.id)])]);
  const set=select('Партия составов',[['0','Все партии'],...Array.from({length:5},(_,i)=>[i+1,'Партия '+(i+1)])]);
- const min=select('Минимум розыгрышей',[10,15,30,50,100].map(n=>[n,n+' розыгрышей']),30);
+ const min=select('Минимум розыгрышей',[10,15,30,50,100].map(n=>[n,n+' розыгрышей']),initial?.min??30);
  const order=select('Сортировка составов',[['rallies','Объём выборки'],['rate','Доля побед'],['time','Измеренное время LIVE'],['plusMinus','Разница очков']]);
  const body=el('div',{class:'coach-stack'});let limit=15,cached=null;
  const options=()=>({from:from.value,to:to.value,opponent:opponent.value,source:source.value,set:Number(set.value),min:Number(min.value),phaseMin:10});
@@ -38,7 +38,7 @@ export function openLineupAnalysis(view,{match=null,back=closeSheet}={}){
    return y.rallies-x.rallies||y.measuredMs-x.measuredMs||x.key.localeCompare(y.key);
   });
   const note=start?'Итог всей партии относится к её стартовой шестёрке, даже если позже состав менялся. P1–P6 сохраняют исходные позиции; режим «состав» объединяет перестановки тех же игроков.':'Розыгрыши относятся к фактическим игрокам до начисления очка. PDF учитывается только там, где полный состав или присутствие обоих игроков подтверждено на всю партию. Проценты фаз — исключительно LIVE.';
-  body.replaceChildren(card('Покрытие данных',[p('Матчей '+a.total+' · подробных LIVE '+a.liveMatches+' · VolleyPoint '+a.pdfMatches+' · без источника состава '+a.unknownMatches),p('Стартовые составы: '+a.knownStarts+'/'+a.completedSets+' партий · PDF: '+a.pdfKnownStarts+'/'+a.pdfSetCount),p('LIVE-розыгрыши: '+a.liveRallies+' · PDF-розыгрыши с известной шестёркой: '+a.pdfSixRallies+'/'+a.pdfRallies+' · с хотя бы одной известной парой: '+a.pdfPairRallies+'/'+a.pdfRallies),p('Измеренное LIVE-время команды: '+courtTimeLabel(a.measuredMs)),p(note),p('Различия не доказывают влияние состава: соперники, фазы, уровень турнира и замены меняются. Небольшая выборка помечается; историческое время PDF не складывается с LIVE.')]),p('Найдено сочетаний: '+rows.length+' · показано '+Math.min(limit,rows.length)));
+  body.replaceChildren(card('Покрытие данных',[p('Матчей '+a.total+' · подробных LIVE '+a.liveMatches+' · VolleyPoint '+a.pdfMatches+' (без стартовых составов '+a.pdfWithoutStarts+') · ручных/прежних '+a.unknownMatches),p('Стартовые составы: '+a.knownStarts+'/'+a.completedSets+' партий · PDF: '+a.pdfKnownStarts+'/'+a.pdfSetCount),p('LIVE-розыгрыши: '+a.liveRallies+' · PDF-розыгрыши с известной шестёркой: '+a.pdfSixRallies+'/'+a.pdfRallies+' · с хотя бы одной известной парой: '+a.pdfPairRallies+'/'+a.pdfRallies),p('Измеренное LIVE-время команды: '+courtTimeLabel(a.measuredMs)),p(note),p('Различия не доказывают влияние состава: соперники, фазы, уровень турнира и замены меняются. Небольшая выборка помечается; историческое время PDF не складывается с LIVE.')]),p('Найдено сочетаний: '+rows.length+' · показано '+Math.min(limit,rows.length)));
   for(const r of rows.slice(0,limit)){
    const title=r.players.map((id,i)=>(mode.value==='orderedStarts'?'P'+(i+1)+' ':'')+name(players,id)).join(' · ');
    if(start){

@@ -25,7 +25,7 @@ export function lineupAnalysis(matches,{from='',to='',opponent='',source='all',m
  check(['all','live','imported'].includes(source)&&Number.isInteger(min)&&min>=1&&min<=500&&Number.isInteger(phaseMin)&&phaseMin>=1&&phaseMin<=500&&Number.isInteger(set)&&set>=0&&set<=5,'Проверьте фильтры составов');
  const selected=matches.filter(m=>(!from||m.date>=from)&&(!to||m.date<=to)&&(!opponent||norm(m.opponent)===opponent)&&(source==='all'||(source==='live'?m.detail:m.imported)));
  const pairs=new Map(),six=new Map(),starts=new Map(),orderedStarts=new Map();
- let liveMatches=0,pdfMatches=0,unknownMatches=0,liveRallies=0,pdfRallies=0,pdfSixRallies=0,pdfPairRallies=0,measuredMs=0,pdfSetCount=0,pdfKnownStarts=0,completedSets=0,knownStarts=0;
+ let liveMatches=0,pdfMatches=0,pdfWithoutStarts=0,unknownMatches=0,liveRallies=0,pdfRallies=0,pdfSixRallies=0,pdfPairRallies=0,measuredMs=0,pdfSetCount=0,pdfKnownStarts=0,completedSets=0,knownStarts=0;
  for(const [i,m] of selected.entries()){
   // Internal unique index; no dependence on untrusted IDs as object properties.
   const mid=i;
@@ -56,6 +56,7 @@ export function lineupAnalysis(matches,{from='',to='',opponent='',source='all',m
    }
   }else if(m.imported){
    pdfMatches++;const v=m.imported.timing;
+   if(!v?.sets.some((s,j)=>(!set||j+1===set)&&validLine(s.lineup)))pdfWithoutStarts++;
    for(const [j,score] of m.sets.entries()){
     if(set&&j+1!==set)continue;completedSets++;pdfSetCount++;
     const events=m.imported.rallies.filter(e=>e.set===j+1),won=events.filter(e=>e.winner==='ours').length;
@@ -77,5 +78,5 @@ export function lineupAnalysis(matches,{from='',to='',opponent='',source='all',m
  }
  const sorted=map=>[...map.values()].map(r=>finish(r,min,phaseMin)).sort((a,b)=>Number(b.eligible)-Number(a.eligible)||b.rallies-a.rallies||b.measuredMs-a.measuredMs||a.key.localeCompare(b.key));
  const startRows=map=>[...map.values()].map(r=>{const {matchIds,...rest}=r;return {...rest,matches:matchIds.size,winRate:pct(r.wins,r.sets),plusMinus:r.pointsFor-r.pointsAgainst,eligible:r.sets>=3&&matchIds.size>=2};}).sort((a,b)=>b.sets-a.sets||a.key.localeCompare(b.key));
- return {total:selected.length,liveMatches,pdfMatches,unknownMatches,liveRallies,pdfRallies,pdfSixRallies,pdfPairRallies,measuredMs,pdfSetCount,pdfKnownStarts,completedSets,knownStarts,pairs:sorted(pairs),six:sorted(six),starts:startRows(starts),orderedStarts:startRows(orderedStarts)};
+ return {total:selected.length,liveMatches,pdfMatches,pdfWithoutStarts,unknownMatches,liveRallies,pdfRallies,pdfSixRallies,pdfPairRallies,measuredMs,pdfSetCount,pdfKnownStarts,completedSets,knownStarts,pairs:sorted(pairs),six:sorted(six),starts:startRows(starts),orderedStarts:startRows(orderedStarts)};
 }

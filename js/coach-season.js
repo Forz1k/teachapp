@@ -1,4 +1,5 @@
-import {playerSeasonStats} from './coach.js';
+import {timedMatchPlayers,timedRate} from './coach.js';
+import {replayDetailed} from './match-protocol.js';
 import {definitionKey,testHistory,summarizeTests} from './coach-tests.js';
 export const sourceLabels={all:'Все матчи',live:'Подробные матчи TeachApp',imported:'VolleyPoint PDF',manual:'Ручные / прежние матчи'};
 export const matchMetrics={aces:'Эйсы',points:'Личные очки',attackKills:'Результативные атаки',blocks:'Блоки',serveRate:'Успешность подачи',receiveRate:'Положительный приём',attackRate:'Результативность атаки',pointsPer10:'Личные очки за 10 минут LIVE'};
@@ -22,11 +23,15 @@ export function eligiblePlayers(players,filter={}){
 export function matchComparison(view,metric,filter={}){
  if(!Object.hasOwn(matchMetrics,metric))throw Error('Неизвестный показатель');
  const matches=filteredMatches(view.matches,filter);
- if(metric==='pointsPer10')return eligiblePlayers(view.players,filter).map(player=>{
-  const roster=matches.filter(m=>m.roster.includes(player.id)),t=playerSeasonStats(roster,player.id).playingTime,history=[];
-  for(const m of roster){if(!m.detail)continue;const a=playerSeasonStats([m],player.id).playingTime;if(a.pointsPer10!==null)history.push({date:m.date,label:m.opponent,value:a.pointsPer10});}
-  return {player,value:t.pointsPer10,recorded:t.rateMatches,total:roster.length,attempts:t.rateRallies,success:t.ratePoints,eligible:t.pointsPer10!==null&&t.rateMatches>=2,history:history.sort((a,b)=>a.date.localeCompare(b.date)),lower:false,unit:'очк./10 мин',sample:t.ratePoints+' очков · '+Math.round(t.rateMs/60000*10)/10+' мин · '+t.rateRallies+' роз. · матчей '+t.rateMatches+'/'+roster.length};
- });
+ if(metric==='pointsPer10'){
+  const data=new Map(matches.filter(m=>m.detail).map(m=>[m,timedMatchPlayers(replayDetailed(m.detail))]));
+  return eligiblePlayers(view.players,filter).map(player=>{
+   const roster=matches.filter(m=>m.roster.includes(player.id)),history=[],sum={ms:0,rallies:0,points:0};let recorded=0;
+   for(const m of roster){const a=data.get(m)?.get(player.id);if(!a||a.ms<=0)continue;sum.ms+=a.ms;sum.rallies+=a.rallies;sum.points+=a.points;recorded+=Number(a.rallies>0);const value=timedRate(a);if(value!==null)history.push({date:m.date,label:m.opponent,value});}
+   const value=timedRate(sum);
+   return {player,value,recorded,total:roster.length,attempts:sum.rallies,success:sum.points,eligible:value!==null&&recorded>=2,history:history.sort((a,b)=>a.date.localeCompare(b.date)),lower:false,unit:'очк./10 мин',sample:sum.points+' очков · '+Math.round(sum.ms/60000*10)/10+' мин · '+sum.rallies+' роз. · матчей с розыгрышами '+recorded+'/'+roster.length};
+  });
+ }
  const pair={serveRate:['serves','serveErrors',true],receiveRate:['receptions','receptionGood',false],attackRate:['attacks','attackKills',false]}[metric];
  return eligiblePlayers(view.players,filter).map(player=>{
   const roster=matches.filter(m=>m.roster.includes(player.id));

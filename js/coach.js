@@ -167,6 +167,19 @@ export function summarizeStats(matches,playerIds=null){
 }
 // Aggregate only comparable observations. A terminal-action protocol does not
 // provide the denominator of all attacks or receptions.
+export function timedMatchPlayers(state){
+ const t=courtTime(state),rows=new Map();
+ for(const [id,ms] of Object.entries(t.players.ours))rows.set(id,{ms,rallies:0,won:0,lost:0,points:0,unattributedWins:0});
+ for(const e of state.timeline){
+  if(e.type!=='rally'||!e.clockRunning)continue;
+  for(const id of e.before.lineups.ours){
+   if(!rows.has(id))rows.set(id,{ms:0,rallies:0,won:0,lost:0,points:0,unattributedWins:0});
+   const r=rows.get(id);r.rallies++;if(e.side==='ours'){r.won++;if(e.kind==='point'||e.player==null)r.unattributedWins++;if(e.actor==='ours'&&e.player===id&&['ace','kill','tip','block'].includes(e.kind))r.points++;}else r.lost++;
+  }
+ }
+ return rows;
+}
+export function timedRate(r){return r.ms>=600000&&r.rallies>=10?r.points*600000/r.ms:null;}
 export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
  const chosen=matches.filter(m=>m.roster.includes(playerId)&&(!from||m.date>=from)&&(!to||m.date<=to));
  const summary=summarizeStats(chosen,[playerId]);
@@ -187,10 +200,9 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
    const state=replayDetailed(m.detail);detailedMatches++;
    const t=courtTime(state);
    if(t.measured){const ms=t.players.ours[playerId]||0;playingTime.measuredMatches++;if(t.partial)playingTime.partialMatches++;playingTime.totalMs+=ms;playingTime.teamMs+=t.elapsedMs;playingTime.rows.push({matchId:m.id,date:m.date,opponent:m.opponent,ms,teamMs:t.elapsedMs,partial:t.partial,sets:t.sets.map(s=>({measured:s.started,ms:s.started?(s.players.ours[playerId]||0):null,teamMs:s.elapsedMs,partial:s.untrackedRallies>0}))});}else playingTime.unknownMatches++;
-   const onCourt=state.timeline.filter(e=>e.type==='rally'&&e.before.lineups.ours.includes(playerId));
-   const timed=onCourt.filter(e=>e.clockRunning),timedWins=timed.filter(e=>e.side==='ours'),timedPoints=timedWins.filter(e=>e.actor==='ours'&&e.player===playerId&&['ace','kill','tip','block'].includes(e.kind)).length;
-   playingTime.timedRallies+=timed.length;playingTime.timedPoints+=timedPoints;playingTime.timedWon+=timedWins.length;playingTime.timedLost+=timed.length-timedWins.length;playingTime.unattributedTimedWins+=timedWins.filter(e=>e.kind==='point'||e.actor==='ours'&&e.player==null).length;
-   const measuredMs=t.players.ours[playerId]||0;if(measuredMs>0&&timed.length){playingTime.rateMatches++;playingTime.rateMs+=measuredMs;playingTime.rateRallies+=timed.length;playingTime.ratePoints+=timedPoints;}
+   const tm=timedMatchPlayers(state).get(playerId);
+   if(tm){playingTime.timedRallies+=tm.rallies;playingTime.timedPoints+=tm.points;playingTime.timedWon+=tm.won;playingTime.timedLost+=tm.lost;playingTime.unattributedTimedWins+=tm.unattributedWins;
+    if(tm.ms>0){playingTime.rateMs+=tm.ms;playingTime.rateRallies+=tm.rallies;playingTime.ratePoints+=tm.points;playingTime.rateMatches+=Number(tm.rallies>0);}}
    const stat=state.sides.ours.stats[playerId]||{};
    errors.serve+=stat.serveErrors||0;errors.attack+=stat.attackErrors||0;errors.receive+=stat.receiveErrors||0;errors.other+=stat.otherErrors||0;
    for(const e of state.timeline){
@@ -211,7 +223,7 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
    rates[key].total+=x[total];rates[key].success+=complement?x[total]-x[success]:x[success];
   }
  }
- playingTime.pointsPer10=playingTime.rateMs>=600000&&playingTime.rateRallies>=10?playingTime.ratePoints*600000/playingTime.rateMs:null;
+ playingTime.pointsPer10=timedRate({ms:playingTime.rateMs,rallies:playingTime.rateRallies,points:playingTime.ratePoints});
  return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,importedMatches,importedErrors,importedBreakdown,importedServiceWins,importedLongestSeries,rates,chosen,playingTime};
 }
 export function teamView(data,teamId){
