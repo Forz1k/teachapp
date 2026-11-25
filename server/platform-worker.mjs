@@ -4,7 +4,7 @@ import {digestToken} from './cloudflare-protocol.mjs';
 import {dispatchWorkspace,BODY_LIMIT} from './platform-api.mjs';
 const H={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Type':'application/json; charset=utf-8'};
 const json=(status,body,cors={})=>new Response(JSON.stringify(body),{status,headers:{...H,...cors}});
-function config(env){try{const origin=new URL(env.TEACHAPP_PLATFORM_ORIGIN);if(env.TEACHAPP_PLATFORM_SYNTHETIC!=='true'||origin.protocol!=='https:'||origin.origin!==env.TEACHAPP_PLATFORM_ORIGIN||!/^[a-f0-9]{64}$/.test(env.TEACHAPP_PLATFORM_ROOT_HASH))return null;return {origin:origin.origin,rootHash:env.TEACHAPP_PLATFORM_ROOT_HASH};}catch{return null;}}
+function config(env){try{const origin=new URL(env.TEACHAPP_PLATFORM_ORIGIN);if(env.TEACHAPP_PLATFORM_SYNTHETIC!=='true'||!(origin.protocol==='https:'||origin.protocol==='http:'&&['127.0.0.1','localhost','[::1]'].includes(origin.hostname))||origin.origin!==env.TEACHAPP_PLATFORM_ORIGIN||!/^[a-f0-9]{64}$/.test(env.TEACHAPP_PLATFORM_ROOT_HASH))return null;return {origin:origin.origin,rootHash:env.TEACHAPP_PLATFORM_ROOT_HASH};}catch{return null;}}
 const secret=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
 async function bodyOf(request){
  if(!/^application\/json(?:;|$)/i.test(request.headers.get('content-type')||''))return {error:415};

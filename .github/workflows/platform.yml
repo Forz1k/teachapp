@@ -4,6 +4,8 @@ on:
     paths:
       - 'server/platform-*.mjs'
       - 'server/workspace-policy.mjs'
+      - 'js/platform-client.js'
+      - 'platform-dev/**'
       - 'wrangler.platform-dev.jsonc'
       - 'tools/platform-smoke.mjs'
       - '.github/workflows/platform.yml'
@@ -21,5 +23,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false playwright@1.65.1
       - run: npx --yes wrangler@4.161.0 deploy --config wrangler.platform-dev.jsonc --dry-run --outdir "${RUNNER_TEMP}/platform-build"
       - run: node tools/platform-smoke.mjs

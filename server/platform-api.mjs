@@ -23,7 +23,7 @@ function allowed(s,member,action,r){return authorizeWorkspace({id:member.id},{..
 function audit(s,member,action,target,now){s.audit.push({at:now,actorId:member.id,action,target});if(s.audit.length>200)s.audit.splice(0,s.audit.length-200);}
 function memberByHash(s,auth,now){return s.members.find(m=>m.tokenHash===auth&&m.revokedAt===null&&m.expiresAt>now);}
 function validateRoster(body){require(exact(body,['id','name','players'])&&id(body.id)&&str(body.name)&&Array.isArray(body.players)&&body.players.length<=64,400,'team');require(body.players.every(p=>exact(p,['id','name','number'])&&id(p.id)&&str(p.name)&&int(p.number,0,99))&&uniq(body.players.map(p=>p.id))&&uniq(body.players.map(p=>p.number)),400,'roster');}
-function validateAthlete(body){require(exact(body,['goals','assignments','schedule'])&&['goals','assignments','schedule'].every(k=>Array.isArray(body[k])&&body[k].length<=32&&uniq(body[k].map(x=>x?.id))),400,'athlete');
+function validateAthlete(body){require(exact(body,['expectedRevision','goals','assignments','schedule'])&&int(body.expectedRevision)&&['goals','assignments','schedule'].every(k=>Array.isArray(body[k])&&body[k].length<=32&&uniq(body[k].map(x=>x?.id))),400,'athlete');
  require(body.goals.every(g=>exact(g,['id','name','status','to'])&&id(g.id)&&str(g.name,160)&&['active','done','paused'].includes(g.status)&&date(g.to)),400,'goals');
  require(body.assignments.every(g=>exact(g,['id','name','due','status'])&&id(g.id)&&str(g.name,160)&&date(g.due)&&['open','done','review'].includes(g.status)),400,'assignments');
  require(body.schedule.every(g=>exact(g,['id','date','time','title'])&&id(g.id)&&date(g.date)&&time(g.time)&&str(g.title,160)),400,'schedule');}
@@ -71,28 +71,35 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
     m.revokedAt=now;for(const match of s.matches)if(match.lease?.holderId===m.id){match.lease=null;match.generation++;}
     audit(s,actor,'member.revoke',m.id,now);return ok({member:publicMember(m)},200,true);
    }
+   if(method==='GET'&&path==='teams'){
+    require(['owner','coach','assistant'].includes(actor.role),403,'forbidden');return ok({teams:s.teams.filter(t=>allowed(s,actor,'team.roster',resource(s,'team',{teamId:t.id}))||allowed(s,actor,'team.read',resource(s,'team',{teamId:t.id}))).map(t=>({id:t.id,name:t.name}))});
+   }
+   if(method==='GET'&&path==='matches'){
+    require(['owner','coach','assistant'].includes(actor.role),403,'forbidden');return ok({matches:s.matches.filter(m=>{const ref=resource(s,'match',{teamId:m.teamId,matchId:m.id,status:m.status});return allowed(s,actor,'team.read',ref)||allowed(s,actor,'match.score',ref);}).map(m=>publicMatch(m,now))});
+   }
    if(method==='POST'&&path==='teams'){
     owner();validateRoster(body);require(!exists(s.teams,body.id)&&s.teams.length<12,409,'team-limit');s.teams.push(clone(body));audit(s,actor,'team.create',body.id,now);return ok({team:assistantProjection(body)},201,true);
    }
    let r=/^teams\/([A-Za-z0-9_-]{1,64})\/roster$/.exec(path);
    if(r&&method==='GET'){
-    const team=exists(s.teams,r[1]);require(team,404,'resource');const ref=resource(s,'team',{teamId:team.id});require(allowed(s,actor,'team.roster',ref)||allowed(s,actor,'team.read',ref),403,'forbidden');return ok({team:assistantProjection(team)});
+    const ref=resource(s,'team',{teamId:r[1]});require(allowed(s,actor,'team.roster',ref)||allowed(s,actor,'team.read',ref),403,'forbidden');const team=exists(s.teams,r[1]);require(team,404,'resource');return ok({team:assistantProjection(team)});
    }
    r=/^teams\/([A-Za-z0-9_-]{1,64})\/athletes\/([A-Za-z0-9_-]{1,64})(\/respond)?$/.exec(path);
    if(r){
-    const team=exists(s.teams,r[1]),athleteId=r[2];require(team&&team.players.some(p=>p.id===athleteId),404,'resource');
-    const ref=resource(s,'athlete',{teamId:team.id,athleteId}),record=s.athletes.find(a=>a.teamId===team.id&&a.id===athleteId);
+    const athleteId=r[2],ref=resource(s,'athlete',{teamId:r[1],athleteId}),teamRef=resource(s,'team',{teamId:r[1]});
+    const permitted=method==='PUT'&&!r[3]?allowed(s,actor,'team.write',teamRef):method==='POST'&&r[3]?allowed(s,actor,'athlete.self.respond',ref):method==='GET'&&!r[3]&&(allowed(s,actor,'athlete.self.read',ref)||allowed(s,actor,'athlete.read',ref));require(permitted,403,'forbidden');
+    const team=exists(s.teams,r[1]);require(team&&team.players.some(p=>p.id===athleteId),404,'resource');const record=s.athletes.find(a=>a.teamId===team.id&&a.id===athleteId);
     if(method==='PUT'&&!r[3]){
      require(allowed(s,actor,'team.write',resource(s,'team',{teamId:team.id})),403,'forbidden');validateAthlete(body);
-     const next={id:athleteId,teamId:team.id,...clone(body),responses:(record?.responses||[]).filter(x=>body.assignments.some(a=>a.id===x.assignmentId))};
-     if(record)s.athletes[s.athletes.indexOf(record)]=next;else s.athletes.push(next);audit(s,actor,'athlete.update',athleteId,now);return ok({record:athleteProjection(next),responses:next.responses},200,true);
+     require(body.expectedRevision===(record?.revision??0),409,'revision');const {expectedRevision,...content}=clone(body);const next={id:athleteId,teamId:team.id,...content,revision:expectedRevision+1,responses:(record?.responses||[]).filter(x=>body.assignments.some(a=>a.id===x.assignmentId))};
+     if(record)s.athletes[s.athletes.indexOf(record)]=next;else s.athletes.push(next);audit(s,actor,'athlete.update',athleteId,now);return ok({record:athleteProjection(next),revision:next.revision,responses:next.responses},200,true);
     }
     if(method==='GET'&&!r[3]){
-     require(allowed(s,actor,'athlete.self.read',ref)||allowed(s,actor,'athlete.read',ref),403,'forbidden');return ok({record:athleteProjection(record||{id:athleteId}),responses:clone(record?.responses||[])});
+     require(allowed(s,actor,'athlete.self.read',ref)||allowed(s,actor,'athlete.read',ref),403,'forbidden');return ok({record:athleteProjection(record||{id:athleteId}),revision:record?.revision??0,responses:clone(record?.responses||[])});
     }
     if(method==='POST'&&r[3]){
      require(allowed(s,actor,'athlete.self.respond',ref),403,'forbidden');require(exact(body,['assignmentId','response'])&&id(body.assignmentId)&&['seen','ready','question'].includes(body.response),400,'response');require(record&&record.assignments.some(a=>a.id===body.assignmentId&&a.status==='open'),404,'assignment');
-     const old=record.responses.find(x=>x.assignmentId===body.assignmentId);if(old?.response===body.response)return ok({response:old});const next={assignmentId:body.assignmentId,response:body.response,at:now};record.responses=record.responses.filter(x=>x.assignmentId!==body.assignmentId).concat(next);audit(s,actor,'athlete.respond',athleteId,now);return ok({response:next},200,true);
+     const old=record.responses.find(x=>x.assignmentId===body.assignmentId);if(old?.response===body.response)return ok({response:old});const next={assignmentId:body.assignmentId,response:body.response,at:now};record.responses=record.responses.filter(x=>x.assignmentId!==body.assignmentId).concat(next);record.revision++;audit(s,actor,'athlete.respond',athleteId,now);return ok({response:next},200,true);
     }
    }
    if(method==='POST'&&path==='matches'){
@@ -101,7 +108,7 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
    }
    r=/^matches\/([A-Za-z0-9_-]{1,64})(?:\/(acquire|renew|release|score|next|finish))?$/.exec(path);
    if(r){
-    const m=exists(s.matches,r[1]);require(m,404,'resource');const ref=resource(s,'match',{teamId:m.teamId,matchId:m.id,status:m.status}),canScore=allowed(s,actor,'match.score',ref),canRead=allowed(s,actor,'team.read',ref)||canScore;
+    const m=exists(s.matches,r[1]);if(!m)return err(actor.role==='owner'?404:403,'resource');const ref=resource(s,'match',{teamId:m.teamId,matchId:m.id,status:m.status}),canScore=allowed(s,actor,'match.score',ref),canRead=allowed(s,actor,'team.read',ref)||canScore;
     if(method==='GET'&&!r[2]){require(canRead,403,'forbidden');return ok({match:publicMatch(m,now)});}
     require(method==='POST'&&canScore,403,'forbidden');
     const op=r[2];
