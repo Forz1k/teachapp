@@ -9,5 +9,5 @@ export function periodMarks(lessons,marks,studentId){let sum=0,count=0;for(const
 
 export const journalDensityLabels={standard:'Стандартно',compact:'Компактно',comfortable:'Крупно'};
 const densityKey='teachapp.journal.density';
-export function readJournalDensity(storage=globalThis.localStorage){try{const value=storage.getItem(densityKey);return Object.hasOwn(journalDensityLabels,value)?value:'standard';}catch{return 'standard';}}
+export function readJournalDensity(storage){try{const value=(storage??globalThis.localStorage).getItem(densityKey);return Object.hasOwn(journalDensityLabels,value)?value:'standard';}catch{return 'standard';}}
 export function saveJournalDensity(value,storage=globalThis.localStorage){if(!Object.hasOwn(journalDensityLabels,value))throw Error('Некорректный масштаб журнала');storage.setItem(densityKey,value);if(readJournalDensity(storage)!==value)throw Error('Не удалось сохранить масштаб');return value;}

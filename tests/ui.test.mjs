@@ -784,10 +784,13 @@ test('Предматчевое досье и черновик тренировк
 });
 
 test('Journal density switches without replacing the table or changing marks',async()=>{
- await seed();store.state.currentTrimesterId='t1';const screen=doc.createElement('div');
- renderJournal(screen,{onOpenClassPicker(){},onOpenExemptions(){},onOpenLessonPlanner(){}});
- const select=screen.querySelector('.journal-density'),grid=screen.querySelector('.journal-grid'),table=grid.querySelector('table'),cells=table.querySelectorAll('td.cell');
- const first=cells[0];assert.ok(select);const old=table.textContent;
- try{select.value='comfortable';select.dispatchEvent(new window.Event('change'));assert.equal(grid.dataset.density,'comfortable');assert.equal(grid.querySelector('table'),table);assert.equal(table.querySelector('td.cell'),first);assert.equal(table.textContent,old);}
- finally{localStorage.removeItem('teachapp.journal.density');}
+ const descriptor=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+ Object.defineProperty(globalThis,'localStorage',{value:window.localStorage,configurable:true,writable:true});
+ try{
+  await seed();store.state.currentTrimesterId='t1';const screen=doc.createElement('div');
+  renderJournal(screen,{onOpenClassPicker(){},onOpenExemptions(){},onOpenLessonPlanner(){}});
+  const select=screen.querySelector('.journal-density'),grid=screen.querySelector('.journal-grid'),table=grid.querySelector('table'),cells=table.querySelectorAll('td.cell');
+  const first=cells[0];assert.ok(select);const old=table.textContent;
+  select.value='comfortable';select.dispatchEvent(new window.Event('change'));assert.equal(grid.dataset.density,'comfortable');assert.equal(grid.querySelector('table'),table);assert.equal(table.querySelector('td.cell'),first);assert.equal(table.textContent,old);
+ }finally{window.localStorage.removeItem('teachapp.journal.density');if(descriptor)Object.defineProperty(globalThis,'localStorage',descriptor);else delete globalThis.localStorage;}
 });
