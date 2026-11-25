@@ -111,7 +111,9 @@ try{
  await viewport(1280,900);
  // Populate a full trimester and verify real scroll geometry, not only DOM presence.
  await evalJs("(async()=>{const S=await import('./js/store.js'),M=await import('./js/model.js');const id=S.state.currentClassId,period=S.currentTrimester();for(let i=0;i<32;i++){const d=M.addDays(period.from,i);if(d<=period.to)await S.addLesson(id,d);}return true})()");
- await ready('table.journal');
+ // A pre-existing journal table may still be visible while store notifications
+ // finish rendering the new lessons. Wait for the actual populated geometry.
+ await wait(()=>evalJs('(()=>{const g=document.querySelector(".journal-grid");return Boolean(g&&g.querySelectorAll("th.col-lesson").length>=32&&g.scrollWidth>g.clientWidth)})()'),'populated trimester journal with horizontal overflow');
  const geometry=await evalJs('(()=>{const g=document.querySelector(".journal-grid"),a=g.querySelector("th.col-num"),b=g.querySelector("th.col-name"),end=g.querySelector("th.col-sum:last-child");document.querySelector(".journal-scroll-end").click();const right=g.getBoundingClientRect().right;const reached=end.getBoundingClientRect().right<=right+2;const scrolled=g.scrollLeft>0;document.querySelector(".journal-scroll-controls input").value=0;document.querySelector(".journal-scroll-controls input").dispatchEvent(new Event("input"));return {scrolled,reached,aligned:getComputedStyle(a).verticalAlign==="middle"&&getComputedStyle(b).verticalAlign==="middle",back:g.scrollLeft===0}})()');
  assert.deepEqual(geometry,{scrolled:true,reached:true,aligned:true,back:true});
  await capture('1280-journal-dark');
