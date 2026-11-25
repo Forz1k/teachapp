@@ -4,7 +4,7 @@ import {documentTypes} from '../documents.js';
 import {exportLocalLibrary,parseLibrary,importLocalLibrary,MAX_LIBRARY_BYTES} from '../portable-library.js';
 import {openGymBoards,openGymView} from './methodical.js';
 import * as W from '../workbench.js';
-import {catalog} from '../health.js';
+import {catalog,validPeriod} from '../health.js';
 import {el,openSheet,closeSheet,toast,confirmDialog,downloadBlob} from '../ui.js';
 import {equipmentCard} from './resources.js';
 import {openBoardView} from './tactics.js';
@@ -82,15 +82,16 @@ export async function openCircuitBuilder(back=closeSheet,initialClass=S.state.cu
      btn('Удалить станцию',()=>{if(stations.length<=2)return toast('Нужно минимум две станции');stations.splice(index,1);draw();})]);
    }));refresh();
   }
-  const save=btn('Открыть черновик конспекта',async()=>{if(!draft)return;const fresh=await W.listWork('inventory');if(JSON.stringify(fresh)!==JSON.stringify(stock)){toast('Остатки инвентаря изменились. Откройте конструктор заново.');return;}await planForm(draft.plan,back,'school');},'primary');
+  const save=btn('Открыть черновик конспекта',async()=>{if(!draft||save.disabled)return;save.disabled=true;try{const candidate=draft.plan,fresh=await W.listWork('inventory');if(JSON.stringify(fresh)!==JSON.stringify(stock)){toast('Остатки инвентаря изменились. Откройте конструктор заново.');return;}await planForm(candidate,back,'school');}catch(e){toast(e.message);}finally{save.disabled=!draft;}},'primary');
   function refresh(){try{
    const pupils=cls.value?S.studentsOfClass(cls.value):[],lesson={classId:cls.value,date:date.value};
    if(cls.value&&!S.state.classes.some(c=>c.id===cls.value))throw Error('Класс недоступен');
-   if(!/^\d{4}-\d{2}-\d{2}$/.test(date.value)||!Number.isFinite(Date.parse(date.value)))throw Error('Укажите дату проверки');
+   if(!validPeriod(date.value,null))throw Error('Укажите дату проверки');
    draft=W.circuitDraft({name:name.value.trim(),minutes:num(duration),rounds:num(rounds),work:num(work),transition:num(transition),warmup:{exercise:byExercise(warmup.value),minutes:num(warmMinutes)},cooldown:{exercise:byExercise(cooldown.value),minutes:num(coolMinutes)},stations:stations.map(s=>({...s,exercise:byExercise(s.exerciseId)})),pupilCount:pupils.length,inventory:stock});
    const review=cls.value?W.lessonPlanReview(draft.plan,lesson,{students:pupils,activities:S.activities(),restrictions:S.state.activityRestrictions,exemptions:S.state.exemptions}):null;
    const rows=review?review.items.slice(0,stations.length+1).concat(review.items.slice(-1)):[];
    result.replaceChildren(card('Расчёт кругов',[p(draft.total+' / '+duration.value+' мин · '+draft.groups+' групп'),p(cls.value?'Максимум '+draft.groupSize+' человек в группе (весь состав класса, без автоматического распределения).':'Выберите класс для оценки вместимости и ограничений.'),...draft.capacityIssues.map(x=>p('Станция '+x.station+': вместимость '+x.capacity+', требуется '+x.required+' — пересмотрите группы.')),p('Время: разминка + круги × станции × (работа + переход) + завершение.')]),
+    card('Схема переходов одного круга',[p('Номер в ячейке — станция, на которой работает условная группа. Схема повторяется в каждом круге.'),el('div',{class:'analytics-table'},[el('table',{},[el('thead',{},[el('tr',{},[el('th',{text:'Слот'}),...Array.from({length:draft.groups},(_,i)=>el('th',{text:'Гр. '+(i+1)}))])]),el('tbody',{},draft.rotation.map((row,i)=>el('tr',{},[el('th',{text:String(i+1)}),...row.map(n=>el('td',{text:String(n)}))])))])])]),
     equipmentCard(draft.plan.resources,stock),
     card('Проверка нагрузки',[p(review?'ОСВ: '+review.full.length+' · проверка по внесённым сведениям на '+M.fmtFull(date.value)+'.':'Без класса ограничения не проверены.'),...rows.map(({item,matches,potentialMatches,needsReview})=>p(item.exercise.name+' · совпадения: '+new Set(matches.map(m=>m.studentId)).size+' · возможные: '+new Set(potentialMatches.map(m=>m.studentId)).size+(needsReview?' · уточнить нагрузку':''))),p('Ни отсутствие совпадений, ни расчёт вместимости не означают допуск. Индивидуальные задания и группы определяет учитель.')]));
    save.disabled=false;
@@ -114,7 +115,8 @@ export async function openLibrary(context='school'){
    }else{
     const plans=await W.listWork('plan');body.append(btn('+ Конспект',()=>planForm(null,draw,context),'primary'),...plans.map(r=>card(r.name,[el('div',{class:'work-tags'},[el('span',{class:'status-pill',text:W.contexts[r.context]}),el('span',{class:'status-pill',text:r.minutes+' мин'}),el('span',{class:'status-pill',text:r.items.length+' упражнений'})]),p(r.goal),el('div',{class:'phase-summary'},Object.entries(W.phases).map(([id,label])=>el('div',{},[el('small',{text:label}),el('strong',{text:r.items.filter(i=>i.phase===id).reduce((n,i)=>n+i.minutes,0)+' мин'})]))),btn('Открыть / редактировать',()=>planForm(r,draw,context)),btn('Копировать',()=>planForm({...r,id:undefined,name:r.name+' (копия)'},draw,context)),...(r.tactics||[]).map(b=>btn('Схема · '+b.name,()=>openBoardView(b,draw))),...(r.gymBoards||[]).map(b=>btn('Схема зала · '+b.name,()=>openGymView(b,draw))),btn('Экспорт текста',()=>exportPlan(r)),btn('Удалить',()=>remove(r))])));
    }
-   body.append(context==='school'?btn('Резервные сценарии уроков',()=>openFallbackBuilder(draw)):null,context==='school'?btn('Конструктор круговой тренировки',()=>openCircuitBuilder(draw)):null,btn('Конструктор спортивного зала',openGymBoards),btn('КТП, тактика и шаблоны документов',()=>openMaterials(draw)),btn('Импорт / экспорт библиотеки',()=>openPortableLibrary(draw)),btn('Закрыть',closeSheet));openSheet(body);
+   if(context==='school')body.append(btn('Резервные сценарии уроков',()=>openFallbackBuilder(draw)),btn('Конструктор круговой тренировки',()=>openCircuitBuilder(draw)));
+   body.append(btn('Конструктор спортивного зала',openGymBoards),btn('КТП, тактика и шаблоны документов',()=>openMaterials(draw)),btn('Импорт / экспорт библиотеки',()=>openPortableLibrary(draw)),btn('Закрыть',closeSheet));openSheet(body);
   }catch(e){toast(e.message);}
  }
  await draw();

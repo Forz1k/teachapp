@@ -327,3 +327,7 @@ PR #94 не объединён, новый релиз не опубликова�
 ## Teacher Intelligence: preparation checkpoint
 - `915f73c`, `d182a8e`: read-only per-slot preparation, dated restriction and norm context, selected plan preview, no implicit journal writes. Stabilized old browser journal check by waiting for populated columns, retaining geometry assertions.
 - 375/375, no failures/skips, both full CI runs PASS, 68 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic. [CI](https://github.com/Forz1k/teachapp/actions/runs/45572261118), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45572261190).
+
+## Teacher Intelligence: reserve plans and circuit builder checkpoint
+- `868c421`: reserve copy with separate reason, independent editable school plan, original inventory/hall assumptions cleared; parallel circuit builder with duration, group capacity, simultaneous inventory, per-exercise health review, ordinary plan draft, no timer or schema change.
+- 378/378, zero failures/skips; both full CI runs successful, 70 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic. [CI](https://github.com/Forz1k/teachapp/actions/runs/45573416951), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45573417013).

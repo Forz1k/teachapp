@@ -128,7 +128,8 @@ export function circuitDraft({name,minutes:duration,rounds,work,transition,warmu
  const resources=[...requirements.values()];
  const plan={kind:'plan',name,context:'school',minutes:duration,goal:'Круговая организация: '+groups+' станций, '+rounds+' кругов. Группы одновременно работают на разных станциях, после каждого слота циклически переходят на следующую. Учитель проверяет допуск, состав групп и реальную нагрузку.',equipment:'Потребность рассчитана для одновременной работы всех станций. Проверить наличие и безопасность.',audience:'',items,resources,gymBoards:[]};
  validateWorkRecord({...plan,id:'circuit-preview'});
- return {plan,total,groups,groupSize,capacityIssues:stations.map((s,i)=>({station:i+1,capacity:s.capacity,required:groupSize})).filter(s=>s.capacity<groupSize),stock:equipmentStatus(resources,inventory)};
+ const rotation=Array.from({length:groups},(_,slot)=>Array.from({length:groups},(_,group)=>(group+slot)%groups+1));
+ return {plan,total,groups,groupSize,rotation,capacityIssues:stations.map((s,i)=>({station:i+1,capacity:s.capacity,required:groupSize})).filter(s=>s.capacity<groupSize),stock:equipmentStatus(resources,inventory)};
 }
 export function planExercises(plan){return plan.items.map(i=>({name:i.exercise.name,activityId:i.exercise.activityId,minutes:i.minutes}));}
 export function librarySearch(exercises,query='',category=''){const q=query.trim().toLowerCase();return exercises.filter(e=>(!category||e.category===category)&&(!q||[e.name,e.description,e.equipment].some(x=>x.toLowerCase().includes(q))));}

@@ -55,7 +55,7 @@ test('Circuit uses parallel station inventory, actual elapsed slots, capacities 
  const station={exercise:W.builtinExercises[1],capacity:8,notes:'',resources:[r]};
  const args={name:'Круг',minutes:45,rounds:2,work:3,transition:1,warmup:{exercise:W.builtinExercises[0],minutes:5},cooldown:{exercise:W.builtinExercises[3],minutes:5},stations:[station,{...station,exercise:W.builtinExercises[2]}],pupilCount:17,inventory:[stock]};
  const before=structuredClone(args),result=W.circuitDraft(args);
- assert.equal(result.total,26);assert.equal(result.groups,2);assert.equal(result.groupSize,9);assert.equal(result.capacityIssues.length,2);
+ assert.equal(result.total,26);assert.deepEqual(result.rotation,[[1,2],[2,1]]);assert.equal(result.groups,2);assert.equal(result.groupSize,9);assert.equal(result.capacityIssues.length,2);
  assert.equal(result.plan.resources[0].qty,6);assert.equal(result.stock[0].available,5);assert.equal(result.stock[0].shortage,1);
  assert.equal(result.plan.items.length,6);assert.equal(result.plan.items.reduce((n,i)=>n+i.minutes,0),26);assert.match(result.plan.items[1].notes,/параллельно/);
  assert.deepEqual(args,before);result.plan.items[1].exercise.name='Copy';assert.equal(args.stations[0].exercise.name,before.stations[0].exercise.name);

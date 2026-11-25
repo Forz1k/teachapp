@@ -99,6 +99,7 @@ try{
  await wait(()=>evalJs('document.querySelector(".vp-last-event")?.textContent.includes("зона 4")'),'placement saved');
  await clickText('.vp-tabs button','Статистика');await ready('.vp-heat-grid');
  assert.equal(await evalJs('Array.from(document.querySelectorAll(".vp-heat-cell")).some(n=>n.getAttribute("aria-label")==="Зона 4: 1")'),true);
+ assert.ok(await evalJs('document.querySelector(".sheet.show")?.textContent.includes("Связка передачи и атаки")&&document.querySelector(".sheet.show")?.textContent.includes("До и после замен")&&document.querySelector(".sheet.show")?.textContent.includes("На приёме")'));
  await capture('390-live-analytics');
  await clickText('.vp-tabs button','События');await clickText('.vp-history-row button','Уточнить');await ready('.vp-report-section');await clickText('.sheet button','Сохранить уточнение');await ready('.vp-history-row');
  await clickText('.vp-tabs button','Матч');await ready('.vp-undo');

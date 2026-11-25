@@ -4,7 +4,7 @@ import {captureModes,touchActions,touchQuality,touchResults,captureSummary,captu
 import {animateOnce,scoreChanges,recentRallies,rallyStreak,capturePositions,animatePositions} from '../motion.js';
 import * as C from '../coach.js';
 import * as V from '../match-protocol.js';
-import {matchTactics} from '../match-tactics.js';
+import {matchTactics,rotationPerformance,recordedConnections,substitutionWindows} from '../match-tactics.js';
 import * as Portal from '../public-publisher.js';
 import {todayIso,uid} from '../model.js';
 import * as ui from '../ui.js';
@@ -214,6 +214,10 @@ export function openDetailedMatch(initial,back,refresh){
   if(section==='match'&&!s.finished&&!pointDraft&&!scoutOpen){const change=btn('Зафиксировать смену сторон',()=>perform({type:'changeEnds'},()=>{selected=null;swapped=false;}),'wide');body.append(el('div',{class:'card-block vp-stack'},[p(s.changeDue?'По выбранному регламенту пора проверить смену сторон. Подтвердите только фактическую смену.':'Фактическая смена сторон записывается в историю. Переворот табло не меняет счёт.'),change]));}
   if(!pointDraft&&!scoutOpen)previousOverlay='';
   if(active&&!pointDraft&&!scoutOpen){const rows=recentRallies(s.timeline,set),streak=rallyStreak(recentRallies(s.timeline,set,s.timeline.length));if(rows.length){const meter=el('div',{class:'vp-rally-meter'},[el('div',{class:'vp-rally-meter-head'},[el('small',{text:'Последние '+rows.length+' розыгрышей'}),el('strong',{text:streak.count>=2?'Серия '+sideName(d,streak.side)+' · '+streak.count:'Последнее очко · '+sideName(d,streak.side)})]),el('div',{class:'vp-rally-strip','aria-label':rows.map(x=>x.score+' '+sideName(d,x.side)).join(', ')},rows.map(x=>el('span',{class:x.side,title:x.score}))) ]);body.insertBefore(meter,body.children[1]);if(Object.keys(changes).length)animateOnce(meter.querySelector('.vp-rally-strip span:last-child'),'enter',{duration:180});}}
+  if(active&&!pointDraft&&!scoutOpen&&section==='match'){
+   const current=rotationPerformance(s.timeline,{set,min:5}).ours.rows[s.rotations.ours],phase=s.serve==='ours'?'serve':'receive';
+   if(current[phase])body.append(el('details',{class:'vp-match-more'},[el('summary',{text:'Текущий цикл P'+current.position+' · '+(phase==='serve'?'подача':'приём')+' '+current[phase+'Won']+'/'+current[phase]}),p(current[phase+'Eligible']?'Зафиксированная доля выигранных розыгрышей: '+Math.round(current[phase+'Rate'])+'%.':'Малая выборка — пока менее 5 розыгрышей в этой фазе.'),p('Только текущая партия и цикл относительно стартового состава. Это не прогноз и не автоматическая рекомендация замены.')]));
+  }
   if(section==='stats'){body.append(momentumBlock(d,s),liveAnalysis(d,s),captureBlock(d,s));}
   else if(section==='events'){
    const rawRallies=d.events.flatMap((e,i)=>e.type==='rally'?[i]:[]);let ri=0;
@@ -457,17 +461,24 @@ function liveAnalysis(d,s){
   });
   const tactical=matchTactics(d,5,{set,min:Number(sample.value)});
   const combo=(title,items)=>section(title,p('Выигранные розыгрыши в присутствии игроков. Сочетание не доказывает индивидуальный вклад.'),table(['Игроки','Розыгрыши','Победы','+/−','Доля'],items.slice(0,20).map(x=>[x.players.map(id=>name(d,'ours',id)).join(' · '),x.rallies,x.won,x.plusMinus,x.eligible?pct(x.won,x.rallies):'Мало данных'])),!items.length?p('Нет записанных сочетаний.'):null);
+  const rotationData=rotationPerformance(s.timeline,{set,min:Number(sample.value)});
+  const phaseRate=(won,n,eligible)=>won+'/'+n+' · '+(eligible?pct(won,n):'мало данных');
   const rotationRows=sides.flatMap(side=>{
-   const r=Array.from({length:6},(_,i)=>({position:i+1,won:0,lost:0}));
-   for(const e of s.timeline)if(e.type==='rally'&&(!set||e.set===set))r[e.rotation[side]][e.side===side?'won':'lost']++;
+   const {rows:r,comparisons}=rotationData[side];
    const runs=[...s.sides[side].runs,...(s.sides[side].activeRun?[s.sides[side].activeRun]:[])].filter(x=>!set||x.set===set);
-   return [section('Переходы · '+sideName(d,side),p('P1–P6 — циклы относительно стартового состава партии.'),table(['Цикл','Розыгрыши','Выиграно','Проиграно','+/−'],r.map(x=>['P'+x.position,x.won+x.lost,x.won,x.lost,x.won-x.lost]))),
+   return [section('Переходы · '+sideName(d,side),p('P1–P6 — циклы относительно стартового состава партии. Съём — выигранный розыгрыш на приёме, break-point — на своей подаче. Минимум применяется к каждой фазе отдельно.'),table(['Цикл','Розыгрыши','+/−','На подаче','На приёме'],r.map(x=>['P'+x.position,x.rallies,x.plusMinus,phaseRate(x.serveWon,x.serve,x.serveEligible),phaseRate(x.receiveWon,x.receive,x.receiveEligible)])),
+    ...comparisons.map(x=>p('Проверить '+(x.phase==='serve'?'подачу':'приём')+' в циклах '+x.low.map(n=>'P'+n).join(', ')+' относительно '+x.high.map(n=>'P'+n).join(', ')+' · разница '+Math.round(x.gap)+' п.п. Не индивидуальная оценка.'))),
     section('Серии подач · '+sideName(d,side),table(['Сет','Подающая','Очки','Эйсы','Ошибки'],runs.map(x=>[x.set,name(d,side,x.player),x.won,x.aces,x.errors])))];
   });
-  output.replaceChildren(...rows,heat,...rotationRows,combo('Сочетания двух игроков',tactical.pairs),combo('Фактические шестёрки',tactical.six));
+  const links=recordedConnections([s.timeline],{side,set,min:Number(sample.value)}),subs=substitutionWindows(s.timeline,{set,window:5});
+  const connectionCard=section('Связка передачи и атаки · '+sideName(d,side),p('Полностью зарегистрировано '+links.complete+'/'+links.rallies+' розыгрышей; связки найдены в '+links.linkedRallies+'. Только соседние записанные действия передачи и атаки разных игроков одной команды; не предполагаемые ассисты.'),
+    table(['Передающая','Атакующая','Попытки','Очки','Ошибки','Эфф.'],links.rows.slice(0,30).map(x=>[name(d,side,x.setter),name(d,side,x.attacker),x.attempts,x.points,x.errors,x.eligible?Math.round(x.efficiency)+'%':'Мало данных'])),!links.rows.length?p('Нет подходящих полных записей действий.'):null);
+  const subCard=section('До и после замен',p('До 5 розыгрышей с каждой стороны события, только в той же партии; окна могут пересекаться. Разница не доказывает вклад заменённого игрока.'),
+    table(['Сет · счёт','Команда','Ушла / вышла','До','После','Разница'],subs.map(x=>[x.set+' · '+x.score,sideName(d,x.side),name(d,x.side,x.out)+' / '+name(d,x.side,x.in),x.before.won+'/'+x.before.total,x.after.won+'/'+x.after.total,x.delta===null?'Неполное окно':Math.round(x.delta)+' п.п.'])),!subs.length?p('Замен в выбранном периоде нет.'):null);
+  output.replaceChildren(...rows,heat,...rotationRows,connectionCard,subCard,combo('Сочетания двух игроков',tactical.pairs),combo('Фактические шестёрки',tactical.six));
  }
  playerOptions();sidePicker.addEventListener('change',()=>{playerOptions();draw();});for(const control of [period,mode,player,sample])control.addEventListener('change',draw);draw();
- return section('Аналитика розыгрышей',field('Период',period),field('Команда для карты',sidePicker),field('Вид завершения',mode),field('Игрок для карты',player),field('Минимум для сравнения сочетаний',sample),output);
+ return section('Аналитика розыгрышей',field('Период',period),field('Команда для карты',sidePicker),field('Вид завершения',mode),field('Игрок для карты',player),field('Минимум выборки для сравнения',sample),output);
 }
 function momentumBlock(d,s){
  const current=s.setEnded?s.sets.length:s.sets.length+1;
