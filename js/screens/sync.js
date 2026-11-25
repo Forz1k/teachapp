@@ -3,7 +3,7 @@ import {openTrustedDevices} from './trusted-devices.js';
 import * as S from '../store.js';
 import * as db from '../db.js';
 import {ktpLinkIssues} from '../backup.js';
-import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,localSyncState,describeSyncConflict,disconnectSync,localScopeUploadSize,syncUploadBytes,defaultCloudflarePacketLimit} from '../sync.js';
+import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,localSyncState,describeSyncConflict,disconnectSync,localScopeUploadSize,syncUploadBytes,syncDeltaEstimate,defaultCloudflarePacketLimit} from '../sync.js';
 import {createDeviceInvite,redeemDeviceInvite,parseInvite} from '../device-invite.js';
 import {autoSyncStatus,withSyncSession,runPersonalSync} from '../auto-sync.js';
 import {parsePersonalCode,personalCredentials,readPersonalCode,savePersonalCode,forgetPersonalCode} from '../personal-sync.js';
@@ -114,6 +114,12 @@ export function openSync(){
    if(n!==seq||chosen!==plan||closed)return;
    if(next.conflicts.length){choicesStatus.textContent='Осталось разрешить: '+next.conflicts.length;return;}
    choicesStatus.textContent='На этом устройстве: новых '+next.counts.added+', изменённых '+next.counts.changed+', удалённых '+next.counts.deleted+'. Сервер получит итоговый зашифрованный снимок. Размер PUT: '+packetSizeText(syncUploadBytes(next.snapshot,{area:chosen.area,workspaceId:chosen.workspaceId,expectedRevision:chosen.revision}))+'. У другого relay лимит может отличаться.';
+   if(chosen.revision>0){
+    try{
+     const delta=syncDeltaEstimate(chosen.remote,next.snapshot,{area:chosen.area,workspaceId:chosen.workspaceId,baseRevision:chosen.revision});
+     if(delta.changedRecords)choicesStatus.textContent+=' Экспериментальная оценка передачи только изменений: '+packetSizeText(delta.bytes)+' · записей: '+delta.changedRecords+'. Сейчас по-прежнему отправляется полный снимок.';
+    }catch{/* A comparison must never block the existing sync protocol. */}
+   }
    apply.disabled=busy;
   }catch(e){if(n===seq){choicesStatus.textContent=e.message;if(e.message.includes('разделе ktp'))results.append(btn('Проверить и исправить КТП',openKtpDiagnostics));}}
  }

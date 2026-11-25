@@ -251,6 +251,96 @@ export function localScopeUploadSize(data,area){
  const snapshot=projectScope(data,area),cp=getCheckpoint(data,area);
  return {area,bytes:syncUploadBytes(snapshot,{area,workspaceId:cp?.workspaceId||'00000000-0000-4000-8000-000000000000',expectedRevision:cp?.revision??0}),records:Object.values(snapshot).reduce((n,rows)=>n+rows.length,0)};
 }
+
+/* Experimental incremental protocol: pure scoped delta and encrypted replay.
+   Deliberately not accepted by the existing v1/v2 endpoints or auto-sync.
+   The future relay must retain an authenticated full anchor plus ordered deltas. */
+const deltaApp='teachapp-sync-delta';
+const digestPattern=/^[0-9a-f]{64}$/;
+const exactFields=(v,keys)=>plain(v)&&Object.keys(v).length===keys.length&&keys.every(k=>Object.hasOwn(v,k));
+function deltaContext(area,workspaceId,baseRevision){
+ check(validArea(area)&&typeof workspaceId==='string'&&uuid.test(workspaceId)&&revision(baseRevision)&&baseRevision<Number.MAX_SAFE_INTEGER,'Некорректная базовая ревизия изменений');
+ return {area,workspaceId,baseRevision,revision:baseRevision+1};
+}
+function deltaOps(base,next,area){
+ validateScope(base,area);validateScope(next,area);
+ const changes={};
+ for(const store of keysFor(area)){
+  const b=byId(base[store]),n=byId(next[store]);
+  const upserts=sorted([...n.values()].filter(r=>!b.has(r.id)||!same(r,b.get(r.id))));
+  const deletes=[...b.keys()].filter(id=>!n.has(id)).sort();
+  if(upserts.length||deletes.length)changes[store]={upserts,deletes};
+ }
+ return changes;
+}
+async function scopeDigest(snapshot,area){
+ validateScope(snapshot,area);
+ const ordered=Object.fromEntries(keysFor(area).map(n=>[n,sorted(snapshot[n])]));
+ const bytes=new TextEncoder().encode(canonical(ordered));
+ return Array.from(new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+}
+function deltaPacket(context,changes,baseHash,resultHash){
+ return {app:deltaApp,version:1,backupVersion:BACKUP_VERSION,...context,baseHash,resultHash,changes};
+}
+export function syncDeltaEstimate(base,next,{area,workspaceId,baseRevision}){
+ const ctx=deltaContext(area,workspaceId,baseRevision),changes=deltaOps(base,next,area);
+ const changedRecords=Object.values(changes).reduce((n,c)=>n+c.upserts.length+c.deletes.length,0);
+ const bytes=encryptedEnvelopeBytes(deltaPacket(ctx,changes,'0'.repeat(64),'0'.repeat(64)))+
+  JSON.stringify({expectedRevision:baseRevision,envelope:null}).length-4;
+ return {bytes,changedRecords,fullBytes:syncUploadBytes(next,{area,workspaceId,expectedRevision:baseRevision})};
+}
+export async function buildSyncDelta(base,next,{area,workspaceId,baseRevision}){
+ const ctx=deltaContext(area,workspaceId,baseRevision),changes=deltaOps(base,next,area);
+ check(Object.keys(changes).length,'Нет изменений для инкрементальной передачи');
+ const [baseHash,resultHash]=await Promise.all([scopeDigest(base,area),scopeDigest(next,area)]);
+ return deltaPacket(ctx,changes,baseHash,resultHash);
+}
+export async function applySyncDelta(base,packet,{area,workspaceId,baseRevision,current}){
+ const ctx=deltaContext(area,workspaceId,baseRevision);
+ check(exactFields(packet,['app','version','backupVersion','area','workspaceId','baseRevision','revision','baseHash','resultHash','changes'])&&
+  packet.app===deltaApp&&packet.version===1&&packet.backupVersion===BACKUP_VERSION&&
+  Object.entries(ctx).every(([k,v])=>packet[k]===v)&&typeof packet.baseHash==='string'&&digestPattern.test(packet.baseHash)&&
+  typeof packet.resultHash==='string'&&digestPattern.test(packet.resultHash),'Несовместимый пакет изменений или неверная ревизия');
+ check(await scopeDigest(base,area)===packet.baseHash,'Базовый снимок изменений не совпадает');
+ const keys=keysFor(area);
+ check(plain(packet.changes)&&Object.keys(packet.changes).length>0&&Object.keys(packet.changes).every(n=>keys.includes(n)),'Некорректная область пакета изменений');
+ const result={};
+ for(const store of keys){
+  const rows=byId(base[store]);
+  if(Object.hasOwn(packet.changes,store)){
+   const c=packet.changes[store],seen=new Set();
+   check(exactFields(c,['upserts','deletes'])&&Array.isArray(c.upserts)&&Array.isArray(c.deletes)&&(c.upserts.length||c.deletes.length),'Некорректный список изменений');
+   for(const id of c.deletes){
+    check(typeof id==='string'&&rows.has(id)&&!seen.has(id),'Неизвестное или повторное удаление');
+    seen.add(id);rows.delete(id);
+   }
+   for(const row of c.upserts){
+    check(plain(row)&&typeof row.id==='string'&&row.id.trim()&&!seen.has(row.id)&&!same(rows.get(row.id),row),'Повторная или некорректная запись изменений');
+    seen.add(row.id);rows.set(row.id,row);
+   }
+  }
+  result[store]=sorted([...rows.values()]);
+ }
+ check(await scopeDigest(result,area)===packet.resultHash,'Итоговый снимок изменений не совпадает');
+ // Reuse the ordinary backup/relationship validation, including scope isolation.
+ // Never write to IndexedDB from this prototype.
+ combineScope(current,result,area);
+ return result;
+}
+export async function replaySyncDeltas({base,baseRevision,area,workspaceId,entries,password,current}){
+ deltaContext(area,workspaceId,baseRevision);
+ check(Array.isArray(entries)&&entries.length<=128,'Слишком длинная цепочка изменений; требуется новый проверенный снимок');
+ let snapshot=copy(base),rev=baseRevision;
+ combineScope(current,snapshot,area);
+ for(const entry of entries){
+  check(exactFields(entry,['revision','envelope'])&&entry.revision===rev+1&&isEncryptedBackup(entry.envelope),'Пропущена или подменена ревизия изменений');
+  const packet=await decryptBackup(entry.envelope,password);
+  snapshot=await applySyncDelta(snapshot,packet,{area,workspaceId,baseRevision:rev,current});
+  rev=entry.revision;
+ }
+ return {snapshot,revision:rev};
+}
+
 export async function prepareSync({area,endpoint,password,client,data}){
  endpoint=normalizeEndpoint(endpoint);
  check(validArea(area),'Выберите рабочую область');
