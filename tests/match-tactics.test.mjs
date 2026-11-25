@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {detailEvent} from '../js/match-protocol.js';
-import {matchTactics,teamTactics,matchDebrief} from '../js/match-tactics.js';
+import {matchTactics,teamTactics,matchDebrief,trainingRecommendations} from '../js/match-tactics.js';
 const p=Array.from({length:7},(_,i)=>({id:'a'+i,name:'Игрок '+i,number:i}));
 const base={mode:'dual',teamName:'Наши',opponent:'Гости',competition:'',venue:'',startedAt:'2026-01-01T12:00:00Z',ourPlayers:p,awayPlayers:[],roster:p.map(p=>p.id),lineup:p.slice(0,6).map(p=>p.id),awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'theirs',events:[]};
 const append=(d,side)=>detailEvent(d,{type:'rally',side,kind:'point'});
@@ -41,4 +41,10 @@ test('Послематчевые выводы используют частот�
  let d={...base,firstServe:'ours'};
  for(let i=0;i<3;i++){d=detailEvent(d,{type:'rally',side:'theirs',kind:'serveError',player:null});d=append(d,'ours');}
  const a=matchDebrief(d);assert.equal(a.errors[0].count,3);assert.ok(a.notes.some(x=>x.title==='Частые отмеченные причины потери очка'));assert.equal(a.detailed,3);
+});
+
+test('Подбор упражнений опирается на выборку и причину, не на неизвестные попытки',()=>{
+ const exercises=[{id:'s',category:'volleyball',name:'Подача в зону',description:'Серия подач',minutes:10,equipment:'Мячи'},{id:'p',category:'volleyball',name:'Приём',description:'Приём мяча'},{id:'x',category:'fitness',name:'Подача'}];
+ const d={detailed:12,rallies:30,errors:[{kind:'serveError',count:3},{kind:'receiveError',count:2},{kind:'unknown',count:20}]};
+ const r=trainingRecommendations(d,exercises);assert.equal(r.length,1);assert.equal(r[0].count,3);assert.equal(r[0].detailed,12);assert.equal(r[0].rallies,30);assert.deepEqual(r[0].exercises.map(x=>x.id),['s']);assert.deepEqual(trainingRecommendations({...d,detailed:9},exercises),[]);assert.equal(trainingRecommendations(d,[])[0].exercises.length,0);
 });

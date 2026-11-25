@@ -1,6 +1,7 @@
 import {seasonCapture,touchActions} from '../match-capture.js';
 import {replayDetailed} from '../match-protocol.js';
-import {matchTactics,teamTactics,opponentHistory,matchDebrief} from '../match-tactics.js';
+import {matchTactics,teamTactics,opponentHistory,matchDebrief,trainingRecommendations} from '../match-tactics.js';
+import {builtinExercises,listWork} from '../workbench.js';
 import {fmtFull} from '../model.js';
 import {buildDocument} from '../documents.js';
 import {openDocumentPreview,matchDebriefInput} from './documents.js';
@@ -69,7 +70,15 @@ export function debriefCard(detail){
  const d=matchDebrief(detail);
  return card('Выводы тренеру',[p('Причины указаны: '+d.detailed+'/'+d.rallies+'. Рекомендации основаны только на внесённых розыгрышах и не заменяют оценку тренера.'),...d.notes.map(n=>el('div',{class:'insight-note '+n.kind},[el('strong',{text:n.title}),p(n.text)])),!d.notes.length?p('Выраженных закономерностей по выбранным порогам не обнаружено.'):null,el('details',{},[el('summary',{text:'Основания выводов'}),...d.errors.map(x=>p('Потеря очка · '+x.label+': '+x.count)),...d.positive.map(x=>p('Наше очко · '+x.label+': '+x.count)),p('Указаны количества зарегистрированных действий, а не полные попытки.')])]);
 }
+async function openTrainingRecommendations(match,back){
+ const body=stack([el('h2',{text:'Подбор упражнений'}),p('Повторяющиеся отмеченные причины потери очков: минимум 3 одинаковые причины и 10 розыгрышей с указанием причины. Подбор по названию и описанию упражнений из библиотеки. Это не оценка всех попыток и не автоматический план тренировки.'),p('Загрузка библиотеки…'),btn('Назад',back)]);
+ openSheet(body);
+ try{
+  const saved=await listWork('exercise'),items=trainingRecommendations(matchDebrief(match.detail),[...builtinExercises,...saved]);
+  body.replaceChildren(el('h2',{text:'Подбор упражнений'}),p('Подбор по тексту упражнений. Объём, технику и нагрузку определяет тренер.'),...items.map(r=>card(r.topic,[p('Отмечено причин потери очка: '+r.count+'; всего с указанной причиной '+r.detailed+' из '+r.rallies+' розыгрышей.'),...r.exercises.map(x=>el('div',{class:'insight-note'},[el('strong',{text:x.name}),p(x.minutes+' мин · '+x.description),p(x.equipment||'Инвентарь не указан')])),!r.exercises.length?p('В библиотеке нет упражнения с подходящим описанием. Добавьте своё.'):null])),!items.length?p('Недостаточно зарегистрированных причин для подбора по заданным порогам.'):null,btn('Назад',back));
+ }catch{body.replaceChildren(el('h2',{text:'Подбор упражнений'}),p('Не удалось загрузить библиотеку или рассчитать подбор.'),btn('Назад',back));}
+}
 export function openMatchDebrief(match,back=closeSheet){
  if(!match.detail)return;
- openSheet(stack([el('h2',{text:'Итоги и план работы · '+match.opponent}),p(fmtFull(match.date)),debriefCard(match.detail),btn('Отчёт Word / Excel / PDF',()=>openDocumentPreview(buildDocument('matchDebrief',matchDebriefInput(match)),()=>openMatchDebrief(match,back))),btn('Подробный тактический разбор',()=>openMatchTactics(match,()=>openMatchDebrief(match,back)),'primary'),btn('Закрыть',back)]));
+ openSheet(stack([el('h2',{text:'Итоги и план работы · '+match.opponent}),p(fmtFull(match.date)),debriefCard(match.detail),btn('Подобрать упражнения',()=>openTrainingRecommendations(match,()=>openMatchDebrief(match,back))),btn('Отчёт Word / Excel / PDF',()=>openDocumentPreview(buildDocument('matchDebrief',matchDebriefInput(match)),()=>openMatchDebrief(match,back))),btn('Подробный тактический разбор',()=>openMatchTactics(match,()=>openMatchDebrief(match,back)),'primary'),btn('Закрыть',back)]));
 }
