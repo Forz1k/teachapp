@@ -85,7 +85,7 @@ function resultsPanel(rows,full=false){
  const renderRows=()=>{
   const chosen=full?searchArchive(rows,{query:resultQuery,season:seasonFilter,outcome:resultFilter}):rows;
   count.textContent='Найдено '+chosen.length+' из '+rows.length+' загруженных матчей.';
-  list.replaceChildren(...archiveRows(chosen.slice(0,full?resultLimit:5)),!chosen.length?p('Нет результатов по выбранному фильтру.'):null);
+  list.replaceChildren(...(chosen.length?archiveRows(chosen.slice(0,full?resultLimit:5)):[p('Нет результатов по выбранному фильтру.')]));
   more.hidden=chosen.length<=resultLimit;
  };
  if(full){
@@ -125,6 +125,7 @@ function draw(){
  connection.textContent=connected&&!awaitingSnapshot?'● На связи':received?'Нет актуальной связи':'Подключение…';connection.dataset.state=connected&&!awaitingSnapshot?'online':'offline';renderNav();
  if(!data){setScoreboard(false);root.replaceChildren(card(el('h1','',received?'Страница пока не опубликована':'TeachApp Volleyball'),p(problem||(received?'Попросите тренера опубликовать расписание.':'Ожидание данных…'))));return;}
  const m=state.match,upcoming=data.schedule.filter(x=>x.id!==data.match?.scheduledId),past=mergeLoadedResults(fanResults(data),archiveRowsExtra);
+ if(seasonFilter!=='all'&&!archiveSeasons(past).map(String).includes(seasonFilter))seasonFilter='all';
  if(resultFilter==='draw'&&!past.some(x=>resultOutcome(x)==='draw'))resultFilter='all';const latest=!pinned&&!state.next&&!['live','break'].includes(state.mode)&&past[0]&&(!m||past[0].id!==m.id)?past[0]:null;
  const parts=[];parts.push(el('p','portal-updated','Последнее обновление: '+format(data.updatedAt,{dateStyle:'short',timeStyle:'medium'})));if(stale||!connected||awaitingSnapshot)parts.push(el('div','notice',stale?'Данные давно не обновлялись. Последний полученный счёт.':'Соединение восстанавливается. Показаны последние данные.'));
  const params=new URL(shareLink).searchParams,requested=params.get('archive')||params.get('match');if(requested&&tab==='overview'){const detailed=data.match?.id===requested&&!params.has('archive')?data.match:null;const row=params.has('archive')?directResult:detailed||past.find(x=>x.id===requested);const back=el('a','archive-link','← Все матчи');const u=new URL(shareLink);back.href=viewerPageLink(u.href);parts.push(back,row?(detailed?card(head('Матч',detailed.status==='finished'?'Завершён':fresh?'Текущий счёт':'Последний счёт'),teams(teamName(),detailed.opponent,detailed),sets(detailed),p(date(detailed.startedAt)),shareMatch(row),detailed.status==='finished'?resultDownload(row):null):card(head('Результат матча'),...archiveRows([row]),p('Для этой записи опубликован только итоговый счёт.'),shareMatch(row),resultDownload(row))):card(p(directBusy?'Загрузка результата…':'Результат не найден или снят с публикации.')));if(detailed?.events.length){parts.push(eventsPanel(detailed));const trend=momentum(detailed);if(trend)parts.push(trend);}if(detailed?.stats.length)parts.push(...[statTable(detailed.stats,'ours',teamName()),statTable(detailed.stats,'theirs',detailed.opponent)].filter(Boolean));mount(parts);return;}
