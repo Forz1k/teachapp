@@ -372,3 +372,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ## 5.2 multipart checkpoint
 - `7dc9c6f`: 406/406, both full CI, WebKit, Cloudflare and real workerd multipart pass (1,952,776 ciphertext characters / 4 parts), restart, compaction and later delta. [CI](https://github.com/Forz1k/teachapp/actions/runs/45595852928), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45595852817).
+
+## 5.2 rotation checkpoint
+- `3b2d515`: synthetic rotation of encryption and device access keys, separate privilege, encrypted owner recovery file, CAS, durable atomic credential epoch, old token rejection; 407/407, both CI, 75 Chromium screenshots, WebKit and Cloudflare/Delta synthetic pass. [CI](https://github.com/Forz1k/teachapp/actions/runs/45599304095), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45599303864).

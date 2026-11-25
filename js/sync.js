@@ -528,6 +528,57 @@ export async function commitDeltaRotation({endpoint,client,area,password,current
  return {revision:result.revision,replayed:result.replayed};
 }
 
+// A device file deliberately contains only its own ordinary access token, not
+// the owner recovery file, other device tokens or either privileged credential.
+export async function createDeltaDeviceRecovery({endpoint,area,current,recovery,recoveryPassword,devicePassword,index,synthetic=false,fetcher}){
+ const p=await openDeltaRecovery({endpoint,area,current,recovery,recoveryPassword,synthetic});
+ check(Number.isInteger(index)&&index>=0&&index<p.readTokens.length&&typeof devicePassword==='string'&&devicePassword.length>=12&&devicePassword!==recoveryPassword&&devicePassword!==p.newPassword,'Выберите устройство и отдельный пароль');
+ const token=p.readTokens[index],client=deltaLabClient(endpoint,area,token,{fetcher}),revision=p.expectedRevision+1;
+ const anchor=await client.getRevision(revision);
+ check(anchor.revision===revision&&anchor.kind==='anchor'&&same(anchor.envelope,p.envelope),'Новая контрольная точка не подтверждена');
+ return encryptBackup({app:'teachapp-delta-device-recovery',version:1,endpoint:p.endpoint,area,workspaceId:p.workspaceId,anchorRevision:revision,digest:p.digest,anchorHash:await deltaPartHash(canonical(anchor.envelope)),password:p.newPassword,token},devicePassword);
+}
+export async function openDeltaDeviceRecovery({endpoint,area,file,devicePassword,synthetic=false}){
+ check(synthetic===true&&validArea(area),'Восстановление только для Delta LAB');
+ const p=await decryptBackup(file,devicePassword);
+ check(exactFields(p,['app','version','endpoint','area','workspaceId','anchorRevision','digest','anchorHash','password','token'])&&p.app==='teachapp-delta-device-recovery'&&p.version===1&&p.endpoint===labEndpoint(endpoint)&&p.area===area&&uuid.test(p.workspaceId)&&revision(p.anchorRevision)&&p.anchorRevision>=2&&digestPattern.test(p.digest)&&digestPattern.test(p.anchorHash)&&typeof p.password==='string'&&secretPattern.test(p.password)&&typeof p.token==='string'&&secretPattern.test(p.token)&&p.password!==p.token,'Неверный файл устройства');
+ return p;
+}
+// Rebind only the encrypted local ancestor, never the local business records
+// or the remote head. An explicitly reviewed normal three-way merge follows.
+export async function rebindDeltaDevice({endpoint,area,file,devicePassword,oldPassword,synthetic=false,confirmed=false,expectedRemoteRevision,expectedLocalRevision,acceptHistoricalBase=false,fetcher}){
+ const p=await openDeltaDeviceRecovery({endpoint,area,file,devicePassword,synthetic}),current=await db.dumpAll(),cp=getCheckpoint(current,area);
+ check(cp&&cp.endpoint===p.endpoint&&cp.workspaceId===p.workspaceId&&revision(cp.revision)&&cp.revision<p.anchorRevision,'Нет подходящей прежней контрольной точки; не заменяйте локальные данные');
+ check(typeof oldPassword==='string'&&oldPassword!==p.password,'Нужен прежний пароль контрольной точки');
+ const ancestor=await readPacket(cp.envelope,oldPassword,area,cp.revision);
+ check(ancestor.workspaceId===p.workspaceId,'Контрольная точка другого пространства');
+ combineScope(current,ancestor.snapshot,area);
+ const historical=cp.revision<p.anchorRevision-1;
+ if(!historical)check(await scopeDigest(ancestor.snapshot,area)===p.digest,'Прежняя контрольная точка не совпадает с проверенной ревизией ротации');
+ const client=deltaLabClient(endpoint,area,p.token,{fetcher}),row=await client.getRevision(p.anchorRevision);
+ check(row.revision===p.anchorRevision&&row.kind==='anchor'&&await deltaPartHash(canonical(row.envelope))===p.anchorHash,'Контрольная точка ротации отсутствует или подменена');
+ const anchor=await readPacket(row.envelope,p.password,area,p.anchorRevision);
+ check(anchor.workspaceId===p.workspaceId&&await scopeDigest(anchor.snapshot,area)===p.digest,'Снимок ротации не совпадает');
+ const remote=await readDeltaLab({client,area,password:p.password,current,checkpoint:{revision:p.anchorRevision,workspaceId:p.workspaceId,snapshot:anchor.snapshot}});
+ check(!remote.compactedPastCheckpoint&&remote.workspaceId===p.workspaceId,'История ротации уже удалена; требуется отдельное восстановление');
+ const local=projectScope(current,area),draft=mergeScopes(ancestor.snapshot,local,remote.snapshot,area);
+ if(!draft.conflicts.length)combineScope(current,draft.snapshot,area);
+ const summary={area,localRevision:cp.revision,remoteRevision:remote.revision,historicalBase:historical,localChanges:counts(ancestor.snapshot,local),remoteChanges:counts(ancestor.snapshot,remote.snapshot),conflicts:draft.conflicts.length,requiresReview:true};
+ if(!confirmed)return {...summary,status:'preview'};
+ check(expectedRemoteRevision===remote.revision&&expectedLocalRevision===cp.revision,'Ревизии изменились; повторите проверку');
+ check(!historical||acceptHistoricalBase===true,'Старая контрольная точка требует явного согласования: её история больше не доступна на сервере');
+ const envelope=await encryptBackup(packetPayload(ancestor.snapshot,area,p.workspaceId,cp.revision),p.password);
+ await db.transaction(names,'readwrite',async s=>{
+  const latest=Object.fromEntries(await Promise.all(names.map(async n=>[n,await s[n].getAll()])));
+  check(same(getCheckpoint(latest,area),cp)&&same(projectScope(latest,area),local),'Локальные данные изменились; повторите проверку');
+  // Remove only stale success metadata. Retain old base/revision exactly;
+  // explicit acceptCompactedHistory in the new adapter is still required.
+  await s.meta.put({...cp,envelope});
+  await s.meta.delete(statusKey(area));
+ });
+ return {...summary,status:'rebound'};
+}
+
 /* Explicit laboratory adapter for the existing prepare/preview/execute pipeline.
    The full envelopes returned to that pipeline are generated locally; only
    an initial anchor or encrypted delta travels across the network.

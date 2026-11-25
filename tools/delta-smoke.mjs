@@ -15,7 +15,7 @@ import {defaultSettings} from '../js/model.js';
 import {BACKUP_VERSION} from '../js/backup.js';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
 import {splitDeltaAnchor} from '../js/delta-anchor.js';
-import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation} from '../js/sync.js';
+import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation,createDeltaDeviceRecovery,openDeltaDeviceRecovery,rebindDeltaDevice} from '../js/sync.js';
 
 const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),coachAdmin='E'.repeat(43),rotator='F'.repeat(43),coachRotator='G'.repeat(43),origin='http://127.0.0.1:8099',area='school',password='synthetic-delta-test-password';
 const workspaceId='00000000-0000-4000-8000-000000000001';
@@ -220,6 +220,20 @@ try{
  assert.deepEqual((await readDeltaLab({client:coachClient,area:scope,password,current:freshDb()})).snapshot,afterLarge);
  console.log('DELTA MULTIPART PASS: '+split.chunks.length+' parts, '+largeAnchor.data.length+' ciphertext characters; staged invisibility, exact retry, auth separation, restart/resume, atomic compaction, old part removal and post-compaction delta.');
  // Rotate the large coach anchor after compaction and a subsequent delta.
+ // Save an old authenticated checkpoint on a separate offline device at rev 3.
+ await db.replaceAll(freshDb());
+ const offlineAdapter=deltaLabSyncAdapter({endpoint,area:scope,token:c,password,synthetic:true,readData:()=>db.dumpAll()});
+ // Rev 4 is current; join with the genuine old encrypted rev-3 checkpoint
+ // obtained from the retained compaction anchor, not with a guessed base.
+ const oldRow=await coachClient.getRevision(3);
+ const offlineState={...freshDb(),coachTeams:structuredClone(nextLarge.coachTeams)};
+ offlineState.meta.push({id:'sync-checkpoint-'+scope,endpoint,workspaceId,revision:3,envelope:oldRow.envelope});
+ await db.replaceAll(offlineState);
+ await db.put('coachTeams',{...await db.get('coachTeams','large-team-3'),name:'Локальное изменение офлайн'});
+ await db.put('coachTeams',{...await db.get('coachTeams','large-team-1'),name:'Конфликт офлайн'});
+ // Independent school data must survive rebind.
+ await db.put('classes',{id:'offline-school',name:'8А'});
+ const beforeRebind=await db.dumpAll();
  const recoveryPassword='synthetic-separate-recovery-password';
  const rotateClient=deltaLabClient(endpoint,scope,c,{compactToken:coachAdmin,rotateToken:coachRotator});
  const args={endpoint,client:rotateClient,area:scope,password,current:freshDb(),recoveryPassword,synthetic:true};
@@ -256,6 +270,44 @@ try{
  assert.deepEqual((await readDeltaLab({client:secondClient,area:scope,password:opened.newPassword,current:freshDb()})).snapshot,rotatedScope);
  assert.equal((await request('head')).status,401);assert.equal((await client.head()).revision,conflictA.revision);
  console.log('DELTA ROTATION PASS: large encrypted recovery, atomic new anchor and token replacement, old password and tokens rejected, exact retry, restart, new delta and independent school scope.');
+ // Re-enrol the offline device with a narrowly scoped encrypted file.
+ const devicePassword='synthetic-device-file-password';
+ const deviceFile=await createDeltaDeviceRecovery({...rotateArgs,index:1,devicePassword});
+ const deviceArgs={endpoint,area:scope,file:deviceFile,devicePassword,oldPassword:password,synthetic:true};
+ const device=await openDeltaDeviceRecovery(deviceArgs);
+ assert.equal(device.token,opened.readTokens[1]);assert.equal(device.password,opened.newPassword);
+ assert.ok(!Object.hasOwn(device,'compactToken')&&!Object.hasOwn(device,'readTokens')&&!Object.hasOwn(device,'rotateToken'));
+ await assert.rejects(openDeltaDeviceRecovery({...deviceArgs,area:'school'}));
+ await assert.rejects(rebindDeltaDevice({...deviceArgs,oldPassword:'incorrect-old-password'}));
+ await assert.rejects(prepareSync({area:scope,endpoint,password,client:offlineAdapter}));
+ assert.deepEqual(await db.dumpAll(),beforeRebind);
+ const review=await rebindDeltaDevice(deviceArgs);
+ assert.equal(review.status,'preview');assert.equal(review.historicalBase,true);assert.equal(review.localRevision,3);assert.equal(review.remoteRevision,6);assert.equal(review.conflicts,1);
+ assert.deepEqual(await db.dumpAll(),beforeRebind);
+ const confirmedRebind={...deviceArgs,confirmed:true,expectedRemoteRevision:review.remoteRevision,expectedLocalRevision:review.localRevision};
+ await assert.rejects(rebindDeltaDevice(confirmedRebind),/явного согласования/);
+ await assert.rejects(rebindDeltaDevice({...confirmedRebind,expectedRemoteRevision:5,acceptHistoricalBase:true}),/Ревизии изменились/);
+ assert.deepEqual(await db.dumpAll(),beforeRebind);
+ const rebound=await rebindDeltaDevice({...confirmedRebind,acceptHistoricalBase:true});assert.equal(rebound.status,'rebound');
+ const afterRebind=await db.dumpAll();
+ assert.deepEqual(projectScope(afterRebind,scope),projectScope(beforeRebind,scope));assert.deepEqual(afterRebind.classes,beforeRebind.classes);
+ const cp=afterRebind.meta.find(r=>r.id==='sync-checkpoint-'+scope);
+ assert.equal(cp.revision,3);assert.deepEqual((await decryptBackup(cp.envelope,device.password)).snapshot,nextLarge);
+ await assert.rejects(decryptBackup(cp.envelope,password));
+ const newOptions={endpoint,area:scope,token:device.token,password:device.password,synthetic:true,readData:()=>db.dumpAll()};
+ await assert.rejects(prepareSync({...newOptions,client:deltaLabSyncAdapter(newOptions)}),/История уплотнена/);
+ const newAdapter=deltaLabSyncAdapter({...newOptions,acceptCompactedHistory:true});
+ const rejoin=await prepareSync({...newOptions,client:newAdapter});assert.equal(rejoin.conflicts.length,1);
+ const conflictChoices={[rejoin.conflicts[0].key]:'remote'};
+ await assert.rejects(executeSync({plan:rejoin,choices:{},password:device.password,client:newAdapter,confirmed:true,reuseRemote:true}),/конфликт/);
+ assert.equal((await secondClient.head()).revision,6);
+ assert.equal((await executeSync({plan:rejoin,choices:conflictChoices,password:device.password,client:newAdapter,confirmed:true,reuseRemote:true})).revision,7);
+ assert.equal((await db.get('coachTeams','large-team-3')).name,'Локальное изменение офлайн');
+ assert.equal((await db.get('coachTeams','large-team-1')).name,'После компактизации');
+ assert.equal((await db.get('coachTeams','large-team-2')).name,'После ротации');
+ assert.ok(await db.get('classes','offline-school'));
+ assert.deepEqual((await readDeltaLab({client:secondClient,area:scope,password:device.password,current:await db.dumpAll()})).snapshot,projectScope(await db.dumpAll(),scope));
+ console.log('DELTA DEVICE REBIND PASS: scoped encrypted device file, old checkpoint re-encrypted only after explicit review, offline edit preserved, conflict choice, new remote edits, school isolation, verified merged revision.');
  const sizes=syncDeltaEstimate(base,next,{area,workspaceId,baseRevision:1});assert.ok(sizes.bytes<sizes.fullBytes);
  console.log('DELTA SIZE '+JSON.stringify(sizes));
  console.log('DELTA WORKER PASS: real workerd, opaque encrypted anchor and deltas, two scoped devices, CAS race and exact retry, bounds, isolation, restart persistence and verified reconstruction');
