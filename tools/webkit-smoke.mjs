@@ -56,18 +56,19 @@ try{
  await page.locator('.sheet.show').getByRole('button',{name:'Закрыть',exact:true}).click();
  // KTP checkpoint, replacement and independent copy in the real mobile UI.
  const ktpId=await page.evaluate(async()=>{const S=await import('./js/store.js'),H=await import('./js/ktp-history.js');const k=await S.addKtp({name:'Синтетическое КТП',classIds:[]});await S.appendKtpTopics(k.id,[{name:'Бег'},{name:'Прыжок'}]);await H.saveKtpVersion(k.id,'Первая редакция');await S.replaceKtpTopics(k.id,[{name:'Новая тема'}]);await (await import('./js/screens/ktp.js')).openKtpHistory(k.id);return k.id;});
- await page.getByRole('heading',{name:'История версий КТП',exact:true}).waitFor();
+ await page.locator('.sheet.show').getByRole('heading',{name:'История версий КТП',exact:true}).waitFor();
+ await page.waitForFunction(()=>[...document.querySelectorAll('.sheet.show button')].filter(n=>n.textContent==='Создать новый КТП из версии').length===2);
  assert.equal(await page.locator('.sheet.show').getByRole('button',{name:'Создать новый КТП из версии',exact:true}).count(),2);
  const firstVersion=page.locator('.sheet.show .coach-card').filter({has:page.getByRole('heading',{name:'Первая редакция',exact:true})});
  await firstVersion.locator('summary').click();
  await firstVersion.getByText('Удалено: Бег',{exact:true}).waitFor();
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'KTP history overflow');
  await firstVersion.getByRole('button',{name:'Создать новый КТП из версии',exact:true}).click();
- await page.locator('.dialog input[type=text]').fill('Восстановленная редакция');
- await page.locator('.dialog').getByRole('button',{name:'Сохранить',exact:true}).click();
- await page.getByRole('heading',{name:'Создать независимую копию?',exact:true}).waitFor();
- await page.locator('.dialog').getByRole('button',{name:'Создать',exact:true}).click();
- await page.getByRole('heading',{name:'Восстановленная редакция',exact:true}).waitFor();
+ await page.locator('.dialog-backdrop.show .dialog input[type=text]').fill('Восстановленная редакция');
+ await page.locator('.dialog-backdrop.show .dialog').getByRole('button',{name:'Сохранить',exact:true}).click();
+ await page.locator('.dialog-backdrop.show .dialog').getByRole('heading',{name:'Создать независимую копию?',exact:true}).waitFor();
+ await page.locator('.dialog-backdrop.show .dialog').getByRole('button',{name:'Создать',exact:true}).click();
+ await page.locator('.sheet.show').getByRole('heading',{name:'Восстановленная редакция',exact:true}).waitFor();
  const restoredKtp=await page.evaluate(async id=>{const S=await import('./js/store.js');const copy=S.state.ktp.find(k=>k.name==='Восстановленная редакция');return {source:S.topicsOfKtp(id).map(t=>t.name),copy:S.topicsOfKtp(copy.id).map(t=>({name:t.name,confirmed:t.activitiesConfirmed})),classes:copy.classIds};},ktpId);
  assert.deepEqual(restoredKtp,{source:['Новая тема'],copy:[{name:'Бег',confirmed:false},{name:'Прыжок',confirmed:false}],classes:[]});
  await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
