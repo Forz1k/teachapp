@@ -5,6 +5,7 @@ on:
       - 'server/delta-*.mjs'
       - 'server/cloudflare-protocol.mjs'
       - 'server/cloudflare-relay.mjs'
+      - 'server/migration-receipt.mjs'
       - 'server/device-trust.mjs'
       - 'wrangler.migration-source-dev.jsonc'
       - 'js/sync.js'

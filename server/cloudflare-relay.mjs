@@ -2,18 +2,21 @@
 import {DurableObject} from 'cloudflare:workers';
 import {LIMIT,digestToken} from './cloudflare-protocol.mjs';
 import {DeviceRegistry,validDeviceHash,validRegistration,validRevocation} from './device-trust.mjs';
+import {validAnchorCommitment,normalizeReceiptKeys,importReceiptKey,verifyRollbackReceipt} from './migration-receipt.mjs';
 const areas=['school','coach'];
 const tokenPattern=/^[A-Za-z0-9_-]{32,256}$/;
 const digestPattern=/^[0-9a-f]{64}$/;
 const migrationIdPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const loopback=['127.0.0.1','localhost','[::1]'];
-const validFencePacket=b=>b&&typeof b==='object'&&!Array.isArray(b)&&Object.keys(b).sort().join(',')==='expectedRevision,migrationId'&&Number.isSafeInteger(b.expectedRevision)&&b.expectedRevision>0&&typeof b.migrationId==='string'&&migrationIdPattern.test(b.migrationId);
+const validMigrationRevision=b=>b&&typeof b==='object'&&!Array.isArray(b)&&Number.isSafeInteger(b.expectedRevision)&&b.expectedRevision>0&&typeof b.migrationId==='string'&&migrationIdPattern.test(b.migrationId);
+const validFencePacket=b=>validMigrationRevision(b)&&(Object.keys(b).sort().join(',')==='expectedRevision,migrationId'||Object.keys(b).sort().join(',')==='destinationAnchorCommitment,expectedRevision,migrationId'&&validAnchorCommitment(b.destinationAnchorCommitment));
+const validResumePacket=b=>validMigrationRevision(b)&&Object.keys(b).sort().join(',')==='expectedRevision,migrationId,receipt'&&b.receipt&&typeof b.receipt==='object'&&!Array.isArray(b.receipt);
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 function json(status,body,extra={}){
  return new Response(JSON.stringify(body),{status,headers:{...headers,'Content-Type':'application/json; charset=utf-8',...extra}});
 }
 function config(env){
- let origin,hashes,adminHash=null,fenceHashes={};
+ let origin,hashes,adminHash=null,fenceHashes={},verifyKeys={};
  try{
   const url=new URL(env.TEACHAPP_SYNC_ORIGIN);
   if(url.protocol!=='https:'||url.origin!==env.TEACHAPP_SYNC_ORIGIN)throw Error();
@@ -36,9 +39,11 @@ function config(env){
    const f=JSON.parse(env.TEACHAPP_SYNC_FENCE_HASHES||'{}');
    if(!f||typeof f!=='object'||Array.isArray(f)||Object.keys(f).some(a=>!areas.includes(a)))throw Error();
    for(const [area,h] of Object.entries(f)){if(!validDeviceHash(h)||seen.has(h)||h===adminHash||!hashes[area].length&&!adminHash)throw Error();seen.add(h);fenceHashes[area]=h;}
+   verifyKeys=normalizeReceiptKeys(JSON.parse(env.TEACHAPP_SYNC_ROLLBACK_VERIFY_KEYS||'{}'));
+   if(!verifyKeys||Object.keys(verifyKeys).some(a=>!fenceHashes[a]))throw Error();
   }
  }catch{return null;}
- return {origin,hashes,adminHash,fenceHashes};
+ return {origin,hashes,adminHash,fenceHashes,verifyKeys};
 }
 function equal(a,b){let diff=0;for(let i=0;i<64;i++)diff|=a.charCodeAt(i)^b.charCodeAt(i);return diff===0;}
 async function authorized(request,hashes){
@@ -84,12 +89,13 @@ export default {async fetch(request,env){
  }
  const match=/^\/v1\/snapshot\/(school|coach)$/.exec(url.pathname),pair=/^\/v1\/pairing\/(create|redeem)$/.exec(url.pathname);
  const v2Snapshot=/^\/v2\/snapshot\/(school|coach)$/.exec(url.pathname),devices=/^\/v2\/devices\/(school|coach)(\/revoke)?$/.exec(url.pathname),pairV2=/^\/v2\/pairing\/(create|redeem)$/.exec(url.pathname);
- const fence=/^\/v1\/migration-fence\/(school|coach)$/.exec(url.pathname),fenceStatus=/^\/v([12])\/migration-fence-status\/(school|coach)$/.exec(url.pathname);
- if((!match&&!pair&&!pairV2&&!v2Snapshot&&!devices&&!fence&&!fenceStatus)||url.search)return json(404,{error:'route'});
+ const fence=/^\/v1\/migration-fence\/(school|coach)$/.exec(url.pathname),resume=/^\/v1\/migration-rollback\/(school|coach)$/.exec(url.pathname),fenceStatus=/^\/v([12])\/migration-fence-status\/(school|coach)$/.exec(url.pathname);
+ if((!match&&!pair&&!pairV2&&!v2Snapshot&&!devices&&!fence&&!resume&&!fenceStatus)||url.search)return json(404,{error:'route'});
  const settings=config(env);
  if(!settings)return json(503,{error:'not-configured'});
  if((v2Snapshot||devices||pairV2||fenceStatus?.[1]==='2')&&!settings.adminHash)return json(404,{error:'route'});
- if((fence||fenceStatus)&&(env.TEACHAPP_SYNC_MIGRATION_SYNTHETIC!=='true'||!loopback.includes(url.hostname)||url.protocol!=='http:'||!settings.fenceHashes[fence?.[1]??fenceStatus[2]]))return json(404,{error:'route'});
+ if((fence||resume||fenceStatus)&&(env.TEACHAPP_SYNC_MIGRATION_SYNTHETIC!=='true'||!loopback.includes(url.hostname)||url.protocol!=='http:'||!settings.fenceHashes[fence?.[1]??resume?.[1]??fenceStatus[2]]))return json(404,{error:'route'});
+ if(resume&&!settings.verifyKeys[resume[1]])return json(404,{error:'route'});
  const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};
  if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
  if(request.method==='OPTIONS'){
@@ -97,19 +103,20 @@ export default {async fetch(request,env){
   return new Response(null,{status:204,headers:{...headers,...cors,'Access-Control-Allow-Methods':'GET, PUT, POST, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'}});
  }
  try{
-  if(fence||fenceStatus){
-   const area=fence?.[1]??fenceStatus[2],version=fenceStatus?.[1];
+  if(fence||resume||fenceStatus){
+   const area=fence?.[1]??resume?.[1]??fenceStatus[2],version=fenceStatus?.[1];
    const init={method:request.method,headers:{}};let internal;
-   if(fence){
+   if(fence||resume){
     if(!await authorized(request,[settings.fenceHashes[area]]))return json(401,{error:'unauthorized'},cors);
-    if(!['GET','PUT'].includes(request.method))return json(405,{error:'method'},cors);
+    if(resume?request.method!=='PUT':!['GET','PUT'].includes(request.method))return json(405,{error:'method'},cors);
     // A pre-existing device token cannot acquire administrative privilege, even across contours.
     for(const a of areas){const object=env.SNAPSHOTS.get(env.SNAPSHOTS.idFromName(a));const r=await object.fetch(new Request('https://internal/migration-key-available',{method:'POST',body:JSON.stringify({hash:settings.fenceHashes[area]})}));if(r.status!==200)return json(409,{error:'fence-key-reuse'},cors);}
-    internal='/migration-fence';
+    internal=resume?'/migration-rollback':'/migration-fence';
+    init.headers['X-Migration-Area']=area;
     if(request.method==='PUT'){
      if(!/^application\/json(?:;|$)/i.test(request.headers.get('Content-Type')||''))return json(415,{error:'content-type'},cors);
      const packet=await readSmallJson(request);if(packet.error)return json(packet.error,{error:'packet'},cors);
-     if(!validFencePacket(packet.body))return json(400,{error:'packet'},cors);init.body=JSON.stringify(packet.body);
+     if(resume?!validResumePacket(packet.body):!validFencePacket(packet.body)||Boolean(settings.verifyKeys[area])!==Object.hasOwn(packet.body,'destinationAnchorCommitment'))return json(400,{error:'packet'},cors);init.body=JSON.stringify(packet.body);
     }
    }else{
     if(request.method!=='GET')return json(405,{error:'method'},cors);
@@ -209,6 +216,9 @@ export class SyncSnapshot extends DurableObject{
   this.sql=ctx.storage.sql;
   this.sql.exec('CREATE TABLE IF NOT EXISTS snapshot (id INTEGER PRIMARY KEY CHECK (id = 1), revision INTEGER NOT NULL, envelope TEXT NOT NULL)');
   this.sql.exec('CREATE TABLE IF NOT EXISTS migration_fence (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, migration_id TEXT NOT NULL)');
+  this.sql.exec('CREATE TABLE IF NOT EXISTS migration_rollback_guard (id INTEGER PRIMARY KEY CHECK(id=1), commitment TEXT NOT NULL, public_key TEXT NOT NULL)');
+  this.sql.exec('CREATE TABLE IF NOT EXISTS migration_rollback_done (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, migration_id TEXT NOT NULL)');
+  this.settings=config(env);
  }
  get(){
   const row=this.sql.exec('SELECT revision, envelope FROM snapshot WHERE id=1').toArray()[0];
@@ -251,12 +261,31 @@ export class SyncSnapshot extends DurableObject{
    }
    if((path==='/migration-fence'||path==='/migration-fence-status')&&request.method==='GET')return json(200,this.fenceState());
    if(path==='/migration-fence'&&request.method==='PUT'){
-    const body=await request.json();if(!validFencePacket(body))return json(400,{error:'packet'});
+    const body=await request.json(),area=request.headers.get('X-Migration-Area'),key=this.settings?.verifyKeys[area];
+    if(!validFencePacket(body)||!areas.includes(area)||Boolean(key)!==Object.hasOwn(body,'destinationAnchorCommitment'))return json(400,{error:'packet'});
+    if(key)try{await importReceiptKey(key);}catch{return json(400,{error:'invalid-pinned-key'});}
     return this.storage.transactionSync(()=>{
-     const state=this.fenceState();
-     if(state.fence)return state.fence.revision===body.expectedRevision&&state.fence.migrationId===body.migrationId?json(200,state):json(423,{error:'migration-frozen'});
-     if(state.revision!==body.expectedRevision)return json(409,{error:'stale'});
+     const state=this.fenceState(),guard=this.sql.exec('SELECT commitment,public_key FROM migration_rollback_guard WHERE id=1').toArray()[0];
+     if(this.sql.exec('SELECT id FROM migration_rollback_done WHERE id=1').toArray().length)return json(409,{error:'rollback-completed'});
+     if(state.fence)return state.fence.revision===body.expectedRevision&&state.fence.migrationId===body.migrationId&&(!key&&!guard||key&&guard?.commitment===body.destinationAnchorCommitment&&guard.public_key===JSON.stringify(key))?json(200,state):json(423,{error:'migration-frozen'});
+     if(state.revision!==body.expectedRevision||guard)return json(409,{error:'stale'});
      this.sql.exec('INSERT INTO migration_fence(id,revision,migration_id) VALUES(1,?,?)',state.revision,body.migrationId);
+     if(key)this.sql.exec('INSERT INTO migration_rollback_guard(id,commitment,public_key) VALUES(1,?,?)',body.destinationAnchorCommitment,JSON.stringify(key));
+     return json(200,this.fenceState());
+    });
+   }
+   if(path==='/migration-rollback'&&request.method==='PUT'){
+    const body=await request.json(),area=request.headers.get('X-Migration-Area'),key=this.settings?.verifyKeys[area];
+    if(!validResumePacket(body)||!areas.includes(area)||!key)return json(400,{error:'packet'});
+    const guard=this.sql.exec('SELECT commitment,public_key FROM migration_rollback_guard WHERE id=1').toArray()[0];
+    if(!guard||guard.public_key!==JSON.stringify(key)||!await verifyRollbackReceipt(body.receipt,{area,migrationId:body.migrationId,anchorCommitment:guard.commitment},key))return json(409,{error:'invalid-seal-receipt'});
+    return this.storage.transactionSync(()=>{
+     const state=this.fenceState(),currentGuard=this.sql.exec('SELECT commitment,public_key FROM migration_rollback_guard WHERE id=1').toArray()[0],done=this.sql.exec('SELECT revision,migration_id FROM migration_rollback_done WHERE id=1').toArray()[0];
+     if(!currentGuard||currentGuard.commitment!==guard.commitment||currentGuard.public_key!==guard.public_key)return json(409,{error:'guard-changed'});
+     if(done)return done.revision===body.expectedRevision&&done.migration_id===body.migrationId&&!state.fence?json(200,state):json(409,{error:'rollback-completed'});
+     if(state.revision!==body.expectedRevision||state.fence?.migrationId!==body.migrationId)return json(409,{error:'fence-mismatch'});
+     this.sql.exec('INSERT INTO migration_rollback_done(id,revision,migration_id) VALUES(1,?,?)',state.revision,body.migrationId);
+     this.sql.exec('DELETE FROM migration_fence WHERE id=1');
      return json(200,this.fenceState());
     });
    }

@@ -68,3 +68,14 @@ export async function joinDeltaAnchor(raw,uploadId,readPart){
  const data=chunks.join('');check(data.length===manifest.dataLength,'Неполный снимок');
  return {...manifest.header,data};
 }
+
+// Commitment to the actual stored revision-1 anchor; multipart uses the verified
+// manifest ID, so neither worker needs to assemble the entire large ciphertext.
+export async function singleDeltaAnchorCommitment(envelope){
+ check(exact(envelope,[...fields,'data']),'Некорректный снимок назначения');
+ return 'single:'+await deltaPartHash(JSON.stringify([...fields,'data'].map(k=>envelope[k])));
+}
+export async function migrationAnchorCommitment(envelope,packetLimit=1024*1024){
+ if(encoder.encode(JSON.stringify({expectedRevision:0,envelope})).length<=packetLimit)return singleDeltaAnchorCommitment(envelope);
+ return 'multipart:'+(await splitDeltaAnchor(envelope,{kind:'anchor',expectedRevision:0})).uploadId;
+}

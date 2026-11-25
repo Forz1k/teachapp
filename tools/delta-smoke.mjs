@@ -20,6 +20,7 @@ import {defaultSettings} from '../js/model.js';
 import {BACKUP_VERSION} from '../js/backup.js';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
 import {splitDeltaAnchor} from '../js/delta-anchor.js';
+import {signRollbackReceipt} from '../server/migration-receipt.mjs';
 import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation,createDeltaDeviceRecovery,openDeltaDeviceRecovery,rebindDeltaDevice,relayClient,deltaMigrationFenceClient,deltaMigrationFenceStatus,cutoverDeltaMigrationDevice,sealDeltaMigrationRollback,rollbackDeltaMigrationDevice,prepareDeltaMigration,openDeltaMigration,inspectDeltaMigrationDevice,commitDeltaMigration} from '../js/sync.js';
 
 const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),coachAdmin='E'.repeat(43),rotator='F'.repeat(43),coachRotator='G'.repeat(43),sealKey='K'.repeat(43),coachSealKey='L'.repeat(43),area='school',password='synthetic-delta-test-password';
@@ -28,10 +29,10 @@ const webRoot=process.cwd(),site=httpServer(async(req,res)=>{try{const u=new URL
 await new Promise(r=>site.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+site.address().port;
 const state=await mkdtemp(join(tmpdir(),'teachapp-delta-')),socket=createServer();
 await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address().port;await new Promise(r=>socket.close(r));
-const endpoint='http://127.0.0.1:'+port;let proc,output='',workerState=join(state,'primary');
+const endpoint='http://127.0.0.1:'+port;let proc,output='',workerState=join(state,'primary'),receiptSignKeys={};
 async function start(){
  const hashes={school:[await digestToken(a),await digestToken(b)],coach:[await digestToken(c)]};
- proc=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.delta-dev.jsonc','--local','--ip','127.0.0.1','--port',String(port),'--persist-to',workerState,'--var','TEACHAPP_DELTA_SYNTHETIC:true','--var','TEACHAPP_DELTA_ORIGIN:'+origin,'--var','TEACHAPP_DELTA_TOKEN_HASHES:'+JSON.stringify(hashes),'--var','TEACHAPP_DELTA_COMPACT_HASHES:'+JSON.stringify({school:await digestToken(admin),coach:await digestToken(coachAdmin)}),'--var','TEACHAPP_DELTA_ROTATE_HASHES:'+JSON.stringify({school:await digestToken(rotator),coach:await digestToken(coachRotator)}),'--var','TEACHAPP_DELTA_SEAL_HASHES:'+JSON.stringify({school:await digestToken(sealKey),coach:await digestToken(coachSealKey)})],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
+ proc=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.delta-dev.jsonc','--local','--ip','127.0.0.1','--port',String(port),'--persist-to',workerState,'--var','TEACHAPP_DELTA_SYNTHETIC:true','--var','TEACHAPP_DELTA_ORIGIN:'+origin,'--var','TEACHAPP_DELTA_TOKEN_HASHES:'+JSON.stringify(hashes),'--var','TEACHAPP_DELTA_COMPACT_HASHES:'+JSON.stringify({school:await digestToken(admin),coach:await digestToken(coachAdmin)}),'--var','TEACHAPP_DELTA_ROTATE_HASHES:'+JSON.stringify({school:await digestToken(rotator),coach:await digestToken(coachRotator)}),'--var','TEACHAPP_DELTA_SEAL_HASHES:'+JSON.stringify({school:await digestToken(sealKey),coach:await digestToken(coachSealKey)}),'--var','TEACHAPP_DELTA_ROLLBACK_SIGN_KEYS:'+JSON.stringify(receiptSignKeys)],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
  proc.stdout.on('data',x=>output=(output+x).slice(-8000));proc.stderr.on('data',x=>output=(output+x).slice(-8000));
  for(let i=0;i<150;i++){if(proc.exitCode!==null)throw Error(output);try{if((await fetch(endpoint+'/healthz',{signal:AbortSignal.timeout(1000)})).ok)return;}catch{}await sleep(500);}
  throw Error('Startup timeout '+output);
@@ -544,7 +545,10 @@ try{
  }finally{await new Promise(resolve=>legacy.close(resolve));}
 
  // Cloudflare source compatibility: a second local workerd (distinct config and storage).
- await stop();workerState=join(state,'cf-migration-target');await start();
+ await stop();workerState=join(state,'cf-migration-target');
+ const receiptKeys=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+ const publicReceiptKey=await crypto.subtle.exportKey('jwk',receiptKeys.publicKey),privateReceiptKey=await crypto.subtle.exportKey('jwk',receiptKeys.privateKey);
+ receiptSignKeys={school:privateReceiptKey};await start();
  const cfPortProbe=createServer();await new Promise(r=>cfPortProbe.listen(0,'127.0.0.1',r));
  const cfPort=cfPortProbe.address().port;await new Promise(r=>cfPortProbe.close(r));
  const cfSource='http://127.0.0.1:'+cfPort,cfOrigin='https://synthetic-migration.example';
@@ -554,7 +558,7 @@ try{
  async function startCf(enabled=true,fenceHashOverride){
   cfOutput='';
   const fenceHashes=fenceHashOverride??{school:await digestToken(cfSchoolFence),coach:await digestToken(cfFence)};
-  cfProcess=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.migration-source-dev.jsonc','--local','--ip','127.0.0.1','--port',String(cfPort),'--persist-to',join(state,'cf-migration-source'),'--var','TEACHAPP_SYNC_ORIGIN:'+cfOrigin,'--var','TEACHAPP_SYNC_TOKEN_HASHES:'+JSON.stringify(cfHashes),'--var','TEACHAPP_SYNC_ADMIN_HASH:'+await digestToken(cfAdmin),...(enabled?['--var','TEACHAPP_SYNC_MIGRATION_SYNTHETIC:true','--var','TEACHAPP_SYNC_FENCE_HASHES:'+JSON.stringify(fenceHashes)]:[])],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
+  cfProcess=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.migration-source-dev.jsonc','--local','--ip','127.0.0.1','--port',String(cfPort),'--persist-to',join(state,'cf-migration-source'),'--var','TEACHAPP_SYNC_ORIGIN:'+cfOrigin,'--var','TEACHAPP_SYNC_TOKEN_HASHES:'+JSON.stringify(cfHashes),'--var','TEACHAPP_SYNC_ADMIN_HASH:'+await digestToken(cfAdmin),...(enabled?['--var','TEACHAPP_SYNC_MIGRATION_SYNTHETIC:true','--var','TEACHAPP_SYNC_FENCE_HASHES:'+JSON.stringify(fenceHashes),'--var','TEACHAPP_SYNC_ROLLBACK_VERIFY_KEYS:'+JSON.stringify({school:publicReceiptKey})]:[])],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
   cfProcess.stdout.on('data',x=>cfOutput=(cfOutput+x).slice(-8000));cfProcess.stderr.on('data',x=>cfOutput=(cfOutput+x).slice(-8000));
   for(let i=0;i<150;i++){if(cfProcess.exitCode!==null)throw Error(cfOutput);try{if((await fetch(cfSource+'/healthz',{signal:AbortSignal.timeout(1000)})).ok)return;}catch{}await sleep(500);}
   throw Error('Cloudflare migration source startup '+cfOutput);
@@ -612,7 +616,11 @@ try{
   const cfOwner={...cfConfirm,sourceFenceToken:cfSchoolFence,sourceFenceId:cfPlan.migrationId,sourceFrozen:true};
   const cfAdminFence=deltaMigrationFenceClient(cfOwner);
   await assert.rejects(commitDeltaMigration(cfOwner),/не заблокирован/);
-  const cfFrozen=await cfAdminFence.freeze({expectedRevision:1,migrationId:cfPlan.migrationId,confirmed:true,backupVerified:true});
+  const freezeCf={expectedRevision:1,migrationId:cfPlan.migrationId,confirmed:true,backupVerified:true,destinationAnchorCommitment:cfPlan.destinationAnchorCommitment};
+  await assert.rejects(cfAdminFence.freeze({...freezeCf,destinationAnchorCommitment:undefined}),/400/);
+  const cfFrozen=await cfAdminFence.freeze(freezeCf);
+  assert.deepEqual(await cfAdminFence.freeze(freezeCf),cfFrozen);
+  await assert.rejects(cfAdminFence.freeze({...freezeCf,destinationAnchorCommitment:'single:'+'0'.repeat(64)}),/423/);
   assert.deepEqual(cfFrozen,{revision:1,fence:{revision:1,migrationId:cfPlan.migrationId}});
   assert.deepEqual(await deltaMigrationFenceStatus(cfConfirm),cfFrozen);
   assert.deepEqual(await deltaMigrationFenceStatus({...cfConfirm,sourceToken:cfLegacy,protocolVersion:1}),cfFrozen);
@@ -635,19 +643,43 @@ try{
   await assert.rejects(schoolCf.put(1,cfNewSchool),e=>e.code==='migration-frozen');
   await stopCf();await startCf();
   assert.deepEqual(await deltaMigrationFenceStatus(cfConfirm),cfFrozen);
-  assert.equal((await cfCall('/v1/migration-rollback/school',cfSchoolFence,'PUT',{expectedRevision:1,migrationId:cfPlan.migrationId})).status,404);
+  const cfDeltaTarget=deltaLabClient(endpoint,'school',a);
+  assert.equal((await cfCall('/v1/migration-rollback/school',cfSchoolFence,'PUT',{expectedRevision:1,migrationId:cfPlan.migrationId})).status,400);
+  await assert.rejects(cfDeltaTarget.rollbackReceipt(),e=>e.status===409);
   assert.equal((await sealDeltaMigrationRollback({...cfConfirm,destinationSealToken:sealKey})).status,'rollback-sealed');
+  const signed=await cfDeltaTarget.rollbackReceipt();
+  assert.equal(signed.anchorCommitment,cfPlan.destinationAnchorCommitment);
+  assert.equal(signed.migrationId,cfPlan.migrationId);
+  const resumeCf={expectedRevision:1,migrationId:cfPlan.migrationId,confirmed:true,backupVerified:true,allDevicesReconciled:true,receipt:signed};
+  assert.throws(()=>cfAdminFence.resumeCloudflareSource({...resumeCf,allDevicesReconciled:false}),/возврат всех устройств/);
+  assert.equal((await cfCall('/v1/migration-rollback/school',cfSchoolDevice,'PUT',{expectedRevision:1,migrationId:cfPlan.migrationId,receipt:signed})).status,401);
+  const wrongAnchor=await signRollbackReceipt({area:'school',migrationId:cfPlan.migrationId,anchorCommitment:'single:'+'0'.repeat(64)},privateReceiptKey);
+  const wrongArea=await signRollbackReceipt({area:'coach',migrationId:cfPlan.migrationId,anchorCommitment:cfPlan.destinationAnchorCommitment},privateReceiptKey);
+  const wrongKeys=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+  const wrongSigner=await signRollbackReceipt({area:'school',migrationId:cfPlan.migrationId,anchorCommitment:cfPlan.destinationAnchorCommitment},await crypto.subtle.exportKey('jwk',wrongKeys.privateKey));
+  for(const badReceipt of [{...signed,signature:'A'.repeat(86)},wrongAnchor,wrongArea,wrongSigner])await assert.rejects(cfAdminFence.resumeCloudflareSource({...resumeCf,receipt:badReceipt}),/409/);
+  await assert.rejects(sourceSchoolV2.put(1,cfNewSchool),e=>e.code==='migration-frozen');
   assert.equal((await rollbackDeltaMigrationDevice(cfConfirm)).status,'rollback-completed');
   assert.equal((await db.get('meta','sync-checkpoint-school')).endpoint,cfSource);
   assert.equal((await db.get('meta','sync-checkpoint-migration-school')),undefined);
   assert.deepEqual(projectScope(await db.dumpAll(),'school'),base);
-  // Cloudflare source stays fenced: no release endpoint or false rollback completion.
+  // Release only after the destination's durable seal and the operator's device reconciliation.
   await assert.rejects(sourceSchoolV2.put(1,cfNewSchool),e=>e.code==='migration-frozen');
+  await stop();await start();
+  const signedAgain=await cfDeltaTarget.rollbackReceipt();assert.equal(signedAgain.anchorCommitment,signed.anchorCommitment);
+  assert.deepEqual(await cfAdminFence.resumeCloudflareSource(resumeCf),{revision:1,fence:null});
+  assert.deepEqual(await cfAdminFence.resumeCloudflareSource(resumeCf),{revision:1,fence:null});
+  const afterResume=await sourceSchoolV2.put(1,cfNewSchool);assert.equal(afterResume.revision,2);
+  await stopCf();await startCf();
+  assert.deepEqual(await cfAdminFence.resumeCloudflareSource(resumeCf),{revision:2,fence:null});
+  await assert.rejects(cfAdminFence.freeze({...freezeCf,expectedRevision:2}),/409/);
+  assert.equal((await cfDeltaTarget.rollbackStatus()).seal.migrationId,cfPlan.migrationId);
+  await assert.rejects(cfDeltaTarget.anchor((await cfDeltaTarget.getRevision(1)).envelope),e=>e.status===423);
   assert.equal((await cfCall('/v2/devices/school/revoke',cfAdmin,'POST',{id:cfSchoolDeviceId})).status,200);
   assert.equal((await cfCall('/v2/migration-fence-status/school',cfSchoolDevice)).status,401);
   assert.equal((await cfCall('/v2/snapshot/school',cfSchoolDevice)).status,401);
-  assert.deepEqual(await schoolCf.get(),sourceSchoolHead);
-  console.log('CLOUDFLARE MIGRATION PASS: real independent workerd source/target, v1/v2 shared fence CAS, reserved and revoked keys, immutable copy, v2 device cutover and local rollback, persisted write refusal, no Cloudflare source release or production profile change.');
+  assert.deepEqual(await schoolCf.get(),afterResume);
+  console.log('CLOUDFLARE MIGRATION PASS: real independent workerd source/target, v1/v2 shared fence CAS, reserved and revoked keys, immutable copy, v2 device cutover and rollback, signed seal receipt bound to anchor, tamper/wrong signer rejection, persistent exact source resume and sealed target. No production profile change.');
  }finally{await stopCf();}
  const sizes=syncDeltaEstimate(base,next,{area,workspaceId,baseRevision:1});assert.ok(sizes.bytes<sizes.fullBytes);
  console.log('DELTA SIZE '+JSON.stringify(sizes));

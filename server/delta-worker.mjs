@@ -2,7 +2,8 @@
 import {DurableObject} from 'cloudflare:workers';
 import {LIMIT,digestToken} from './cloudflare-protocol.mjs';
 import {normalizeDeltaWrite,decideDeltaWrite,MAX_DELTA_ENTRIES,MAX_LEDGER_BYTES} from './delta-ledger.mjs';
-import {normalizeAnchorManifest,anchorUploadId,verifyAnchorPart} from '../js/delta-anchor.js';
+import {normalizeAnchorManifest,anchorUploadId,verifyAnchorPart,singleDeltaAnchorCommitment} from '../js/delta-anchor.js';
+import {normalizeReceiptKeys,signRollbackReceipt} from './migration-receipt.mjs';
 const UPLOAD_TTL=10*60*1000,utf8=new TextEncoder();
 const migrationId=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const multipartRoute=/^\/multipart\/(anchor|compact|rotate)\/([a-f0-9]{64})\/(begin|commit|abort|part\/(0|[1-9]\d?))$/;
@@ -32,7 +33,9 @@ function config(env,url){
   for(const area of areas){const h=rotators[area];if(h===undefined)continue;if(typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)||seen.has(h)||!hashes[area].length||!compactors[area])return null;seen.add(h);}
   if(!sealers||typeof sealers!=='object'||Array.isArray(sealers)||Object.keys(sealers).some(k=>!areas.includes(k)))return null;
   for(const area of areas){const h=sealers[area];if(h===undefined)continue;if(typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)||seen.has(h)||!hashes[area].length)return null;seen.add(h);}
-  return readCount?{origin:origin.origin,hashes,compactors,rotators,sealers,reserved:[...seen]}:null;
+  const signKeys=normalizeReceiptKeys(JSON.parse(env.TEACHAPP_DELTA_ROLLBACK_SIGN_KEYS||'{}'),true);
+  if(!signKeys||Object.keys(signKeys).some(a=>!sealers[a]))return null;
+  return readCount?{origin:origin.origin,hashes,compactors,rotators,sealers,signKeys,reserved:[...seen]}:null;
  }catch{return null;}
 }
 function equal(a,b){let d=0;for(let i=0;i<64;i++)d|=a.charCodeAt(i)^b.charCodeAt(i);return d===0;}
@@ -57,7 +60,7 @@ export default {async fetch(request,env){
  const route=/^\/v1\/delta\/(school|coach)(\/.*)$/.exec(u.pathname);
  if(!route||u.search)return json(404,{error:'route'});
  const [,area,internal]=route,path=internal.slice(1),multi=multipartRoute.exec(internal),part=partRoute.exec(internal);
- if(!multi&&!part&&!/^(head|anchor|append|compact|rollback-seal|rollback-status|revision\/[1-9]\d{0,14})$/.test(path))return json(404,{error:'route'});
+ if(!multi&&!part&&!/^(head|anchor|append|compact|rollback-seal|rollback-status|rollback-receipt|revision\/[1-9]\d{0,14})$/.test(path))return json(404,{error:'route'});
  const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};
  if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
  if(request.method==='OPTIONS')return origin===settings.origin?new Response(null,{status:204,headers:{...cors,'Access-Control-Allow-Methods':'GET, PUT, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'}}):json(403,{error:'origin'});
@@ -187,6 +190,22 @@ export class DeltaLedger extends DurableObject{
    if(!this.settings||!areas.includes(area)||!this.allowed(area,digest,role))return json(401,{error:'unauthorized'});
    if(request.method==='GET'){
     if(path==='/rollback-status')return json(200,{revision:this.head().revision,seal:this.seal()});
+    if(path==='/rollback-receipt'){
+     const key=this.settings.signKeys[area];if(!key)return json(404,{error:'receipt-disabled'});
+     const seal=this.seal(),head=this.head(),row=this.last(1);
+     if(!seal||head.revision!==1||head.anchorRevision!==1||head.count!==1||row?.kind!=='anchor')return json(409,{error:'not-sealed'});
+     const stored=JSON.parse(row.serialized);
+     let anchorCommitment;
+     if(stored.multipart){
+      const m=normalizeAnchorManifest(stored.multipart);
+      if(!m||m.kind!=='anchor'||m.expectedRevision!==0||await anchorUploadId(m)!==stored.uploadId)return json(503,{error:'invalid-anchor'});
+      anchorCommitment='multipart:'+stored.uploadId;
+     }else anchorCommitment=await singleDeltaAnchorCommitment(stored);
+     // No unseal route exists. Recheck authorization after asynchronous crypto.
+     const receipt=await signRollbackReceipt({area,migrationId:seal.migrationId,anchorCommitment},key);
+     if(!this.allowed(area,digest,'read'))return json(401,{error:'unauthorized'});
+     return json(200,receipt);
+    }
     if(path==='/head'){
      const h=this.head();return json(200,{revision:h.revision,anchorRevision:h.anchorRevision,count:h.count,bytes:h.bytes,maxEntries:MAX_DELTA_ENTRIES+1,maxBytes:MAX_LEDGER_BYTES,keyEpoch:this.credentials(area).epoch});
     }

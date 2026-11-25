@@ -4,7 +4,7 @@ import {validateBackup,BACKUP_VERSION} from './backup.js';
 import {defaultSettings,exemptionCovers,hasOsv} from './model.js';
 import {gradeState,finalState} from './grade-history.js';
 import {encryptBackup,decryptBackup,isEncryptedBackup,encryptedEnvelopeBytes} from './privacy.js';
-import {DELTA_MAX_DATA,splitDeltaAnchor,joinDeltaAnchor,normalizeAnchorManifest,normalizeRotationHashes,deltaPartHash} from './delta-anchor.js';
+import {DELTA_MAX_DATA,splitDeltaAnchor,joinDeltaAnchor,normalizeAnchorManifest,normalizeRotationHashes,deltaPartHash,migrationAnchorCommitment} from './delta-anchor.js';
 
 export const syncAreas={school:'Школа',coach:'Тренер'};
 const names=Object.keys(db.SCHEMA);
@@ -400,7 +400,7 @@ export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sea
   check(ack?.revision===expectedRevision+1&&typeof ack.replayed==='boolean','Сервер не подтвердил снимок');
   return ack;
  }
- return {head:()=>request('head'),rollbackStatus:()=>request('rollback-status'),sealRollback:migrationId=>{check(validToken(sealToken)&&typeof migrationId==='string'&&uuid.test(migrationId),'Нужен отдельный ключ закрытия назначения');return request('rollback-seal',{expectedRevision:1,migrationId},sealToken);},getRevision:async rev=>{
+ return {head:()=>request('head'),rollbackStatus:()=>request('rollback-status'),rollbackReceipt:()=>request('rollback-receipt'),sealRollback:migrationId=>{check(validToken(sealToken)&&typeof migrationId==='string'&&uuid.test(migrationId),'Нужен отдельный ключ закрытия назначения');return request('rollback-seal',{expectedRevision:1,migrationId},sealToken);},getRevision:async rev=>{
    check(revision(rev),'Некорректная ревизия');const row=await request('revision/'+rev);
    if(!Object.hasOwn(row,'multipart'))return row;
    const manifest=normalizeAnchorManifest(row.multipart);
@@ -616,7 +616,7 @@ export async function prepareDeltaMigration(args){
  check(envelope.data.length<=DELTA_MAX_DATA&&old.envelope.data.length<=DELTA_MAX_DATA,'Снимок превышает лимит переноса');
  const payload={app:'teachapp-delta-migration',version:1,source,destination,area,protocolVersion,sourceRevision:old.revision,sourceWorkspaceId:packet.workspaceId,workspaceId,digest,sourceEnvelope:old.envelope,envelope};
  const file=await encryptBackup(payload,backupPassword);
- return {area,migrationId:workspaceId,sourceRevision:old.revision,destinationRevision:1,records:migrationRecordCount(packet.snapshot),encryptedBytes:envelope.data.length,file};
+ return {area,migrationId:workspaceId,destinationAnchorCommitment:await migrationAnchorCommitment(envelope),sourceRevision:old.revision,destinationRevision:1,records:migrationRecordCount(packet.snapshot),encryptedBytes:envelope.data.length,file};
 }
 export async function openDeltaMigration({sourceEndpoint,destinationEndpoint,area,protocolVersion=1,current,file,sourcePassword,destinationPassword,backupPassword,synthetic=false}){
  const {source,destination}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
@@ -659,12 +659,16 @@ export function deltaMigrationFenceClient({sourceEndpoint,destinationEndpoint,ar
  const {source}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
  check([1,2].includes(protocolVersion)&&validArea(area)&&typeof sourceFenceToken==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(sourceFenceToken)&&sourceFenceToken!==sourceToken&&sourceFenceToken!==destinationToken,'Нужен отдельный ключ блокировки источника LAB');
  const request=body=>migrationFenceRequest(source,area,sourceFenceToken,'migration-fence',fetcher,body);
- return {get:()=>request(),freeze:({expectedRevision,migrationId,confirmed,backupVerified})=>{
+ return {get:()=>request(),freeze:({expectedRevision,migrationId,confirmed,backupVerified,destinationAnchorCommitment})=>{
   check(confirmed===true&&backupVerified===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите резервную копию и необратимую блокировку LAB');
-  return request({expectedRevision,migrationId:migrationId.toLowerCase()});
+  check(destinationAnchorCommitment===undefined||typeof destinationAnchorCommitment==='string'&&/^(single|multipart):[a-f0-9]{64}$/.test(destinationAnchorCommitment),'Некорректная контрольная сумма назначения');
+  return request({expectedRevision,migrationId:migrationId.toLowerCase(),...(destinationAnchorCommitment===undefined?{}:{destinationAnchorCommitment})});
  },resumeSource:({expectedRevision,migrationId,confirmed,backupVerified,allDevicesReconciled})=>{
   check(protocolVersion===1&&confirmed===true&&backupVerified===true&&allDevicesReconciled===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите проверенные копии и возврат всех устройств');
   return migrationFenceRequest(source,area,sourceFenceToken,'migration-rollback',fetcher,{expectedRevision,migrationId:migrationId.toLowerCase()});
+ },resumeCloudflareSource:({expectedRevision,migrationId,confirmed,backupVerified,allDevicesReconciled,receipt})=>{
+  check(confirmed===true&&backupVerified===true&&allDevicesReconciled===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId)&&plain(receipt),'Подтвердите возврат всех устройств и подписанную квитанцию закрытия');
+  return migrationFenceRequest(source,area,sourceFenceToken,'migration-rollback',fetcher,{expectedRevision,migrationId:migrationId.toLowerCase(),receipt});
  }};
 }
 export async function deltaMigrationFenceStatus({sourceEndpoint,destinationEndpoint,area,sourceToken,protocolVersion=1,synthetic=false,fetcher=globalThis.fetch}){
