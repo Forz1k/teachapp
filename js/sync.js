@@ -220,6 +220,24 @@ export async function verifySyncSnapshot(remote,password,area){
  await readPacket(remote.envelope,password,area,remote.revision);return {revision:remote.revision,empty:false};
 }
 const snapshotLimit=90*1024*1024;
+// Enforce the actual UTF-8 byte limit even when Content-Length is missing.
+// Reject malformed UTF-8 rather than silently replacing bytes in JSON strings.
+export async function readSyncResponse(res,limit,{requireStream=false,label='сервера'}={}){
+ const length=res.headers.get('content-length');
+ check(length===null||length===undefined||(/^\d+$/.test(length)&&Number(length)<=limit),'Слишком большой или некорректный ответ '+label);
+ let text='';
+ if(res.body?.getReader){
+  const reader=res.body.getReader(),decoder=new TextDecoder('utf-8',{fatal:true});let size=0;
+  try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>limit)throw Error('Слишком большой ответ '+label);text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}
+  catch(error){try{await reader.cancel();}catch{}throw error;}
+  finally{reader.releaseLock();}
+ }else{
+  check(!requireStream,'Пустой ответ '+label);
+  if(typeof res.arrayBuffer==='function'){const bytes=await res.arrayBuffer();check(bytes.byteLength<=limit,'Слишком большой ответ '+label);text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}
+  else{text=await res.text();check(new TextEncoder().encode(text).length<=limit,'Слишком большой ответ '+label);}
+ }
+ return JSON.parse(text);
+}
 export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeoutMs=45000,protocolVersion=1}={}){
  endpoint=normalizeEndpoint(endpoint);
  check(validArea(area)&&typeof token==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(token),'Проверьте индивидуальный ключ доступа сервера');
@@ -240,15 +258,9 @@ export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeou
    if(res.status===409)throw Error('На сервере появилась новая ревизия. Повторите предварительный просмотр.');
    if(res.status===401||res.status===403)throw Error('Сервер отказал в доступе. Проверьте ключ и область.');
    check(res.ok,'Сервер синхронизации недоступен (HTTP '+res.status+')');
-   const length=Number(res.headers.get('content-length')||0);
-   check(length<=snapshotLimit,'Слишком большой ответ сервера');
-   let text='';
-   if(res.body?.getReader){
-    const reader=res.body.getReader(),decoder=new TextDecoder();let size=0;
-    try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>snapshotLimit){await reader.cancel();throw Error('Слишком большой ответ сервера');}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}
-    finally{reader.releaseLock();}
-   }else{text=await res.text();check(text.length<=snapshotLimit,'Слишком большой ответ сервера');}
-   const result=JSON.parse(text);
+   let result;
+   try{result=await readSyncResponse(res,snapshotLimit);}
+   catch(error){if(error?.name==='AbortError')throw Object.assign(Error('Временная ошибка чтения ответа сервера синхронизации'),{retryable:true});throw error;}
    check(plain(result)&&Number.isSafeInteger(result.revision)&&result.revision>=0&&(result.revision===0?result.envelope===null:isEncryptedBackup(result.envelope)),'Некорректный ответ сервера');
    return result;
   }finally{clearTimeout(timeout);}
@@ -378,13 +390,7 @@ export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sea
   try{
    const res=await fetcher(url+path,{method:body?'PUT':'GET',headers:{Authorization:'Bearer '+secret,...(body?{'Content-Type':'application/json'}:{})},body:encoded,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:ctl.signal});
    if(!res.ok)throw Object.assign(Error(res.status===410?'История уплотнена, повторите чтение':'Delta LAB: HTTP '+res.status),{status:res.status});
-   const limit=defaultCloudflarePacketLimit+4096;
-   check(Number(res.headers.get('content-length')||0)<=limit,'Слишком большой ответ Delta LAB');
-   check(res.body?.getReader,'Пустой ответ Delta LAB');
-   const reader=res.body.getReader(),decoder=new TextDecoder('utf-8',{fatal:true});let size=0,text='';
-   try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>limit){await reader.cancel();throw Error('Слишком большой ответ Delta LAB');}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}
-   finally{reader.releaseLock();}
-   return JSON.parse(text);
+   return await readSyncResponse(res,defaultCloudflarePacketLimit+4096,{requireStream:true,label:'Delta LAB'});
   }finally{clearTimeout(timer);}
  }
  async function writeAnchor(kind,expectedRevision,envelope,secret,rotation){
@@ -973,9 +979,9 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
  guardSync(stillAllowed);
  if(!pullOnly){
   let committed;
-  try{committed=await client.put(plan.revision,envelope);}catch(e){guardSync(stillAllowed,true);throw e;}
+  try{committed=await client.put(plan.revision,envelope);}catch(e){guardSync(stillAllowed,true);if(e?.retryable||e instanceof SyntaxError||e instanceof TypeError)throw Object.assign(Error(e.message),{retryable:e.retryable===true,remoteMayHaveCommitted:true});throw e;}
   guardSync(stillAllowed,true);
-  check(committed.revision===nextRevision&&same(committed.envelope,envelope),'Сервер не подтвердил запись ожидаемой ревизии');
+  if(committed?.revision!==nextRevision||!same(committed.envelope,envelope))throw Object.assign(Error('Сервер не подтвердил запись ожидаемой ревизии'),{remoteMayHaveCommitted:true});
  }
  try{
   return await db.transaction(names,'readwrite',async s=>{
