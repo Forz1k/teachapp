@@ -16,8 +16,9 @@ const server=createServer(async(req,res)=>{
   const url=new URL(req.url,'http://localhost'),base=root;
   const path=resolve(base,'.'+decodeURIComponent(url.pathname==='/'?'/index.html':url.pathname));
   if(!path.startsWith(base+sep))throw Error('Invalid path');
+  const bytes=await readFile(path);
   res.writeHead(200,{'Content-Type':mime[extname(path)]||'application/octet-stream','Cache-Control':'no-store'});
-  res.end(await readFile(path));
+  res.end(bytes);
  }catch{if(!res.headersSent)res.writeHead(404);res.end();}
 });
 await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
@@ -58,8 +59,18 @@ try{
  root=candidate; // Same origin and browser context; only static server content changes.
  await page.evaluate(async()=>{const r=await navigator.serviceWorker.getRegistration();if(!r)throw Error('No registration');await r.update();});
  await page.getByRole('button',{name:'Обновить',exact:true}).waitFor({timeout:45000});
- await page.getByRole('button',{name:'Обновить',exact:true}).click();
- await page.waitForFunction(async v=>{try{return (await import('./js/version.js')).APP_VERSION===v&&Boolean(document.querySelector('.workspace-nav'))&&Boolean(navigator.serviceWorker.controller);}catch{return false;}},expected,{timeout:45000});
+ const oldDocument=await page.evaluate(()=>{window.__oldUpgradeDocument=true;return performance.timeOrigin;});
+ // Activation can expose new module URLs to the old document for a brief
+ // interval. Wait for the application's actual controllerchange reload,
+ // not just a newly fetched version module in the outgoing document.
+ await Promise.all([
+  page.waitForNavigation({waitUntil:'load',timeout:45000}),
+  page.getByRole('button',{name:'Обновить',exact:true}).click()
+ ]);
+ await page.locator('.workspace-nav').waitFor();
+ await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller),undefined,{timeout:45000});
+ const newDocument=await page.evaluate(async()=>({old:!!window.__oldUpgradeDocument,time:performance.timeOrigin,version:(await import('./js/version.js')).APP_VERSION}));
+ assert.equal(newDocument.old,false);assert.notEqual(newDocument.time,oldDocument);assert.equal(newDocument.version,expected);
  const upgraded=await page.evaluate(async()=>{const db=await import('./js/db.js');return {data:await db.dumpAll(),version:(await db.open()).version,caches:await caches.keys(),pref:localStorage.getItem('teachapp.upgrade-test')};});
  assert.deepEqual(upgraded.data,fixture.data,'upgrade must preserve every stored record including checkpoint and draft');
  assert.equal(upgraded.version,10);assert.equal(upgraded.pref,'local-preference');assert.ok(upgraded.caches.some(x=>x.endsWith(':v'+expected)));assert.ok(!upgraded.caches.some(x=>x.endsWith(':v5.1.0')));
