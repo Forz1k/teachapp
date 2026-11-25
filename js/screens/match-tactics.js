@@ -1,12 +1,16 @@
 import {seasonCapture,touchActions} from '../match-capture.js';
 import {replayDetailed} from '../match-protocol.js';
 import {matchTactics,teamTactics,opponentHistory,matchDebrief,trainingRecommendations,recordedConnections} from '../match-tactics.js';
-import {builtinExercises,listWork} from '../workbench.js';
+import {builtinExercises,listWork,matchTrainingDraft} from '../workbench.js';
+import {loadCoach,teamView,trainingWarnings} from '../coach.js';
+import {todayIso} from '../model.js';
+import {validPeriod} from '../health.js';
+import {planForm} from './library.js';
 import {fmtFull} from '../model.js';
 import {buildDocument} from '../documents.js';
 import {openDocumentPreview,matchDebriefInput} from './documents.js';
 import {metric} from '../dashboard.js';
-import {el,openSheet,closeSheet} from '../ui.js';
+import {el,openSheet,closeSheet,toast} from '../ui.js';
 const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{class:'btn wide '+kind,type:'button',text,onclick});
 const card=(title,children)=>el('section',{class:'card-block coach-card'},[el('h3',{text:title}),...children]);
 const stack=children=>el('div',{class:'coach-form'},children);
@@ -77,6 +81,40 @@ export function debriefCard(detail){
  const d=matchDebrief(detail);
  return card('Выводы тренеру',[p('Причины указаны: '+d.detailed+'/'+d.rallies+'. Рекомендации основаны только на внесённых розыгрышах и не заменяют оценку тренера.'),...d.notes.map(n=>el('div',{class:'insight-note '+n.kind},[el('strong',{text:n.title}),p(n.text)])),!d.notes.length?p('Выраженных закономерностей по выбранным порогам не обнаружено.'):null,el('details',{},[el('summary',{text:'Основания выводов'}),...d.errors.map(x=>p('Потеря очка · '+x.label+': '+x.count)),...d.positive.map(x=>p('Наше очко · '+x.label+': '+x.count)),p('Указаны количества зарегистрированных действий, а не полные попытки.')])]);
 }
+export async function openTrainingDraft(match,back=closeSheet){
+ try{
+  const [data,saved,goals]=await Promise.all([loadCoach(),listWork('exercise'),listWork('coachGoal')]),team=data.coachTeams.find(t=>t.id===match.teamId);
+  if(!team||team.archived||!match.detail)throw Error('Выберите подробный матч действующей команды');
+  const view=teamView(data,team.id),players=view.players.filter(p=>!p.archived),exercises=[...builtinExercises,...saved],recommendations=trainingRecommendations(matchDebrief(match.detail),exercises);
+  const candidates=new Map(),add=(ex,label)=>{if(!ex||['warmup','cooldown'].includes(ex.category))return;if(!candidates.has(ex.id))candidates.set(ex.id,{exercise:ex,labels:new Set()});candidates.get(ex.id).labels.add(label);};
+  for(const r of recommendations)for(const x of r.exercises)add(exercises.find(e=>e.id===x.id),r.topic+' · '+r.count+' отмеченных потерь');
+  const day=el('input',{type:'date',value:todayIso()}),duration=el('input',{type:'number',min:1,max:600,value:90}),selection=new Set(),out=el('div',{class:'coach-stack','aria-live':'polite'}),choices=el('div',{class:'coach-stack'}),goalInfo=el('div',{class:'coach-stack'});
+  const pick=el('select',{},[el('option',{value:'',text:'Выберите упражнение'}),...exercises.filter(e=>!['warmup','cooldown'].includes(e.category)).map(e=>el('option',{value:e.id,text:e.name}))]);
+  let draft=null;
+  const save=btn('Открыть редактируемый конспект',async()=>{if(!draft)return;try{await planForm(draft.plan,back,'coach');}catch(e){toast(e.message);}},'primary');
+  function refresh(){
+   try{
+    if(!validPeriod(day.value,null))throw Error('Укажите дату тренировки');
+    draft=matchTrainingDraft({exercises,selectedIds:[...selection],minutes:Number(duration.value)});
+    const warnings=trainingWarnings({date:day.value,roster:players.map(p=>p.id),exercises:draft.plan.items.map(i=>({...i.exercise,minutes:i.minutes}))},players);
+    out.replaceChildren(p('Запланировано '+draft.total+' / '+duration.value+' мин. Разминка и завершение по 5 мин.'),card('Проверка нагрузки на выбранную дату',[...warnings.map(w=>p(name(players,w.player.id)+' · '+w.exercises.map(e=>e.name).join(', ')+' · '+(w.potential?'возможное ограничение, уточнить':'сопоставленное ограничение, проверить'))),!warnings.length?p('По внесённым категориям совпадений не найдено. Это не допуск.'):null,p('Проверка для текущего активного состава, без автоматического назначения игрокам.')]));save.disabled=false;
+   }catch(e){draft=null;save.disabled=true;out.replaceChildren(p(e.message));}
+  }
+  function draw(){
+   // Goal candidates are recomputed on date change; selection remains explicit.
+   for(const c of candidates.values())for(const tag of [...c.labels])if(tag==='Из действующей индивидуальной цели')c.labels.delete(tag);
+   const relevant=goals.filter(g=>g.teamId===team.id&&g.status==='active'&&g.from<=day.value&&players.some(p=>p.id===g.playerId));
+   goalInfo.replaceChildren(...relevant.map(g=>{const missing=g.exercises.filter(x=>!exercises.some(e=>e.name===x.name&&e.activityId===x.activityId));for(const x of g.exercises){const matches=exercises.filter(e=>e.name===x.name&&e.activityId===x.activityId);if(matches.length===1)add(matches[0],'Из действующей индивидуальной цели');}return p(name(players,g.playerId)+' · '+g.name+' · срок '+fmtFull(g.to)+(missing.length?' · нет в библиотеке: '+missing.map(x=>x.name).join(', '):''));}),!relevant.length?p('Нет действующих целей на выбранную дату.'):null);
+   choices.replaceChildren(...[...candidates.values()].filter(c=>c.labels.size||selection.has(c.exercise.id)).map(c=>{
+    const check=el('input',{type:'checkbox'});check.checked=selection.has(c.exercise.id);check.onchange=()=>{if(check.checked)selection.add(c.exercise.id);else selection.delete(c.exercise.id);refresh();};
+    return card(c.exercise.name,[field('Включить в черновик · '+c.exercise.minutes+' мин',check),p([...c.labels].join(' · ')||'Выбрано тренером'),p(c.exercise.description)]);
+   }),!candidates.size?p('Недостаточно записанных причин или совпадений с библиотекой. Выберите упражнение вручную.'):null);
+   refresh();
+  }
+  day.onchange=draw;duration.oninput=refresh;draw();
+  openSheet(stack([el('h2',{text:'Черновик тренировки по матчу'}),p('Соперник: '+match.opponent+' · '+fmtFull(match.date)+'. Подбор по записанным причинам и точным совпадениям упражнений из целей. Личные цели и ФИО остаются только в этом приватном обзоре.'),field('Дата проверки',day),field('Длительность тренировки',duration),card('Действующие цели (для просмотра)',[goalInfo]),field('Добавить из библиотеки',pick),btn('+ Вариант упражнения',()=>{const ex=exercises.find(e=>e.id===pick.value);if(!ex)return;add(ex,'Выбрано тренером');selection.add(ex.id);draw();}),choices,out,save,btn('Назад',back)]),{fullHeight:true});
+ }catch(e){toast(e.message);}
+}
 async function openTrainingRecommendations(match,back){
  const body=stack([el('h2',{text:'Подбор упражнений'}),p('Повторяющиеся отмеченные причины потери очков: минимум 3 одинаковые причины и 10 розыгрышей с указанием причины. Подбор по названию и описанию упражнений из библиотеки. Это не оценка всех попыток и не автоматический план тренировки.'),p('Загрузка библиотеки…'),btn('Назад',back)]);
  openSheet(body);
@@ -87,5 +125,5 @@ async function openTrainingRecommendations(match,back){
 }
 export function openMatchDebrief(match,back=closeSheet){
  if(!match.detail)return;
- openSheet(stack([el('h2',{text:'Итоги и план работы · '+match.opponent}),p(fmtFull(match.date)),debriefCard(match.detail),btn('Подобрать упражнения',()=>openTrainingRecommendations(match,()=>openMatchDebrief(match,back))),btn('Отчёт Word / Excel / PDF',()=>openDocumentPreview(buildDocument('matchDebrief',matchDebriefInput(match)),()=>openMatchDebrief(match,back))),btn('Подробный тактический разбор',()=>openMatchTactics(match,()=>openMatchDebrief(match,back)),'primary'),btn('Закрыть',back)]));
+ openSheet(stack([el('h2',{text:'Итоги и план работы · '+match.opponent}),p(fmtFull(match.date)),debriefCard(match.detail),btn('Подобрать упражнения',()=>openTrainingRecommendations(match,()=>openMatchDebrief(match,back))),btn('Черновик тренировки по матчу',()=>openTrainingDraft(match,()=>openMatchDebrief(match,back)),'primary'),btn('Отчёт Word / Excel / PDF',()=>openDocumentPreview(buildDocument('matchDebrief',matchDebriefInput(match)),()=>openMatchDebrief(match,back))),btn('Подробный тактический разбор',()=>openMatchTactics(match,()=>openMatchDebrief(match,back)),'primary'),btn('Закрыть',back)]));
 }

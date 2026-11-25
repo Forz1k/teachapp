@@ -1,4 +1,4 @@
-import {openOpponents,openTrainingOverview} from './coach-opponents.js';
+import {openOpponents,openTrainingOverview,openPreMatchDossier} from './coach-opponents.js';
 import {openAssistant} from './assistant.js';
 import {openStudio} from './studio.js';
 /* Тренерский интерфейс: отдельная навигация и данные, без связи со школьным журналом. */
@@ -129,7 +129,7 @@ function trainingForm(team,view,t,refresh,template=null){
   function warn(){
     const matches=C.trainingWarnings(preview(),players);
     warnings.replaceChildren(p('Проверка внесённых ограничений: '+(matches.length?'есть совпадения':'совпадений нет. Это не подтверждение допуска.')));
-    for(const m of matches)warnings.append(p(label(m.player)+': '+m.exercises.map(e=>e.name).join(', ')+' · '+(m.restriction.type==='avoid'?'не выполнять':'проверить адаптацию')));
+    for(const m of matches)warnings.append(p(label(m.player)+': '+m.exercises.map(e=>e.name).join(', ')+' · '+(m.potential?'возможное ограничение — уточнить упражнение':m.restriction.type==='avoid'?'не выполнять':'проверить адаптацию')));
     if(!exercises.length)warnings.append(p('В плане нет размеченных упражнений — сопоставление ограничений неполное.'));
   }
   function drawPlan(){
@@ -287,7 +287,7 @@ export async function renderCoach(root,ctx={}){
         }
       }else if(selectedSection==='matches'){
         if(!team.archived)body.append(competitionCard(team,data,refresh));
-        body.append(card('Матчи и соревнования',[team.archived?null:btn('Площадка и live-матч',()=>openMatchCenter(team,refresh),'primary wide'),team.archived?null:btn('+ Результат матча',()=>matchForm(team,view,null,refresh),'wide'),team.archived?null:btn('Импорт PDF VolleyPoint',()=>openVolleyImport(team,view,refresh),'wide')]));
+        body.append(card('Матчи и соревнования',[btn('Предматчевое досье',()=>openPreMatchDossier(team),'wide'),team.archived?null:btn('Площадка и live-матч',()=>openMatchCenter(team,refresh),'primary wide'),team.archived?null:btn('+ Результат матча',()=>matchForm(team,view,null,refresh),'wide'),team.archived?null:btn('Импорт PDF VolleyPoint',()=>openVolleyImport(team,view,refresh),'wide')]));
         body.append(historyPanel(view.matches,m=>{
           const s=C.matchScore(m);
           return card(m.opponent+' · '+s.ours+':'+s.theirs,[p(fmtFull(m.date)+(m.competition?' · '+m.competition:'')),p(m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),p('Игроков в составе: '+m.roster.length),

@@ -115,8 +115,11 @@ export function trainingWarnings(training,players){
   const out=[];
   for(const p of players.filter(p=>training.roster.includes(p.id))){
     for(const r of p.restrictions.filter(r=>active(r,training.date))){
-      const exercises=training.exercises.filter(x=>ancestorIds(x.activityId,activityMap).ancestors.has(r.activityId));
+      const applicable=x=>r.type!=='no_test'||ancestorIds(x.activityId,activityMap).ancestors.has('test');
+      const exercises=training.exercises.filter(x=>applicable(x)&&ancestorIds(x.activityId,activityMap).ancestors.has(r.activityId));
+      const possible=training.exercises.filter(x=>applicable(x)&&!exercises.includes(x)&&ancestorIds(r.activityId,activityMap).ancestors.has(x.activityId));
       if(exercises.length)out.push({player:p,restriction:r,exercises});
+      if(possible.length)out.push({player:p,restriction:r,exercises:possible,potential:true});
     }
   }
   return out;

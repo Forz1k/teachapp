@@ -64,3 +64,14 @@ test('Circuit uses parallel station inventory, actual elapsed slots, capacities 
  assert.throws(()=>W.circuitDraft({...args,stations:[{...station,resources:[r,r]},station]}),/Повторяющийся/);
  assert.equal(W.circuitDraft({...args,inventory:[]}).stock[0].available,null);
 });
+
+test('Match training draft only copies explicitly selected library exercises, no private data or implicit writes',async()=>{
+ await db.clearAll();await S.load();const before=await db.dumpAll();
+ const e=W.builtinExercises[1],draft=W.matchTrainingDraft({exercises:W.builtinExercises,selectedIds:[e.id],minutes:45});
+ assert.equal(draft.total,18);assert.equal(draft.plan.context,'coach');assert.equal(draft.plan.items.length,3);assert.equal(draft.plan.audience,'');
+ assert.deepEqual(await db.dumpAll(),before);assert.throws(()=>W.matchTrainingDraft({exercises:W.builtinExercises,selectedIds:[e.id],minutes:17}),/не помещаются/);
+ assert.throws(()=>W.matchTrainingDraft({exercises:W.builtinExercises,selectedIds:[e.id,e.id],minutes:45}));
+ assert.throws(()=>W.matchTrainingDraft({exercises:W.builtinExercises,selectedIds:['unknown'],minutes:45}));
+ const saved=await W.saveWork(draft.plan);assert.equal(saved.kind,'plan');assert.equal((await W.listWork('plan')).length,1);
+ const backup=await S.makeBackup();await S.restoreBackup(backup);assert.equal((await W.listWork('plan'))[0].context,'coach');
+});

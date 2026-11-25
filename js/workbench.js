@@ -131,6 +131,22 @@ export function circuitDraft({name,minutes:duration,rounds,work,transition,warmu
  const rotation=Array.from({length:groups},(_,slot)=>Array.from({length:groups},(_,group)=>(group+slot)%groups+1));
  return {plan,total,groups,groupSize,rotation,capacityIssues:stations.map((s,i)=>({station:i+1,capacity:s.capacity,required:groupSize})).filter(s=>s.capacity<groupSize),stock:equipmentStatus(resources,inventory)};
 }
+/** Use the same stored plan format. No athlete names, goals, private notes,
+ * match identifiers or medical data are copied into portable plan snapshots. */
+export function matchTrainingDraft({exercises,selectedIds,minutes:duration}){
+ require(Array.isArray(exercises)&&Array.isArray(selectedIds)&&selectedIds.length>0&&selectedIds.length<=50&&new Set(selectedIds).size===selectedIds.length&&minutes(duration),'Выберите упражнения и длительность тренировки');
+ const byId=new Map(exercises.map(e=>[e.id,e])),items=[{phase:'intro',exercise:structuredClone(builtinExercises[0]),minutes:5,notes:'Разминка; проверить ограничения и адаптировать нагрузку.'}];
+ for(const id of selectedIds){
+  const e=byId.get(id);validateExercise(e);
+  require(e.category!=='warmup'&&e.category!=='cooldown','Выберите упражнения основной части');
+  items.push({phase:'main',exercise:structuredClone(e),minutes:e.minutes,notes:'Уточнить методику, число повторений и индивидуальную нагрузку перед занятием.'});
+ }
+ items.push({phase:'end',exercise:structuredClone(builtinExercises[3]),minutes:5,notes:'Спокойное завершение.'});
+ const total=items.reduce((n,i)=>n+i.minutes,0);
+ require(total<=duration,'Выбранные упражнения не помещаются в тренировку');
+ const plan={kind:'plan',name:'Тренировка по итогам матча',context:'coach',minutes:duration,goal:'Отработать выбранные тренером элементы по результатам наблюдений и действующим задачам. Состав и нагрузку подтвердить отдельно.',equipment:'Проверить инвентарь по выбранным упражнениям.',audience:'',items,resources:[]};
+ validateWorkRecord({...plan,id:'training-preview'});return {plan,total};
+}
 export function planExercises(plan){return plan.items.map(i=>({name:i.exercise.name,activityId:i.exercise.activityId,minutes:i.minutes}));}
 export function librarySearch(exercises,query='',category=''){const q=query.trim().toLowerCase();return exercises.filter(e=>(!category||e.category===category)&&(!q||[e.name,e.description,e.equipment].some(x=>x.toLowerCase().includes(q))));}
 

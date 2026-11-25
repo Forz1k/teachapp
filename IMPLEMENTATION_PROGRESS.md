@@ -331,3 +331,7 @@ PR #94 не объединён, новый релиз не опубликова�
 ## Teacher Intelligence: reserve plans and circuit builder checkpoint
 - `868c421`: reserve copy with separate reason, independent editable school plan, original inventory/hall assumptions cleared; parallel circuit builder with duration, group capacity, simultaneous inventory, per-exercise health review, ordinary plan draft, no timer or schema change.
 - 378/378, zero failures/skips; both full CI runs successful, 70 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic. [CI](https://github.com/Forz1k/teachapp/actions/runs/45573416951), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45573417013).
+
+## Volleyball Intelligence: rotation and connections checkpoint
+- `75f02f9`: phase-specific relative cycles, recorded adjacent set/attack pairs, substitution windows without causal claims; circuit transition matrix and coach library fix.
+- 382/382, no failures/skips, both CI runs, 70 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45574226496).

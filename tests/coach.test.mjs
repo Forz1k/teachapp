@@ -74,3 +74,10 @@ test('Training load validates actual attendance and preserves missing values acr
  assert.equal(result.total,270);assert.equal(result.known,1);assert.equal(result.unknown,1);assert.equal(C.playerTrainingLoad(p.id,[unknown],{today:'2026-11-24'}).total,null);
  const copy=await S.makeBackup();await S.restoreBackup(copy);assert.deepEqual((await C.loadCoach()).coachTrainings.find(x=>x.id===t.id).effort,t.effort);
 });
+
+test('Coach training flags descendant restrictions on broad exercise separately and respects no-test scope',()=>{
+ const p={id:'p',restrictions:[{activityId:'pass',dateFrom:'2026-01-01',type:'avoid'},{activityId:'jump',dateFrom:'2026-01-01',type:'no_test'}]};
+ const exercises=[{name:'Волейбол',activityId:'volley',minutes:10},{name:'Прыжки',activityId:'broad',minutes:5},{name:'Контроль',activityId:'standing',minutes:5}];
+ const r=C.trainingWarnings({date:'2026-02-01',roster:['p'],exercises},[p]);
+ assert.equal(r.length,2);assert.equal(r[0].potential,true);assert.deepEqual(r[0].exercises,[exercises[0]]);assert.deepEqual(r[1].exercises,[exercises[2]]);
+});

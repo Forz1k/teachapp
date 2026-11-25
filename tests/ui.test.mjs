@@ -765,3 +765,20 @@ test('Конструктор круговой тренировки показы�
  [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Открыть черновик конспекта').click();await tick(100);
  assert.match(doc.querySelector('.sheet').textContent,/Конспект занятия/);assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
 });
+
+test('Предматчевое досье и черновик тренировки не меняют данные до сохранения',async()=>{
+ await seed();const C=await import('../js/coach.js'),V=await import('../js/screens/coach-opponents.js'),T=await import('../js/screens/match-tactics.js');
+ const team=await C.saveTeam({name:'Демо-команда'}),players=[];
+ for(let i=0;i<6;i++)players.push(await C.savePlayer({teamId:team.id,name:'Игрок '+i,number:i+1,position:'universal'}));
+ const ids=players.map(p=>p.id),detail={mode:'dual',teamName:team.name,opponent:'Гости',competition:'',venue:'',startedAt:'2026-01-01T12:00:00Z',ourPlayers:players.map(({id,name,number})=>({id,name,number})),awayPlayers:[],roster:ids,lineup:ids,awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours',events:[]};
+ const before=await db.dumpAll();
+ await V.openPreMatchDossier(team,ui.closeSheet,'Новый соперник');
+ assert.match(doc.querySelector('.sheet').textContent,/Предматчевое досье/);assert.match(doc.querySelector('.sheet').textContent,/Встреч в этой выборке нет/);assert.match(doc.querySelector('.sheet').textContent,/Игрок 0/);
+ await T.openTrainingDraft({teamId:team.id,opponent:'Гости',date:'2026-01-01',detail},ui.closeSheet);
+ const sheet=doc.querySelector('.sheet');assert.match(sheet.textContent,/Черновик тренировки по матчу/);
+ const pick=sheet.querySelector('select');pick.value='builtin-pass';
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='+ Вариант упражнения').click();
+ assert.match(sheet.textContent,/18 \/ 90 мин/);
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Открыть редактируемый конспект').click();await tick(100);
+ assert.match(doc.querySelector('.sheet').textContent,/Конспект занятия/);assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
+});
