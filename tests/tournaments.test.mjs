@@ -44,3 +44,6 @@ test('Две группы + плей-офф: квалификация, раве�
  t=T.applyGame(t,final.id,{result:T.resultOf(t,final,{a:3,b:2})});assert.ok(T.tournamentChampion(t));
  assert.throws(()=>T.applyGame(t,T.gamesOf(t)[0].id,{result:null}));
 });
+
+import {drawTournamentNames,tournamentScheduleConflicts} from '../js/tournaments.js';
+test('draw preserves names and detects same start referee, venue and team',()=>{const names=['A','B','C','D'];assert.deepEqual(drawTournamentNames(names,()=>0).sort(),names);assert.deepEqual(names,['A','B','C','D']);assert.throws(()=>drawTournamentNames(['A']));let t=makeTournament({name:'Test',system:'league',format:'score',bestOf:1,target:25,decider:15,names});const games=gamesOf(t);const a=games[0],b=games.find(g=>g.id!==a.id&&[a.a,a.b].includes(g.a));const patch={date:'2026-11-25',time:'10:00',venue:'Hall',referee:'Referee'};t=applyGame(t,a.id,patch);t=applyGame(t,b.id,patch);assert.deepEqual(tournamentScheduleConflicts(t)[0].reasons,['Площадка','Судья','Команда']);assert.match(tournamentCsv(t),/Referee/);});

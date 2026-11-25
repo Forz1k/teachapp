@@ -54,7 +54,7 @@ export function gamesOf(t){
   if(bye)winner={ready:true,id:a||b};
   if(g.result){require(ready&&!bye,'Матч ещё не имеет двух участников');validateResult(t,a,b,g.result);if(g.result.a!==g.result.b)winner={ready:true,id:g.result.a>g.result.b?a:b};}
   winners.set(f.id,winner);
-  result.push({...f,a,b,ready,bye,winner:winner.id,date:g.date||'',time:g.time||'',venue:g.venue||'',result:g.result||null});
+  result.push({...f,a,b,ready,bye,winner:winner.id,date:g.date||'',time:g.time||'',venue:g.venue||'',referee:g.referee||'',result:g.result||null});
  }return result;
 }
 export function validateTournament(t){
@@ -64,7 +64,7 @@ export function validateTournament(t){
  if(t.groupSeeds!==undefined){require(t.system==='groups'&&only(t.groupSeeds,['1','2'])&&Object.values(t.groupSeeds).every(ids=>Array.isArray(ids)&&ids.length===2&&new Set(ids).size===2&&ids.every(id=>t.teams.some(x=>x.id===id))),'Проверьте подтверждённые места групп');}
  const ids=fixtures(t).map(f=>f.id);
  require(only(t.games,ids)&&Object.keys(t.games).length===ids.length,'Повреждена сетка турнира');
- for(const g of Object.values(t.games))require(only(g,['date','time','venue','result'])&&typeof g.date==='string'&&(!g.date||validPeriod(g.date,null))&&timeOK(g.time)&&(!g.time||g.date)&&opt(g.venue,200)&&Object.hasOwn(g,'result')&&(g.result===null||typeof g.result==='object'),'Проверьте расписание игр');
+ for(const g of Object.values(t.games))require(only(g,['date','time','venue','referee','result'])&&typeof g.date==='string'&&(!g.date||validPeriod(g.date,null))&&timeOK(g.time)&&(!g.time||g.date)&&opt(g.venue,200)&&(!Object.hasOwn(g,'referee')||opt(g.referee,200))&&Object.hasOwn(g,'result')&&(g.result===null||typeof g.result==='object'),'Проверьте расписание игр');
  gamesOf(t);return t;
 }
 export function makeTournament(input){
@@ -79,7 +79,7 @@ export function applyGame(t,id,patch){
  require(g&&Object.hasOwn(next.games,id)&&!g.bye,'Игра недоступна');
  const original=next.games[id],result=Object.hasOwn(patch,'result')?patch.result:original.result;
  if(result&&Object.hasOwn(patch,'result'))require(g.ready&&g.a&&g.b&&result.aId===g.a&&result.bId===g.b,'Участники игры изменились');
- next.games[id]={date:patch.date??original.date,time:patch.time??original.time,venue:patch.venue??original.venue,result};
+ next.games[id]={date:patch.date??original.date,time:patch.time??original.time,venue:patch.venue??original.venue,referee:patch.referee??original.referee??'',result};
  if(next.system==='groups'&&g.group&&Object.hasOwn(patch,'result')&&JSON.stringify(result)!==JSON.stringify(original.result)&&next.groupSeeds)delete next.groupSeeds[g.group];
  next.revision++;return validateTournament(next);
 }
@@ -111,7 +111,7 @@ function rankRows(t,teams,games){
 }
 function groupGames(t,n){
  const list=groupFixtures(t,n),v={...t,system:'league'};
- return list.map(g=>{const saved=t.games[g.id]||{};if(saved.result)validateResult(v,g.a,g.b,saved.result);return {...g,ready:true,bye:false,winner:saved.result?(saved.result.a>saved.result.b?g.a:saved.result.a<saved.result.b?g.b:null):null,date:saved.date||'',time:saved.time||'',venue:saved.venue||'',result:saved.result||null};});
+ return list.map(g=>{const saved=t.games[g.id]||{};if(saved.result)validateResult(v,g.a,g.b,saved.result);return {...g,ready:true,bye:false,winner:saved.result?(saved.result.a>saved.result.b?g.a:saved.result.a<saved.result.b?g.b:null):null,date:saved.date||'',time:saved.time||'',venue:saved.venue||'',referee:saved.referee||'',result:saved.result||null};});
 }
 export function groupStandings(t){
  if(t.system!=='groups')return [];
@@ -128,7 +128,7 @@ function groupedGames(t){
  const groups=groupStandings(t),[a,b]=groups.map(g=>g.seeds),list=fixtures(t).filter(g=>g.playoff),result=groups.flatMap(g=>g.games);
  result.sort((x,y)=>x.round-y.round||x.group-y.group||x.id.localeCompare(y.id));
  const playoff=(f,x,y)=>{const saved=t.games[f.id]||{},ready=!!x&&!!y;if(saved.result){require(ready,'Сначала определите участников плей-офф');validateResult(t,x,y,saved.result);}
- return {...f,a:x||null,b:y||null,ready,bye:false,winner:saved.result?(saved.result.a>saved.result.b?x:y):null,date:saved.date||'',time:saved.time||'',venue:saved.venue||'',result:saved.result||null};};
+ return {...f,a:x||null,b:y||null,ready,bye:false,winner:saved.result?(saved.result.a>saved.result.b?x:y):null,date:saved.date||'',time:saved.time||'',venue:saved.venue||'',referee:saved.referee||'',result:saved.result||null};};
  const s1=playoff(list[0],a?.[0],b?.[1]),s2=playoff(list[1],b?.[0],a?.[1]);return [...result,s1,s2,playoff(list[2],s1.winner,s2.winner)];
 }
 export function standings(t){return t.system==='groups'?groupStandings(t).flatMap(g=>g.rows.map(r=>({...r,group:g.group}))):rankRows(t,t.teams,gamesOf(t));}
@@ -142,7 +142,7 @@ export function tournamentChampion(t){if(!['knockout','groups'].includes(t.syste
 function csv(value){let s=String(value??'');if(/^[\s\uFEFF]*[=+\-@]|^[\t\r\n]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';}
 export function tournamentCsv(t,type='games'){
  const name=id=>t.teams.find(p=>p.id===id)?.name||'';
- const rows=type==='standings'?[['Группа','Место','Команда','Игры','Победы','Ничьи','Поражения','Очки','За','Против'],...standings(t).map(r=>[r.group||'',r.place,r.name,r.played,r.won,r.draw,r.lost,r.points,r.for,r.against])]:[['Раунд','Дата','Время','Место','Команда А','Команда Б','Счёт А','Счёт Б','Партии'],...gamesOf(t).filter(g=>!g.bye).map(g=>[g.round,g.date,g.time,g.venue,name(g.a),name(g.b),g.result?.a,g.result?.b,g.result?.sets.map(s=>s.a+':'+s.b).join(' / ')])];
+ const rows=type==='standings'?[['Группа','Место','Команда','Игры','Победы','Ничьи','Поражения','Очки','За','Против'],...standings(t).map(r=>[r.group||'',r.place,r.name,r.played,r.won,r.draw,r.lost,r.points,r.for,r.against])]:[['Раунд','Дата','Время','Место','Судья','Команда А','Команда Б','Счёт А','Счёт Б','Партии'],...gamesOf(t).filter(g=>!g.bye).map(g=>[g.round,g.date,g.time,g.venue,g.referee,name(g.a),name(g.b),g.result?.a,g.result?.b,g.result?.sets.map(s=>s.a+':'+s.b).join(' / ')])];
  return '\uFEFF'+rows.map(r=>r.map(csv).join(';')).join('\r\n');
 }
 export function tournamentCalendar(tournaments,from,to){
@@ -151,3 +151,12 @@ export function tournamentCalendar(tournaments,from,to){
   return {id:t.id+'-'+g.id,source:'tournament',date:g.date,time:g.time,minutes:0,title:t.name+' · '+name(g.a)+' — '+name(g.b)+(g.venue?' · '+g.venue:''),exportTitle:'Турнирная игра',done:!!g.result,remind:30};
  }));
 }
+
+/** Shuffle only before creating a tournament. Rejection sampling avoids modulo bias. */
+export function drawTournamentNames(names,random=()=>crypto.getRandomValues(new Uint32Array(1))[0]){
+ require(Array.isArray(names)&&names.length>=2&&names.length<=32,'Добавьте от 2 до 32 участников');const a=[...names];
+ for(let i=a.length-1;i>0;i--){const n=i+1,limit=Math.floor(2**32/n)*n;let r,tries=0;do{r=random();require(Number.isInteger(r)&&r>=0&&r<2**32&&++tries<=100,'Ошибка случайной жеребьёвки');}while(r>=limit);const j=r%n;[a[i],a[j]]=[a[j],a[i]];}
+ return a;
+}
+/** Only equal start times can be checked, because fixture duration is not stored. */
+export function tournamentScheduleConflicts(t){const rows=gamesOf(t).filter(g=>!g.bye&&g.date&&g.time),result=[];const normalize=s=>String(s||'').trim().replace(/\s+/g,' ').toLocaleLowerCase('ru');for(let i=0;i<rows.length;i++)for(let j=i+1;j<rows.length;j++){const a=rows[i],b=rows[j];if(a.date!==b.date||a.time!==b.time)continue;const reasons=[];if(normalize(a.venue)&&normalize(a.venue)===normalize(b.venue))reasons.push('Площадка');if(normalize(a.referee)&&normalize(a.referee)===normalize(b.referee))reasons.push('Судья');if([a.a,a.b].filter(Boolean).some(x=>[b.a,b.b].includes(x)))reasons.push('Команда');if(reasons.length)result.push({a:a.id,b:b.id,date:a.date,time:a.time,reasons});}return result;}
