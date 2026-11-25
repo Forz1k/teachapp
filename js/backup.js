@@ -4,6 +4,7 @@ import { validateCoachData, coachStores } from './coach.js';
 import {validateArchive} from './school-archive.js';
 import {validateWorkRecord} from './workbench.js';
 import {validateOlympiadSeries} from './teacher-portfolio.js';
+import {assignmentsOverlap} from './school-tools.js';
 import { SCHEMA } from './db.js';
 import {validLessonSlot,validLessonTime} from './model.js';
 
@@ -111,6 +112,9 @@ export function validateBackup(payload) {
   validateCoachData(tables);
   for(const r of tables.workRecords){if(r.kind==='archive')validateArchive(r);else validateWorkRecord(r);if(r.kind==='coachGoal'&&(!index.coachTeams.has(r.teamId)||index.coachPlayers.get(r.playerId)?.teamId!==r.teamId))throw Error('Некорректная связь индивидуальной цели');if(r.kind==='tacticBoard'&&!index.coachTeams.has(r.teamId))throw Error('Некорректная связь тактической схемы');if(r.kind==='seasonPlan'&&!index.coachTeams.has(r.teamId))throw Error('Некорректная связь плана сезона');}
   validateOlympiadSeries(tables.workRecords.filter(r=>r.kind==='schoolCompetition'));
+  // Existing legacy overlaps remain readable. Reject newly introduced overlaps after a cross-device merge.
+  const assignments=tables.workRecords.filter(r=>r.kind==='normAssignment'),groups=new Map();
+  for(const a of assignments){const k=JSON.stringify([a.classId,a.normId,a.yearFrom,a.yearTo]);if(!groups.has(k))groups.set(k,[]);const group=groups.get(k);if(group.some(b=>(a.revision!==undefined||b.revision!==undefined)&&assignmentsOverlap(a,b)))throw Error('Пересекающиеся назначения нормативов. Согласуйте назначения на устройствах.');group.push(a);}
   const historical=[tables,...tables.workRecords.filter(r=>r.kind==='archive').map(r=>r.snapshot)];
   for(const r of tables.workRecords.filter(r=>r.kind==='gradeHistory'))if(!historical.some(d=>{const st=d.students.find(p=>p.id===r.studentId);return st&&(r.scope==='final'||d.lessons.some(l=>l.id===r.lessonId&&l.classId===st.classId));}))throw Error('История оценки не связана с учеником и уроком');
   return tables;
