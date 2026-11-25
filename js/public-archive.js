@@ -79,14 +79,24 @@ export function searchArchive(rows,{query='',season='all',outcome='all'}={}){
 }
 /** Current public stream wins over an older fetched archive copy. Keep the
  * direct archive key only when the full public scores agree. */
-export function mergeLoadedResults(current,extra){
- const rows=new Map(extra.map(r=>[r.id,r]));
+export function mergeLoadedArchive(current,extra){
+ const rows=new Map(),conflicts=new Set();
+ for(const row of extra){
+  if(conflicts.has(row.id))continue;
+  const old=rows.get(row.id);
+  if(old&&(!equalArchiveResult(old,row)||old.archiveKey&&row.archiveKey&&old.archiveKey!==row.archiveKey)){
+   rows.delete(row.id);conflicts.add(row.id);continue;
+  }
+  rows.set(row.id,old?.archiveKey&&!row.archiveKey?old:row);
+ }
  for(const row of current){
   const old=rows.get(row.id);
-  rows.set(row.id,old?.archiveKey&&equalArchiveResult(old,row)?{...row,archiveKey:old.archiveKey}:row);
+  if(conflicts.has(row.id)){const {archiveKey:ignored,...safe}=row;rows.set(row.id,safe);}
+  else rows.set(row.id,old?.archiveKey&&equalArchiveResult(old,row)?{...row,archiveKey:old.archiveKey}:row);
  }
- return [...rows.values()].sort((a,b)=>b.startedAt-a.startedAt||a.id.localeCompare(b.id));
+ return {rows:[...rows.values()].sort((a,b)=>b.startedAt-a.startedAt||a.id.localeCompare(b.id)),conflicts:[...conflicts].sort()};
 }
+export function mergeLoadedResults(current,extra){return mergeLoadedArchive(current,extra).rows;}
 /** Build a card from validated score-only data; ignore all other fields. */
 export function publicResultCard(team,row){
  const r=archiveProjection(row);

@@ -69,3 +69,16 @@ test('Spectator can open a previously unknown season and ignores an older pendin
   assert.match(document.querySelector('.result-card a').href,/archive=/);
  }finally{globalThis.fetch=originalFetch;w.dispatchEvent(new w.Event('pagehide'));w.close();}
 });
+
+test('Viewer flags conflicting loaded archive IDs instead of selecting a date silently',async()=>{
+ const dom=new JSDOM('<header id="connection"></header><nav id="portal-nav"></nav><main id="portal"></main>',{url:'https://example.com/live/'});
+ const w=dom.window,originalFetch=globalThis.fetch;Object.assign(globalThis,{document:w.document,window:w,location:w.location});let stream;
+ globalThis.EventSource=class{constructor(){this.listeners={};stream=this;}addEventListener(t,f){this.listeners[t]=f;}close(){}emit(data){this.listeners.put({type:'put',data:JSON.stringify({path:'/',data})});}};
+ const a={id:'duplicate',opponent:'Гости',startedAt:Date.UTC(2026,9,1),setsWon:{ours:1,theirs:0},sets:[{ours:25,theirs:20}]},b={...a,startedAt:a.startedAt+3600000};
+ const key=r=>String(r.startedAt).padStart(16,'0')+'_'+r.id;
+ globalThis.fetch=async()=>new Response(JSON.stringify({[key(a)]:a,[key(b)]:b}));
+ try{await import('../js/public-view.js?duplicate-archive=1');stream.onopen();stream.emit({schema:1,team:'Команда',updatedAt:Date.now(),schedule:[],archive:[]});
+  document.querySelector('[data-tab=results]').click();[...document.querySelectorAll('button')].find(n=>n.textContent==='Загрузить расширенный архив').click();
+  await new Promise(r=>setImmediate(r));assert.match(document.body.textContent,/противоречивые записи/);assert.equal(document.querySelectorAll('.result-card').length,0);
+ }finally{globalThis.fetch=originalFetch;w.dispatchEvent(new w.Event('pagehide'));w.close();}
+});

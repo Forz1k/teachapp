@@ -69,3 +69,13 @@ test('Calendar exports stable UID, escapes CR and LF, and folds Unicode at 75 oc
  assert.notEqual(text.match(/^DTSTART:(.*)$/m)[1],next.match(/^DTSTART:(.*)$/m)[1]);
  for(const f of [{...fixture,id:'bad\r\nUID:fake'},{...fixture,startAt:null},{...fixture,startAt:Infinity}])assert.throws(()=>fixtureCalendar('Команда',f));
 });
+
+test('Conflicting archive IDs are not silently chosen; current publication wins without an ambiguous link',async()=>{
+ const {mergeLoadedArchive}=await import('../js/public-archive.js');
+ const a=row(1),b={...a,startedAt:a.startedAt+1000};
+ const old={...a,archiveKey:archiveKey(a)},changed={...b,archiveKey:archiveKey(b)};
+ assert.deepEqual(mergeLoadedArchive([], [old,changed]),{rows:[],conflicts:[a.id]});
+ assert.deepEqual(mergeLoadedArchive([], [old,old]),{rows:[old],conflicts:[]});
+ assert.deepEqual(mergeLoadedArchive([a],[old,changed]),{rows:[a],conflicts:[a.id]});
+ assert.equal(mergeLoadedArchive([],[changed,old,row(2)]).rows.length,1);
+});
