@@ -4,7 +4,7 @@ import {validateBackup,BACKUP_VERSION} from './backup.js';
 import {defaultSettings,exemptionCovers,hasOsv} from './model.js';
 import {gradeState,finalState} from './grade-history.js';
 import {encryptBackup,decryptBackup,isEncryptedBackup,encryptedEnvelopeBytes} from './privacy.js';
-import {DELTA_MAX_DATA,splitDeltaAnchor,joinDeltaAnchor,normalizeAnchorManifest} from './delta-anchor.js';
+import {DELTA_MAX_DATA,splitDeltaAnchor,joinDeltaAnchor,normalizeAnchorManifest,normalizeRotationHashes,deltaPartHash} from './delta-anchor.js';
 
 export const syncAreas={school:'Школа',coach:'Тренер'};
 const names=Object.keys(db.SCHEMA);
@@ -362,11 +362,11 @@ export async function replaySyncDeltas({base,baseRevision,area,workspaceId,entri
 
 /* Local synthetic relay only. No change to the production v1/v2 client.
    Keep credential roles separate; never persist tokens or plaintext snapshots. */
-export function deltaLabClient(endpoint,area,token,{compactToken,fetcher=globalThis.fetch,timeoutMs=15000}={}){
+export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,fetcher=globalThis.fetch,timeoutMs=15000}={}){
  endpoint=normalizeEndpoint(endpoint);
  check(validArea(area)&&['localhost','127.0.0.1','[::1]'].includes(new URL(endpoint).hostname)&&new URL(endpoint).protocol==='http:','Delta LAB доступен только на localhost');
  const validToken=t=>typeof t==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(t);
- check(validToken(token)&&(compactToken===undefined||validToken(compactToken)&&compactToken!==token),'Проверьте отдельные тестовые ключи');
+ check(validToken(token)&&(compactToken===undefined||validToken(compactToken)&&compactToken!==token)&&(rotateToken===undefined||validToken(rotateToken)&&rotateToken!==token&&rotateToken!==compactToken),'Проверьте отдельные тестовые ключи');
  const url=endpoint+'/v1/delta/'+area+'/';
  async function request(path,body,secret=token){
   const encoded=body===undefined?undefined:JSON.stringify(body);
@@ -384,10 +384,10 @@ export function deltaLabClient(endpoint,area,token,{compactToken,fetcher=globalT
    return JSON.parse(text);
   }finally{clearTimeout(timer);}
  }
- async function writeAnchor(kind,expectedRevision,envelope,secret){
+ async function writeAnchor(kind,expectedRevision,envelope,secret,rotation){
   const body={expectedRevision,envelope};
-  if(new TextEncoder().encode(JSON.stringify(body)).length<=defaultCloudflarePacketLimit)return request(kind,body,secret);
-  const {uploadId,manifest,chunks}=await splitDeltaAnchor(envelope,{kind,expectedRevision}),path='multipart/'+kind+'/'+uploadId+'/';
+  if(kind!=='rotate'&&new TextEncoder().encode(JSON.stringify(body)).length<=defaultCloudflarePacketLimit)return request(kind,body,secret);
+  const {uploadId,manifest,chunks}=await splitDeltaAnchor(envelope,{kind,expectedRevision,rotation}),path='multipart/'+kind+'/'+uploadId+'/';
   const begun=await request(path+'begin',{manifest},secret);
   if(begun?.revision===expectedRevision+1&&begun.replayed===true)return {revision:begun.revision,replayed:true};
   check(begun?.uploadId===uploadId&&Number.isSafeInteger(begun.expiresAt),'Сервер не подтвердил начало загрузки');
@@ -412,7 +412,8 @@ export function deltaLabClient(endpoint,area,token,{compactToken,fetcher=globalT
   },
   anchor:envelope=>writeAnchor('anchor',0,envelope,token),
   append:(expectedRevision,envelope)=>request('append',{expectedRevision,envelope}),
-  compact:(expectedRevision,envelope)=>{check(validToken(compactToken),'Нужен отдельный ключ компактизации');return writeAnchor('compact',expectedRevision,envelope,compactToken);}
+  compact:(expectedRevision,envelope)=>{check(validToken(compactToken),'Нужен отдельный ключ компактизации');return writeAnchor('compact',expectedRevision,envelope,compactToken);},
+  rotate:(expectedRevision,envelope,rotation)=>{check(validToken(rotateToken)&&normalizeRotationHashes(rotation),'Нужен отдельный ключ ротации');return writeAnchor('rotate',expectedRevision,envelope,rotateToken,rotation);}
  };
 }
 function validDeltaHead(h){
@@ -471,6 +472,60 @@ export async function compactDeltaLab({client,area,password,current,checkpoint=n
  const result=await client.compact(expectedRevision,envelope);
  check(result?.revision===expectedRevision+1,'Сервер не подтвердил компактизацию');
  return {revision:result.revision,workspaceId:remote.workspaceId,snapshot:remote.snapshot,envelope};
+}
+
+// Rotation recovery is a separate encrypted file, never a normal sync profile.
+// All secrets are generated locally; the server sees only hashes and ciphertext.
+const randomSecret=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
+const secretPattern=/^[a-f0-9]{64}$/;
+function labEndpoint(endpoint){
+ const value=normalizeEndpoint(endpoint),url=new URL(value);
+ check(url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname),'Ротация только в Delta LAB');return value;
+}
+export async function prepareDeltaRotation({endpoint,client,area,password,current,checkpoint=null,expectedRevision,recoveryPassword,deviceCount=2,synthetic=false}){
+ check(synthetic===true&&revision(expectedRevision)&&Number.isInteger(deviceCount)&&deviceCount>=1&&deviceCount<=8,'Ротация только для синтетического контура');
+ endpoint=labEndpoint(endpoint);
+ check(typeof recoveryPassword==='string'&&recoveryPassword.length>=12&&recoveryPassword!==password,'Нужен отдельный пароль файла восстановления');
+ const remote=await readDeltaLab({client,area,password,current,checkpoint});
+ check(remote.revision===expectedRevision&&!remote.compactedPastCheckpoint,'Ревизия изменилась или требует согласования');
+ const newPassword=randomSecret(),readTokens=Array.from({length:deviceCount},randomSecret),compactToken=randomSecret();
+ const envelope=await encryptBackup(packetPayload(remote.snapshot,area,remote.workspaceId,expectedRevision+1),newPassword);
+ check(envelope.data.length<=DELTA_MAX_DATA,'Снимок превышает лимит ротации');
+ const payload={app:'teachapp-delta-recovery',version:1,endpoint,area,workspaceId:remote.workspaceId,expectedRevision,digest:await scopeDigest(remote.snapshot,area),newPassword,readTokens,compactToken,envelope};
+ const recovery=await encryptBackup(payload,recoveryPassword);
+ return {area,expectedRevision,newRevision:expectedRevision+1,records:Object.values(remote.snapshot).reduce((n,rows)=>n+rows.length,0),recovery};
+}
+export async function openDeltaRecovery({recovery,recoveryPassword,endpoint,area,current,synthetic=false}){
+ check(synthetic===true,'Восстановление только для Delta LAB');
+ const p=await decryptBackup(recovery,recoveryPassword);
+ check(exactFields(p,['app','version','endpoint','area','workspaceId','expectedRevision','digest','newPassword','readTokens','compactToken','envelope'])&&p.app==='teachapp-delta-recovery'&&p.version===1&&p.endpoint===labEndpoint(endpoint)&&p.area===area&&uuid.test(p.workspaceId)&&revision(p.expectedRevision)&&p.expectedRevision<Number.MAX_SAFE_INTEGER&&digestPattern.test(p.digest)&&typeof p.newPassword==='string'&&secretPattern.test(p.newPassword)&&Array.isArray(p.readTokens)&&p.readTokens.length>=1&&p.readTokens.length<=8&&p.readTokens.every(t=>typeof t==='string'&&secretPattern.test(t))&&typeof p.compactToken==='string'&&secretPattern.test(p.compactToken)&&new Set([p.newPassword,...p.readTokens,p.compactToken]).size===p.readTokens.length+2,'Неверный файл восстановления');
+ const anchor=await readPacket(p.envelope,p.newPassword,area,p.expectedRevision+1);
+ check(anchor.workspaceId===p.workspaceId&&await scopeDigest(anchor.snapshot,area)===p.digest,'Снимок восстановления не совпадает');
+ combineScope(current,anchor.snapshot,area);
+ const rotation=normalizeRotationHashes({readHashes:await Promise.all(p.readTokens.map(deltaPartHash)),compactHash:await deltaPartHash(p.compactToken)});
+ check(rotation,'Некорректные новые ключи');
+ return {...p,rotation,snapshot:anchor.snapshot};
+}
+// Accept only a verified recovery file read back by the caller. On a lost ACK,
+// a retry checks the exact rotated anchor using the new credentials instead
+// of rotating again. If it has been compacted away, stop for manual review.
+export async function commitDeltaRotation({endpoint,client,area,password,current,recovery,recoveryPassword,confirmed=false,backupVerified=false,synthetic=false,fetcher}){
+ check(confirmed&&backupVerified&&synthetic===true,'Подтвердите сохранённый файл восстановления и смену ключей');
+ const p=await openDeltaRecovery({endpoint,area,current,recovery,recoveryPassword,synthetic});
+ const next=deltaLabClient(endpoint,area,p.readTokens[0],{compactToken:p.compactToken,fetcher});
+ let remote;
+ try{remote=await readDeltaLab({client,area,password,current});}
+ catch(e){if(e.status!==401)throw e;
+  const row=await next.getRevision(p.expectedRevision+1);
+  check(row.kind==='anchor'&&same(row.envelope,p.envelope),'Ротация не подтверждена');
+  return {revision:row.revision,replayed:true};
+ }
+ check(remote.revision===p.expectedRevision&&remote.workspaceId===p.workspaceId&&await scopeDigest(remote.snapshot,area)===p.digest,'Сервер изменился; подготовьте новый файл восстановления');
+ const result=await client.rotate(p.expectedRevision,p.envelope,p.rotation);
+ check(result?.revision===p.expectedRevision+1,'Сервер не подтвердил смену ключей');
+ const row=await next.getRevision(result.revision);
+ check(row.kind==='anchor'&&same(row.envelope,p.envelope),'Новая ревизия не подтверждена');
+ return {revision:result.revision,replayed:result.replayed};
 }
 
 /* Explicit laboratory adapter for the existing prepare/preview/execute pipeline.

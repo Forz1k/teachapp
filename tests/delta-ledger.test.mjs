@@ -32,3 +32,11 @@ test('Privileged compaction advances revision even at capacity, preserves CAS an
  assert.equal(decideDeltaWrite(compacted,'delta',packet(3),anchor).status,409);
  assert.equal(decideDeltaWrite(compacted,'delta',packet(4),anchor).status,201);
 });
+
+test('Rotation can replace a single anchor and requires exact revision, bounded size and exact retry',()=>{
+ const h={revision:1,count:1,bytes:100},next=packet(1);
+ assert.deepEqual(decideDeltaWrite(h,'rotate',next),{status:201,revision:2,replayed:false,compact:true});
+ assert.equal(decideDeltaWrite(h,'rotate',packet(0)).status,409);
+ assert.equal(decideDeltaWrite(h,'rotate',{...next,bytes:MAX_LEDGER_BYTES+1}).status,507);
+ assert.deepEqual(decideDeltaWrite({revision:2,count:1,bytes:100},'rotate',next,{revision:2,kind:'anchor',serialized:next.serialized}),{status:200,revision:2,replayed:true});
+});

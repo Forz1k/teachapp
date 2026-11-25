@@ -369,3 +369,6 @@ PR #94 не объединён, новый релиз не опубликова�
 ## 5.1.1 publication
 - Main `1bd6998` merged [PR #94](https://github.com/Forz1k/teachapp/pull/94) after 404/404 tests, both CI runs, WebKit real 5.1.0 → 5.1.1 update and encrypted restore, all synthetic workflows. [Release CI](https://github.com/Forz1k/teachapp/actions/runs/45594579857), [upgrade](https://github.com/Forz1k/teachapp/actions/runs/45594579882).
 - [Pages deployment](https://github.com/Forz1k/teachapp/actions/runs/45594932845) and [main CI](https://github.com/Forz1k/teachapp/actions/runs/45594934574) successful. Physical owner verification outstanding; no production Firebase/Worker change.
+
+## 5.2 multipart checkpoint
+- `7dc9c6f`: 406/406, both full CI, WebKit, Cloudflare and real workerd multipart pass (1,952,776 ciphertext characters / 4 parts), restart, compaction and later delta. [CI](https://github.com/Forz1k/teachapp/actions/runs/45595852928), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45595852817).
