@@ -71,6 +71,7 @@ export async function openCircuitBuilder(back=closeSheet,initialClass=S.state.cu
   const warmup=exerciseSelect('builtin-warmup'),warmMinutes=inp(5,'number',{min:1,max:600}),cooldown=exerciseSelect('builtin-cool'),coolMinutes=inp(5,'number',{min:1,max:600});
   const stations=[{exerciseId:'builtin-pass',capacity:8,notes:'',resources:[]},{exerciseId:'builtin-serve',capacity:8,notes:'',resources:[]}];
   const templatePicker=select([]),templateControls=el('div',{class:'coach-stack'}),list=el('div',{class:'coach-stack circuit-stations'}),result=el('div',{class:'coach-stack','aria-live':'polite'});let draft=null;
+  templatePicker.setAttribute('aria-label','Библиотека станций');
   function draw(){
    const previous=templatePicker.value;templatePicker.replaceChildren(el('option',{value:'',text:'Выберите сохранённую станцию'}),...templates.map(t=>el('option',{value:t.id,text:t.name})));if(templates.some(t=>t.id===previous))templatePicker.value=previous;
    list.replaceChildren(...stations.map((station,index)=>{

@@ -105,6 +105,7 @@ try{
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'alternatives overflow');
  await page.evaluate(async()=>{const S=await import('./js/store.js');await S.saveNorm({name:'Синтетический прыжок',activityId:'standing',unit:'см',direction:'max',scale:[100,120,140,160,180]});await (await import('./js/screens/school-tools.js')).openNormAssignments();});
  await shown.getByRole('button',{name:'+ Назначить норматив',exact:true}).click();
+ await shown.getByRole('heading',{name:'Назначить норматив классу',exact:true}).waitFor().catch(async e=>{throw Error('Norm form: '+JSON.stringify({errors,sheet:await shown.textContent()})+' '+e.message);});
  await shown.getByLabel('Кому назначено',{exact:true}).selectOption('selected');
  await shown.getByRole('checkbox').check();
  await shown.getByLabel('Минимум результатов по критерию',{exact:true}).fill('2');
@@ -116,7 +117,7 @@ try{
  await shown.getByRole('button',{name:'Сохранить станцию в библиотеку',exact:true}).first().click();
  await dialog.locator('input[type=text]').fill('Синтетическая станция');
  await dialog.getByRole('button',{name:'Сохранить',exact:true}).click();
- await shown.getByRole('option',{name:'Синтетическая станция',exact:true}).waitFor({state:'attached'});
+ await shown.locator('select[aria-label="Библиотека станций"] option').filter({hasText:'Синтетическая станция'}).waitFor({state:'attached'});
  await shown.getByLabel('Библиотека станций',{exact:true}).selectOption({label:'Синтетическая станция'});
  await shown.getByRole('button',{name:'Добавить станцию из библиотеки',exact:true}).click();
  await shown.getByRole('heading',{name:'Станция 3',exact:true}).waitFor();
