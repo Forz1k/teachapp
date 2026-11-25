@@ -246,13 +246,21 @@ try{
  await fan.getByRole('combobox',{name:'Соперник для сравнения'}).selectOption('тест 1');
  assert.match(await fan.locator('.opponent-details').textContent(),/Партии: 2:0 · очки: 50:38/);
  const old={id:'result_older',opponent:'Архивная команда с длинным названием',startedAt:Date.UTC(2023,9,1),setsWon:{ours:2,theirs:1},sets:[{ours:25,theirs:20},{ours:21,theirs:25},{ours:15,theirs:10}]},oldKey=String(old.startedAt).padStart(16,'0')+'_'+old.id;
- await fan.route('**/publicMatchArchive/**',async route=>{
-  const url=new URL(route.request().url());
-  const value=url.pathname.endsWith('/'+oldKey+'.json')?old:url.searchParams.get('equalTo')===JSON.stringify(old.id)?{[oldKey]:old}:url.searchParams.has('startAt')?{[oldKey]:old}:null;
-  await route.fulfill({status:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(value)});
- });
+ // Stub only the archive fetch API, like the synthetic EventSource above.
+ // The real Firebase emulator independently verifies the REST queries/rules.
+ const mockArchive=({old,oldKey})=>{
+  const original=window.fetch.bind(window);window.__archiveRequests=[];
+  window.fetch=async(input,options)=>{
+   const url=new URL(typeof input==='string'?input:input.url,location.href);
+   if(!url.pathname.includes('/publicMatchArchive/'))return original(input,options);
+   window.__archiveRequests.push(url.href);
+   const value=url.pathname.endsWith('/'+oldKey+'.json')?old:url.searchParams.get('equalTo')===JSON.stringify(old.id)?{[oldKey]:old}:url.searchParams.has('startAt')?{[oldKey]:old}:null;
+   return new Response(JSON.stringify(value),{status:200,headers:{'Content-Type':'application/json'}});
+  };
+ };
+ await fan.addInitScript(mockArchive,{old,oldKey});await fan.evaluate(mockArchive,{old,oldKey});
  await fan.locator('.archive-season-year').fill('2023');await fan.getByRole('button',{name:'Загрузить сезон',exact:true}).click();
- await fan.locator('.result-card').filter({hasText:old.opponent}).waitFor();assert.equal(await fan.locator('.season-filter').first().inputValue(),'2023');
+ await fan.waitForFunction(()=>window.__archiveRequests.length>0);try{await fan.locator('.result-card').filter({hasText:old.opponent}).waitFor({timeout:5000});}catch(e){console.error('Archive request diagnostic',await fan.evaluate(()=>({urls:window.__archiveRequests,text:document.getElementById('portal').innerText})));throw e;}assert.equal(await fan.locator('.season-filter').first().inputValue(),'2023');
  const oldHref=await fan.locator('.result-card').filter({hasText:old.opponent}).locator('a').getAttribute('href');assert.equal(new URL(oldHref).searchParams.get('archive'),oldKey);
  await fan.goto(oldHref);await fan.waitForFunction(()=>typeof window.__fanPush==='function');await fan.evaluate(x=>window.__fanPush(x),{...future,schedule:[],archive});
  await fan.locator('.historical-score').waitFor();assert.match(await fan.locator('.historical-totals').textContent(),/61 : 55/);
