@@ -355,3 +355,8 @@ PR #94 не объединён, новый релиз не опубликова�
 - `0898ce8`: latched foreground/identity guard before upload, after acknowledgement and in local transaction; late remote acceptance leaves checkpoint unchanged for reconciliation. Identical authenticated envelope avoids redundant PBKDF2. Clean-status fast path rechecks actual local scope atomically.
 - 401/401, 0 failures/skips, both full CI runs, 75 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45589132164).
 - Guard is cooperative; cannot undo an already accepted server write, remotely revoke a bearer, or encrypt the browser profile at rest.
+
+## Performance checkpoint
+- `3b01829`: structural JSON equality (canonical digests unchanged), per-class lesson and final-grade indices, reuse of attendance assessment.
+- 404/404, 0 failures/skips, both full CI runs, 75 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45589869415).
+- Synthetic medians: 23,064 records equality 89.63 → 3.61 ms; period review 24 classes / 720 pupils / 864 lessons 15.80 → 12.39 ms. Calculation-only, identical compared outputs.
