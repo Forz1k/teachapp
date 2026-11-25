@@ -1,6 +1,7 @@
 import * as P from '../public-publisher.js';
 import * as W from '../workbench.js';
-import {newsTypes,newsProjection,newNewsDraft,tournamentProjection} from '../public-media.js';
+import {newsTypes,newsProjection} from '../public-media.js';
+import {newNewsDraft,tournamentProjection} from '../public-media-drafts.js';
 import {el,openSheet,toast,confirmDialog} from '../ui.js';
 import {todayIso} from '../model.js';
 const p=text=>el('p',{text}),btn=(text,onclick)=>el('button',{type:'button',class:'btn wide',text,onclick}),card=(title,...children)=>el('section',{class:'card-block'},[el('h3',{text:title}),...children]),field=(label,control)=>el('label',{class:'field'},[el('span',{text:label}),control]);

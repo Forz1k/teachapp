@@ -365,7 +365,7 @@
             },
             "games": {
               "$i": {
-                ".validate": "$i.matches(/^(0|[1-9][0-9]?|[1-4][0-9][0-9])$/) && newData.hasChildren(['round','group','a','b','date','time','venue','status'])",
+                ".validate": "$i.matches(/^(0|[1-9][0-9]?|[1-4][0-9][0-9])$/) && newData.hasChildren(['round','group','a','b','date','time','venue','status']) && ((newData.child('status').val() === 'finished' && newData.hasChild('score')) || (newData.child('status').val() !== 'finished' && !newData.hasChild('score')))",
                 "round": {
                   ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 32 && newData.val() % 1 === 0"
                 },

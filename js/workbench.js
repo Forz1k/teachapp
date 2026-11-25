@@ -1,4 +1,4 @@
-import {validateNewsDraft} from './public-media.js';
+import {validateNewsDraft} from './public-media-drafts.js';
 import {validateSchoolCompetition,validateTeacherPortfolio} from './teacher-portfolio.js';
 import {validateStudentGoal} from './student-goals.js';
 import {validateMaterial,materialKinds} from './library-materials.js';
