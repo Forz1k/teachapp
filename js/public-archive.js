@@ -40,7 +40,19 @@ export function queueArchiveResult(rows,result){
  return [...rows.filter(r=>r.id!==safe.id),safe];
 }
 export function resultLink(href,r){const u=new URL(viewerPageLink(href));const value=r.archiveKey||r.id;if(!(r.archiveKey?key:id).test(value||''))throw Error('Некорректная ссылка на результат');u.searchParams.set(r.archiveKey?'archive':'match',value);return u.href;}
-export function fixtureCalendar(team,fixture){const safe=v=>String(v).replace(/\\/g,'\\\\').replace(/\r?\n|\r/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;');const dt=v=>new Date(v).toISOString().replace(/[-:]|\.\d{3}/g,'');return ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//TeachApp//Schedule//RU','BEGIN:VEVENT','UID:'+safe(fixture.id)+'-'+dt(fixture.startAt)+'@teachapp','DTSTAMP:'+dt(Date.now()),'DTSTART:'+dt(fixture.startAt),'SUMMARY:'+safe(team+' — '+fixture.opponent),'END:VEVENT','END:VCALENDAR',''].join('\r\n');}
+// RFC 5545 text escaping and stable event identity across rescheduling.
+// Fold by UTF-8 octets, not UTF-16 code units, without splitting a code point.
+function foldCalendarLine(line){
+ const encoder=new TextEncoder();let result='',bytes=0;
+ for(const ch of line){const n=encoder.encode(ch).length;if(bytes+n>75){result+='\r\n ';bytes=1;}result+=ch;bytes+=n;}
+ return result;
+}
+export function fixtureCalendar(team,fixture){
+ if(!fixture||typeof fixture.id!=='string'||!id.test(fixture.id)||!Number.isSafeInteger(fixture.startAt)||fixture.startAt<0||fixture.startAt>253402300799999)throw Error('Некорректная встреча');
+ const safe=v=>String(v??'').replace(/\\/g,'\\\\').replace(/\r\n|\r|\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;');
+ const dt=v=>new Date(v).toISOString().replace(/[-:]|\.\d{3}/g,'');
+ return ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//TeachApp//Schedule//RU','BEGIN:VEVENT','UID:'+fixture.id+'@teachapp','DTSTAMP:'+dt(Date.now()),'DTSTART:'+dt(fixture.startAt),'SUMMARY:'+safe(team+' — '+fixture.opponent),'END:VEVENT','END:VCALENDAR',''].map(foldCalendarLine).join('\r\n');
+}
 
 /** School/sport season is September through August, using UTC for stable grouping. */
 export function archiveSeason(startedAt){const d=new Date(startedAt);if(!Number.isFinite(d.getTime()))return null;return d.getUTCFullYear()-(d.getUTCMonth()<8?1:0);}

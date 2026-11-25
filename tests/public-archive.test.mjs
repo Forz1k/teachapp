@@ -55,3 +55,17 @@ test('Legacy opaque link resolution requests exactly one ID and refuses ambiguit
  assert.equal(got.archiveKey,k);assert.equal(await fetchArchiveById(target,r.id,async()=>new Response('null')),null);
  await assert.rejects(fetchArchiveById(target,r.id,async()=>new Response(JSON.stringify({[k]:r,other:r}))),/Несколько/);
 });
+
+test('Calendar exports stable UID, escapes CR and LF, and folds Unicode at 75 octets',()=>{
+ const fixture={id:'fixture_1',opponent:'Гости',startAt:1700000000000};
+ const text=fixtureCalendar('Команда\rX-FAKE:1\n'+ '🏐'.repeat(60),fixture);
+ const next=fixtureCalendar('Команда',{...fixture,startAt:fixture.startAt+3600000});
+ const unfold=s=>s.replace(/\r\n /g,'');
+ assert.equal(unfold(text).match(/^UID:(.*)$/m)[1],next.match(/^UID:(.*)$/m)[1]);
+ assert.match(unfold(text),/Команда\\nX-FAKE:1\\n/);
+ assert.ok(!text.includes('\rX-FAKE:1'));
+ assert.ok(text.split('\r\n').every(line=>new TextEncoder().encode(line).length<=75));
+ assert.ok(unfold(text).includes('🏐'.repeat(60)));
+ assert.notEqual(text.match(/^DTSTART:(.*)$/m)[1],next.match(/^DTSTART:(.*)$/m)[1]);
+ for(const f of [{...fixture,id:'bad\r\nUID:fake'},{...fixture,startAt:null},{...fixture,startAt:Infinity}])assert.throws(()=>fixtureCalendar('Команда',f));
+});

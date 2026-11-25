@@ -388,3 +388,8 @@ PR #94 не объединён, новый релиз не опубликова�
 ## 5.9 compatibility checkpoint
 - `fff158f`: backup 22, old formats, all synthetic workflows on version changes. 451/451 and all seven workflows passed, including actual published 5.1.1 WebKit upgrade and v21 rejecting v22. [Checks](https://github.com/Forz1k/teachapp/commit/fff158f5a52d2f2241f55b2a215920043cdb4e2a/checks).
 - Owner authorized the final static publication after checks. Production LAB/Worker/Firebase migration and physical acceptance remain separate.
+
+
+## 6.0.1 — стабилизация (кандидат)
+
+База main: f7066c1c57cfe63bdfc98b10d8e8b7f6f52d9b22, 6.0.0. Открытый PR #88 расходится с main (один изменённый фрагмент health.js); актуальная формулировка main учитывает и возможные ограничения, поэтому старый вариант не переносится. Исправлен экспорт календаря: стабильный UID при переносе встречи, экранирование CR/LF, перенос строк по UTF-8, проверка ID и даты. Добавлена регрессия. Локальное клонирование недоступно (DNS GitHub); полная приёмка по GitHub Actions и физическая проверка отдельно. Статус не DONE.
