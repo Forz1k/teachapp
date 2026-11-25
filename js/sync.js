@@ -207,7 +207,9 @@ const revision=n=>Number.isSafeInteger(n)&&n>=1;
 async function readPacket(envelope,password,area,rev){
  check(isEncryptedBackup(envelope),'Сервер не вернул зашифрованный пакет');
  const p=await decryptBackup(envelope,password);
- check(p?.app==='teachapp-sync'&&p.version===1&&[19,20,BACKUP_VERSION].includes(p.backupVersion)&&p.area===area&&uuid.test(p.workspaceId)&&p.revision===rev,'Несовместимый пакет синхронизации или подмена ревизии');
+ check(p?.app==='teachapp-sync'&&p.version===1&&p.area===area&&uuid.test(p.workspaceId)&&p.revision===rev,'Несовместимый пакет синхронизации или подмена ревизии');
+ if(Number.isInteger(p.backupVersion)&&p.backupVersion>BACKUP_VERSION)throw Object.assign(Error('Обновите TeachApp на всех устройствах: сервер содержит более новый формат данных. Локальные записи сохранены.'),{code:'newer-backup-format'});
+ check([19,20,21,BACKUP_VERSION].includes(p.backupVersion),'Несовместимый пакет синхронизации');
  validateScope(p.snapshot,area);
  return p;
 }
@@ -315,7 +317,7 @@ export async function buildSyncDelta(base,next,{area,workspaceId,baseRevision}){
 function checkDeltaHeader(packet,{area,workspaceId,baseRevision}){
  const ctx=deltaContext(area,workspaceId,baseRevision);
  check(exactFields(packet,['app','version','backupVersion','area','workspaceId','baseRevision','revision','baseHash','resultHash','changes'])&&
-  packet.app===deltaApp&&packet.version===1&&packet.backupVersion===BACKUP_VERSION&&
+  packet.app===deltaApp&&packet.version===1&&[21,BACKUP_VERSION].includes(packet.backupVersion)&&
   Object.entries(ctx).every(([k,v])=>packet[k]===v)&&typeof packet.baseHash==='string'&&digestPattern.test(packet.baseHash)&&
   typeof packet.resultHash==='string'&&digestPattern.test(packet.resultHash),'Несовместимый пакет изменений или неверная ревизия');
 }

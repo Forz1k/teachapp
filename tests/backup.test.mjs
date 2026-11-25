@@ -95,3 +95,10 @@ test('КТП: диагностика и точечное исправление 
  assert.doesNotThrow(()=>validateBackup({app:'teachapp',version:BACKUP_VERSION,data:repaired}));
  await assert.rejects(S.repairKtpPlan(row,ktp.name,[cls.id],true),/изменилось/);
 });
+
+test('Backup 22 restores v21 and rejects future versions without touching records',async()=>{
+ const current=await seed();assert.equal(current.version,22);const legacy={...structuredClone(current),version:21};const before=await db.dumpAll();
+ await S.restoreBackup(legacy);assert.deepEqual(await db.dumpAll(),before);
+ await assert.rejects(S.restoreBackup({...current,version:23}),/Версия резервной копии/);
+ assert.deepEqual(await db.dumpAll(),before);
+});

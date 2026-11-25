@@ -2,6 +2,7 @@ name: TeachApp Delta synthetic
 on:
   pull_request:
     paths:
+      - 'package.json'
       - 'server/delta-*.mjs'
       - 'server/cloudflare-protocol.mjs'
       - 'server/cloudflare-relay.mjs'

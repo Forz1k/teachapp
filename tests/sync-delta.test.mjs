@@ -71,3 +71,17 @@ test('Laboratory adapter requires opt-in and loopback, and a checkpoint avoids r
  await assert.rejects(readDeltaLab({client,area,password,current,checkpoint:{...checkpoint,snapshot:base}}),/ранее принятой/);
  await assert.rejects(readDeltaLab({client:{...client,head:async()=>({revision:1,anchorRevision:1,count:1})},area,password,current,checkpoint}),/устаревшую/);
 });
+
+test('New release reads v21 encrypted anchors/deltas, rejects future format before merge',async()=>{
+ const current=data(),base=scope(current),nextData=structuredClone(current);nextData.students[0].fullName='Новая запись';
+ const next=scope(nextData),packet=await buildSyncDelta(base,next,ctx);assert.equal(packet.backupVersion,22);
+ assert.deepEqual(await applySyncDelta(base,{...packet,backupVersion:21},{...ctx,current}),next);
+ await assert.rejects(applySyncDelta(base,{...packet,backupVersion:23},{...ctx,current}),/Несовместимый/);
+ const {verifySyncSnapshot}=await import('../js/sync.js');
+ for(const backupVersion of [19,20,21,22]){
+  const envelope=await encryptBackup({app:'teachapp-sync',version:1,backupVersion,area,workspaceId,revision:1,snapshot:base},password);
+  assert.deepEqual(await verifySyncSnapshot({revision:1,envelope},password,area),{revision:1,empty:false});
+ }
+ const future=await encryptBackup({app:'teachapp-sync',version:1,backupVersion:23,area,workspaceId,revision:1,snapshot:base},password);
+ await assert.rejects(verifySyncSnapshot({revision:1,envelope:future},password,area),e=>e.code==='newer-backup-format');
+});

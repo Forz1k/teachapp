@@ -8,7 +8,8 @@ import {assignmentsOverlap} from './school-tools.js';
 import { SCHEMA } from './db.js';
 import {validLessonSlot,validLessonTime} from './model.js';
 
-export const BACKUP_VERSION = 21;
+// 22 fences older clients that do not understand new record/event types.
+export const BACKUP_VERSION = 22;
 const legacyCore = ['meta','classes','students','lessons','topics','marks','exemptions','monthly'];
 const text = s => typeof s === 'string' && s.trim().length > 0;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -25,7 +26,7 @@ export function ktpLinkIssues(data){
 }
 export function validateBackup(payload) {
   if (payload?.app !== 'teachapp' || !object(payload.data)) throw new Error('Файл не похож на резервную копию TeachApp');
-  if (![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
+  if (![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,BACKUP_VERSION].includes(payload.version)) throw new Error('Версия резервной копии не поддерживается');
   if(payload.scope!==undefined&&(!object(payload.scope)||!['class','team','archive'].includes(payload.scope.kind)||!text(payload.scope.id)||!Number.isInteger(payload.scope.omitted)||payload.scope.omitted<0))throw Error('Повреждена область выборочной копии');
   const data = payload.data;
   const names = Object.keys(SCHEMA);

@@ -56,8 +56,16 @@ try{
   // exchange must not initialize or contact its endpoint after upgrading.
   const trust=await import('./js/device-trust.js'),secret=()=>btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
   const profile=trust.saveTrustedProfile({version:2,endpoint:'https://synthetic-profile.example.test',deviceId:crypto.randomUUID(),name:'Synthetic upgrade device',areas:{coach:{token:secret(),password:secret()}}});
-  const backup=await S.makeBackup();return {profile,data:await db.dumpAll(),backupData:backup.data,protectedBackup:await encryptBackup(backup,password),remote,matchId:d.id,password,endpoint};
+  const backup=await S.makeBackup();
+  // An older published client must reject a newer authenticated format even
+  // when the contents would otherwise be valid; no local write is allowed.
+  const oldPacket=await (await import('./js/privacy.js')).decryptBackup(remote.envelope,password);
+  const futureEnvelope=await encryptBackup({...oldPacket,backupVersion:22},password);
+  let oldRejected=false;try{await sync.verifySyncSnapshot({revision:1,envelope:futureEnvelope},password,area);}catch{oldRejected=true;}
+  let oldBackupRejected=false;try{(await import('./js/backup.js')).validateBackup({...backup,version:22});}catch{oldBackupRejected=true;}
+  return {profile,data:await db.dumpAll(),backupData:backup.data,protectedBackup:await encryptBackup(backup,password),remote,matchId:d.id,password,endpoint,futureEnvelope,oldRejected,oldBackupRejected};
  });
+ assert.equal(fixture.oldRejected,true,'old published client must reject v22 sync packet');assert.equal(fixture.oldBackupRejected,true,'old client must reject v22 backup');
  assert.equal(fixture.remote.revision,1);assert.equal(fixture.data.lessons.length,2);assert.equal(fixture.data.coachLive.length,1);
  assert.equal(fixture.backupData.meta.some(x=>x.id.startsWith('sync-checkpoint-')),false);
  root=candidate; // Same origin and browser context; only static server content changes.
@@ -84,6 +92,9 @@ try{
   return {revision:result.revision,writes,status:(await sync.localSyncState({area:'school',endpoint,password})).status};
  },fixture);
  assert.deepEqual(reconcile,{revision:1,writes:0,status:'clean'});
+ const compat=await page.evaluate(async({futureEnvelope,password})=>{const sync=await import('./js/sync.js'),S=await import('./js/store.js');return {remote:await sync.verifySyncSnapshot({revision:1,envelope:futureEnvelope},password,'school'),backup:(await S.makeBackup()).version};},fixture);
+ assert.deepEqual(compat,{remote:{revision:1,empty:false},backup:22});
+ console.log('FORMAT FENCE PASS: published v21 refuses v22, new client reads both, preserved old checkpoint without PUT.');
  await context.setOffline(true);await page.reload();await page.locator('.workspace-nav').waitFor();
  const offline=await page.evaluate(async id=>{
   const db=await import('./js/db.js'),C=await import('./js/coach.js'),{replayDetailed}=await import('./js/match-protocol.js'),draft=await db.get('coachLive',id);

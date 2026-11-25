@@ -2,6 +2,7 @@ name: TeachApp Platform synthetic
 on:
   pull_request:
     paths:
+      - 'package.json'
       - 'server/platform-*.mjs'
       - 'server/workspace-policy.mjs'
       - 'js/platform-client.js'
