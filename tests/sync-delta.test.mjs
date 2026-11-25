@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {SCHEMA} from '../js/db.js';
 import {defaultSettings} from '../js/model.js';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
-import {projectScope,buildSyncDelta,applySyncDelta,replaySyncDeltas,syncDeltaEstimate,combineScope,mergeScopes} from '../js/sync.js';
+import {projectScope,buildSyncDelta,applySyncDelta,replaySyncDeltas,syncDeltaEstimate,combineScope,mergeScopes,deltaLabSyncAdapter,deltaLabClient,readDeltaLab} from '../js/sync.js';
 
 const workspaceId='00000000-0000-4000-8000-000000000001',area='school',password='synthetic-only-long-passphrase';
 const data=()=>({...Object.fromEntries(Object.keys(SCHEMA).map(n=>[n,[]])),meta:[defaultSettings()],classes:[{id:'c',name:'7А'}],students:Array.from({length:100},(_,i)=>({id:'s'+i,classId:'c',fullName:'Синтетический ученик '+i,number:i+1})),coachTeams:[{id:'t',name:'Локальная команда',archived:false}]});
@@ -56,4 +56,18 @@ test('Encrypted delta chain is contiguous and retains three-way merge semantics'
  const merged=mergeScopes(base,scope(local),result.snapshot,area);
  assert.equal(merged.conflicts.length,0);assert.equal(merged.snapshot.students.find(x=>x.id==='s2').fullName,'Локальное изменение');
  local.students[0].fullName='Конфликт';assert.equal(mergeScopes(base,scope(local),result.snapshot,area).conflicts.length,1);
+});
+
+test('Laboratory adapter requires opt-in and loopback, and a checkpoint avoids replaying old records',async()=>{
+ assert.throws(()=>deltaLabSyncAdapter({endpoint:'http://127.0.0.1:8099',area,token:'a'.repeat(43),password,readData:()=>data()}),/синтетических/);
+ assert.throws(()=>deltaLabClient('https://example.com',area,'a'.repeat(43)),/localhost/);
+ assert.throws(()=>deltaLabClient('http://127.0.0.1:8099',area,'a'.repeat(43),{compactToken:'a'.repeat(43)}),/отдельные/);
+ const current=data(),base=scope(current),d=structuredClone(current);d.students[0].fullName='New';
+ const next=scope(d),packet=await buildSyncDelta(base,next,ctx),envelope=await encryptBackup(packet,password);
+ let reads=[];const client={head:async()=>({revision:2,anchorRevision:1,count:2}),getRevision:async revision=>{reads.push(revision);assert.equal(revision,2);return {revision,kind:'delta',envelope};}};
+ const checkpoint={revision:2,workspaceId,snapshot:next};
+ const remote=await readDeltaLab({client,area,password,current,checkpoint});
+ assert.deepEqual(remote.snapshot,next);assert.deepEqual(reads,[2]);
+ await assert.rejects(readDeltaLab({client,area,password,current,checkpoint:{...checkpoint,snapshot:base}}),/ранее принятой/);
+ await assert.rejects(readDeltaLab({client:{...client,head:async()=>({revision:1,anchorRevision:1,count:1})},area,password,current,checkpoint}),/устаревшую/);
 });

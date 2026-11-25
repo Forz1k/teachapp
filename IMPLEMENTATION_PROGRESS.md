@@ -311,3 +311,7 @@ PR #94 не объединён, новый релиз не опубликова�
 ## Incremental synchronization — client codec checkpoint
 - `d329dfe`: scoped changes, canonical base/result digests, authenticated encrypted replay, relationship validation, manual preview size comparison. Current v1/v2 transport unchanged.
 - Verified 364/364 tests, validate, browser/offline (65 screenshots), WebKit, Cloudflare and Platform synthetic: [CI](https://github.com/Forz1k/teachapp/actions/runs/45567811230), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45567811226), [Cloudflare](https://github.com/Forz1k/teachapp/actions/runs/45567811242), [Platform](https://github.com/Forz1k/teachapp/actions/runs/45567811229). See docs/SYNC_DELTA.md.
+
+## Delta compaction checkpoint — 25.11.2026
+- `a590937`: explicit separate compactor privilege, atomic new anchor at the next revision, CAS vs concurrent append, stale-reader 410 restart, fresh-device reconstruction, checkpoint comparison and explicit stale history review. Local-only test Worker, no production deployment. Old intermediate history is intentionally superseded; verified backup required.
+- 367/367 tests, zero failures/skips; validate, Chromium/offline (65 screenshots), WebKit, Cloudflare, Platform and Delta synthetic PASS: [CI](https://github.com/Forz1k/teachapp/actions/runs/45569335998), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45569335948), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45569336033).

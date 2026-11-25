@@ -295,12 +295,15 @@ export async function buildSyncDelta(base,next,{area,workspaceId,baseRevision}){
  const [baseHash,resultHash]=await Promise.all([scopeDigest(base,area),scopeDigest(next,area)]);
  return deltaPacket(ctx,changes,baseHash,resultHash);
 }
-export async function applySyncDelta(base,packet,{area,workspaceId,baseRevision,current}){
+function checkDeltaHeader(packet,{area,workspaceId,baseRevision}){
  const ctx=deltaContext(area,workspaceId,baseRevision);
  check(exactFields(packet,['app','version','backupVersion','area','workspaceId','baseRevision','revision','baseHash','resultHash','changes'])&&
   packet.app===deltaApp&&packet.version===1&&packet.backupVersion===BACKUP_VERSION&&
   Object.entries(ctx).every(([k,v])=>packet[k]===v)&&typeof packet.baseHash==='string'&&digestPattern.test(packet.baseHash)&&
   typeof packet.resultHash==='string'&&digestPattern.test(packet.resultHash),'Несовместимый пакет изменений или неверная ревизия');
+}
+export async function applySyncDelta(base,packet,{area,workspaceId,baseRevision,current}){
+ checkDeltaHeader(packet,{area,workspaceId,baseRevision});
  check(await scopeDigest(base,area)===packet.baseHash,'Базовый снимок изменений не совпадает');
  const keys=keysFor(area);
  check(plain(packet.changes)&&Object.keys(packet.changes).length>0&&Object.keys(packet.changes).every(n=>keys.includes(n)),'Некорректная область пакета изменений');
@@ -383,21 +386,30 @@ export async function readDeltaLab({client,area,password,current,checkpoint=null
    const head=await client.head();check(validDeltaHead(head),'Некорректная цепочка Delta LAB');
    check(!checkpoint||head.revision>=checkpoint.revision,'Сервер вернул устаревшую ревизию');
    if(!head.revision)return {revision:0,anchorRevision:0,workspaceId:null,snapshot:null,compactedPastCheckpoint:false};
-   const first=await client.getRevision(head.anchorRevision);
-   check(first?.kind==='anchor'&&first.revision===head.anchorRevision,'Отсутствует базовый снимок Delta LAB');
-   const initial=await readPacket(first.envelope,password,area,head.anchorRevision);
-   const workspaceId=initial.workspaceId;
-   check(!checkpoint||workspaceId===checkpoint.workspaceId,'Сервер заменил рабочее пространство');
-   let snapshot=initial.snapshot;combineScope(current,snapshot,area);
-   const checkKnown=rev=>{
-    if(checkpoint?.revision===rev)check(same(snapshot,checkpoint.snapshot),'Содержимое ранее принятой ревизии изменилось');
-   };
-   checkKnown(head.anchorRevision);
-   for(let rev=head.anchorRevision+1;rev<=head.revision;rev++){
+   // With an authenticated local checkpoint, validate the corresponding remote
+   // entry, then fetch only its tail. A new or very stale device needs the anchor.
+   const start=checkpoint&&checkpoint.revision>=head.anchorRevision?checkpoint.revision:head.anchorRevision;
+   const first=await client.getRevision(start);
+   check(first?.revision===start,'Отсутствует базовый снимок Delta LAB');
+   let workspaceId,snapshot;
+   if(start===head.anchorRevision){
+    check(first.kind==='anchor','Отсутствует базовый снимок Delta LAB');
+    const initial=await readPacket(first.envelope,password,area,start);
+    workspaceId=initial.workspaceId;snapshot=initial.snapshot;
+    check(!checkpoint||workspaceId===checkpoint.workspaceId,'Сервер заменил рабочее пространство');
+    if(checkpoint?.revision===start)check(await scopeDigest(snapshot,area)===await scopeDigest(checkpoint.snapshot,area),'Содержимое ранее принятой ревизии изменилось');
+   }else{
+    check(checkpoint&&first.kind==='delta','Некорректная контрольная точка Delta LAB');
+    workspaceId=checkpoint.workspaceId;snapshot=copy(checkpoint.snapshot);
+    const packet=await decryptBackup(first.envelope,password);
+    checkDeltaHeader(packet,{area,workspaceId,baseRevision:start-1});
+    check(await scopeDigest(snapshot,area)===packet.resultHash,'Содержимое ранее принятой ревизии изменилось');
+   }
+   combineScope(current,snapshot,area);
+   for(let rev=start+1;rev<=head.revision;rev++){
     const row=await client.getRevision(rev);
     check(row?.kind==='delta'&&row.revision===rev,'Пропущена или подменена ревизия изменений');
     snapshot=await applySyncDelta(snapshot,await decryptBackup(row.envelope,password),{area,workspaceId,baseRevision:rev-1,current});
-    checkKnown(rev);
    }
    return {revision:head.revision,anchorRevision:head.anchorRevision,workspaceId,snapshot,compactedPastCheckpoint:!!checkpoint&&checkpoint.revision<head.anchorRevision};
   }catch(e){if(e.status!==410||attempt===2)throw e;}
@@ -415,6 +427,67 @@ export async function compactDeltaLab({client,area,password,current,checkpoint=n
  const result=await client.compact(expectedRevision,envelope);
  check(result?.revision===expectedRevision+1,'Сервер не подтвердил компактизацию');
  return {revision:result.revision,workspaceId:remote.workspaceId,snapshot:remote.snapshot,envelope};
+}
+
+/* Explicit laboratory adapter for the existing prepare/preview/execute pipeline.
+   The full envelopes returned to that pipeline are generated locally; only
+   an initial anchor or encrypted delta travels across the network.
+   No normal app callers: data access is injected by the synthetic test harness. */
+export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synthetic=false,acceptCompactedHistory=false,fetcher,timeoutMs}){
+ check(synthetic===true&&typeof readData==='function','Интеграция Delta LAB только для синтетических данных');
+ check(typeof password==='string'&&password.length>=12,'Проверьте пароль Delta LAB');
+ endpoint=normalizeEndpoint(endpoint);
+ const client=deltaLabClient(endpoint,area,token,{fetcher,timeoutMs});
+ let baseline=null,pending=null,busy=false;
+ async function exclusive(task){
+  check(!busy,'Дождитесь завершения обмена Delta LAB');busy=true;
+  try{return await task();}finally{busy=false;}
+ }
+ return {
+  get:()=>exclusive(async()=>{
+   baseline=null;pending=null;
+   const current=await readData(),cp=getCheckpoint(current,area);
+   let checkpoint=null;
+   if(cp){
+    check(cp.endpoint===endpoint&&revision(cp.revision)&&uuid.test(cp.workspaceId),'Этот контур связан с другим сервером или повреждён');
+    const packet=await readPacket(cp.envelope,password,area,cp.revision);
+    check(packet.workspaceId===cp.workspaceId,'Неверная общая ревизия');
+    checkpoint={revision:cp.revision,workspaceId:cp.workspaceId,snapshot:packet.snapshot};
+   }
+   const remote=await readDeltaLab({client,area,password,current,checkpoint});
+   check(!remote.compactedPastCheckpoint||acceptCompactedHistory,'История уплотнена после локальной ревизии. Нужно явное согласование с проверенным снимком.');
+   const envelope=!remote.revision?null:checkpoint?.revision===remote.revision?cp.envelope:
+    await encryptBackup(packetPayload(remote.snapshot,area,remote.workspaceId,remote.revision),password);
+   baseline=remote;
+   return {revision:remote.revision,envelope};
+  }),
+  put:(expectedRevision,envelope)=>exclusive(async()=>{
+   check(baseline&&baseline.revision===expectedRevision,'Сначала прочитайте актуальную ревизию Delta LAB');
+   const next=await readPacket(envelope,password,area,expectedRevision+1),current=await readData();
+   combineScope(current,next.snapshot,area);
+   check(!expectedRevision||baseline.workspaceId===next.workspaceId,'Неверное рабочее пространство Delta LAB');
+   // A retry of the exact local envelope must reuse the same encrypted delta.
+   if(pending){check(pending.expectedRevision===expectedRevision&&same(pending.envelope,envelope),'Предыдущая запись не согласована. Повторите чтение ревизии.');}
+   else{
+    let payload=envelope;
+    if(expectedRevision){
+     const estimate=syncDeltaEstimate(baseline.snapshot,next.snapshot,{area,workspaceId:next.workspaceId,baseRevision:expectedRevision});
+     check(estimate.changedRecords>0,'Нет изменений; используйте получение без повторной записи');
+     check(estimate.bytes<=defaultCloudflarePacketLimit,'Пакет изменений превышает лимит; данные не отправлены');
+     const delta=await buildSyncDelta(baseline.snapshot,next.snapshot,{area,workspaceId:next.workspaceId,baseRevision:expectedRevision});
+     await applySyncDelta(baseline.snapshot,delta,{area,workspaceId:next.workspaceId,baseRevision:expectedRevision,current});
+     payload=await encryptBackup(delta,password);
+    }else check(new TextEncoder().encode(JSON.stringify({expectedRevision,envelope})).length<=defaultCloudflarePacketLimit,'Первичный снимок превышает лимит; данные не отправлены');
+    pending={expectedRevision,envelope:copy(envelope),payload,ack:null};
+   }
+   if(!pending.ack){
+    const accepted=await (expectedRevision?client.append(expectedRevision,pending.payload):client.anchor(pending.payload));
+    check(accepted?.revision===expectedRevision+1&&typeof accepted.replayed==='boolean','Сервер не подтвердил ожидаемую ревизию');
+    pending.ack={revision:accepted.revision,envelope:copy(pending.envelope)};
+   }
+   return copy(pending.ack);
+  })
+ };
 }
 
 export async function prepareSync({area,endpoint,password,client,data}){

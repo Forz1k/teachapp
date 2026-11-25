@@ -8,11 +8,13 @@ import {join} from 'node:path';
 import {createServer} from 'node:net';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {digestToken} from '../server/cloudflare-protocol.mjs';
+import 'fake-indexeddb/auto';
+import * as db from '../js/db.js';
 import {SCHEMA} from '../js/db.js';
 import {defaultSettings} from '../js/model.js';
 import {BACKUP_VERSION} from '../js/backup.js';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
-import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes} from '../js/sync.js';
+import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync} from '../js/sync.js';
 
 const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),origin='http://127.0.0.1:8099',area='school',password='synthetic-delta-test-password';
 const workspaceId='00000000-0000-4000-8000-000000000001';
@@ -72,7 +74,11 @@ try{
  // The old checkpoint remains separate from dirty local edits.
  const client=deltaLabClient(endpoint,area,a,{compactToken:admin}),otherClient=deltaLabClient(endpoint,area,b);
  const params={client,area,password,current:baseData},known={revision:3,workspaceId,snapshot:latest};
- assert.deepEqual((await readDeltaLab({...params,checkpoint:known})).snapshot,latest);
+ const requested=[],tracking={head:()=>client.head(),getRevision:rev=>{requested.push(rev);return client.getRevision(rev);}};
+ assert.deepEqual((await readDeltaLab({...params,client:tracking,checkpoint:known})).snapshot,latest);
+ assert.deepEqual(requested,[3]);requested.length=0;
+ assert.deepEqual((await readDeltaLab({...params,client:tracking,checkpoint:{revision:2,workspaceId,snapshot:expected}})).snapshot,latest);
+ assert.deepEqual(requested,[2,3]);
  await assert.rejects(readDeltaLab({...params,checkpoint:{...known,snapshot:base}}),/ранее принятой/);
  await assert.rejects(compactDeltaLab({...params,expectedRevision:3}),/Подтвердите/);
  await assert.rejects(compactDeltaLab({...params,expectedRevision:2,confirmed:true}),/История изменилась/);
@@ -117,6 +123,61 @@ try{
  const racingClient={head:async()=>++calls===1?head:client.head(),getRevision:rev=>client.getRevision(rev)};
  assert.deepEqual((await readDeltaLab({...params,client:racingClient})).snapshot,after);assert.equal(calls,2);
  console.log('DELTA COMPACTION PASS: separate privilege, CAS race, exact retry, stale-reader restart, stale checkpoint merge, post-compaction append and durable fresh-device recovery');
+
+ // Use the same actual prepare/preview/execute functions as the ordinary app,
+ // but two synthetic IndexedDB snapshots and an isolated laboratory transport.
+ const freshDb=()=>({...Object.fromEntries(Object.keys(SCHEMA).map(n=>[n,[]])),meta:[defaultSettings()]});
+ const adapter=(token,options={})=>deltaLabSyncAdapter({endpoint,area,token,password,readData:()=>db.dumpAll(),synthetic:true,...options});
+ const syncArgs={endpoint,area,password};
+ const exchange=async(client,choices={})=>executeSync({plan:await prepareSync({...syncArgs,client}),choices,password,client,confirmed:true,reuseRemote:true});
+ const devA=adapter(a),devB=adapter(b);
+ await db.replaceAll(freshDb());
+ const joinedA=await exchange(devA);assert.equal(joinedA.revision,persisted.revision);
+ let localA=await db.dumpAll();assert.deepEqual(projectScope(localA,area),after);
+ await db.replaceAll(freshDb());
+ const joinedB=await exchange(devB);assert.equal(joinedB.revision,persisted.revision);
+ let localB=await db.dumpAll();assert.equal((await client.head()).revision,persisted.revision);
+ // Independent offline edits merge; only changed records travel in each PUT.
+ await db.replaceAll(localA);await db.put('students',{...await db.get('students','s4'),fullName:'Изменение устройства A'});
+ const sentA=await exchange(devA);assert.equal(sentA.revision,persisted.revision+1);
+ localA=await db.dumpAll();
+ const deltaA=await client.getRevision(sentA.revision),decodedA=await decryptBackup(deltaA.envelope,password);
+ assert.equal(deltaA.kind,'delta');assert.deepEqual(decodedA.changes.students.upserts.map(x=>x.id),['s4']);
+ await db.replaceAll(localB);await db.put('students',{...await db.get('students','s5'),fullName:'Изменение устройства B'});
+ const sentB=await exchange(devB);assert.equal(sentB.revision,sentA.revision+1);
+ assert.equal((await db.get('students','s4')).fullName,'Изменение устройства A');
+ const deltaB=await client.getRevision(sentB.revision),decodedB=await decryptBackup(deltaB.envelope,password);
+ assert.deepEqual(decodedB.changes.students.upserts.map(x=>x.id),['s5']);
+ localB=await db.dumpAll();await db.replaceAll(localA);assert.equal((await exchange(devA)).revision,sentB.revision);
+ assert.equal((await db.get('students','s5')).fullName,'Изменение устройства B');
+ localA=await db.dumpAll();
+ // Compaction with a verified snapshot, while the other device is offline.
+ const latestRemote=await readDeltaLab({...params,current:localA});
+ const compactedAgain=await compactDeltaLab({...params,current:localA,checkpoint:{revision:latestRemote.revision,workspaceId:latestRemote.workspaceId,snapshot:latestRemote.snapshot},expectedRevision:latestRemote.revision,confirmed:true});
+ assert.equal((await client.head()).count,1);
+ await db.replaceAll(localB);await db.put('students',{...await db.get('students','s6'),fullName:'Несинхронизированное изменение'});
+ await assert.rejects(prepareSync({...syncArgs,client:devB}),/История уплотнена/);
+ assert.equal((await db.get('students','s6')).fullName,'Несинхронизированное изменение');
+ const agreed=adapter(b,{acceptCompactedHistory:true});
+ const accepted=await exchange(agreed);assert.equal(accepted.revision,compactedAgain.revision+1);
+ assert.equal((await db.get('students','s4')).fullName,'Изменение устройства A');
+ assert.equal((await db.get('students','s6')).fullName,'Несинхронизированное изменение');
+ localB=await db.dumpAll();
+ // Conflicting edits are not silently overwritten; explicit existing merge choices.
+ await db.replaceAll(localA);const agreedA=adapter(a,{acceptCompactedHistory:true});await exchange(agreedA);
+ await db.put('students',{...await db.get('students','s7'),fullName:'Конфликт A'});
+ const conflictA=await exchange(agreedA);
+ await db.replaceAll(localB);await db.put('students',{...await db.get('students','s7'),fullName:'Конфликт B'});
+ const plan=await prepareSync({...syncArgs,client:agreed});
+ assert.equal(plan.conflicts.length,1);assert.equal(plan.conflicts[0].store,'students');
+ await assert.rejects(executeSync({plan,choices:{},password,client:agreed,confirmed:true,reuseRemote:true}),/конфликт/);
+ assert.equal((await client.head()).revision,conflictA.revision);
+ const choices={[plan.conflicts[0].key]:'remote'};
+ assert.equal(previewSync(await db.dumpAll(),plan,choices).conflicts.length,0);
+ assert.equal((await executeSync({plan,choices,password,client:agreed,confirmed:true,reuseRemote:true})).revision,conflictA.revision);
+ assert.equal((await db.get('students','s7')).fullName,'Конфликт A');
+ assert.equal((await client.head()).revision,conflictA.revision);
+ console.log('DELTA SYNC INTEGRATION PASS: actual IndexedDB prepare/preview/execute, independent device edits, delta-only PUT, pull without revision churn, explicit compacted-history review and conflict resolution');
  const sizes=syncDeltaEstimate(base,next,{area,workspaceId,baseRevision:1});assert.ok(sizes.bytes<sizes.fullBytes);
  console.log('DELTA SIZE '+JSON.stringify(sizes));
  console.log('DELTA WORKER PASS: real workerd, opaque encrypted anchor and deltas, two scoped devices, CAS race and exact retry, bounds, isolation, restart persistence and verified reconstruction');
