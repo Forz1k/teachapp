@@ -183,7 +183,7 @@ export function replayDetailed(d){
   if(ev.kind==='ace')serving.activeRun.aces++;
   if(ev.kind==='serveError')serving.activeRun.errors++;
   s.score[winner]++;s.rallyCount++;
-  timeline(ev,{actor,player,before,rotation:{...s.rotations}});
+  timeline(ev,{actor,player,before,rotation:{...s.rotations},clockRunning:clock.running});
   if(winner!==s.serve){
    flush(s.serve);s.rotations[winner]=(s.rotations[winner]+1)%6;
    if(winner==='ours')s.lineup=rotate(s.lineup);else s.awayLineup=rotate(s.awayLineup);

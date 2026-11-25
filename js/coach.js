@@ -172,7 +172,7 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
  const summary=summarizeStats(chosen,[playerId]);
  const errors={serve:0,attack:0,receive:0,other:0};
  let detailedMatches=0,rallies=0,serviceRallies=0,serviceWins=0,serviceAces=0,serviceErrors=0,unclassifiedServiceLosses=0,unknownOnCourt=0;
- const playingTime={measuredMatches:0,partialMatches:0,unknownMatches:0,totalMs:0,teamMs:0,rows:[],historicalMatches:0,historicalPartialMatches:0,historicalMinMs:0,historicalMaxMs:0,historicalRows:[]};
+ const playingTime={measuredMatches:0,partialMatches:0,unknownMatches:0,totalMs:0,teamMs:0,timedRallies:0,timedPoints:0,timedWon:0,timedLost:0,unattributedTimedWins:0,rateMatches:0,rateMs:0,ratePoints:0,rateRallies:0,rows:[],historicalMatches:0,historicalPartialMatches:0,historicalMinMs:0,historicalMaxMs:0,historicalRows:[]};
  let importedMatches=0,importedServiceWins=0,importedLongestSeries=0,importedErrors=0;
  const importedBreakdown={serve:0,attack:0,receive:0,other:0};
  const rates={serve:{total:0,success:0},receive:{total:0,success:0},attack:{total:0,success:0}};
@@ -187,6 +187,10 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
    const state=replayDetailed(m.detail);detailedMatches++;
    const t=courtTime(state);
    if(t.measured){const ms=t.players.ours[playerId]||0;playingTime.measuredMatches++;if(t.partial)playingTime.partialMatches++;playingTime.totalMs+=ms;playingTime.teamMs+=t.elapsedMs;playingTime.rows.push({matchId:m.id,date:m.date,opponent:m.opponent,ms,teamMs:t.elapsedMs,partial:t.partial,sets:t.sets.map(s=>({measured:s.started,ms:s.started?(s.players.ours[playerId]||0):null,teamMs:s.elapsedMs,partial:s.untrackedRallies>0}))});}else playingTime.unknownMatches++;
+   const onCourt=state.timeline.filter(e=>e.type==='rally'&&e.before.lineups.ours.includes(playerId));
+   const timed=onCourt.filter(e=>e.clockRunning),timedWins=timed.filter(e=>e.side==='ours'),timedPoints=timedWins.filter(e=>e.actor==='ours'&&e.player===playerId&&['ace','kill','tip','block'].includes(e.kind)).length;
+   playingTime.timedRallies+=timed.length;playingTime.timedPoints+=timedPoints;playingTime.timedWon+=timedWins.length;playingTime.timedLost+=timed.length-timedWins.length;playingTime.unattributedTimedWins+=timedWins.filter(e=>e.kind==='point'||e.actor==='ours'&&e.player==null).length;
+   const measuredMs=t.players.ours[playerId]||0;if(measuredMs>0&&timed.length){playingTime.rateMatches++;playingTime.rateMs+=measuredMs;playingTime.rateRallies+=timed.length;playingTime.ratePoints+=timedPoints;}
    const stat=state.sides.ours.stats[playerId]||{};
    errors.serve+=stat.serveErrors||0;errors.attack+=stat.attackErrors||0;errors.receive+=stat.receiveErrors||0;errors.other+=stat.otherErrors||0;
    for(const e of state.timeline){
@@ -207,6 +211,7 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
    rates[key].total+=x[total];rates[key].success+=complement?x[total]-x[success]:x[success];
   }
  }
+ playingTime.pointsPer10=playingTime.rateMs>=600000&&playingTime.rateRallies>=10?playingTime.ratePoints*600000/playingTime.rateMs:null;
  return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,importedMatches,importedErrors,importedBreakdown,importedServiceWins,importedLongestSeries,rates,chosen,playingTime};
 }
 export function teamView(data,teamId){

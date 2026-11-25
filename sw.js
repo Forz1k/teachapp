@@ -64,7 +64,7 @@ const PRECACHE = [
   './js/screens/volleypoint-import.js',
   './js/volleyball.js',
   './js/match-protocol.js','./js/match-rules.js','./js/match-transfer.js','./js/match-capture.js','./js/video-review.js','./js/video-clip.js','./js/screens/video-review.js',
-  './js/match-tactics.js','./js/match-history.js','./js/screens/match-history.js',
+  './js/match-tactics.js','./js/lineup-analysis.js','./js/screens/lineup-analysis.js','./js/match-history.js','./js/screens/match-history.js',
   './js/screens/match-tactics.js',
   './js/screens/match-protocol.js',
   './js/screens/lineup-picker.js',
