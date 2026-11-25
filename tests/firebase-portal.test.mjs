@@ -124,16 +124,16 @@ test('Opt-in archive queue survives disconnection, never overwrites conflicts, a
   if(opt.method==='PUT'){if(opt.headers['If-Match']!==(records.has(k)?'present':'empty'))return json(null,412);archiveWrites++;records.set(k,JSON.parse(opt.body));return json(records.get(k));}
   return new Response(JSON.stringify(records.get(k)||null),{headers:{ETag:records.has(k)?'present':'empty'}});
  };
- await P.connectPortal(id,credentials,fetcher);P.setPortalEnabled(id,true,'Команда');await wait(()=>!P.portalInfo(id).dirty);
+ await P.connectPortal(id,credentials,fetcher);P.setPortalEnabled(id,true,'Команда');await wait(()=>!P.portalInfo(id).dirty&&P.portalInfo(id).status.startsWith('Опубликовано'));
  const match={id:'private_id',teamId:id,date:'2025-11-01',opponent:'Гости',sets:[{ours:25,theirs:20}],privateNote:'secret'};
- await P.publishSavedResult(id,match);await wait(()=>!P.portalInfo(id).dirty);assert.equal(P.portalInfo(id).data.archivePending.length,0);
- P.setPortalSettings(id,{permanent:true});await wait(()=>!P.portalInfo(id).dirty);
+ await P.publishSavedResult(id,match);await wait(()=>!P.portalInfo(id).dirty&&P.portalInfo(id).status.startsWith('Опубликовано'));assert.equal(P.portalInfo(id).data.archivePending.length,0);
+ P.setPortalSettings(id,{permanent:true});await wait(()=>!P.portalInfo(id).dirty&&P.portalInfo(id).status.startsWith('Опубликовано'));
  P.disconnectPortal(id);const result=await P.publishSavedResult(id,match);assert.equal(P.portalInfo(id).data.archivePending.length,1);assert.equal([...map.values()].join('').includes('privateNote'),false);
- await P.connectPortal(id,credentials,fetcher);await wait(()=>!P.portalInfo(id).dirty);
+ await P.connectPortal(id,credentials,fetcher);await wait(()=>!P.portalInfo(id).dirty&&P.portalInfo(id).status.startsWith('Опубликовано'));
  const cancelled=await P.sendPendingArchive(id,{confirm:()=>false,fetcher});assert.equal(cancelled.cancelled,true);assert.equal(archiveWrites,0);
  const key=String(result.startedAt).padStart(16,'0')+'_'+result.id;records.set(key,{...result,opponent:'Other'});
  const conflict=await P.sendPendingArchive(id,{confirm:()=>true,fetcher});assert.equal(conflict.conflicts,1);assert.equal(archiveWrites,0);assert.equal(P.portalInfo(id).data.archivePending.length,1);
  records.delete(key);const sent=await P.sendPendingArchive(id,{confirm:()=>true,fetcher});assert.equal(sent.copied,1);assert.equal(archiveWrites,1);assert.equal(P.portalInfo(id).data.archivePending.length,0);
- await P.publishSavedResult(id,match);await wait(()=>!P.portalInfo(id).dirty);const retry=await P.sendPendingArchive(id,{confirm:()=>true,fetcher});assert.equal(retry.existing,1);assert.equal(archiveWrites,1);
+ await P.publishSavedResult(id,match);await wait(()=>!P.portalInfo(id).dirty&&P.portalInfo(id).status.startsWith('Опубликовано'));const retry=await P.sendPendingArchive(id,{confirm:()=>true,fetcher});assert.equal(retry.existing,1);assert.equal(archiveWrites,1);
  P.disconnectPortal(id);
 });

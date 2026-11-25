@@ -242,6 +242,24 @@ try{
  await fan.locator('[data-filter=win]').click();assert.equal(await fan.locator('.result-card .trophy').count(),2);
  await fan.locator('.archive-search').fill('Тест 1');assert.equal(await fan.locator('.result-card').count(),1);await fan.getByRole('button',{name:'Очистить поиск',exact:true}).click();assert.equal(await fan.locator('.result-card').count(),2);
  assert.ok(await fan.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'public result cards overflow');
+ // 5.5: real mobile viewport, historical protocol and an evicted legacy link.
+ await fan.getByRole('combobox',{name:'Соперник для сравнения'}).selectOption('тест 1');
+ assert.match(await fan.locator('.opponent-details').textContent(),/Партии: 2:0 · очки: 50:38/);
+ const old={id:'result_older',opponent:'Архивная команда с длинным названием',startedAt:Date.UTC(2023,9,1),setsWon:{ours:2,theirs:1},sets:[{ours:25,theirs:20},{ours:21,theirs:25},{ours:15,theirs:10}]},oldKey=String(old.startedAt).padStart(16,'0')+'_'+old.id;
+ await fan.route('**/publicMatchArchive/**',async route=>{
+  const url=new URL(route.request().url());
+  const value=url.pathname.endsWith('/'+oldKey+'.json')?old:url.searchParams.get('equalTo')===JSON.stringify(old.id)?{[oldKey]:old}:url.searchParams.has('startAt')?{[oldKey]:old}:null;
+  await route.fulfill({status:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(value)});
+ });
+ await fan.locator('.archive-season-year').fill('2023');await fan.getByRole('button',{name:'Загрузить сезон',exact:true}).click();
+ await fan.locator('.result-card').filter({hasText:old.opponent}).waitFor();assert.equal(await fan.locator('.season-filter').first().inputValue(),'2023');
+ const oldHref=await fan.locator('.result-card').filter({hasText:old.opponent}).locator('a').getAttribute('href');assert.equal(new URL(oldHref).searchParams.get('archive'),oldKey);
+ await fan.goto(oldHref);await fan.waitForFunction(()=>typeof window.__fanPush==='function');await fan.evaluate(x=>window.__fanPush(x),{...future,schedule:[],archive});
+ await fan.locator('.historical-score').waitFor();assert.match(await fan.locator('.historical-totals').textContent(),/61 : 55/);
+ assert.equal(await fan.locator('.historical-set').count(),3);assert.ok(await fan.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'historical page overflow');
+ const legacy=new URL(oldHref);legacy.searchParams.delete('archive');legacy.searchParams.set('match',old.id);
+ await fan.goto(legacy.href);await fan.waitForFunction(()=>typeof window.__fanPush==='function');await fan.evaluate(x=>window.__fanPush(x),{...future,schedule:[],archive});
+ await fan.locator('.historical-score').waitFor();assert.match(await fan.locator('.historical-score').textContent(),/Архивная команда/);
  await fan.close();
  await context.setOffline(true);
  await page.reload();

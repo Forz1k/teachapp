@@ -151,11 +151,11 @@ export async function continuePortalHandoff(id,local,expected,{confirmed=false}=
 }
 export function setPortalEnabled(id,enabled,team){
  const e=entry(id),d=e.data;ensurePublishingAllowed(e);if(e.conflict)throw Error('Сначала разрешите конфликт публикации.');if(e.archiveSending&&!enabled)throw Error('Завершите отправку архива');if(enabled&&!e.publisher)throw Error('Сначала подключите Firebase');
- d.enabled=!!enabled;d.team=String(team||d.team).trim().slice(0,100);d.pendingDelete=!enabled; if(!enabled){if(e.archiveSending)throw Error('Завершите отправку архива');d.activeId=null;d.match=null;d.archivePending=[];}
+ d.enabled=!!enabled;d.team=String(team||d.team).trim().slice(0,100);d.pendingDelete=!enabled; if(!enabled){d.activeId=null;d.match=null;d.archivePending=[];}
  save(e);enqueue(e);return portalInfo(id);
 }
 export function setPortalSettings(id,patch){
- const e=entry(id),d=e.data;ensurePublishingAllowed(e);for(const k of ['events','numbers','stats','auto','permanent'])if(Object.hasOwn(patch,k))d.settings[k]=!!patch[k];
+ const e=entry(id),d=e.data;ensurePublishingAllowed(e);if(e.archiveSending&&Object.hasOwn(patch,'permanent'))throw Error('Завершите отправку архива');for(const k of ['events','numbers','stats','auto','permanent'])if(Object.hasOwn(patch,k))d.settings[k]=!!patch[k];
  if(!d.settings.permanent&&Object.hasOwn(patch,'permanent'))d.archivePending=[];
  if(d.match){if(!d.settings.events)d.match.events=[];if(!d.settings.numbers){d.match.events=d.match.events.map(({number,...x})=>x);d.match.stats=[];}if(!d.settings.stats)d.match.stats=[];}
  save(e);if(d.enabled)enqueue(e);else notify(e);
@@ -222,6 +222,7 @@ export async function listExtendedArchive(id,{cursor=null,fetcher=fetch}={}){
  const access=archiveSession(id),page=await fetchArchivePage(access.target,{cursor,fetcher});access.stillAllowed();return page;
 }
 export async function publishExtendedResult(id,result,{confirm,fetcher=fetch}={}){
+ if(entry(id).archiveSending)throw Error('Завершите отправку очереди');
  const access=archiveSession(id),k=archiveKey(result),version=await readArchiveVersion(access.target,k,fetcher);
  access.stillAllowed();const existing=await fetchArchiveById(access.target,result.id,fetcher);access.stillAllowed();if(existing&&existing.archiveKey!==k)throw Error('Этот результат уже сохранён под другой датой. Проверьте архив.');if(!await confirm?.(version.value))return false;access.stillAllowed();
  const token=await access.session.getToken();access.stillAllowed();await writeArchiveRecord(access.target,k,result,token,version.etag,fetcher);return true;
@@ -236,6 +237,7 @@ export async function removeExtendedResult(id,result,{confirm,fetcher=fetch}={})
 }
 /** Copy only already-confirmed public score projections; never replace existing records. */
 export async function migrateExtendedArchive(id,{confirm,fetcher=fetch}={}){
+ if(entry(id).archiveSending)throw Error('Завершите отправку очереди');
  const access=archiveSession(id),rows=clone(entry(id).data.archive);
  if(!await confirm?.(rows.length))return {cancelled:true,copied:0,existing:0,conflicts:0,failed:0};
  const report={cancelled:false,copied:0,existing:0,conflicts:0,failed:0};
