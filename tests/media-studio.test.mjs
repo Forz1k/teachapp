@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {templates,formats,studioModel,wrapStudioText,studioStyle,readStudioStyle,saveStudioStyle,resetStudioStyle,studioPublication,studioZip,studioCrc32,paintStudio,studioBatch} from '../js/media-studio.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {templates,formats,studioModel,wrapStudioText,studioStyle,readStudioStyle,saveStudioStyle,resetStudioStyle,studioPublication,studioZip,studioCrc32,paintStudio,studioBatch,studioLayouts,studioCrop,studioInk,studioPresetList,saveStudioPreset,removeStudioPreset,studioStyleFile,parseStudioStyleFile} from '../js/media-studio.js';
 test('12 templates and three formats, safe explicit model',()=>{assert.equal(Object.keys(templates).length,12);assert.equal(Object.keys(formats).length,3);const m=studioModel({template:'bad',format:'bad',team:'A\nB',accent:'javascript:',private:'secret'});assert.equal(m.team,'A B');assert.equal(m.template,'matchday');assert.equal(m.accent,'#61e5b0');assert.equal(Object.hasOwn(m,'private'),false);});
 test('long words wrap and truncate within width',()=>{const ctx={measureText:s=>({width:s.length})};const lines=wrapStudioText(ctx,'1234567890 second third',4,2);assert.equal(lines.length,2);assert.ok(lines.every(x=>x.length<=4));assert.match(lines.at(-1),/…$/);});
 
@@ -36,5 +36,32 @@ test('Studio long team names, logo and scores leave footer separate in every for
  const canvas={getContext:()=>ctx};
  paintStudio(canvas,{format,title:'Очень длинный заголовок '.repeat(8),team:'Очень длинное название команды '.repeat(8),opponent:'Другая команда '.repeat(8),score:'25 : 23',details:'Подробности '.repeat(40),footer:'Footer'},{logo:{width:100,height:100}});
  assert.ok(lines.every((r,i)=>i===0||r.y>=lines[i-1].y));assert.ok(lines.every(r=>r.y<canvas.height));assert.ok(lines.some(r=>r.t==='Footer'));
+ }
+});
+
+test('Reusable styles are isolated, bounded, explicit replacement and portable whitelisted JSON',()=>{
+ const map=new Map(),storage={getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v),removeItem:k=>map.delete(k)};
+ const raw={layout:'arena',focus:'top',accent:'#ff0000',background:'#ffffff',team:'PRIVATE',photo:'secret'};
+ saveStudioPreset('a','Домашний',raw,{storage});assert.equal(studioPresetList('b',storage).length,0);
+ assert.throws(()=>saveStudioPreset('a','домашний',raw,{storage}));saveStudioPreset('a','домашний',{...raw,layout:'editorial'},{storage,replace:true});
+ assert.equal(studioPresetList('a',storage)[0].style.layout,'editorial');assert.ok(!JSON.stringify([...map]).includes('PRIVATE'));
+ for(let i=0;i<11;i++)saveStudioPreset('a','p'+i,raw,{storage});assert.throws(()=>saveStudioPreset('a','13',raw,{storage}));
+ removeStudioPreset('a','p0',storage);assert.equal(studioPresetList('a',storage).length,11);
+ const serialized=studioStyleFile(raw);assert.deepEqual(parseStudioStyleFile(serialized),studioStyle(raw));assert.ok(!serialized.includes('secret'));
+ const invalid=JSON.parse(serialized);invalid.style.photo='secret';assert.throws(()=>parseStudioStyleFile(JSON.stringify(invalid)));assert.throws(()=>parseStudioStyleFile('x'.repeat(4097)));
+ assert.equal(studioStyle({}).layout,'classic');assert.equal(studioStyle({}).focus,'center');
+});
+test('Contrast chooses readable black or white and crop anchors preserve cover dimensions',()=>{
+ assert.equal(studioInk('#ffffff'),'#000000');assert.equal(studioInk('#000000'),'#ffffff');
+ assert.deepEqual(studioCrop(200,100,100,100,'left'),{x:0,y:0,width:200,height:100});
+ assert.deepEqual(studioCrop(200,100,100,100,'right'),{x:-100,y:0,width:200,height:100});
+ assert.deepEqual(studioCrop(100,200,100,100,'bottom'),{x:0,y:-100,width:100,height:200});
+ assert.throws(()=>studioCrop(0,100,100,100));
+});
+test('All three designs keep text inside canvas and reserve footer in all formats',()=>{
+ for(const layout of Object.keys(studioLayouts))for(const format of Object.keys(formats)){
+  const lines=[],ctx={font:'',measureText(s){return {width:s.length*Number(this.font.match(/(\d+)px/)?.[1]||20)*.55};},fillRect(){},fillText(t,x,y){lines.push({t,x,y,font:this.font,fill:this.fillStyle});},drawImage(){}},canvas={getContext:()=>ctx};
+  paintStudio(canvas,{layout,format,background:'#ffffff',accent:'#eeeeee',team:'Очень длинное название '.repeat(7),opponent:'Другая команда '.repeat(7),score:'25 : 23',details:'Текст '.repeat(80),footer:'Footer'},{backgroundImage:{width:200,height:100},logo:{width:100,height:100}});
+  assert.ok(lines.every((r,i)=>i===0||r.y>=lines[i-1].y));assert.ok(lines.every(r=>r.y<canvas.height));assert.ok(lines.some(r=>r.t==='Footer'&&r.fill==='#000000'));
  }
 });
