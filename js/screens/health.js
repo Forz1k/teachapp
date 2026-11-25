@@ -3,6 +3,7 @@ import * as H from '../health.js';
 import * as M from '../model.js';
 import { el, openSheet, toast } from '../ui.js';
 import { openParticipation } from './participation.js';
+import {alternativeExerciseCandidates,builtinExercises,listWork} from '../workbench.js';
 
 const field = (label,control) => el('label',{class:'field'},[el('span',{text:label}),control]);
 const btn = (text, action) => el('button',{type:'button',class:'btn',text,onclick:async e => {
@@ -159,8 +160,10 @@ export function openLessonRestrictions(lesson,studentId,onBack){
     if(!student)continue;
     panel.append(el('div',{class:'card-block'},[btn(student.fullName,()=>openHealth(id)),
       el('p',{text:[groupAt(id,lesson.date),nameOf(activityId),nameOf(r.activityId),H.types[r.type],r.instruction,dateLabel(r)].filter(Boolean).join(' · ')}),
+      btn('Подобрать варианты задания',()=>openAlternatives(lesson,id,reopen)),
       ...(lesson.id?[btn('Зафиксировать фактическое участие',()=>openParticipation(id,lesson.id,activityId))]:[])]));
   }
+  for(const st of full)panel.append(btn('Варианты задания · '+st.fullName,()=>openAlternatives(lesson,st.id,reopen)));
   if(onBack)panel.append(btn('Вернуться к уроку',onBack));
   openSheet(panel);
 }
@@ -178,4 +181,12 @@ export function prepareTest(lesson) {
   const draw = () => result.replaceChildren(warning({...lesson,activityIds:[choice.value]}));
   choice.onchange = draw; draw();
   openSheet(el('div',{},[el('h2',{text:'Подготовка норматива'}),field('Испытание',choice),result]));
+}
+
+async function openAlternatives(lesson,id,back){
+ const exercises=[...builtinExercises,...await listWork('exercise')],student=S.state.students.find(s=>s.id===id),result=alternativeExerciseCandidates(lesson,id,exercises,{students:S.state.students,activities:S.activities(),restrictions:S.state.activityRestrictions,exemptions:S.state.exemptions});
+ const panel=el('div',{},[el('h2',{text:'Варианты задания · '+student.fullName}),el('p',{text:'Это черновики для рассмотрения учителем, не медицинская рекомендация и не разрешение на нагрузку. Проверяются только внесённые категории и даты. Учтите все указания специалиста и фактическое состояние ученика.'}),el('h3',{text:'Теоретические задания для рассмотрения'}),...result.theoretical.map(text=>el('p',{text}))]);
+ if(result.full)panel.append(el('p',{text:'Действует освобождение: физические упражнения не предлагаются.'}));
+ else panel.append(el('h3',{text:'Библиотека · нет совпадений по указанным категориям'}),el('p',{text:'Упражнения с известным совпадением или неизвестной категорией исключены. Отсутствие совпадения не подтверждает допустимость нагрузки.'}),...result.rows.slice(0,50).map(({exercise:e})=>el('div',{class:'card-block'},[el('strong',{text:e.name}),el('p',{text:nameOf(e.activityId)+' · '+e.description})])),...(result.rows.length?[]:[el('p',{text:'Подходящие записи библиотеки не найдены.'})]));
+ panel.append(btn('Назад к проверке',back));openSheet(panel);
 }

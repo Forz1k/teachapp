@@ -457,7 +457,9 @@ function showTopicsPreview(ktpId, parsed, onDone) {
     el('button', {
       class: 'btn primary wide', type: 'button', text: 'Записать темы',
       disabled: !items.length,
-      onclick: async () => {
+      onclick: async e => {
+        const button=e.currentTarget;button.disabled=true;
+        try{
         if(!append){const existing=store.topicsOfKtp(ktpId);const used=store.state.lessons.filter(l=>existing.some(t=>t.id===l.topicId));if(used.length)return ui.toast('Существующие темы используются в уроках. Допишите темы или создайте новую версию КТП.');if(!await ui.confirmDialog({title:'Заменить темы?',text:'Старые темы этого КТП будут удалены. Проверьте предпросмотр. Для сохранения старых тем используйте дописывание.',ok:'Заменить',danger:true}))return;}
         const { applyKtpTopics } = await import('../export.js');
         const n = await applyKtpTopics(ktpId, items, { append });
@@ -465,6 +467,7 @@ function showTopicsPreview(ktpId, parsed, onDone) {
         ui.toast(`Записано тем: ${n}`);
         if (onDone) setTimeout(onDone, 320);
         else setTimeout(() => openKtpDetail(ktpId), 320);
+        }catch(err){ui.toast(err.message);}finally{button.disabled=false;}
       },
     }),
     el('button', { class: 'btn wide', type: 'button', text: 'Отмена', onclick: ui.closeSheet }),

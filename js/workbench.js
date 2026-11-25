@@ -90,3 +90,16 @@ export function lessonPlanReview(plan,lesson,{students,activities,restrictions,e
  });
  return {items,full:[...full],minutes:items.reduce((n,x)=>n+x.item.minutes,0),total:pupils.length};
 }
+
+/** Candidate list, never clearance. Full exemptions have no physical exercise candidates. */
+export function alternativeExerciseCandidates(lesson,studentId,exercises,{students,activities,restrictions,exemptions}){
+ const student=students.find(s=>s.id===studentId&&s.classId===lesson.classId);
+ if(!student)throw Error('Ученик не найден в классе');
+ const full=exemptions.some(e=>e.studentId===studentId&&exemptionCovers(e,lesson.date));
+ const current=new Set(lesson.activityIds||[]);
+ const rows=full?[]:exercises.filter(e=>e?.kind==='exercise'&&!current.has(e.activityId)).map(exercise=>{
+  const check=checkLessonRestrictions({lesson:{...lesson,activityIds:[exercise.activityId],activitiesConfirmed:true},activities,students:[student],restrictions});
+  return {exercise,matches:check.matches,needsReview:check.needsReview};
+ }).filter(r=>!r.needsReview&&!r.matches.length);
+ return {full,rows,theoretical:['Разбор правил и техники упражнения','Наблюдение и запись последовательности действий','Анализ схемы или учебного материала без физической нагрузки']};
+}
