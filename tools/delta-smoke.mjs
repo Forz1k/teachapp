@@ -500,7 +500,7 @@ try{
   assert.equal(await db.get('meta','sync-checkpoint-migration-coach'),undefined);
   assert.deepEqual(await db.get('meta','sync-checkpoint-school'),localBefore.meta.find(r=>r.id==='sync-checkpoint-school'));
   for(const name of Object.keys(SCHEMA).filter(n=>n!=='meta'))assert.deepEqual(reverted[name],localBefore[name]);
-  await assert.rejects(fence.resumeSource({...resume,allDevicesReconciled:false}),/возврат всех устройств/);
+  assert.throws(()=>fence.resumeSource({...resume,allDevicesReconciled:false}),/возврат всех устройств/);
   await stop();await start();
   assert.deepEqual(await target.rollbackStatus(),{revision:1,seal:{migrationId:sourceFenceId,revision:1}});
   await assert.rejects(target.append(1,unusedDelta),e=>e.status===423);
