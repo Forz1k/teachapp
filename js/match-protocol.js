@@ -65,7 +65,7 @@ export function legalSubstitutions(d,s,side,out){
  return roster.filter(p=>!line.includes(p.id)&&(side!=='ours'||!liberoIds(d).includes(p.id))&&(d.substitutionMode!=='paired'||allowedPair(s.substitutionState[side],out,p.id)));
 }
 export function liberoIntervalPending(d,s){return regulationOf(d).liberoInterval==='oneRally'&&s.lastLiberoRally===s.rallyCount;}
-export function replayDetailed(d){
+export function replayDetailed(d,{capturePlayer=null}={}){
  fail(d.mode==='dual'&&text(d.teamName)&&text(d.opponent)&&typeof d.competition==='string'&&d.competition.length<=200&&typeof d.venue==='string'&&d.venue.length<=200&&
    timestamp(d.startedAt)&&validRoster(d.ourPlayers)&&validRoster(d.awayPlayers)&&Array.isArray(d.roster)&&uniq(d.roster)&&
    d.roster.length===d.ourPlayers.length&&d.roster.every(id=>d.ourPlayers.some(p=>p.id===id))&&d.awayPlayers.every(p=>!d.roster.includes(p.id))&&
@@ -77,7 +77,7 @@ export function replayDetailed(d){
  const rosters={ours:d.ourPlayers,theirs:d.awayPlayers};
  const s={lineup:[...d.lineup],awayLineup:[...d.awayLineup],liberoFor:null,liberoId:null,serve:d.firstServe,score:{ours:0,theirs:0},sets:[],setDetails:[],timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(d.lineup,d.awayLineup),rotations:{ours:0,theirs:0},sides:{ours:sideData(),theirs:sideData()},timeline:[],setEnded:false,finished:false,endsSwapped:false,endsAtBreak:false,deciderEndsChanged:false,rallyCount:0,lastLiberoRally:null,changeDue:false};
  let setStarted=d.startedAt,lastAt=d.startedAt;
- const clock=createCourtClock(d.startedAt);
+ const clock=createCourtClock(d.startedAt,{capturePlayer});
  const setNo=()=>s.sets.length+1;
  const lineupFor=side=>side==='ours'?s.lineup:s.awayLineup;
  const visible=side=>lineupFor(side).map(id=>side==='ours'&&id===s.liberoFor?s.liberoId:id);
@@ -241,6 +241,12 @@ export function detailEvent(d,event,now=new Date().toISOString()){
 export function courtTime(state,asOf=state.courtClock.lastAt){
  const lineups={ours:state.lineup.map(id=>id===state.liberoFor?state.liberoId:id),theirs:state.awayLineup};
  return clockSummary(state.courtClock,{lineups,asOf});
+}
+/** Private on-demand player timeline in measured playing time, excluding pauses. */
+export function courtPlayerTimeline(detail,playerId){
+ fail(typeof playerId==='string'&&detail.ourPlayers.some(p=>p.id===playerId),'Игрок отсутствует в заявке матча');
+ const state=replayDetailed(detail,{capturePlayer:playerId}),summary=courtTime(state);
+ return summary.sets.map((set,i)=>({set:i+1,measured:set.started,partial:set.untrackedRallies>0,elapsedMs:set.elapsedMs,playerMs:set.started?(set.players.ours[playerId]||0):null,intervals:summary.intervals.filter(x=>x.set===i+1)}));
 }
 export function reportData(d){
  const s=replayDetailed(d);
