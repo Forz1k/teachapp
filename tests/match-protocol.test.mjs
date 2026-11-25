@@ -187,3 +187,22 @@ test('Эмблемы: только ограниченные PNG data URL, ста
  const d={...base,boardLogos:{ours:png,theirs:null}};assert.equal(replayDetailed(d).ours,0);assert.equal(spectatorSnapshot(d).logos.ours,png);
  assert.throws(()=>replayDetailed({...base,boardLogos:{ours:'bad',theirs:null}}),/параметры/);
 });
+
+import {legalSubstitutions,liberoIds} from '../js/match-protocol.js';
+import {projectMatch} from '../js/public-portal.js';
+test('second libero can replace only active back-row player, legacy event still works',()=>{
+ const p2={id:'a7',name:'Либеро 2',number:7},b={...base,ourPlayers:[...base.ourPlayers,p2],roster:[...base.roster,p2.id],libero2:p2.id};
+ assert.deepEqual(liberoIds(b),['a6','a7']);let d=detailEvent(b,{type:'libero',for:'a4',player:'a7'});assert.equal(replayDetailed(d).liberoId,'a7');
+ assert.throws(()=>detailEvent(d,{type:'libero',for:'a5',player:'a6'}),/один либеро/);d=detailEvent(d,{type:'libero',for:'a4',player:'a6'});assert.equal(replayDetailed(d).liberoId,'a6');assert.equal(replayDetailed(d).subs,0);
+ assert.throws(()=>detailEvent(d,{type:'rally',side:'ours',kind:'kill',player:'a6'}));assert.throws(()=>replayDetailed({...b,lineup:['a7',...b.lineup.slice(1)]}));
+ d=detailEvent(d,{type:'libero',for:null});assert.equal(replayDetailed(d).liberoId,null);assert.equal(replayDetailed(detailEvent(base,{type:'libero',for:'a4'})).liberoId,'a6');
+});
+test('custom substitution limit is respected by replay and available choices',()=>{
+ const reserve={id:'a7',name:'Запасной',number:7};let d={...base,ourPlayers:[...base.ourPlayers,reserve],roster:[...base.roster,reserve.id],limits:{substitutions:8,timeouts:2}};
+ for(let i=0;i<8;i++){const out=i%2?'a7':'a0',incoming=i%2?'a0':'a7';assert.ok(legalSubstitutions(d,replayDetailed(d),'ours',out).some(p=>p.id===incoming));d=detailEvent(d,{type:'sub',side:'ours',out,in:incoming});}
+ assert.equal(replayDetailed(d).subs,8);assert.deepEqual(legalSubstitutions(d,replayDetailed(d),'ours','a0'),[]);
+});
+test('sanctions are private recorded decisions, not inferred scoring or public data',()=>{
+ const d=detailEvent(base,{type:'sanction',side:'ours',category:'warning',player:'a1',note:'PRIVATE referee note'}),s=replayDetailed(d);
+ assert.deepEqual(s.score,{ours:0,theirs:0});assert.equal(s.timeline[0].type,'sanction');assert.throws(()=>detailEvent(d,{type:'sanction',side:'ours',category:'warning',player:'b1',note:''}));assert.equal(JSON.stringify(projectMatch(d)).includes('PRIVATE'),false);assert.equal(replayDetailed(detailEvent(d,null)).timeline.length,0);
+});
