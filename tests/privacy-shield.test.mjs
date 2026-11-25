@@ -31,3 +31,23 @@ test('controller resets on activity, covers on elapsed time, handles visibility 
  doc.visibilityState='hidden';doc.dispatchEvent(new Event('visibilitychange'));assert.deepEqual(calls,['idle','background']);
  stop();covered=false;doc.dispatchEvent(new Event('visibilitychange'));advance(90000);assert.deepEqual(calls,['idle','background']);assert.equal(scheduled,null);
 });
+
+test('Screen lock fails closed on unavailable or malformed storage',async()=>{
+ const {screenLockEnabled,verifyScreenLock}=await import('../js/privacy-shield.js');
+ const denied={getItem(){throw Error('denied');}};
+ assert.equal(screenLockEnabled(denied),true);assert.equal(await verifyScreenLock('',denied),false);
+ assert.equal(await verifyScreenLock('',{getItem:()=>null}),true);
+ assert.equal(await verifyScreenLock('123456',{getItem:()=>'{broken'}),false);
+});
+test('Screen lock rejects stale verifier and competing changes',async()=>{
+ const {changeScreenLock,verifyScreenLock}=await import('../js/privacy-shield.js');
+ let raw=null;const storage={getItem:()=>raw,setItem:(k,v)=>{raw=v;},removeItem:()=>{raw=null;}};
+ await changeScreenLock({next:'123456'},storage);
+ assert.equal(await verifyScreenLock('123456',storage),true);
+ const old=raw,checking=verifyScreenLock('123456',storage);raw=null;
+ assert.equal(await checking,false);
+ raw=old;const changing=changeScreenLock({current:'123456',next:'987654'},storage);raw=null;
+ await assert.rejects(changing,/другой вкладке/);assert.equal(raw,null);
+ const noWrite={getItem:()=>null,setItem:()=>{}};
+ await assert.rejects(changeScreenLock({next:'123456'},noWrite),/Не удалось сохранить/);
+});
