@@ -19,3 +19,13 @@ export function calibratedMarkers(detail,anchors=[],filters={}){
  const time=t=>{let a=points[0],b=points.at(-1);if(t<=a.recorded)return a.seconds+t-a.recorded;if(t>=b.recorded)return b.seconds+t-b.recorded;for(let i=1;i<points.length;i++){if(points[i].recorded>=t){a=points[i-1];b=points[i];break;}}return a.seconds+(t-a.recorded)*(b.seconds-a.seconds)/(b.recorded-a.recorded);};
  const {kind='',side='',playerId='',duration=Infinity}=filters;return all.map(m=>({...m,seconds:time(m.seconds)})).filter(m=>(!kind||m.kind===kind)&&(!side||m.side===side)&&(!playerId||m.playerId===playerId)&&m.seconds>=0&&m.seconds<=duration);
 }
+
+// Local clip range only; never stores or uploads the underlying recording.
+export function clipRange(start,end,duration){
+ if(![start,end,duration].every(Number.isFinite)||start<0||end>duration||end-start<1||end-start>30)throw Error('Укажите отрезок от 1 до 30 секунд в пределах видео');
+ return {start,end,seconds:end-start};
+}
+export function clipAround(seconds,duration,before=5,after=5){
+ if(!Number.isFinite(seconds)||!Number.isFinite(duration)||seconds<0||seconds>duration)throw Error('Некорректное положение видео');
+ return clipRange(Math.max(0,seconds-before),Math.min(duration,seconds+after),duration);
+}
