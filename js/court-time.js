@@ -24,7 +24,7 @@ export function clockRally(c){if(!c.running)c.sets[c.set-1].untrackedRallies++;}
 export function clockPause(c){c.running=false;}
 export function clockNext(c){c.running=false;c.set++;c.sets.push(empty());}
 export function clockSummary(c,{lineups,asOf=c.lastAt}={}){
- const copy=structuredClone(c),now=time(asOf);
+ const copy={...c,sets:c.sets.map(s=>({...s,players:{ours:Object.assign(Object.create(null),s.players.ours),theirs:Object.assign(Object.create(null),s.players.theirs)}}))},now=time(asOf);
  if(copy.running&&lineups&&Number.isFinite(now)&&now>copy.lastAt)clockAdvance(copy,now,lineups);
  const players={ours:Object.create(null),theirs:Object.create(null)};
  for(const set of copy.sets)for(const side of sideKeys)for(const [id,ms] of Object.entries(set.players[side]))players[side][id]=(players[side][id]||0)+ms;
