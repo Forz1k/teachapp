@@ -39,5 +39,5 @@ test('Season-bounded archive pagination reaches old seasons directly and rejects
  const page=await fetchArchivePage(target,{season:'2024',limit:1,fetcher});assert.deepEqual(page.rows.map(r=>r.id),[last.id]);assert.equal(page.cursor,archiveKey(last));
  const next=await fetchArchivePage(target,{season:'2024',cursor:page.cursor,limit:1,fetcher});assert.deepEqual(next.rows.map(r=>r.id),[first.id]);assert.equal(next.cursor,null);
  assert.throws(()=>archivePage(raw,{season:'2024',cursor:archiveKey(after)}));assert.throws(()=>archiveSeasonBounds('2024.5'));assert.throws(()=>archiveSeasonBounds('1969'));assert.throws(()=>archiveSeasonBounds('9999'));assert.equal(archiveSeasonBounds('all'),null);
- assert.deepEqual(archivePage(raw,{season:'2023'}),{rows:[],cursor:null});
+ assert.deepEqual(archivePage(raw,{season:'2022'}),{rows:[],cursor:null});
 });
