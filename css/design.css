@@ -513,3 +513,14 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 
 /* Measured on-court time: compact live control, no layout shift on each tick. */
 .court-time-panel{padding:10px 12px;gap:6px}.court-time-panel p{font-size:12px;color:var(--text-2);margin:0;line-height:1.4}.court-time-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.court-time-head>div{display:grid;gap:2px;min-width:0}.court-time-head small{font-size:12px;color:var(--text-2)}.court-time-head strong{font-size:24px;font-variant-numeric:tabular-nums;line-height:1.1}.court-time-head .btn{min-height:44px;font-size:13px}.court-time-set{font-size:13px;font-variant-numeric:tabular-nums}
+
+/* Per-device density: do not alter fixed sticky column offsets or hide lesson dates. */
+.journal-density{max-width:150px;min-height:36px;font-size:12px}
+.screen>.journal-grid[data-density="compact"]{--journal-name-width:124px;--journal-date-width:52px;--journal-total-width:56px}
+.screen>.journal-grid[data-density="comfortable"]{--journal-name-width:154px;--journal-date-width:86px;--journal-total-width:70px}
+.journal-grid[data-density="compact"] .journal tbody td{height:38px}
+.journal-grid[data-density="comfortable"] .journal tbody td{height:56px}
+.journal-grid[data-density="comfortable"] .journal .name-cell{font-size:15px}
+.journal-grid[data-density="comfortable"] .journal thead th .topic{font-size:12px;max-height:42px}
+@media(min-width:1000px){.screen>.journal-grid[data-density="compact"]{--journal-name-width:180px}.screen>.journal-grid[data-density="comfortable"]{--journal-name-width:255px}}
+@media(max-width:360px){.screen>.journal-grid[data-density="comfortable"]{--journal-name-width:138px;--journal-date-width:76px}}
