@@ -19,7 +19,7 @@ const require=(condition,status,error)=>{if(!condition)throw {status,error};};
 const publicMember=m=>({id:m.id,role:m.role,teamIds:m.teamIds,matchIds:m.matchIds,teamId:m.teamId,athleteId:m.athleteId,expiresAt:m.expiresAt,revokedAt:m.revokedAt});
 const publicMatch=(m,now)=>({id:m.id,teamId:m.teamId,opponent:m.opponent,status:m.status,revision:m.revision,set:m.set,score:clone(m.score),sets:clone(m.sets),lease:m.lease&&m.lease.until>now?{holderId:m.lease.holderId,generation:m.generation,until:m.lease.until}:null,generation:m.generation});
 const resource=(s,type,fields={})=>({workspaceId:s.id,type,...fields});
-function allowed(s,member,action,r){return authorizeWorkspace({id:member.id},{...member,userId:member.id,workspaceId:s.id,revoked:member.revokedAt!==null},r,action);}
+function allowed(s,member,action,r){if(member.role==='assistant'&&action==='team.roster'&&!s.matches.some(m=>m.teamId===r.teamId&&m.status==='live'&&member.matchIds.includes(m.id)))return false;return authorizeWorkspace({id:member.id},{...member,userId:member.id,workspaceId:s.id,revoked:member.revokedAt!==null},r,action);}
 function audit(s,member,action,target,now){s.audit.push({at:now,actorId:member.id,action,target});if(s.audit.length>200)s.audit.splice(0,s.audit.length-200);}
 function memberByHash(s,auth,now){return s.members.find(m=>m.tokenHash===auth&&m.revokedAt===null&&m.expiresAt>now);}
 function validateRoster(body){require(exact(body,['id','name','players'])&&id(body.id)&&str(body.name)&&Array.isArray(body.players)&&body.players.length<=64,400,'team');require(body.players.every(p=>exact(p,['id','name','number'])&&id(p.id)&&str(p.name)&&int(p.number,0,99))&&uniq(body.players.map(p=>p.id))&&uniq(body.players.map(p=>p.number)),400,'roster');}

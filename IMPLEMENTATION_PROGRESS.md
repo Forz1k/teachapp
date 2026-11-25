@@ -433,3 +433,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 7.1 Athlete — checkpoint (synthetic LAB only)
 - Assignment acknowledgements require the profile revision; changed assignment name/deadline invalidates earlier acknowledgement. The athlete cabinet sends the current revision. Added stale-response regression tests. No production student accounts.
+
+### 7.2 Assistant — checkpoint (synthetic LAB only)
+- Assistant roster access ends with the assigned live match; selection edits stop automatic lease renewals and stale UI loads are discarded. Added end-of-match authorization regression test. No real-account rollout.
