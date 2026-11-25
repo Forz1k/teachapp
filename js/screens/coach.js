@@ -1,3 +1,4 @@
+import {courtTimeLabel} from '../court-time.js';
 import {openOpponents,openTrainingOverview,openPreMatchDossier} from './coach-opponents.js';
 import {openAssistant} from './assistant.js';
 import {openStudio} from './studio.js';
@@ -93,10 +94,11 @@ function playerCard(team,player,view,refresh){
     const a=C.playerAttendance(player.id,view.trainings.filter(t=>(!range.from||t.date>=range.from)&&(!range.to||t.date<=range.to)));
     const load=C.playerTrainingLoad(player.id,view.trainings,range);
     const s=C.playerSeasonStats(view.matches,player.id,range);
-    const n=s.errors;
+    const n=s.errors,t=s.playingTime;
     content.replaceChildren(
       el('div',{class:'dashboard-metrics'},[metric('Личные очки',format(s.summary.sums.points),'trophy','Зафиксировано'),metric('Эйсы',format(s.summary.sums.aces),'quick','Зафиксировано'),metric('Атаки',format(s.summary.sums.attackKills),'chart','Результативные'),metric('Блоки',format(s.summary.sums.blocks),'shield','Зафиксировано')]),
       card('Матчи · выбранный период',[p('В заявке: '+s.rosterMatches+' · подробных протоколов: '+s.detailedMatches),p('Розыгрышей на площадке по подробным протоколам: '+s.rallies),trendChart(s.chosen.filter(m=>Number.isFinite(m.stats[player.id]?.points)).map(m=>({date:m.date,value:m.stats[player.id].points})).sort((a,b)=>a.date.localeCompare(b.date)).slice(-20),{unit:'очки',label:'Личные очки в матчах'}),p('График: последние 20 матчей с известным показателем.')]),
+      card('Игровое время',[el('div',{class:'dashboard-metrics'},[metric('На площадке',t.measuredMatches?courtTimeLabel(t.totalMs):'—','quick','Измерено'),metric('Среднее за матч',t.measuredMatches?courtTimeLabel(t.totalMs/t.measuredMatches):'—','chart','По замерам')]),p('Замеры: '+t.measuredMatches+' из '+s.rosterMatches+' · частичные: '+t.partialMatches+' · без данных: '+t.unknownMatches),p('Доля измеренного времени команды: '+ratio(t.totalMs,t.teamMs)+'. Это время в составе на площадке, не чистое время розыгрышей.'),t.rows.length?el('details',{},[el('summary',{text:'По матчам и партиям · '+t.rows.length}),...t.rows.map(r=>el('div',{class:'profile-result'},[p(fmtFull(r.date)+' · '+r.opponent+' · '+courtTimeLabel(r.ms)+(r.partial?' · частично':'')),p(r.sets.map((v,i)=>'П'+(i+1)+' '+courtTimeLabel(v.ms)+(v.partial?'*':'')).join(' · '))]))]):p('Включите измерение в подробном LIVE-матче.')]),
       card('Подача · подробные матчи',[p('Розыгрышей на своей подаче: '+(s.detailedMatches?s.serviceRallies:'—')),p('Выиграно командой на подаче: '+ratio(s.serviceWins,s.serviceRallies)),p('Эйсы: '+(s.detailedMatches?s.serviceAces:'—')+' · отмеченные ошибки подачи: '+(s.detailedMatches?s.serviceErrors:'—')),p('Проигрыши на подаче без указанной причины: '+s.unclassifiedServiceLosses),p('Выигрыш розыгрыша на подаче — командный показатель, не личная точность подачи.')]),
       card('Ошибки · подробные матчи',[p(s.detailedMatches?'Подача '+n.serve+' · атака '+n.attack+' · приём '+n.receive+' · прочие '+n.other:'Нет подробных протоколов'),p('Розыгрыши без полной атрибуции на площадке: '+s.unknownOnCourt),p('Ноль отмеченных ошибок не доказывает отсутствие ошибок.')]),
       card('Данные прежних и ручных матчей',[p('Доля успешных среди записанных действий (не гарантирует полноту):'),p('Подача '+ratio(s.rates.serve.success,s.rates.serve.total)),p('Приём '+ratio(s.rates.receive.success,s.rates.receive.total)),p('Атака '+ratio(s.rates.attack.success,s.rates.attack.total)),p('Событийные протоколы не содержат все попытки атаки и приёма; их проценты здесь не вычисляются.')]),

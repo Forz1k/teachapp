@@ -4,7 +4,8 @@ import * as db from './db.js';
 import {uid,todayIso} from './model.js';
 import {catalog,validPeriod,active,ancestorIds} from './health.js';
 import {replay,appendEvent,undoEvent,validateLiveData} from './volleyball.js';
-import {replayDetailed,validBoardColors,validBoardLogos} from './match-protocol.js';
+import {courtTimeLabel} from './court-time.js';
+import {replayDetailed,courtTime,validBoardColors,validBoardLogos} from './match-protocol.js';
 import {validateVolleyImport,duplicateVolleyMatch} from './volleypoint-import.js';
 import {validateCoachTests,guardTestWrite} from './coach-tests.js';
 export const coachStores=['coachTeams','coachPlayers','coachTrainings','coachMatches','coachLive','coachLineups','coachTests'];
@@ -154,16 +155,20 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
  const summary=summarizeStats(chosen,[playerId]);
  const errors={serve:0,attack:0,receive:0,other:0};
  let detailedMatches=0,rallies=0,serviceRallies=0,serviceWins=0,serviceAces=0,serviceErrors=0,unclassifiedServiceLosses=0,unknownOnCourt=0;
+ const playingTime={measuredMatches:0,partialMatches:0,unknownMatches:0,totalMs:0,teamMs:0,rows:[]};
  let importedMatches=0,importedServiceWins=0,importedLongestSeries=0,importedErrors=0;
  const importedBreakdown={serve:0,attack:0,receive:0,other:0};
  const rates={serve:{total:0,success:0},receive:{total:0,success:0},attack:{total:0,success:0}};
  for(const m of chosen){
+  if(!m.detail)playingTime.unknownMatches++;
   if(m.imported){
    const p=m.imported.players[playerId];if(p){importedMatches++;importedErrors+=p.errors;importedBreakdown.serve+=p.serveErrors;importedBreakdown.attack+=p.attackErrors;importedBreakdown.receive+=p.receiveErrors;importedBreakdown.other+=p.otherErrors;for(const s of p.serviceSeries){importedServiceWins+=s.wins;importedLongestSeries=Math.max(importedLongestSeries,s.wins);}}
    continue;
   }
   if(m.detail){
    const state=replayDetailed(m.detail);detailedMatches++;
+   const t=courtTime(state);
+   if(t.measured){const ms=t.players.ours[playerId]||0;playingTime.measuredMatches++;if(t.partial)playingTime.partialMatches++;playingTime.totalMs+=ms;playingTime.teamMs+=t.elapsedMs;playingTime.rows.push({matchId:m.id,date:m.date,opponent:m.opponent,ms,teamMs:t.elapsedMs,partial:t.partial,sets:t.sets.map(s=>({measured:s.started,ms:s.started?(s.players.ours[playerId]||0):null,teamMs:s.elapsedMs,partial:s.untrackedRallies>0}))});}else playingTime.unknownMatches++;
    const stat=state.sides.ours.stats[playerId]||{};
    errors.serve+=stat.serveErrors||0;errors.attack+=stat.attackErrors||0;errors.receive+=stat.receiveErrors||0;errors.other+=stat.otherErrors||0;
    for(const e of state.timeline){
@@ -184,7 +189,7 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
    rates[key].total+=x[total];rates[key].success+=complement?x[total]-x[success]:x[success];
   }
  }
- return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,importedMatches,importedErrors,importedBreakdown,importedServiceWins,importedLongestSeries,rates,chosen};
+ return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,importedMatches,importedErrors,importedBreakdown,importedServiceWins,importedLongestSeries,rates,chosen,playingTime};
 }
 export function teamView(data,teamId){
   return {players:data.coachPlayers.filter(p=>p.teamId===teamId),trainings:data.coachTrainings.filter(t=>t.teamId===teamId).sort(dateOrder),
@@ -196,11 +201,12 @@ function csvCell(value){
   return '"'+s.replaceAll('"','""')+'"';
 }
 export function coachCsv(view){
-  const rows=[['Дата','Соревнование','Соперник','Счёт','Партии','Игрок',...Object.values(metrics)]];
+  const rows=[['Дата','Соревнование','Соперник','Счёт','Партии','Игрок',...Object.values(metrics),'Время на площадке (измерено)','Полнота времени']];
   for(const m of view.matches){
     const score=matchScore(m),base=[m.date,m.competition,m.opponent,score.ours+':'+score.theirs,m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')];
-    for(const id of m.roster)rows.push([...base,view.players.find(p=>p.id===id)?.name||'',...keys.map(k=>m.stats[id]?.[k]??'')]);
-    if(!m.roster.length)rows.push([...base,'',...keys.map(()=> '')]);
+    const timing=m.detail?courtTime(replayDetailed(m.detail)):null;
+    for(const id of m.roster)rows.push([...base,view.players.find(p=>p.id===id)?.name||'',...keys.map(k=>m.stats[id]?.[k]??''),timing?.measured?courtTimeLabel(timing.players.ours[id]||0):'',timing?.measured?(timing.partial?'Частично':'Измерено'):'Нет данных']);
+    if(!m.roster.length)rows.push([...base,'',...keys.map(()=> ''),'','']);
   }
   return '\uFEFF'+rows.map(r=>r.map(csvCell).join(';')).join('\r\n');
 }
