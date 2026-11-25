@@ -1,5 +1,6 @@
 import {resultLink} from '../public-archive.js';
 import {openStudio} from './studio.js';
+import {openMediaCenter} from './public-media.js';
 import * as P from '../public-publisher.js';
 import {loadCoach,matchScore} from '../coach.js';
 import {prepareLogo} from '../match-protocol.js';
@@ -35,6 +36,7 @@ export function openPublicPortal(team,back=closeSheet){
     field('Соперник',opponent),field('Дата и время',when),el('details',{},[el('summary',{text:'Эмблемы команд'}),field('Наша команда',ours),field('Соперник',theirs)]),btn(editing?'Сохранить изменения':'+ Добавить матч',()=>run(async()=>{if(!when.value)throw Error('Укажите дату и время');P.saveFixture(id,{id:editing?.id||uid('fixture'),opponent:opponent.value,startAt:new Date(when.value).getTime(),logos:{ours:await fixtureLogo(ours,'ours'),theirs:await fixtureLogo(theirs,'theirs')}});editing=null;}),'primary wide'),
     editing?btn('Отмена редактирования',()=>{editing=null;draw();},'wide'):null,
     ...d.schedule.map(x=>el('div',{class:'vp-portal-fixture'},[el('strong',{text:(d.team||team.name)+' — '+x.opponent}),p(date(x.startAt)+(x.startAt<Date.now()?' · проверьте актуальность':'')),el('div',{class:'vp-actions'},[btn('Изменить',()=>{editing=x;draw();}),btn('Удалить',()=>run(async()=>{if(await confirmDialog({title:'Убрать матч из расписания?',text:'Зрители больше не увидят эту встречу.',ok:'Удалить',danger:true}))P.removeFixture(id,x.id);}))])]))),
+   card('Новости и публичные турниры',p('Отдельные черновики, предпросмотр и публикация.'),btn('Медиацентр команды',()=>openMediaCenter(team,()=>openPublicPortal(team,back)),'wide')),
    card('TeachApp Studio',p('Афиши, результаты, грамоты и другие изображения без интернета.'),btn('Открыть студию',()=>openStudio({team:d.team||team.name},()=>openPublicPortal(team,back)),'wide')),
    card('Расширенный архив',p('Постоянные ссылки и отдельные записи. Требуются согласованные правила Firebase v2.'),btn('Управлять расширенным архивом',()=>openExtendedArchive(team,()=>openPublicPortal(team,back)),'wide')),
    card('Опубликованные результаты',p('Добавляйте результаты из истории матчей. Здесь можно убрать отдельную встречу, не удаляя локальную запись.'),btn('+ Добавить результат из истории',()=>openSavedResults(team,()=>openPublicPortal(team,back)),'primary wide'),...d.archive.map(x=>el('div',{class:'vp-portal-fixture'},[el('strong',{text:x.opponent+' · '+x.setsWon.ours+':'+x.setsWon.theirs}),p(x.sets.map(s=>s.ours+':'+s.theirs).join(' / ')),btn('Убрать с сайта',()=>run(async()=>{if(await confirmDialog({title:'Убрать результат с сайта?',text:'Локальный матч и статистика сохранятся. Изменение станет видимым после синхронизации.',ok:'Убрать',danger:true}))P.unpublishResult(id,x.id);}), 'wide')])),!d.archive.length?p('Пока нет опубликованных результатов.'):null),

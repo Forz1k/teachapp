@@ -1,3 +1,4 @@
+import {mediaTarget,readMediaVersion,writePublicMedia,mediaProjection} from './public-media.js';
 import {archiveTarget,archiveKey,readArchiveVersion,writeArchiveRecord,fetchArchivePage,equalArchiveResult} from './public-archive.js';
 /* Team portal state is separate from school/coach records. Opt-in publishing only. */
 import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures} from './public-portal.js';
@@ -170,7 +171,7 @@ function archiveSession(id){
  const e=entry(id),d=e.data;if(!e.session||!d.enabled||d.pendingDelete||e.conflict||e.dirty||e.running)throw Error('Сначала завершите синхронизацию публичной страницы');
  const session=e.session,epoch=e.epoch,target=archiveTarget(portalAddress(d.origin,d.owner,d.slug));
  const stillAllowed=()=>{if(e.session!==session||e.epoch!==epoch||!d.enabled||d.pendingDelete||e.conflict||e.dirty||e.running)throw Error('Состояние публикации изменилось. Обновите список.');};
- return {session,target,stillAllowed};
+ return {session,target,portal:portalAddress(d.origin,d.owner,d.slug),stillAllowed};
 }
 export async function listExtendedArchive(id,{cursor=null,fetcher=fetch}={}){
  const access=archiveSession(id),page=await fetchArchivePage(access.target,{cursor,fetcher});access.stillAllowed();return page;
@@ -200,3 +201,6 @@ export async function migrateExtendedArchive(id,{confirm,fetcher=fetch}={}){
  }catch(e){access.stillAllowed();if(e.status===412)report.conflicts++;else report.failed++;}}
  return report;
 }
+
+export async function loadMediaVersion(id,fetcher=fetch){const a=archiveSession(id),v=await readMediaVersion(mediaTarget(a.portal),fetcher);a.stillAllowed();return v;}
+export async function publishMediaVersion(id,value,etag,fetcher=fetch){const a=archiveSession(id),token=await a.session.getToken();a.stillAllowed();await writePublicMedia(mediaTarget(a.portal),mediaProjection(value),token,etag,fetcher);return true;}

@@ -1,3 +1,4 @@
+import {validateNewsDraft} from './public-media.js';
 import {validateSchoolCompetition,validateTeacherPortfolio} from './teacher-portfolio.js';
 import {validateStudentGoal} from './student-goals.js';
 import {validateMaterial,materialKinds} from './library-materials.js';
@@ -35,6 +36,7 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='publicNewsDraft'){validateNewsDraft(r);return;}
  if(r.kind==='schoolCompetition'){validateSchoolCompetition(r);return;}
  if(r.kind==='teacherPortfolio'){validateTeacherPortfolio(r);return;}
  if(r.kind==='studentGoal'){validateStudentGoal(r);return;}
@@ -67,7 +69,7 @@ export function validateWorkRecord(r){
 }
 export async function listWork(kind){return db.transaction(['workRecords'],'readonly',s=>s.workRecords.index('kind').getAll(kind));}
 export async function saveWork(input){
- require(['exercise','plan','event','rubric','normAssignment','videoReview','opponentNote'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
+ require(['exercise','plan','event','rubric','normAssignment','videoReview','opponentNote','publicNewsDraft'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
  const r=structuredClone({...input,id:input.id||uid(input.kind)});validateWorkRecord(r);
  return db.transaction(['workRecords'],'readwrite',async s=>{
   const old=await s.workRecords.get(r.id);require(!old||old.kind===r.kind,'Нельзя изменить тип записи');if(input.id)require(old,'Запись уже удалена');
