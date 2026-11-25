@@ -16,11 +16,11 @@ import {attentionPanel} from './attention.js';
 import {listWork,lessonPlanReview,phases} from '../workbench.js';
 import {openWorkCalendar} from './work-calendar.js';
 import {showLessonSession} from './session.js';
-import {openInventory,openAchievements} from './resources.js';
+import {openInventory,openAchievements,equipmentCard} from './resources.js';
 import {openDocuments} from './documents.js';
 import {openTournaments} from './tournaments.js';
 import {calendarShortcut} from './work-calendar.js';
-import {openLibrary} from './library.js';
+import {openLibrary,openFallbackBuilder,openCircuitBuilder} from './library.js';
 import {openSchoolWorkload,openSchoolPeriodCenter} from './school-review.js';
 import {openDebtCenter} from './school-tools.js';
 import {metric,actionTile,dashboardHeading,personalizedActions,dayReview,dayDataIndex,focusHero,animateDashboard} from '../dashboard.js';
@@ -66,7 +66,7 @@ export function openReviewTask(target,date=M.todayIso()) {
  * wrong lesson. Only the explicit open action may create a journal row. */
 export async function openDayPreparation(target,date=M.todayIso()){
  try{
-  const [assignments,allPlans]=await Promise.all([listWork('normAssignment'),listWork('plan')]);
+  const [assignments,allPlans,stock]=await Promise.all([listWork('normAssignment'),listWork('plan'),listWork('inventory')]);
   const plans=allPlans.filter(p=>p.context==='school').sort((a,b)=>a.name.localeCompare(b.name,'ru'));
   const getRow=()=>todayEntries(date).find(r=>r.id===target.id&&r.classId===target.classId&&r.slot===target.slot);
   const row=getRow();if(!row)return ui.toast('Расписание изменилось. Выберите урок заново.');
@@ -103,7 +103,8 @@ export async function openDayPreparation(target,date=M.todayIso()){
      !prep.norms.length?p('Нет открытых замечаний по назначенным нормативам.'):null,btn('Центр задолженностей',()=>openDebtCenter(back))),
     card('Выбранный конспект',plan?p('Цель: '+(selected.goal||'не указана')+' · упражнения: '+plan.minutes+' / '+selected.minutes+' мин'):p('Выберите конспект выше для проверки упражнений.'),
      plan?p('Инвентарь по конспекту: '+(selected.equipment||'не указан')+'; фактическую доступность проверьте отдельно.'):null,
-     ...(plan?(selected.resources||[]).map(r=>p(r.name+' · '+r.qty+' '+r.unit)):[]),
+     plan?equipmentCard(selected.resources||[],stock):null,
+     plan?btn('Резервный сценарий этого конспекта',()=>openFallbackBuilder(back,selected.id)):null,
      ...(plan?plan.items.map(({item,matches,potentialMatches,needsReview})=>card(phases[item.phase]+' · '+item.exercise.name+' · '+item.minutes+' мин',
       p(item.exercise.description||''),needsReview?p('Уточнить нагрузку'):null,...matches.map(m=>restriction(m.restriction,'Совпадение: ')),...potentialMatches.map(m=>restriction(m.restriction,'Возможное ограничение: ')),
       !needsReview&&!matches.length?p('По внесённым категориям совпадений не найдено.'):null)):[]),
@@ -111,7 +112,7 @@ export async function openDayPreparation(target,date=M.todayIso()){
    open.disabled=date>M.todayIso()||!prep.pupils.length;
   }catch(e){open.disabled=true;view.replaceChildren(p(e.message));}};
   select.onchange=draw;draw();
-  ui.openSheet(el('div',{class:'coach-form'},[el('h2',{text:'Подготовка к уроку'}),p('Просмотр не создаёт запись в журнале и не изменяет оценки, нагрузку или конспекты.'),el('label',{class:'field'},[el('span',{text:'Конспект для просмотра'}),select]),view,open,btn('Закрыть',ui.closeSheet)]),{fullHeight:true});
+  ui.openSheet(el('div',{class:'coach-form'},[el('h2',{text:'Подготовка к уроку'}),p('Просмотр не создаёт запись в журнале и не изменяет оценки, нагрузку или конспекты.'),el('label',{class:'field'},[el('span',{text:'Конспект для просмотра'}),select]),view,btn('Конструктор круговой тренировки',()=>openCircuitBuilder(back,row.classId,date)),open,btn('Закрыть',ui.closeSheet)]),{fullHeight:true});
  }catch(e){ui.toast(e.message);}
 }
 

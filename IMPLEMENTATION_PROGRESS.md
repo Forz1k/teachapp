@@ -323,3 +323,7 @@ PR #94 не объединён, новый релиз не опубликова�
 ## Teacher Intelligence: all-class period review checkpoint — 25.11.2026
 - `9c1edee`: all-class period closure overview, slot-aware schedule gaps, explicit confirmation and missing attendance, due norm review vs pending results, filters, direct lesson drill-down, aggregate document preview. Corrected class-wide attendance inference; possible restrictions remain review candidates in norm and plan workflows.
 - 371/371 tests, zero failures/skips, validate, Chromium/offline (65 screenshots), WebKit, Cloudflare, Platform and Delta synthetic successful: [CI](https://github.com/Forz1k/teachapp/actions/runs/45571373549), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45571373493).
+
+## Teacher Intelligence: preparation checkpoint
+- `915f73c`, `d182a8e`: read-only per-slot preparation, dated restriction and norm context, selected plan preview, no implicit journal writes. Stabilized old browser journal check by waiting for populated columns, retaining geometry assertions.
+- 375/375, no failures/skips, both full CI runs PASS, 68 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic. [CI](https://github.com/Forz1k/teachapp/actions/runs/45572261118), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45572261190).

@@ -9,6 +9,8 @@ import {el,openSheet,closeSheet,toast,confirmDialog,downloadBlob} from '../ui.js
 import {equipmentCard} from './resources.js';
 import {openBoardView} from './tactics.js';
 import {dashboardHeading} from '../dashboard.js';
+import * as S from '../store.js';
+import * as M from '../model.js';
 const p=text=>el('p',{text});
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
 const inp=(value='',type='text',props={})=>el('input',{value,type,...props});
@@ -27,7 +29,7 @@ function exportPlan(plan){
  const text=[plan.name,W.contexts[plan.context]+' · '+plan.minutes+' мин', 'Группа: '+plan.audience,'Цель: '+plan.goal,'Инвентарь: '+plan.equipment,'',...plan.items.flatMap(i=>[W.phases[i.phase]+' · '+i.minutes+' мин · '+i.exercise.name,i.exercise.description,'Инвентарь: '+i.exercise.equipment,'Методические указания: '+i.notes,'']),...(plan.resources||[]).map(r=>'Инвентарь: '+r.name+' · '+r.qty+' '+r.unit),...(plan.tactics||[]).map(b=>'Тактическая схема: '+b.name+' · '+b.note),'Всего: '+plan.items.reduce((n,i)=>n+i.minutes,0)+' мин.'].join('\n');
  downloadBlob(new Blob(['\uFEFF'+text],{type:'text/plain;charset=utf-8'}),'plan.txt');
 }
-async function planForm(existing,back,context){
+export async function planForm(existing,back,context){
  const e=existing||{},exercises=[...W.builtinExercises,...await W.listWork('exercise')],name=inp(e.name||''),mode=select(Object.entries(W.contexts),e.context||context||'school'),minutes=inp(e.minutes||45,'number',{min:1,max:600}),goal=area(e.goal||''),equipment=inp(e.equipment||''),audience=inp(e.audience||''),items=structuredClone(e.items||[]);
  const resources=structuredClone(e.resources||[]),stock=await W.listWork('inventory'),stockPick=select([['','Выберите инвентарь'],...stock.filter(r=>!r.archived).map(r=>[r.id,r.name])]),resourceQty=inp(1,'number',{min:1,step:1}),resourceList=el('div',{class:'coach-stack'});
  function drawResources(){resourceList.replaceChildren(equipmentCard(resources,stock),...resources.map((r,i)=>btn('Убрать '+r.name,()=>{resources.splice(i,1);drawResources();})));}drawResources();
@@ -48,6 +50,57 @@ async function planForm(existing,back,context){
  const save=btn('Сохранить конспект',async()=>{save.disabled=true;try{await W.saveWork({id:e.id,kind:'plan',name:name.value.trim(),context:mode.value,minutes:num(minutes),goal:goal.value.trim(),equipment:equipment.value.trim(),audience:audience.value.trim(),items,resources,gymBoards:gyms,...(mode.value==='coach'?{tactics}:{})});await back();}catch(err){toast(err.message);}finally{save.disabled=false;}},'primary');
  openSheet(stack([el('h2',{text:'Конспект занятия'}),field('Название',name),field('Тип',mode),field('Класс / группа (без ФИО)',audience),field('Длительность',minutes),field('Цель и задачи',goal),field('Инвентарь',equipment),field('Этап',phase),field('Упражнение',pick),btn('+ Добавить упражнение',()=>{const ex=exercises.find(x=>x.id===pick.value);if(!ex)return;items.push({phase:phase.value,exercise:structuredClone(ex),minutes:ex.minutes,notes:''});items.sort((a,b)=>Object.keys(W.phases).indexOf(a.phase)-Object.keys(W.phases).indexOf(b.phase));draw();}),total,list,resourceBox,boardBox,gymBox,save,btn('Назад',back)]));
 }
+/** Reserve plans are independent ordinary school plans, not automatic substitutions. */
+export async function openFallbackBuilder(back=closeSheet,initialSource){
+ try{
+  const plans=(await W.listWork('plan')).filter(r=>r.context==='school');
+  const source=select([['','Выберите конспект'],...plans.map(r=>[r.id,r.name])],initialSource||''),reason=select(Object.entries(W.fallbackReasons)),preview=el('div',{class:'coach-stack'});
+  const draw=()=>{const plan=plans.find(r=>r.id===source.value);preview.replaceChildren(plan?card('Исходный конспект',[p(plan.name+' · '+plan.minutes+' мин'),...plan.items.map(i=>p(W.phases[i.phase]+' · '+i.exercise.name+' · '+i.minutes+' мин')),p('В копии будут очищены потребность в инвентаре и схемы зала. Перепроверьте все упражнения и заполните реальные условия.')]):p('Выберите сохранённый школьный конспект.'));};
+  source.onchange=reason.onchange=draw;draw();
+  openSheet(stack([el('h2',{text:'Резервный сценарий урока'}),p('Причина помогает различать версии. Исходный конспект и журнал не изменяются.'),field('Исходный конспект',source),field('Причина',reason),preview,btn('Создать черновик резервного конспекта',async()=>{
+   try{const fresh=(await W.listWork('plan')).find(r=>r.id===source.value);if(!fresh)return toast('Выберите доступный школьный конспект');await planForm(W.fallbackPlanDraft(fresh,reason.value),back,'school');}catch(e){toast(e.message);}
+  },'primary'),btn('Назад',back)]),{fullHeight:true});
+ }catch(e){toast(e.message);}
+}
+export async function openCircuitBuilder(back=closeSheet,initialClass=S.state.currentClassId,initialDate=M.todayIso()){
+ try{
+  const exercises=[...W.builtinExercises,...await W.listWork('exercise')],stock=await W.listWork('inventory'),byExercise=id=>exercises.find(e=>e.id===id);
+  const exerciseSelect=(value)=>select(exercises.map(e=>[e.id,e.name]),value);
+  const name=inp('Круговая тренировка'),duration=inp(45,'number',{min:1,max:600}),rounds=inp(2,'number',{min:1,max:8}),work=inp(3,'number',{min:1,max:600}),transition=inp(1,'number',{min:0,max:15});
+  const cls=select([['','Без класса'],...S.state.classes.map(c=>[c.id,c.name])],initialClass||''),date=inp(initialDate,'date');
+  const warmup=exerciseSelect('builtin-warmup'),warmMinutes=inp(5,'number',{min:1,max:600}),cooldown=exerciseSelect('builtin-cool'),coolMinutes=inp(5,'number',{min:1,max:600});
+  const stations=[{exerciseId:'builtin-pass',capacity:8,notes:'',resources:[]},{exerciseId:'builtin-serve',capacity:8,notes:'',resources:[]}];
+  const list=el('div',{class:'coach-stack circuit-stations'}),result=el('div',{class:'coach-stack','aria-live':'polite'});let draft=null;
+  function draw(){
+   list.replaceChildren(...stations.map((station,index)=>{
+    const pick=exerciseSelect(station.exerciseId),capacity=inp(station.capacity,'number',{min:1,max:1000}),notes=area(station.notes,500),resource=select([['','Выберите инвентарь'],...stock.filter(r=>!r.archived).map(r=>[r.id,r.name])]),qty=inp(1,'number',{min:1,max:1000000});
+    pick.onchange=()=>{station.exerciseId=pick.value;refresh();};capacity.oninput=()=>{station.capacity=num(capacity);refresh();};notes.oninput=()=>{station.notes=notes.value;refresh();};
+    return card('Станция '+(index+1),[field('Упражнение',pick),field('Вместимость группы',capacity),field('Указания',notes),
+     field('Инвентарь станции',resource),field('Количество на всю станцию',qty),
+     btn('+ Добавить инвентарь',()=>{const item=stock.find(r=>r.id===resource.value),q=num(qty);if(!item||!Number.isInteger(q)||q<1||q>1000000)return toast('Выберите инвентарь и количество');const value={itemId:item.id,name:item.name,unit:item.unit,qty:q};const at=station.resources.findIndex(r=>r.itemId===item.id);if(at>=0)station.resources[at]=value;else if(station.resources.length<10)station.resources.push(value);else return toast('Не более 10 видов на станцию');draw();}),
+     ...station.resources.map((r,i)=>btn('Убрать '+r.name+' · '+r.qty+' '+r.unit,()=>{station.resources.splice(i,1);draw();})),
+     btn('Удалить станцию',()=>{if(stations.length<=2)return toast('Нужно минимум две станции');stations.splice(index,1);draw();})]);
+   }));refresh();
+  }
+  const save=btn('Открыть черновик конспекта',async()=>{if(!draft)return;const fresh=await W.listWork('inventory');if(JSON.stringify(fresh)!==JSON.stringify(stock)){toast('Остатки инвентаря изменились. Откройте конструктор заново.');return;}await planForm(draft.plan,back,'school');},'primary');
+  function refresh(){try{
+   const pupils=cls.value?S.studentsOfClass(cls.value):[],lesson={classId:cls.value,date:date.value};
+   if(cls.value&&!S.state.classes.some(c=>c.id===cls.value))throw Error('Класс недоступен');
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(date.value)||!Number.isFinite(Date.parse(date.value)))throw Error('Укажите дату проверки');
+   draft=W.circuitDraft({name:name.value.trim(),minutes:num(duration),rounds:num(rounds),work:num(work),transition:num(transition),warmup:{exercise:byExercise(warmup.value),minutes:num(warmMinutes)},cooldown:{exercise:byExercise(cooldown.value),minutes:num(coolMinutes)},stations:stations.map(s=>({...s,exercise:byExercise(s.exerciseId)})),pupilCount:pupils.length,inventory:stock});
+   const review=cls.value?W.lessonPlanReview(draft.plan,lesson,{students:pupils,activities:S.activities(),restrictions:S.state.activityRestrictions,exemptions:S.state.exemptions}):null;
+   const rows=review?review.items.slice(0,stations.length+1).concat(review.items.slice(-1)):[];
+   result.replaceChildren(card('Расчёт кругов',[p(draft.total+' / '+duration.value+' мин · '+draft.groups+' групп'),p(cls.value?'Максимум '+draft.groupSize+' человек в группе (весь состав класса, без автоматического распределения).':'Выберите класс для оценки вместимости и ограничений.'),...draft.capacityIssues.map(x=>p('Станция '+x.station+': вместимость '+x.capacity+', требуется '+x.required+' — пересмотрите группы.')),p('Время: разминка + круги × станции × (работа + переход) + завершение.')]),
+    equipmentCard(draft.plan.resources,stock),
+    card('Проверка нагрузки',[p(review?'ОСВ: '+review.full.length+' · проверка по внесённым сведениям на '+M.fmtFull(date.value)+'.':'Без класса ограничения не проверены.'),...rows.map(({item,matches,potentialMatches,needsReview})=>p(item.exercise.name+' · совпадения: '+new Set(matches.map(m=>m.studentId)).size+' · возможные: '+new Set(potentialMatches.map(m=>m.studentId)).size+(needsReview?' · уточнить нагрузку':''))),p('Ни отсутствие совпадений, ни расчёт вместимости не означают допуск. Индивидуальные задания и группы определяет учитель.')]));
+   save.disabled=false;
+  }catch(e){draft=null;save.disabled=true;result.replaceChildren(p(e.message));}}
+  for(const n of [name,duration,rounds,work,transition,warmMinutes,coolMinutes,date])n.oninput=refresh;
+  for(const n of [cls,warmup,cooldown,date])n.onchange=refresh;
+  draw();
+  openSheet(stack([el('h2',{text:'Конструктор круговой тренировки'}),p('Станции работают одновременно; каждый круг содержит один временной слот на станцию. Это планирование, не таймер.'),field('Название',name),field('Класс',cls),field('Дата проверки',date),field('Длительность занятия',duration),field('Кругов',rounds),field('Работа на станции (мин)',work),field('Переход / организация (мин)',transition),field('Разминка',warmup),field('Минуты разминки',warmMinutes),field('Завершение',cooldown),field('Минуты завершения',coolMinutes),list,btn('+ Станция',()=>{if(stations.length>=10)return toast('Не более 10 станций');stations.push({exerciseId:exercises[0].id,capacity:8,notes:'',resources:[]});draw();}),result,save,btn('Назад',back)]),{fullHeight:true});
+ }catch(e){toast(e.message);}
+}
 export async function openLibrary(context='school'){
  let mode='exercise',query='',category='';
  async function draw(){
@@ -61,7 +114,7 @@ export async function openLibrary(context='school'){
    }else{
     const plans=await W.listWork('plan');body.append(btn('+ Конспект',()=>planForm(null,draw,context),'primary'),...plans.map(r=>card(r.name,[el('div',{class:'work-tags'},[el('span',{class:'status-pill',text:W.contexts[r.context]}),el('span',{class:'status-pill',text:r.minutes+' мин'}),el('span',{class:'status-pill',text:r.items.length+' упражнений'})]),p(r.goal),el('div',{class:'phase-summary'},Object.entries(W.phases).map(([id,label])=>el('div',{},[el('small',{text:label}),el('strong',{text:r.items.filter(i=>i.phase===id).reduce((n,i)=>n+i.minutes,0)+' мин'})]))),btn('Открыть / редактировать',()=>planForm(r,draw,context)),btn('Копировать',()=>planForm({...r,id:undefined,name:r.name+' (копия)'},draw,context)),...(r.tactics||[]).map(b=>btn('Схема · '+b.name,()=>openBoardView(b,draw))),...(r.gymBoards||[]).map(b=>btn('Схема зала · '+b.name,()=>openGymView(b,draw))),btn('Экспорт текста',()=>exportPlan(r)),btn('Удалить',()=>remove(r))])));
    }
-   body.append(btn('Конструктор спортивного зала',openGymBoards),btn('КТП, тактика и шаблоны документов',()=>openMaterials(draw)),btn('Импорт / экспорт библиотеки',()=>openPortableLibrary(draw)),btn('Закрыть',closeSheet));openSheet(body);
+   body.append(context==='school'?btn('Резервные сценарии уроков',()=>openFallbackBuilder(draw)):null,context==='school'?btn('Конструктор круговой тренировки',()=>openCircuitBuilder(draw)):null,btn('Конструктор спортивного зала',openGymBoards),btn('КТП, тактика и шаблоны документов',()=>openMaterials(draw)),btn('Импорт / экспорт библиотеки',()=>openPortableLibrary(draw)),btn('Закрыть',closeSheet));openSheet(body);
   }catch(e){toast(e.message);}
  }
  await draw();

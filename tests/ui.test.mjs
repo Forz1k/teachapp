@@ -754,3 +754,14 @@ test('Подготовка незаведённого урока проверя�
  assert.match(sheet.textContent,/Конспект не назначен уроку автоматически/);
  assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
 });
+
+test('Конструктор круговой тренировки показывает расчёт и открывает обычный конспект без сохранения',async()=>{
+ const {cls}=await seed(),lib=await import('../js/screens/library.js'),before=await db.dumpAll();
+ await lib.openCircuitBuilder(ui.closeSheet,cls.id);
+ const sheet=doc.querySelector('.sheet');assert.match(sheet.textContent,/Конструктор круговой тренировки/);assert.match(sheet.textContent,/26 \/ 45 мин/);
+ assert.equal(sheet.querySelectorAll('.circuit-stations .card-block').length,2);
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='+ Станция').click();
+ assert.match(sheet.textContent,/34 \/ 45 мин/);
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Открыть черновик конспекта').click();await tick(100);
+ assert.match(doc.querySelector('.sheet').textContent,/Конспект занятия/);assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
+});

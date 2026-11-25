@@ -55,7 +55,13 @@ try{
  await clickText('button','Подготовить следующий урок');await ready('.sheet.show select[aria-label="Конспект для подготовки"]');
  await evalJs('(()=>{const n=document.querySelector(".sheet.show select");n.selectedIndex=1;n.dispatchEvent(new Event("change"));return true})()');
  await wait(()=>evalJs('document.querySelector(".sheet.show")?.textContent.includes("Конспект не назначен уроку автоматически")'),'lesson preparation');
- await capture('390-lesson-preparation');await closeSheet();
+ await capture('390-lesson-preparation');
+ await clickText('.sheet button','Конструктор круговой тренировки');await ready('.circuit-stations');
+ await capture('390-circuit-builder');await closeSheet();
+ await clickText('button','Подготовить следующий урок');await ready('.sheet.show select[aria-label="Конспект для подготовки"]');
+ await evalJs('(()=>{const n=document.querySelector(".sheet.show select");n.selectedIndex=1;n.dispatchEvent(new Event("change"));return true})()');
+ await clickText('.sheet button','Резервный сценарий этого конспекта');await wait(()=>evalJs('document.querySelector(".sheet.show")?.textContent.includes("Резервный сценарий урока")'),'reserve plan');
+ await capture('390-fallback-builder');await closeSheet();
  await clickText('button','Закрытие периода');await ready('.period-class-summary');assert.equal(await evalJs('document.querySelectorAll(".period-class-summary").length'),2);
  await capture('390-period-center');await click('.period-class-summary button');await wait(()=>evalJs('document.querySelector(".sheet.show")?.textContent.includes("Проверить уроки")'),'period class review');
  await capture('390-period-class');await closeSheet();
