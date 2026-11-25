@@ -257,3 +257,7 @@
 2026-11-25T05:55:19.5082039Z ℹ skipped 0
 2026-11-25T05:55:45.4978351Z BROWSER PASS: 56 screenshots; real Chromium, offline reload, persistent IndexedDB, score/undo.
 ```
+
+## Кандидат выпуска 5.1.0
+
+Владелец разрешил объединить изменения с основной веткой. Выбран промежуточный minor-релиз, не 7.0. Изменены согласованные версии package/lock, Service Worker, APP_VERSION, README и CHANGELOG. DB_VERSION 10 сохранён; новые записи/режимы требуют обновления всех устройств до нового клиента до обмена. Production Firebase и Cloudflare не меняются. Выпуск — только после успешного полного CI кандидата. Ручная проверка iPhone остаётся отдельной задачей.

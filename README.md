@@ -11,7 +11,7 @@
 
   <br>
 
-  <img alt="Версия" src="https://img.shields.io/badge/version-5.0.12-5145CD">
+  <img alt="Версия" src="https://img.shields.io/badge/version-5.1.0-5145CD">
   <img alt="PWA" src="https://img.shields.io/badge/PWA-offline--first-2563EB">
   <img alt="JavaScript" src="https://img.shields.io/badge/JavaScript-ES_modules-F7DF1E?logo=javascript&logoColor=black">
   <a href="https://github.com/Forz1k/teachapp/actions/workflows/check.yml"><img alt="CI" src="https://github.com/Forz1k/teachapp/actions/workflows/check.yml/badge.svg"></a>
