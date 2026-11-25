@@ -421,3 +421,6 @@ PR #94 не объединён, новый релиз не опубликова�
 ## 6.7 — Live Portal, checkpoint 1
 
 Зрительский архив не выбирает произвольный результат при конфликтующих ключах одного ID: конфликт исключается из сводки, если нет актуальной публикации; текущая публикация сохраняет приоритет без неоднозначной постоянной ссылки. Показано предупреждение, добавлены unit и DOM регрессии. Это не серверная гарантия уникальности; production Firebase и миграция не изменены.
+
+### 6.8 Studio — checkpoint
+- Adjustable photo opacity and left/right/hidden logo placement, persisted only as presentation settings; legacy style files remain compatible. Added renderer and style validation tests. Full freeform layers are not yet implemented.
