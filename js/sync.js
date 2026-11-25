@@ -579,6 +579,95 @@ export async function rebindDeltaDevice({endpoint,area,file,devicePassword,oldPa
  return {...summary,status:'rebound'};
 }
 
+// One-way migration rehearsal. No production endpoints, source writes, ordinary
+// profile changes or IndexedDB writes. The new workspace has its own revision
+// sequence and encryption password, never a continuation of the old relay.
+function migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic){
+ check(synthetic===true,'Перенос доступен только в синтетическом Delta LAB');
+ const source=labEndpoint(sourceEndpoint),destination=labEndpoint(destinationEndpoint);
+ check(new URL(source).origin===source&&new URL(destination).origin===destination&&new URL(source).port&&new URL(destination).port&&source!==destination,'Нужны разные локальные серверы с явными портами');
+ return {source,destination};
+}
+function migrationPasswords(sourcePassword,destinationPassword,backupPassword){
+ check([sourcePassword,destinationPassword,backupPassword].every(p=>typeof p==='string'&&p.length>=12&&p.length<=1024)&&new Set([sourcePassword,destinationPassword,backupPassword]).size===3,'Используйте три разных пароля для источника, назначения и файла переноса');
+}
+const migrationRecordCount=s=>Object.values(s).reduce((n,a)=>n+a.length,0);
+function migrationClients({sourceEndpoint,destinationEndpoint,sourceToken,destinationToken,area,protocolVersion=1,synthetic,fetcher}){
+ const {source,destination}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
+ check(validArea(area)&&sourceToken!==destinationToken&&(protocolVersion===1||protocolVersion===2),'Нужны разные ключи и корректный контур');
+ // Only the read method is exposed internally for the source.
+ const sourceRead=relayClient(source,area,sourceToken,{protocolVersion,fetcher}).get;
+ const target=deltaLabClient(destination,area,destinationToken,{fetcher});
+ return {source,destination,sourceRead,target};
+}
+export async function prepareDeltaMigration(args){
+ const {area,current,sourcePassword,destinationPassword,backupPassword,protocolVersion=1}=args;
+ migrationPasswords(sourcePassword,destinationPassword,backupPassword);
+ const {source,destination,sourceRead,target}=migrationClients(args);
+ const old=await sourceRead(),head=await target.head();
+ check(validDeltaHead(head)&&head.revision===0,'Целевой контур должен быть пустым; перезапись запрещена');
+ check(revision(old.revision)&&isEncryptedBackup(old.envelope),'Нет подтверждённого снимка источника');
+ const packet=await readPacket(old.envelope,sourcePassword,area,old.revision);
+ combineScope(current,packet.snapshot,area);
+ const workspaceId=crypto.randomUUID(),digest=await scopeDigest(packet.snapshot,area);
+ check(syncUploadBytes(packet.snapshot,{area,workspaceId,expectedRevision:0})<=DELTA_MAX_DATA+1024,'Снимок превышает лимит нового контура');
+ const envelope=await encryptBackup(packetPayload(packet.snapshot,area,workspaceId,1),destinationPassword);
+ check(envelope.data.length<=DELTA_MAX_DATA&&old.envelope.data.length<=DELTA_MAX_DATA,'Снимок превышает лимит переноса');
+ const payload={app:'teachapp-delta-migration',version:1,source,destination,area,protocolVersion,sourceRevision:old.revision,sourceWorkspaceId:packet.workspaceId,workspaceId,digest,sourceEnvelope:old.envelope,envelope};
+ const file=await encryptBackup(payload,backupPassword);
+ return {area,sourceRevision:old.revision,destinationRevision:1,records:migrationRecordCount(packet.snapshot),encryptedBytes:envelope.data.length,file};
+}
+export async function openDeltaMigration({sourceEndpoint,destinationEndpoint,area,protocolVersion=1,current,file,sourcePassword,destinationPassword,backupPassword,synthetic=false}){
+ const {source,destination}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
+ migrationPasswords(sourcePassword,destinationPassword,backupPassword);
+ const p=await decryptBackup(file,backupPassword);
+ check(exactFields(p,['app','version','source','destination','area','protocolVersion','sourceRevision','sourceWorkspaceId','workspaceId','digest','sourceEnvelope','envelope'])&&p.app==='teachapp-delta-migration'&&p.version===1&&p.source===source&&p.destination===destination&&p.area===area&&p.protocolVersion===protocolVersion&&revision(p.sourceRevision)&&uuid.test(p.sourceWorkspaceId)&&uuid.test(p.workspaceId)&&p.workspaceId!==p.sourceWorkspaceId&&digestPattern.test(p.digest)&&isEncryptedBackup(p.sourceEnvelope)&&isEncryptedBackup(p.envelope)&&typeof p.sourceEnvelope.data==='string'&&p.sourceEnvelope.data.length<=DELTA_MAX_DATA&&typeof p.envelope.data==='string'&&p.envelope.data.length<=DELTA_MAX_DATA,'Неверный файл переноса или другой контур');
+ const before=await readPacket(p.sourceEnvelope,sourcePassword,area,p.sourceRevision),after=await readPacket(p.envelope,destinationPassword,area,1);
+ check(before.workspaceId===p.sourceWorkspaceId&&after.workspaceId===p.workspaceId&&await scopeDigest(before.snapshot,area)===p.digest&&await scopeDigest(after.snapshot,area)===p.digest&&same(before.snapshot,after.snapshot),'Содержимое снимков переноса не совпадает');
+ combineScope(current,after.snapshot,area);
+ return {...p,snapshot:after.snapshot};
+}
+// Device preflight is deliberately read-only. An offline/dirty device must be
+// reconciled with the source before the rehearsal can be repeated.
+export async function inspectDeltaMigrationDevice(args){
+ const p=await openDeltaMigration(args),local=projectScope(args.current,p.area),cp=getCheckpoint(args.current,p.area);
+ const result={area:p.area,sourceRevision:p.sourceRevision,localRevision:cp?.revision??null,localChanges:counts(p.snapshot,local)};
+ if(!cp)return {...result,status:emptyScope(local)?'fresh-device':'missing-checkpoint',ready:false};
+ if(cp.endpoint!==p.source||cp.workspaceId!==p.sourceWorkspaceId||!revision(cp.revision))return {...result,status:'different-workspace',ready:false};
+ if(cp.revision!==p.sourceRevision)return {...result,status:'stale-checkpoint',ready:false};
+ const before=await readPacket(cp.envelope,args.sourcePassword,p.area,cp.revision);
+ if(before.workspaceId!==p.sourceWorkspaceId||await scopeDigest(before.snapshot,p.area)!==p.digest)return {...result,status:'checkpoint-mismatch',ready:false};
+ const ready=await scopeDigest(local,p.area)===p.digest;
+ return {...result,status:ready?'clean-source':'local-changes',ready};
+}
+export async function commitDeltaMigration(args){
+ check(args.confirmed===true&&args.backupVerified===true&&args.sourceFrozen===true,'Подтвердите проверенный файл и остановку записи на всех исходных устройствах');
+ const p=await openDeltaMigration(args);
+ const {sourceRead,target}=migrationClients(args);
+ const before=await sourceRead(),h=await target.head();
+ check(validDeltaHead(h),'Некорректная история назначения');
+ const sourceMatches=r=>r.revision===p.sourceRevision&&same(r.envelope,p.sourceEnvelope);
+ let replayed=false;
+ if(h.revision===0){
+  check(sourceMatches(before),'Источник изменился; подготовьте новый файл, целевой контур не изменён');
+  const ack=await target.anchor(p.envelope);
+  check(ack?.revision===1&&typeof ack.replayed==='boolean','Запись назначения не подтверждена; сравните ревизии');
+  replayed=ack.replayed;
+ }else{
+  check(h.revision===1&&h.anchorRevision===1&&h.count===1,'Целевой контур уже используется; перезапись запрещена');
+  const existing=await target.getRevision(1);
+  check(existing.revision===1&&existing.kind==='anchor'&&same(existing.envelope,p.envelope),'Целевой контур содержит другой снимок; перезапись запрещена');
+  replayed=true;
+ }
+ const row=await target.getRevision(1),remote=await readDeltaLab({client:target,area:p.area,password:args.destinationPassword,current:args.current});
+ check(row.revision===1&&row.kind==='anchor'&&same(row.envelope,p.envelope)&&remote.revision===1&&remote.workspaceId===p.workspaceId&&await scopeDigest(remote.snapshot,p.area)===p.digest&&same(remote.snapshot,p.snapshot),'Назначение изменилось; переход запрещён');
+ const after=await sourceRead();
+ // Client-side confirmation cannot actually freeze a legacy server. A late
+ // source write leaves a verified *copy*, not permission to change devices.
+ const unchanged=sourceMatches(before)&&sourceMatches(after);
+ return {area:p.area,sourceRevision:p.sourceRevision,observedSourceRevision:after.revision,destinationRevision:1,replayed,status:unchanged?'verified-copy':'source-changed',cutoverAllowed:false,requiresManualCutover:true};
+}
+
 /* Explicit laboratory adapter for the existing prepare/preview/execute pipeline.
    The full envelopes returned to that pipeline are generated locally; only
    an initial anchor or encrypted delta travels across the network.

@@ -378,3 +378,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ## 5.2 offline device checkpoint
 - `eaa4098`: encrypted single-device recovery, old checkpoint preview/rebind, explicit historical-base consent and three-way merge. 407/407, both CI, WebKit, Cloudflare, Delta; real IndexedDB/workerd preserved offline edits and conflict choices. [CI](https://github.com/Forz1k/teachapp/actions/runs/45600038333), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45600038340).
+
+## 5.2 operator console checkpoint
+- `ec4bcf8`: loopback diagnostic/rotation/recovery UI, real browser and workerd test, individual device login, verified owner file, zero browser storage. 407/407, both CI, WebKit, Cloudflare and Delta pass. [CI](https://github.com/Forz1k/teachapp/actions/runs/45619583195), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45619583231).
