@@ -182,3 +182,9 @@ test('Foreground permission loss is latched across the attempt and does not star
  }});
  assert.equal(report.phase,'interrupted');assert.deepEqual(seen,['school']);assert.deepEqual(report.areas.map(r=>r.status),['paused','paused']);
 });
+
+test('Future backup format is surfaced as an update requirement without accelerated retry',async()=>{
+ const code=createPersonalCode(endpoint);
+ const report=await runPersonalSync({getCode:()=>code,online:()=>true,clientFactory:()=>({}),runArea:async({area})=>{if(area==='school')throw Object.assign(Error('future format'),{code:'newer-backup-format'});return {area,status:'synced'};}});
+ assert.equal(report.areas[0].status,'error');assert.equal(report.areas[0].reason,'newer-backup-format');assert.equal(syncRetryDelay(report,0),null);assert.equal(report.areas[1].status,'synced');
+});

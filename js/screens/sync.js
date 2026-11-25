@@ -88,7 +88,7 @@ export function openSync(){
    if(saved&&identityAreas(saved).includes(selected)){const credentials=await identityCredentials(saved,selected);if(n!==seq||closed)return;
     if(binding.status==='none'&&(!cp||cp.endpoint===credentials.endpoint)){endpoint.value=credentials.endpoint;token.value=credentials.token;password.value=credentials.password;}
    }
-   const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)+(r.reason==='migration-binding'?' (нужен согласованный возврат Delta LAB)':r.reason==='packet-too-large'?' (пакет слишком велик)':r.reason==='remote-unconfirmed'?' (сервер мог принять пакет; сравните ревизии)':'')).join(' · ');
+   const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)+(r.reason==='migration-binding'?' (нужен согласованный возврат Delta LAB)':r.reason==='packet-too-large'?' (пакет слишком велик)':r.reason==='remote-unconfirmed'?' (сервер мог принять пакет; сравните ревизии)':r.reason==='newer-backup-format'?' (обновите приложение на всех устройствах)':'')).join(' · ');
    const successes=report.areas.filter(r=>r.status==='synced'&&r.successfulAt).map(r=>syncAreas[r.area]+': '+new Date(r.successfulAt).toLocaleString('ru-RU')).join(' · ');
    personalStatus.textContent=saved?(readTrustedProfile()?'Индивидуальный профиль v2 сохранён.':'Личный код сохранён на этом устройстве.')+(report.phase==='offline'?' Нет сети.':report.phase==='running'?' Обмен выполняется.':report.phase==='interrupted'?' Обмен прерван.':'')+(report.at?' Последняя проверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:'')+(successes?' Успешный обмен в последней попытке: '+successes:''):'Личный код не сохранён.';
    personalForget.hidden=!saved&&!hasTrustedProfileRecord();inviteCreate.hidden=!saved||!!readTrustedProfile();both.hidden=!saved;inviteImport.hidden=Boolean(saved)||hasTrustedProfileRecord();personalConnect.hidden=hasTrustedProfileRecord();
@@ -184,7 +184,7 @@ export function openSync(){
   });
   if(!result)throw Error('Закройте другие вкладки TeachApp.');
   const statuses={synced:'готово',setup:'нужно подключение',conflict:'конфликт',review:'подтвердите изменения',error:'нужна проверка данных или подключения',paused:'обмен остановлен'};
-  simpleResult.textContent=result.areas.map(r=>syncAreas[r.area]+': '+(r.reason==='packet-too-large'?'пакет превышает лимит сервера':r.reason==='remote-unconfirmed'?'сервер мог принять пакет — сравните ревизии':statuses[r.status]||'обмен не выполнен')).join(' · ')||'Обмен остановлен до записи.';
+  simpleResult.textContent=result.areas.map(r=>syncAreas[r.area]+': '+(r.reason==='packet-too-large'?'пакет превышает лимит сервера':r.reason==='remote-unconfirmed'?'сервер мог принять пакет — сравните ревизии':r.reason==='newer-backup-format'?'обновите TeachApp на всех устройствах':statuses[r.status]||'обмен не выполнен')).join(' · ')||'Обмен остановлен до записи.';
   const issues=ktpLinkIssues(await db.dumpAll());
   if(issues.length)simpleResult.textContent+=' · Исправьте КТП через диагностику.';
   await refresh();

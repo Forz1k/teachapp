@@ -381,3 +381,10 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ## 5.2 operator console checkpoint
 - `ec4bcf8`: loopback diagnostic/rotation/recovery UI, real browser and workerd test, individual device login, verified owner file, zero browser storage. 407/407, both CI, WebKit, Cloudflare and Delta pass. [CI](https://github.com/Forz1k/teachapp/actions/runs/45619583195), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45619583231).
+
+## 5.8 reliability checkpoint
+- `0863ce0`: atomic request failures, archive mutation mutex. 449/449, all six triggered workflows passed. [Checks](https://github.com/Forz1k/teachapp/commit/0863ce012d17ffb03a68029dec5b69967526d7f3/checks).
+
+## 5.9 compatibility checkpoint
+- `fff158f`: backup 22, old formats, all synthetic workflows on version changes. 451/451 and all seven workflows passed, including actual published 5.1.1 WebKit upgrade and v21 rejecting v22. [Checks](https://github.com/Forz1k/teachapp/commit/fff158f5a52d2f2241f55b2a215920043cdb4e2a/checks).
+- Owner authorized the final static publication after checks. Production LAB/Worker/Firebase migration and physical acceptance remain separate.
