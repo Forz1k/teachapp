@@ -26,7 +26,7 @@ const PRECACHE = [
   './js/store.js',
   './js/model.js',
   './js/health.js',
-  './js/assessment.js',
+  './js/assessment.js','./js/attendance-index.js',
   './js/norm-import.js',
   './js/screens/norm-batch.js',
   './js/screens/session.js',

@@ -1,3 +1,4 @@
+import {buildAttendanceIndex} from './attendance-index.js';
 import { BACKUP_VERSION, validateBackup, ktpLinkIssues } from './backup.js';
 /* store.js — состояние приложения и все команды записи.
    UI читает состояние отсюда и подписывается на изменения.
@@ -1158,10 +1159,10 @@ export async function transferTopic(sourceId,targetId) {
   notify();
 }
 
-export function attendanceFor(lessons,students,classId){
-  const parts=new Map(state.participation.map(p=>[p.lessonId+'|'+p.studentId,p]));
-  return A.attendanceDetails(lessons.map(l=>({...l,held:lessonHeld(l)})),students,markMap(classId),parts);
+export function attendanceContext(lessons,classId,today=M.todayIso()){
+  return buildAttendanceIndex(lessons,lessonsOfClass(classId),state.marks,state.participation,today);
 }
+export function attendanceFor(lessons,students,classId){return attendanceContext(lessons,classId).forStudents(students);}
 export async function saveNorm(input){
   const n={id:input.id||M.uid('norm'),name:input.name.trim(),activityId:input.activityId,unit:input.unit,direction:input.direction};
   if(input.scales!==undefined)n.scales=input.scales.map(r=>({classId:r.classId??null,gradeLevel:r.gradeLevel??null,group:r.group,scale:[...r.scale]}));
