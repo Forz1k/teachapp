@@ -436,3 +436,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 7.2 Assistant — checkpoint (synthetic LAB only)
 - Assistant roster access ends with the assigned live match; selection edits stop automatic lease renewals and stale UI loads are discarded. Added end-of-match authorization regression test. No real-account rollout.
+
+### 7.3 Notifications — checkpoint
+- Explicit opt-in to generic foreground system reminders while calendar is open and visible; deduplicate due events in session, stop on sheet close, fallback to ICS if unavailable. No background delivery or push backend, no private names in notification payload. Added calculation test.
