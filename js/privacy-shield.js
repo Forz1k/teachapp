@@ -56,13 +56,13 @@ const validCode=s=>typeof s==='string'&&s.length<=128&&(/^[0-9]{6,12}$/.test(s)|
 async function deriveLock(code,salt){if(typeof code!=='string'||!code.length||code.length>128||!globalThis.crypto?.subtle)throw Error('Для блокировки требуется защищённый контекст HTTPS или localhost');const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(code),'PBKDF2',false,['deriveBits']);return new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',salt,iterations:ITERATIONS,hash:'SHA-256'},key,256));}
 // A storage read failure is not proof that a lock is absent. Fail closed.
 // This protects the UI, not the local database or a malicious browser user.
-export function screenLockEnabled(storage=globalThis.localStorage){try{return storage.getItem(LOCK)!==null;}catch{return true;}}
+export function screenLockEnabled(storage){try{return (storage??globalThis.localStorage).getItem(LOCK)!==null;}catch{return true;}}
 async function verifyRecord(code,raw){
  if(raw===null)return true;
  try{const r=JSON.parse(raw);if(r.version!==1||r.iterations!==ITERATIONS)throw Error();const expected=decode(r.verifier,32),actual=await deriveLock(code,decode(r.salt,16));let diff=0;for(let i=0;i<32;i++)diff|=expected[i]^actual[i];return diff===0;}catch{return false;}
 }
-export async function verifyScreenLock(code,storage=globalThis.localStorage){
- try{const raw=storage.getItem(LOCK);return await verifyRecord(code,raw)&&storage.getItem(LOCK)===raw;}catch{return false;}
+export async function verifyScreenLock(code,storage){
+ try{const target=storage??globalThis.localStorage,raw=target.getItem(LOCK);return await verifyRecord(code,raw)&&target.getItem(LOCK)===raw;}catch{return false;}
 }
 export async function changeScreenLock({current='',next=null}={},storage=globalThis.localStorage){
  const raw=storage.getItem(LOCK);

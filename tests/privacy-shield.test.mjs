@@ -51,3 +51,5 @@ test('Screen lock rejects stale verifier and competing changes',async()=>{
  const noWrite={getItem:()=>null,setItem:()=>{}};
  await assert.rejects(changeScreenLock({next:'123456'},noWrite),/Не удалось сохранить/);
 });
+
+test('Global localStorage getter throwing is also fail-closed',async()=>{const {screenLockEnabled,verifyScreenLock}=await import('../js/privacy-shield.js'),prior=Object.getOwnPropertyDescriptor(globalThis,'localStorage');Object.defineProperty(globalThis,'localStorage',{configurable:true,get(){throw Error('blocked');}});try{assert.equal(screenLockEnabled(),true);assert.equal(await verifyScreenLock(''),false);}finally{if(prior)Object.defineProperty(globalThis,'localStorage',prior);else delete globalThis.localStorage;}});

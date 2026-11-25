@@ -439,3 +439,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 7.3 Notifications — checkpoint
 - Explicit opt-in to generic foreground system reminders while calendar is open and visible; deduplicate due events in session, stop on sheet close, fallback to ICS if unavailable. No background delivery or push backend, no private names in notification payload. Added calculation test.
+
+### 8.0 Ecosystem — integrated checkpoint, not release
+- Consolidated all preceding checkpoints against main for full CI, with cross-feature regression covering public results, conflict handling, Studio export, reminder privacy and stable calendar identities. Hardened screen lock against a throwing global storage getter, and stopped stale calendar/assistant UI responses from continuing after navigation. Version remains 6.0.1 candidate. No production migration or release claim.

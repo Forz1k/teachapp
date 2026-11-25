@@ -69,7 +69,7 @@ function liveCard(){
  const path=()=> 'matches/'+selector.value.trim(),same=()=>active?.id===selector.value.trim();
  const load=async()=>{stopTimer();const requested=selector.value.trim();const res=await api.request(path());if(requested!==selector.value.trim())return;active=res.match;draw();};
  selector.oninput=()=>{stopTimer();active=null;body.replaceChildren(p('Откройте выбранный матч.'));};
- const modify=async(op,packet)=>{if(!same())throw Error('Сначала откройте матч');const res=await api.request(path()+'/'+op,'POST',packet);active=res.match;draw();};
+ const modify=async(op,packet)=>{if(!same())throw Error('Сначала откройте матч');const requested=selector.value.trim(),epoch=serial;const res=await api.request(path()+'/'+op,'POST',packet);if(epoch!==serial||requested!==selector.value.trim())return;active=res.match;draw();};
  const op=async(action,side)=>{if(!same()||active.lease?.holderId!==member.id)throw Error('Сначала получите право управления');if(pending)throw Error('Сначала повторите или отмените неподтверждённый запрос');pending={matchId:active.id,action,body:{generation:active.generation,expectedRevision:active.revision,opId:crypto.randomUUID(),...(side?{side}:{})}};await retry();};
  async function retry(){if(!pending||pending.matchId!==selector.value.trim())throw Error('Нет запроса для этого матча');try{await modify(pending.action,pending.body);pending=null;draw();}catch(err){if(err.status>=400&&err.status<500)pending=null;draw();throw err;}}
  function draw(){
