@@ -400,6 +400,7 @@ export async function applySchedule(entries) {
  * Возвращает [{order, name}].
  */
 export async function parseKtpFile(file) {
+  if(/\.docx$/i.test(file.name||'')){const {parseKtpDocx}=await import('./ktp-docx.js');return parseKtpDocx(file);}
   if (!hasXlsx()) throw new Error('Модуль XLSX не загружен');
   const XLSX = window.XLSX;
   const buf = await file.arrayBuffer();

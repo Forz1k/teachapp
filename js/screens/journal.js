@@ -1,3 +1,4 @@
+import {filterJournalLessons,lessonFilterLabels,periodMarks} from '../journal-filters.js';
 import {animateOnce} from '../motion.js';
 import { openHealth, warning, checkGrade } from './health.js';
 /* screens/journal.js — сетка журнала класса: ученики × даты уроков.
@@ -57,10 +58,13 @@ export function renderJournal(root, ctx) {
   const students = store.studentsOfClass(classId);
   const settings = store.state.settings;
   const tr = store.currentTrimester();
-  const lessons = store.lessonsInRange(classId, tr.from, tr.to);
+  const periodLessons = store.lessonsInRange(classId, tr.from, tr.to);
   const markMap = store.markMap(classId);
   const today = M.todayIso();
   const topicsById = new Map(store.state.topics.map(t => [t.id,t]));
+  const filterKey='teachapp.journal.filters.'+classId+'.'+tr.id;let filters={status:'all',from:'',to:'',query:''};try{const raw=JSON.parse(sessionStorage.getItem(filterKey)||'null');if(raw&&Object.hasOwn(lessonFilterLabels,raw.status))filters={...filters,...raw};}catch{}
+  const lessons=filterJournalLessons(periodLessons,filters,{today,topics:topicsById,held:store.lessonHeld});
+  const filteredView=filters.status!=='all'||!!filters.from||!!filters.to||!!filters.query;
   const activeByStudent = new Map();
   for (const e of store.state.exemptions) if (M.exemptionActive(e) && !activeByStudent.has(e.studentId)) activeByStudent.set(e.studentId,e);
 
@@ -94,11 +98,15 @@ export function renderJournal(root, ctx) {
     })));
 
   const search=el('input',{type:'search',placeholder:'Найти ученика','aria-label':'Найти ученика в журнале'});
-  topbar.append(row1,trChips,el('div',{class:'journal-tools'},[search,el('span',{class:'journal-count',text:students.length+' учеников · '+lessons.length+' уроков'})]));
+  topbar.append(row1,trChips,el('div',{class:'journal-tools'},[search,el('span',{class:'journal-count',text:students.length+' учеников · '+lessons.length+' из '+periodLessons.length+' уроков'})]));
 
   const viewMode=(()=>{try{return localStorage.getItem('teachapp.journal.view')==='cards'?'cards':'table';}catch{return 'table';}})();
   const viewToggle=el('button',{type:'button',class:'btn small',text:viewMode==='cards'?'Таблица':'Карточки',onclick:()=>{try{localStorage.setItem('teachapp.journal.view',viewMode==='cards'?'table':'cards');}catch{}store.notify();}});
   const tools=el('div',{class:'journal-tools'},[viewToggle]);topbar.append(tools);
+  const statusFilter=el('select',{'aria-label':'Статус уроков'},Object.entries(lessonFilterLabels).map(([value,text])=>el('option',{value,text})));statusFilter.value=filters.status;
+  const fromFilter=el('input',{type:'date',min:tr.from,max:tr.to,value:filters.from,'aria-label':'Уроки с даты'}),toFilter=el('input',{type:'date',min:tr.from,max:tr.to,value:filters.to,'aria-label':'Уроки по дату'}),topicFilter=el('input',{type:'search',value:filters.query,placeholder:'Поиск по теме','aria-label':'Поиск по теме урока'});
+  const saveFilters=next=>{try{sessionStorage.setItem(filterKey,JSON.stringify(next));}catch{}store.notify();};
+  const filterBox=el('details',{class:'journal-lesson-filters'});filterBox.open=filteredView;filterBox.append(el('summary',{text:filteredView?'Фильтры уроков · активны':'Фильтры уроков'}),el('div',{class:'journal-filter-grid'},[el('label',{class:'field'},['Статус',statusFilter]),el('label',{class:'field'},['С даты',fromFilter]),el('label',{class:'field'},['По дату',toFilter]),el('label',{class:'field'},['Тема',topicFilter]),el('button',{type:'button',class:'btn primary',text:'Применить',onclick:()=>{if(fromFilter.value&&toFilter.value&&fromFilter.value>toFilter.value)return ui.toast('Начальная дата позже конечной');saveFilters({status:statusFilter.value,from:fromFilter.value,to:toFilter.value,query:topicFilter.value.trim()});}}),el('button',{type:'button',class:'btn',text:'Сбросить фильтры',onclick:()=>saveFilters({status:'all',from:'',to:'',query:''})})]),el('p',{class:'profile-note',text:'Итоги и посещаемость считаются за весь выбранный учебный период, даже если часть уроков скрыта.'}));topbar.append(filterBox);
   if(viewMode==='cards'&&lessons.length&&students.length){
    const lessonSelect=el('select',{'aria-label':'Выберите урок'},lessons.map(l=>el('option',{value:l.id,text:M.lessonLabel(l)+' · '+(topicsById.get(l.topicId)?.name||'Без темы')})));
    const storageKey='teachapp.journal.lesson.'+classId+'.'+tr.id;let chosen=lessons.find(l=>l.date===today)||lessons.filter(l=>l.date<=today).at(-1)||lessons[0];
@@ -118,11 +126,11 @@ export function renderJournal(root, ctx) {
 
   if (!lessons.length) {
     wrap.append(el('div', { class: 'empty' }, [
-      el('div', { text: `В периоде «${periodName(tr)}» (${M.fmtFull(tr.from)} – ${M.fmtFull(tr.to)}) уроков пока нет.` }),
+      el('div', { text: filteredView?'Нет уроков по выбранным фильтрам. Сбросьте фильтры.':`В периоде «${periodName(tr)}» (${M.fmtFull(tr.from)} – ${M.fmtFull(tr.to)}) уроков пока нет.` }),
       el('div', { style: 'margin-top:16px' }, [
         el('button', {
-          class: 'btn primary', type: 'button', text: 'Добавить уроки',
-          onclick: () => ctx.onOpenLessonPlanner(classId),
+          class: 'btn primary', type: 'button', text: filteredView?'Сбросить фильтры':'Добавить уроки',
+          onclick: () => filteredView?saveFilters({status:'all',from:'',to:'',query:''}):ctx.onOpenLessonPlanner(classId),
         }),
       ]),
     ]));
@@ -203,8 +211,8 @@ export function renderJournal(root, ctx) {
       tr_.append(cell);
     }
 
-    const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
-    const att = store.attendanceFor(lessons,[st],classId);
+    const avg = periodMarks(periodLessons,markMap,st.id);
+    const att = store.attendanceFor(periodLessons,[st],classId);
 
     tr_.append(el('td', { class: 'col-sum', text: avg === null ? '—' : M.fmtAvg(avg) }));
     tr_.append(el('td', {
@@ -260,8 +268,8 @@ export function renderJournal(root, ctx) {
         if(old!==cells[i].getAttribute('aria-label'))animateOnce(cells[i].firstChild,'pulse',{duration:180});
       });
       const [avg,attendance] = row.querySelectorAll('.col-sum');
-      avg.textContent = count ? M.fmtAvg(sum/count) : '—';
-      const att = store.attendanceFor(lessons,[studentById.get(id)],classId);
+      const whole=periodMarks(periodLessons,latest,id);avg.textContent = whole===null?'—':M.fmtAvg(whole);
+      const att = store.attendanceFor(periodLessons,[studentById.get(id)],classId);
       attendance.title=attTitle(att);
       attendance.textContent = att.pct === null ? '—' : String(att.pct).replace('.',',') + '%';
       attendance.style.color = att.pct !== null && att.pct < 80 ? 'var(--mark-2)' : '';
@@ -269,7 +277,7 @@ export function renderJournal(root, ctx) {
     for(const st of students){
       if(changedStudents.includes(st.id))continue;
       const attendance=rowByStudent.get(st.id).querySelectorAll('.col-sum')[1];
-      const att=store.attendanceFor(lessons,[st],classId);
+      const att=store.attendanceFor(periodLessons,[st],classId);
       attendance.title=attTitle(att);
       attendance.textContent=att.pct===null?'—':String(att.pct).replace('.',',')+'%';
       attendance.style.color=att.pct!==null&&att.pct<80?'var(--mark-2)':'';

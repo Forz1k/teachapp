@@ -40,7 +40,7 @@ export function renderKtp(root, opts = {}) {
           onclick: () => openCreateSheet(opts),
         }),
         el('button', {
-          class: 'btn wide', type: 'button', text: 'Загрузить темы из Excel',
+          class: 'btn wide', type: 'button', text: 'Загрузить темы из Excel / Word',
           onclick: () => openImportForNew(opts),
         }),
       ]),
@@ -376,12 +376,12 @@ function openReorder(ktpId, onDone) {
 /* ---------- импорт тем ---------- */
 
 export function openImportTopics(ktpId, opts = {}, onDone = null) {
-  const fileInput = el('input', { type: 'file', accept: '.xlsx,.xls,.csv', style: 'display:none' });
+  const fileInput = el('input', { type: 'file', accept: '.xlsx,.xls,.csv,.docx', style: 'display:none' });
   document.body.append(fileInput);
 
   const sheet = el('div', {}, [
-    el('h2', { text: 'Темы из Excel' }),
-    el('div', { class: 'sub', text: 'Колонки: номер (необязательно) и название темы' }),
+    el('h2', { text: 'Темы из Excel / Word' }),
+    el('div', { class: 'sub', text: 'Excel / CSV: номер и тема. Word (.docx): таблица с темами либо нумерованный список.' }),
     el('div', { class: 'compare-line', html:
       'Подойдёт таблица вида:<br>'
       + '<b>№</b> | <b>Тема</b><br>1 | Инструктаж по технике безопасности<br>'
@@ -423,7 +423,7 @@ function showTopicsPreview(ktpId, parsed, onDone) {
 
   if (warnings.length) {
     const warn = el('div', { class: 'compare-line', style: 'margin-top:0;margin-bottom:10px;color:var(--mark-3)' });
-    warn.innerHTML = warnings.map((w) => '• ' + w).join('<br>');
+    warn.replaceChildren(...warnings.map(w=>el('p',{text:'• '+w})));
     sheet.append(warn);
   }
 
@@ -436,14 +436,14 @@ function showTopicsPreview(ktpId, parsed, onDone) {
   });
   sheet.append(list);
 
-  let append = false;
+  let append = true;
   const appendRow = el('div', { class: 'row-item' }, [
     el('div', { class: 'label' }, [
       el('div', { text: 'Дописать к существующим' }),
       el('div', { style: 'font-size:12px;color:var(--text-3)', text: 'Иначе старые темы будут заменены' }),
     ]),
     el('button', {
-      type: 'button', class: 'switch', role: 'switch', 'aria-checked': 'false',
+      type: 'button', class: 'switch on', role: 'switch', 'aria-checked': 'true',
       onclick: (e) => {
         append = !append;
         e.currentTarget.classList.toggle('on', append);
@@ -458,6 +458,7 @@ function showTopicsPreview(ktpId, parsed, onDone) {
       class: 'btn primary wide', type: 'button', text: 'Записать темы',
       disabled: !items.length,
       onclick: async () => {
+        if(!append){const existing=store.topicsOfKtp(ktpId);const used=store.state.lessons.filter(l=>existing.some(t=>t.id===l.topicId));if(used.length)return ui.toast('Существующие темы используются в уроках. Допишите темы или создайте новую версию КТП.');if(!await ui.confirmDialog({title:'Заменить темы?',text:'Старые темы этого КТП будут удалены. Проверьте предпросмотр. Для сохранения старых тем используйте дописывание.',ok:'Заменить',danger:true}))return;}
         const { applyKtpTopics } = await import('../export.js');
         const n = await applyKtpTopics(ktpId, items, { append });
         ui.closeSheet();
