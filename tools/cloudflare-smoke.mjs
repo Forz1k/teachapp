@@ -9,7 +9,9 @@ import {createServer} from 'node:net';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {digestToken,LIMIT} from '../server/cloudflare-protocol.mjs';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
-import {relayClient} from '../js/sync.js';
+import {relayClient,projectScope} from '../js/sync.js';
+import {SCHEMA} from '../js/db.js';
+import {BACKUP_VERSION} from '../js/backup.js';
 import {createPersonalCode,personalCredentials,personalTokenHashes} from '../js/personal-sync.js';
 const origin='https://synthetic.example';
 const A='A'.repeat(43),B='B'.repeat(43),C='C'.repeat(43);
@@ -163,6 +165,14 @@ try{
  assert.equal(newProfile.areas.coach.password,profile.areas.coach.password);
  assert.deepEqual(await trustedRelayClient(newProfile,'coach',{fetcher:route}).get(),{revision:0,envelope:null});
  assert.deepEqual(await (await get('school',device2)).json(),newSnapshot);
- await revokeTrustedDevice(newProfile.endpoint,admin,'coach',newProfile.deviceId,route);
+ const snapshotData=Object.fromEntries(Object.keys(SCHEMA).map(k=>[k,[]]));
+ const coachPacket=await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:'coach',workspaceId:crypto.randomUUID(),revision:1,snapshot:projectScope(snapshotData,'coach')},newProfile.areas.coach.password);
+ const original=await trustedRelayClient(newProfile,'coach',{fetcher:route}).put(0,coachPacket);
+ const rotated=await createTrustedInvite({profile:newProfile,adminToken:admin,name:'Rotated coach',areas:['coach'],fetcher:route});
+ assert.deepEqual(rotated.verified.coach,{revision:1,empty:false});
+ const rotatedProfile=await redeemTrustedInvite(rotated.code,route);assert.notEqual(rotatedProfile.areas.coach.token,newProfile.areas.coach.token);
+ const rotatedClient=trustedRelayClient(rotatedProfile,'coach',{fetcher:route});assert.deepEqual(await rotatedClient.get(),original);
+ await revokeTrustedDevice(newProfile.endpoint,admin,'coach',newProfile.deviceId,route);await assert.rejects(trustedRelayClient(newProfile,'coach',{fetcher:route}).get(),/отказал в доступе/);
+ assert.deepEqual(await rotatedClient.get(),original);await revokeTrustedDevice(rotatedProfile.endpoint,admin,'coach',rotatedProfile.deviceId,route);
  console.log('CLOUDFLARE RECOVERY PASS: encrypted key-only recovery, wrong snapshot key rejected, fresh token, no snapshot modification');
 }finally{await stop();await rm(state,{recursive:true,force:true});}

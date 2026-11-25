@@ -18,12 +18,12 @@ export function openTrustedDevices(back=closeSheet){
   const file=await createRecoveryFile(profile?{profile}:{personalCode:code},password);
   downloadBlob(new Blob([JSON.stringify(file)],{type:'application/json'}),'teachapp-device-recovery.json');toast('Защищённый файл сформирован. Проверьте, что он сохранился.');
  }));
- const recoveryFile=el('input',{type:'file',accept:'.json,application/json','aria-label':'Файл восстановления'});
+ const recoveryFile=el('input',{type:'file',accept:'.json,application/json','aria-label':'Файл восстановления'}),recoveryChecks=Object.keys(syncAreas).map(area=>({area,input:el('input',{type:'checkbox',checked:true})}));
  const recover=btn('Выдать новый доступ из файла',run(async()=>{
   const file=recoveryFile.files[0];if(!file||file.size>16384)throw Error('Выберите файл восстановления до 16 КБ');
   const password=await promptDialog({title:'Пароль файла восстановления',password:true,ok:'Открыть'});if(password===null)return;
   const keys=await readRecoveryFile(await file.text(),password);recoveryFile.value='';
-  const areas=Object.keys(keys.areas).filter(a=>checks.find(c=>c.area===a)?.input.checked||!code&&!profile);
+  const areas=Object.keys(keys.areas).filter(a=>recoveryChecks.find(c=>c.area===a)?.input.checked);
   if(!areas.length)throw Error('Выберите доступные контуры');
   if(!await confirmDialog({title:'Проверить сервер и выдать новое приглашение?',text:'Сервер: '+keys.endpoint+'. Контуры: '+areas.map(a=>syncAreas[a]).join(', ')+'. Для создания потребуется действующий ключ администратора именно этого Worker. Снимки проверяются чтением, данные и ревизии не изменяются. Старые устройства останутся действующими до отдельного отзыва.',ok:'Продолжить'}))return;
   const token=await admin();if(!token)return;
@@ -34,7 +34,7 @@ export function openTrustedDevices(back=closeSheet){
   if(!await confirmDialog({title:'Забыть повреждённый профиль?',text:'Будут удалены только сохранённые локальные ключи v2. База, контрольные точки и серверные данные останутся. Устройство на сервере не отзывается. Если сохранён TAP1, после явного удаления он снова станет доступен.',ok:'Забыть',danger:true}))return;
   forgetTrustedProfile();S.notify();openTrustedDevices(back);
  })):null;
- root.append(el('h2',{text:'Доверенные устройства · v2'}),p('Экспериментальный протокол. Требуется отдельно настроенный Worker v2; старый сервер не изменяется. Не используйте реальные данные до согласования миграции.'),p(profile?'Подключён профиль: '+profile.name:hasProfile?'Профиль повреждён. Автоматический переход к TAP1 заблокирован.':'Индивидуальный профиль отсутствует'),broken,field('Адрес Worker',address),field('Название нового устройства',name),...checks.map(c=>field(syncAreas[c.area],c.input)),invite,redeem,el('details',{},[el('summary',{text:'Восстановление и смена ключей доступа'}),p('Сначала выдайте новое приглашение, подключите и проверьте новое устройство, затем отдельно отзовите старое. Это не ротация ключей шифрования.'),backup,field('Защищённый файл восстановления',recoveryFile),recover]),load,list,btn('Назад',back));openSheet(root,{fullHeight:true});
+ root.append(el('h2',{text:'Доверенные устройства · v2'}),p('Экспериментальный протокол. Требуется отдельно настроенный Worker v2; старый сервер не изменяется. Не используйте реальные данные до согласования миграции.'),p(profile?'Подключён профиль: '+profile.name:hasProfile?'Профиль повреждён. Автоматический переход к TAP1 заблокирован.':'Индивидуальный профиль отсутствует'),broken,field('Адрес Worker',address),field('Название нового устройства',name),...checks.map(c=>field(syncAreas[c.area],c.input)),invite,redeem,el('details',{},[el('summary',{text:'Восстановление и смена ключей доступа'}),p('Сначала выдайте новое приглашение, подключите и проверьте новое устройство, затем отдельно отзовите старое. Это не ротация ключей шифрования.'),backup,field('Защищённый файл восстановления',recoveryFile),...recoveryChecks.map(c=>field('Восстановить: '+syncAreas[c.area],c.input)),recover]),load,list,btn('Назад',back));openSheet(root,{fullHeight:true});
 }
 
 function verifiedText(result){return Object.entries(result.verified||{}).map(([a,v])=>syncAreas[a]+': '+(v.empty?'сервер пуст, ключ расшифрования не проверен':'снимок ревизии '+v.revision+' успешно расшифрован')).join(' · ');}
