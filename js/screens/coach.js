@@ -1,4 +1,4 @@
-import {openOpponents,openTrainingOverview} from './coach-opponents.js';
+import {openOpponents,openTrainingOverview,openPreMatchDossier} from './coach-opponents.js';
 import {openAssistant} from './assistant.js';
 import {openStudio} from './studio.js';
 /* Тренерский интерфейс: отдельная навигация и данные, без связи со школьным журналом. */
@@ -129,7 +129,7 @@ function trainingForm(team,view,t,refresh,template=null){
   function warn(){
     const matches=C.trainingWarnings(preview(),players);
     warnings.replaceChildren(p('Проверка внесённых ограничений: '+(matches.length?'есть совпадения':'совпадений нет. Это не подтверждение допуска.')));
-    for(const m of matches)warnings.append(p(label(m.player)+': '+m.exercises.map(e=>e.name).join(', ')+' · '+(m.restriction.type==='avoid'?'не выполнять':'проверить адаптацию')));
+    for(const m of matches)warnings.append(p(label(m.player)+': '+m.exercises.map(e=>e.name).join(', ')+' · '+(m.potential?'возможное ограничение — уточнить упражнение':m.restriction.type==='avoid'?'не выполнять':'проверить адаптацию')));
     if(!exercises.length)warnings.append(p('В плане нет размеченных упражнений — сопоставление ограничений неполное.'));
   }
   function drawPlan(){
@@ -255,7 +255,7 @@ export async function renderCoach(root,ctx={}){
         taskHolder.append(attentionPanel(tasks.concat(commonTasks(School.state.settings,[])),onTask));body.append(taskHolder);
         Promise.all([listWork('event'),listWork('coachGoal')]).then(([events,goals])=>{if(seq===sequence&&taskHolder.isConnected)taskHolder.replaceChildren(attentionPanel(tasks.concat(commonTasks(School.state.settings,events),goalTasks(goals,team.id)),onTask));}).catch(()=>{});
         body.append(el('article',{class:'card-block today-card lesson-card lesson-card-next'},[el('div',{class:'today-meta',text:'Ближайшая тренировка'}),el('h2',{text:next?next.title:'Нет запланированных тренировок'}),next?p(fmtFull(next.date)+' · '+next.time+' · '+next.minutes+' мин'):null,team.archived?null:btn(next?'Открыть тренировку':'Запланировать',()=>trainingForm(team,view,next||null,refresh),'primary wide')]));
-        body.append(dashboardHeading('Быстрые действия'),personalizedActions('coach',[actionTile('Studio','trophy',()=>openStudio({team:team.name})),actionTile('Состав','classes',()=>go('roster')),actionTile('Тренировки','calendar',()=>go('trainings')),actionTile('Матчи','trophy',()=>go('matches')),actionTile('Аналитика','chart',()=>go('analytics')),actionTile('Соперники','trophy',()=>openOpponents(team,view)),actionTile('Нагрузка','chart',()=>openTrainingOverview(team,view)),team.archived?null:actionTile('Live-матч','quick',()=>openMatchCenter(team,refresh)),actionTile('Цели спортсменок','chart',()=>openTeamGoals(team)),actionTile('Конспекты','journal',()=>openLibrary('coach')),actionTile('Тактическая доска','classes',()=>openTacticBoards(team)),actionTile('Документы','journal',()=>openDocuments('teamReport')),actionTile('Инвентарь','classes',openInventory),actionTile('Достижения','trophy',()=>openAchievements({area:'coach'})),team.archived?null:actionTile('Помощник состава','quick',()=>openLineupAssistant(team,view))]));
+        body.append(dashboardHeading('Быстрые действия'),personalizedActions('coach',[actionTile('Studio','trophy',()=>openStudio({team:team.name,scope:team.id})),actionTile('Состав','classes',()=>go('roster')),actionTile('Тренировки','calendar',()=>go('trainings')),actionTile('Матчи','trophy',()=>go('matches')),actionTile('Аналитика','chart',()=>go('analytics')),actionTile('Соперники','trophy',()=>openOpponents(team,view)),actionTile('Нагрузка','chart',()=>openTrainingOverview(team,view)),team.archived?null:actionTile('Live-матч','quick',()=>openMatchCenter(team,refresh)),actionTile('Цели спортсменок','chart',()=>openTeamGoals(team)),actionTile('Конспекты','journal',()=>openLibrary('coach')),actionTile('Тактическая доска','classes',()=>openTacticBoards(team)),actionTile('Документы','journal',()=>openDocuments('teamReport')),actionTile('Инвентарь','classes',openInventory),actionTile('Достижения','trophy',()=>openAchievements({area:'coach'})),team.archived?null:actionTile('Помощник состава','quick',()=>openLineupAssistant(team,view))]));
         if(root.classList.contains('route-enter')&&!body.dataset.motionShown){body.dataset.motionShown='1';animateDashboard(body);}
       }else if(selectedSection==='roster'){
         const active=view.players.filter(p=>!p.archived),arch=view.players.filter(p=>p.archived);
@@ -287,7 +287,7 @@ export async function renderCoach(root,ctx={}){
         }
       }else if(selectedSection==='matches'){
         if(!team.archived)body.append(competitionCard(team,data,refresh));
-        body.append(card('Матчи и соревнования',[team.archived?null:btn('Площадка и live-матч',()=>openMatchCenter(team,refresh),'primary wide'),team.archived?null:btn('+ Результат матча',()=>matchForm(team,view,null,refresh),'wide'),team.archived?null:btn('Импорт PDF VolleyPoint',()=>openVolleyImport(team,view,refresh),'wide')]));
+        body.append(card('Матчи и соревнования',[btn('Предматчевое досье',()=>openPreMatchDossier(team),'wide'),team.archived?null:btn('Площадка и live-матч',()=>openMatchCenter(team,refresh),'primary wide'),team.archived?null:btn('+ Результат матча',()=>matchForm(team,view,null,refresh),'wide'),team.archived?null:btn('Импорт PDF VolleyPoint',()=>openVolleyImport(team,view,refresh),'wide')]));
         body.append(historyPanel(view.matches,m=>{
           const s=C.matchScore(m);
           return card(m.opponent+' · '+s.ours+':'+s.theirs,[p(fmtFull(m.date)+(m.competition?' · '+m.competition:'')),p(m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),p('Игроков в составе: '+m.roster.length),

@@ -16,13 +16,21 @@ async function key(password,salt){
   return c.subtle.deriveKey({name:'PBKDF2',salt,iterations:ITERATIONS,hash:'SHA-256'},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
 }
 export const isEncryptedBackup=p=>p?.app==='teachapp-encrypted';
+const envelopeFor=(salt,iv,data)=>({app:'teachapp-encrypted',version:1,kdf:'PBKDF2-SHA256',iterations:ITERATIONS,cipher:'AES-256-GCM',salt,iv,data});
+// Exact JSON byte count for this envelope: UTF-8 plaintext, GCM's 16-byte tag,
+// then base64. No key derivation, encryption, storage or network is necessary.
+export function encryptedEnvelopeBytes(payload){
+ const size=encoder.encode(JSON.stringify(payload)).length;
+ if(size>LIMIT)throw Error('Копия слишком велика для шифрования на устройстве');
+ return JSON.stringify(envelopeFor('A'.repeat(22)+'==','A'.repeat(16),'')).length+4*Math.ceil((size+16)/3);
+}
 export async function encryptBackup(payload,password){
   if(typeof password!=='string'||password.length<12)throw Error('Используйте пароль не короче 12 символов');
   const c=webCrypto(),salt=c.getRandomValues(new Uint8Array(16)),iv=c.getRandomValues(new Uint8Array(12));
   const plaintext=encoder.encode(JSON.stringify(payload));
   if(plaintext.length>LIMIT)throw Error('Копия слишком велика для шифрования на устройстве');
   const encrypted=await c.subtle.encrypt({name:'AES-GCM',iv,additionalData:encoder.encode(header),tagLength:128},await key(password,salt),plaintext);
-  return {app:'teachapp-encrypted',version:1,kdf:'PBKDF2-SHA256',iterations:ITERATIONS,cipher:'AES-256-GCM',salt:b64(salt),iv:b64(iv),data:b64(new Uint8Array(encrypted))};
+  return envelopeFor(b64(salt),b64(iv),b64(new Uint8Array(encrypted)));
 }
 export async function decryptBackup(p,password){
   if(!isEncryptedBackup(p)||p.version!==1||p.kdf!=='PBKDF2-SHA256'||p.iterations!==ITERATIONS||p.cipher!=='AES-256-GCM')throw Error('Неподдерживаемый формат защищённой копии');

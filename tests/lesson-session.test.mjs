@@ -31,3 +31,14 @@ test('Массовое действие не игнорирует действу
  await assert.rejects(S.applyLessonBatch(future.id,[a.id],'absent',null,true),/ещё не/);
  assert.equal(S.state.marks.length,0);
 });
+
+test('Массовая обычная нагрузка и оценка не обходят возможное частное ограничение',async()=>{
+ const {a,b,l}=await seed();
+ await S.updateLesson(l.id,{activityIds:['jump']});
+ await S.saveRestriction({studentId:b.id,activityId:'standing',type:'avoid',dateFrom:'2025-01-01',dateTo:null});
+ await assert.rejects(S.applyLessonBatch(l.id,[a.id,b.id],'normal',null,true),/ограничение/);
+ await assert.rejects(S.applyLessonBatch(l.id,[b.id],'grade','5',true),/ограничение/);
+ assert.equal(S.state.participation.length,0);assert.equal(S.state.marks.length,0);
+ await S.applyLessonBatch(l.id,[b.id],'absent',null,true);
+ assert.equal(S.state.marks[0].flag,'Н');
+});

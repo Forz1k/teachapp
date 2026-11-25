@@ -1,3 +1,4 @@
+import {buildAttendanceIndex} from './attendance-index.js';
 import { BACKUP_VERSION, validateBackup, ktpLinkIssues } from './backup.js';
 /* store.js — состояние приложения и все команды записи.
    UI читает состояние отсюда и подписывается на изменения.
@@ -531,7 +532,8 @@ async function editMark(studentId, lessonId, edit,source='manual',undoEventId=nu
     const base = edit(priorBase, previous);
     if(source==='undo'&&undoEventId&&base?.value){
       const [restrictions,custom,topic]=await Promise.all([s.activityRestrictions.index('studentId').getAll(studentId),s.activityCategories.getAll(),lesson.topicId?s.topics.get(lesson.topicId):Promise.resolve(null)]);
-      const matches=H.checkLessonRestrictions({lesson:{...lesson,activityIds:lesson.activityIds??topic?.activityIds},students:[student],activities:[...H.catalog,...custom],restrictions}).matches;
+      const review=H.checkLessonRestrictions({lesson:{...lesson,activityIds:lesson.activityIds??topic?.activityIds},students:[student],activities:[...H.catalog,...custom],restrictions});
+      const matches=[...review.matches,...review.potentialMatches];
       if(M.hasOsv(previous)||previous?.flag==='Н'||part?.mode==='paused'||part?.full||exemptions.some(e=>M.exemptionCovers(e,lesson.date))||matches.length)throw Error('Проверьте участие и ограничения в обычном журнале');
     }
     const next = withCoverage(base,previous,lesson,studentId,exemptions,part);
@@ -1158,10 +1160,10 @@ export async function transferTopic(sourceId,targetId) {
   notify();
 }
 
-export function attendanceFor(lessons,students,classId){
-  const parts=new Map(state.participation.map(p=>[p.lessonId+'|'+p.studentId,p]));
-  return A.attendanceDetails(lessons.map(l=>({...l,held:lessonHeld(l)})),students,markMap(classId),parts);
+export function attendanceContext(lessons,classId,today=M.todayIso()){
+  return buildAttendanceIndex(lessons,lessonsOfClass(classId),state.marks,state.participation,today);
 }
+export function attendanceFor(lessons,students,classId){return attendanceContext(lessons,classId).forStudents(students);}
 export async function saveNorm(input){
   const n={id:input.id||M.uid('norm'),name:input.name.trim(),activityId:input.activityId,unit:input.unit,direction:input.direction};
   if(input.scales!==undefined)n.scales=input.scales.map(r=>({classId:r.classId??null,gradeLevel:r.gradeLevel??null,group:r.group,scale:[...r.scale]}));
@@ -1170,13 +1172,16 @@ export async function saveNorm(input){
   await db.put('norms',n);state.norms=state.norms.filter(x=>x.id!==n.id).concat(n);notify();return n;
 }
 export function normCheck(norm,lesson,studentId){
-  return lessonCheck({...lesson,activityIds:[norm.activityId,'test'],activitiesConfirmed:true}).matches.filter(m=>m.studentId===studentId);
+  const review=lessonCheck({...lesson,activityIds:[norm.activityId,'test'],activitiesConfirmed:true});
+  return [...review.matches,...review.potentialMatches].filter(m=>m.studentId===studentId);
 }
 function buildNormResult({normId,studentId,lessonId,status,value=null,basis=''},data){
   const {norm,lesson,cls,students,marks,exemptions,restrictions,custom,parts}=data;
   const student=students.find(s=>s.id===studentId);
   if(!norm||!lesson||!cls||!student||student.classId!==lesson.classId||lesson.date>M.todayIso())throw Error('Проверьте ученика и дату урока');
-  const matches=H.checkLessonRestrictions({lesson:{...lesson,activityIds:[norm.activityId,'test'],activitiesConfirmed:true},students,activities:[...H.catalog,...custom],restrictions}).matches.filter(m=>m.studentId===studentId);
+  const review=H.checkLessonRestrictions({lesson:{...lesson,activityIds:[norm.activityId,'test'],activitiesConfirmed:true},students,activities:[...H.catalog,...custom],restrictions});
+  const matches=review.matches.filter(m=>m.studentId===studentId);
+  if(status==='done'&&review.potentialMatches.some(m=>m.studentId===studentId))throw Error('Уточните категорию упражнения норматива: возможное ограничение нагрузки');
   const mark=marks.find(m=>m.studentId===studentId),full=exemptions.some(e=>e.studentId===studentId&&M.exemptionCovers(e,lesson.date))||M.hasOsv(mark),part=parts.find(p=>p.studentId===studentId);
   if(!['done','restricted'].includes(status)||typeof basis!=='string'||basis.length>2000)throw Error('Проверьте результат и основание');
   if(status==='restricted'&&!matches.length&&!full)throw Error('Нет внесённого основания ограничения');
@@ -1283,8 +1288,8 @@ export async function applyLessonBatch(lessonId,studentIds,action,value=null,con
       s.participation.index('lessonId').getAll(lessonId),s.exemptions.getAll(),s.activityRestrictions.getAll(),
       s.activityCategories.getAll(),lesson.topicId?s.topics.get(lesson.topicId):Promise.resolve(null)]);
     const ids=new Set(students.map(st=>st.id)),byMark=new Map(marks.map(m=>[m.studentId,m])),byPart=new Map(parts.map(p=>[p.studentId,p]));
-    const matches=H.checkLessonRestrictions({lesson:{...lesson,activityIds:lesson.activityIds??topic?.activityIds},activities:[...H.catalog,...custom],students,restrictions}).matches;
-    const restricted=new Set(matches.map(m=>m.studentId));
+    const review=H.checkLessonRestrictions({lesson:{...lesson,activityIds:lesson.activityIds??topic?.activityIds},activities:[...H.catalog,...custom],students,restrictions});
+    const restricted=new Set([...review.matches,...review.potentialMatches].map(m=>m.studentId));
     const nextMarks=[],nextParts=[];
     for(const id of studentIds){
       if(!ids.has(id))throw Error('Состав класса изменился. Откройте урок заново');

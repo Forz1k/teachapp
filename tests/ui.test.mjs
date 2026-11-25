@@ -702,3 +702,83 @@ test('class overview displays one compact row and tags require explicit confirma
   assert.equal(store.lessonCheck(l).needsReview,false);
   ui.closeSheet();
 });
+
+test('Обзор классов проверяет все слоты, включая ещё не созданный урок',async()=>{
+ const {cls,b}=await seed();const M=await import('../js/model.js');const day=M.todayIso();
+ const first=await store.addTopic('Гибкость',1),second=await store.addTopic('Бег',2);
+ await store.updateTopic(first.id,{activityIds:['flex']});await store.updateTopic(second.id,{activityIds:['run']});
+ for(const slot of [1,2,3])await store.setScheduleEntry({weekday:M.weekdayOf(day),slot,classId:cls.id,time:String(slot+7).padStart(2,'0')+':00'});
+ await store.addLesson(cls.id,day,first.id,'',{slot:1,time:'08:00'});
+ await store.addLesson(cls.id,day,second.id,'',{slot:2,time:'09:00'});
+ await store.saveRestriction({studentId:b.id,activityId:'sprint',type:'avoid',dateFrom:day});
+ const screen=doc.createElement('div');renderClasses(screen,{});
+ const rows=[...screen.querySelectorAll('.class-today-row')];
+ assert.equal(rows.length,3);assert.match(rows[0].textContent,/№1.*Гибкость/);assert.match(rows[0].textContent,/Совпадений ограничений не найдено/);
+ assert.match(rows[1].textContent,/№2.*Бег/);assert.match(rows[1].textContent,/Возможные ограничения: 1/);
+ assert.match(rows[2].textContent,/№3.*Урок не создан/);
+ rows[1].click();assert.match(doc.querySelector('.sheet').textContent,/Возможное ограничение: Спринт/);assert.match(doc.querySelector('.sheet').textContent,/Петрова Анна/);ui.closeSheet();
+});
+
+test('Центр закрытия периода показывает все классы, фильтрует и открывает детализацию без записи оценок',async()=>{
+ const {cls}=await seed(),other=await store.addClass('8Б');
+ await store.addStudent(other.id,'Тестовый ученик',1);
+ const M=await import('../js/model.js'),day=M.todayIso();
+ await store.setScheduleEntry({weekday:M.weekdayOf(day),slot:3,classId:other.id,time:'10:00'});
+ const review=await import('../js/screens/school-review.js');
+ const before=await db.dumpAll(),period=store.state.settings.trimesters.find(t=>t.from<=day&&day<=t.to)||store.state.settings.trimesters[0];
+ await review.openSchoolPeriodCenter(period.id);
+ const sheet=doc.querySelector('.sheet');assert.match(sheet.textContent,/Закрытие периода · все классы/);
+ assert.equal(sheet.querySelectorAll('.period-class-summary').length,2);
+ const filter=sheet.querySelectorAll('select')[1];filter.value='missing';filter.onchange();
+ assert.ok(sheet.querySelector('.period-class-summary[data-class-id="'+other.id+'"]'));
+ const row=sheet.querySelector('.period-class-summary[data-class-id="'+other.id+'"]');
+ row.querySelector('button').click();await tick(100);
+ assert.match(doc.querySelector('.sheet').textContent,/Проверить уроки/);
+ assert.match(doc.querySelector('.sheet').textContent,/слот без записи/);
+ assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
+});
+
+test('Подготовка незаведённого урока проверяет конспект и не создаёт записи',async()=>{
+ const {cls,b}=await seed(),M=await import('../js/model.js'),day=M.todayIso(),W=await import('../js/workbench.js');
+ await store.setScheduleEntry({weekday:M.weekdayOf(day),slot:5,classId:cls.id,time:'12:00'});
+ await store.saveRestriction({studentId:b.id,activityId:'sprint',type:'avoid',dateFrom:day});
+ const plan=await W.saveWork({kind:'plan',name:'Тестовый бег',context:'school',minutes:45,goal:'Цель',equipment:'',audience:'9А',items:[{phase:'main',exercise:{...W.builtinExercises[0],activityId:'run',name:'Бег'},minutes:5,notes:''}]});
+ const before=await db.dumpAll(),screen=doc.createElement('div');renderToday(screen,{},day);
+ const card=[...screen.querySelectorAll('.lesson-card')].find(n=>n.textContent.includes('Урок 5'));
+ assert.ok(card);
+ [...card.querySelectorAll('button')].find(x=>x.textContent==='Подготовка к уроку').click();await tick(100);
+ const sheet=doc.querySelector('.sheet');assert.match(sheet.textContent,/запись урока ещё не создана/);
+ assert.match(sheet.textContent,/Другие действующие ограничения/);
+ const select=sheet.querySelector('select[aria-label="Конспект для подготовки"]');select.value=plan.id;select.onchange();
+ assert.match(sheet.textContent,/Возможное ограничение: Петрова Анна Сергеевна/);
+ assert.match(sheet.textContent,/Конспект не назначен уроку автоматически/);
+ assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
+});
+
+test('Конструктор круговой тренировки показывает расчёт и открывает обычный конспект без сохранения',async()=>{
+ const {cls}=await seed(),lib=await import('../js/screens/library.js'),before=await db.dumpAll();
+ await lib.openCircuitBuilder(ui.closeSheet,cls.id);
+ const sheet=doc.querySelector('.sheet');assert.match(sheet.textContent,/Конструктор круговой тренировки/);assert.match(sheet.textContent,/26 \/ 45 мин/);
+ assert.equal(sheet.querySelectorAll('.circuit-stations .card-block').length,2);
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='+ Станция').click();
+ assert.match(sheet.textContent,/34 \/ 45 мин/);
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Открыть черновик конспекта').click();await tick(100);
+ assert.match(doc.querySelector('.sheet').textContent,/Конспект занятия/);assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
+});
+
+test('Предматчевое досье и черновик тренировки не меняют данные до сохранения',async()=>{
+ await seed();const C=await import('../js/coach.js'),V=await import('../js/screens/coach-opponents.js'),T=await import('../js/screens/match-tactics.js');
+ const team=await C.saveTeam({name:'Демо-команда'}),players=[];
+ for(let i=0;i<6;i++)players.push(await C.savePlayer({teamId:team.id,name:'Игрок '+i,number:i+1,position:'universal'}));
+ const ids=players.map(p=>p.id),detail={mode:'dual',teamName:team.name,opponent:'Гости',competition:'',venue:'',startedAt:'2026-01-01T12:00:00Z',ourPlayers:players.map(({id,name,number})=>({id,name,number})),awayPlayers:[],roster:ids,lineup:ids,awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours',events:[]};
+ const before=await db.dumpAll();
+ await V.openPreMatchDossier(team,ui.closeSheet,'Новый соперник');
+ assert.match(doc.querySelector('.sheet').textContent,/Предматчевое досье/);assert.match(doc.querySelector('.sheet').textContent,/Встреч в этой выборке нет/);assert.match(doc.querySelector('.sheet').textContent,/Игрок 0/);
+ await T.openTrainingDraft({teamId:team.id,opponent:'Гости',date:'2026-01-01',detail},ui.closeSheet);
+ const sheet=doc.querySelector('.sheet');assert.match(sheet.textContent,/Черновик тренировки по матчу/);
+ const pick=sheet.querySelector('select');pick.value='builtin-pass';
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='+ Вариант упражнения').click();
+ assert.match(sheet.textContent,/18 \/ 90 мин/);
+ [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Открыть редактируемый конспект').click();await tick(100);
+ assert.match(doc.querySelector('.sheet').textContent,/Конспект занятия/);assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
+});

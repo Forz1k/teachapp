@@ -9,7 +9,9 @@ import {createServer} from 'node:net';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {digestToken,LIMIT} from '../server/cloudflare-protocol.mjs';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
-import {relayClient} from '../js/sync.js';
+import {relayClient,projectScope} from '../js/sync.js';
+import {SCHEMA} from '../js/db.js';
+import {BACKUP_VERSION} from '../js/backup.js';
 import {createPersonalCode,personalCredentials,personalTokenHashes} from '../js/personal-sync.js';
 const origin='https://synthetic.example';
 const A='A'.repeat(43),B='B'.repeat(43),C='C'.repeat(43);
@@ -127,7 +129,7 @@ try{
  assert.deepEqual(await (await get('school',device2)).json(),newSnapshot);
  assert.equal((await get('coach',coachDevice)).status,200);
  console.log('CLOUDFLARE V2 PASS: independent scoped device keys, real server revocation, legacy disable, persistent revisions, no exposed token hashes');
- const {createTrustedInvite,redeemTrustedInvite,parseTrustedInvite,parseTrustedProfile,trustedCredentials,trustedRelayClient,listTrustedDevices,revokeTrustedDevice}=await import('../js/device-trust.js');
+ const {createTrustedInvite,redeemTrustedInvite,parseTrustedInvite,parseTrustedProfile,trustedCredentials,trustedRelayClient,listTrustedDevices,revokeTrustedDevice,createRecoveryFile,readRecoveryFile}=await import('../js/device-trust.js');
  const v2Invite=await createTrustedInvite({personalCode,adminToken:admin,name:'Synthetic paired device',fetcher:route});
  assert.equal(parseTrustedInvite(v2Invite.code).endpoint,'https://synthetic-worker.example');
  const redemptions=await Promise.allSettled([redeemTrustedInvite(v2Invite.code,route),redeemTrustedInvite(v2Invite.code,route)]);
@@ -150,4 +152,27 @@ try{
  await revokeTrustedDevice(profile.endpoint,admin,'coach',profile.deviceId,route);
  await assert.rejects(pairedCoach.get(),/отказал в доступе/);
  console.log('CLOUDFLARE V2 INVITE PASS: one-time encrypted pairing without shared access token, independent contour revocation');
+ const file=await createRecoveryFile({profile},'synthetic-recovery-passphrase'),keys=await readRecoveryFile(JSON.stringify(file),'synthetic-recovery-passphrase');
+ assert.equal(keys.areas.school,personalSchool.password);assert.ok(!JSON.stringify(keys).includes(profile.areas.school.token));
+ // The synthetic school snapshot was deliberately not encrypted with TAP1's key.
+ // Recovery must refuse to issue a new invitation and revoke its partial registration.
+ const beforeRecovery=await listTrustedDevices(profile.endpoint,admin,'school',route);
+ await assert.rejects(createTrustedInvite({recovery:keys,adminToken:admin,name:'Invalid recovery',areas:['school'],fetcher:route}),/отозваны/);
+ const failed=await listTrustedDevices(profile.endpoint,admin,'school',route);assert.equal(failed.length,beforeRecovery.length+1);assert.ok(failed.find(x=>x.name==='Invalid recovery').revokedAt);
+ const replacement=await createTrustedInvite({recovery:keys,adminToken:admin,name:'Recovery coach',areas:['coach'],fetcher:route});
+ assert.deepEqual(replacement.verified.coach,{revision:0,empty:true});
+ const newProfile=await redeemTrustedInvite(replacement.code,route);assert.notEqual(newProfile.areas.coach.token,profile.areas.coach.token);
+ assert.equal(newProfile.areas.coach.password,profile.areas.coach.password);
+ assert.deepEqual(await trustedRelayClient(newProfile,'coach',{fetcher:route}).get(),{revision:0,envelope:null});
+ assert.deepEqual(await (await get('school',device2)).json(),newSnapshot);
+ const snapshotData=Object.fromEntries(Object.keys(SCHEMA).map(k=>[k,[]]));
+ const coachPacket=await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:'coach',workspaceId:crypto.randomUUID(),revision:1,snapshot:projectScope(snapshotData,'coach')},newProfile.areas.coach.password);
+ const original=await trustedRelayClient(newProfile,'coach',{fetcher:route}).put(0,coachPacket);
+ const rotated=await createTrustedInvite({profile:newProfile,adminToken:admin,name:'Rotated coach',areas:['coach'],fetcher:route});
+ assert.deepEqual(rotated.verified.coach,{revision:1,empty:false});
+ const rotatedProfile=await redeemTrustedInvite(rotated.code,route);assert.notEqual(rotatedProfile.areas.coach.token,newProfile.areas.coach.token);
+ const rotatedClient=trustedRelayClient(rotatedProfile,'coach',{fetcher:route});assert.deepEqual(await rotatedClient.get(),original);
+ await revokeTrustedDevice(newProfile.endpoint,admin,'coach',newProfile.deviceId,route);await assert.rejects(trustedRelayClient(newProfile,'coach',{fetcher:route}).get(),/отказал в доступе/);
+ assert.deepEqual(await rotatedClient.get(),original);await revokeTrustedDevice(rotatedProfile.endpoint,admin,'coach',rotatedProfile.deviceId,route);
+ console.log('CLOUDFLARE RECOVERY PASS: encrypted key-only recovery, wrong snapshot key rejected, fresh token, no snapshot modification');
 }finally{await stop();await rm(state,{recursive:true,force:true});}

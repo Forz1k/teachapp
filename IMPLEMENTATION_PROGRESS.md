@@ -261,3 +261,107 @@
 ## Кандидат выпуска 5.1.0
 
 Владелец разрешил объединить изменения с основной веткой. Выбран промежуточный minor-релиз, не 7.0. Изменены согласованные версии package/lock, Service Worker, APP_VERSION, README и CHANGELOG. DB_VERSION 10 сохранён; новые записи/режимы требуют обновления всех устройств до нового клиента до обмена. Production Firebase и Cloudflare не меняются. Выпуск — только после успешного полного CI кандидата. Ручная проверка iPhone остаётся отдельной задачей.
+
+## Выпуск 5.1.0 и следующий этап — 25.11.2026
+
+- По разрешению владельца PR #91 объединён в main: `de8b0991411cb85fb2aaf0c739e966552bc98077`. Дерево совпадает с проверенным кандидатом `669930a085eebe3ae907ed944cef2b6c4ed19d7e`. Версия 5.1.0; 339/339, Chromium 56 снимков, WebKit, Cloudflare и Firebase Emulator PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45557721800), [Pages deployment](https://github.com/Forz1k/teachapp/actions/runs/45557953781) SUCCESS. Production Worker и правила Firebase не изменены; DB_VERSION 10. Обновить оба устройства перед синхронизацией, не очищать данные сайта.
+- [PR #92](https://github.com/Forz1k/teachapp/pull/92), `eefcf2310ae89334af7735c41e96c863135c2b68`: защищённый файл только ключей расшифрования, выдача нового TAD2 с админ-ключом, проверка фактического снимка перед выдачей, запрет fallback при повреждённом профиле. 343/343, Chromium/offline, WebKit, Cloudflare workerd PASS; [CI](https://github.com/Forz1k/teachapp/actions/runs/45558609884), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45558609834), [Cloudflare](https://github.com/Forz1k/teachapp/actions/runs/45558609882). Старые ключи отзываются отдельно после проверки нового устройства; это не ротация ключей шифрования.
+- [PR #93](https://github.com/Forz1k/teachapp/pull/93), `7ca603de397ce521a351c329d7ca424270d055ac`: добровольная передача LIVE; постоянная локальная пауза, блокировка последующих записей, проверка счёта, истории, ETag, отсутствие записи при подтверждении передачи, зашифрованный перенос одного активного черновика с защитой существующих данных. 343/343, Chromium/offline, Cloudflare smoke, WebKit PASS; [CI](https://github.com/Forz1k/teachapp/actions/runs/45559939711), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45559939524). Ошибка сравнения порядка JSON-полей в первом тесте исправлена, повторный прогон PASS. Не эксклюзивная серверная аренда: закрыть другие вкладки, убедиться, что исходное устройство прекратило запись. Требуется одинаковый состав с теми же ID. Реальные устройства и реальный LIVE не проверены.
+
+Обе новые ветки — отдельные draft PR, не объединены и не опубликованы. Общий интеграционный прогон ещё требуется. Firebase Emulator для этих отдельных PR не запускался: правила не менялись; PASS на 5.1.0. Физическая приёмка iPhone, безопасная ротация ключей шифрования, серверная аренда LIVE, полноценные роли и кабинеты остаются незавершёнными. Ни одного production-деплоя серверных правил не выполнялось.
+
+
+## Продолжение после 5.1.0 — 25.11.2026
+
+Единый draft [PR #94](https://github.com/Forz1k/teachapp/pull/94), ветка `roadmap/next-5.1`. Main проверен: `de8b0991411cb85fb2aaf0c739e966552bc98077`, опубликованная версия 5.1.0. Production не изменён.
+
+| Срез | Реализация | Проверки |
+|---|---|---|
+| `ca2ad12` | Интеграция #92 (восстановление доступа v2) и #93 (добровольная передача LIVE и зашифрованный перенос черновика) | [CI PASS](https://github.com/Forz1k/teachapp/actions/runs/45560880835), WebKit, Cloudflare PASS |
+| `c7a87ae` | Изолированный синтетический Platform Worker: отдельное пространство, серверные роли, одноразовые приглашения 10 мин, хеши токенов, истечение сессии 7 дней, аудит, lease 45 с с generation fencing, CAS и идемпотентностью | 350/350, [реальный workerd PASS](https://github.com/Forz1k/teachapp/actions/runs/45561515943) |
+| `cf1da59` | Тестовые кабинеты владельца, тренера, помощника и спортсменки; собственный профиль, расписание, цели, задания и фиксированные ответы; локальный браузерный LAB | [Platform workerd + Chromium PASS](https://github.com/Forz1k/teachapp/actions/runs/45562575879), включая 390px и отсутствие сохранённых credentials. Исправлены абсолютный путь Chromium, вложенный busy и обработка отсутствующей иконки. |
+| `712b53c` | Пользовательские снимки регламентов, 1/3/5 партий, цели и потолок очков, разница, смена сторон, интервал либеро и судейское исключение. Старые матчи не переинтерпретируются. | 354/354, [CI PASS](https://github.com/Forz1k/teachapp/actions/runs/45563075153), WebKit, Cloudflare, Platform PASS |
+| `6eb4213` | Индекс посещаемости на период и повторное использование для строк журнала. Большая синтетическая база, проверка равенства результатов, матрица экрана и клавиатура. | 355/355, [CI PASS](https://github.com/Forz1k/teachapp/actions/runs/45563710909), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45563710969), [Cloudflare](https://github.com/Forz1k/teachapp/actions/runs/45563710863), [Platform](https://github.com/Forz1k/teachapp/actions/runs/45563710908) SUCCESS |
+
+### Измерения и итог проверок кода
+
+```
+ATTENDANCE BENCHMARK {"classes":24,"pupilsPerClass":30,"lessonCount":36,"marks":17760,"participation":3720,"beforeMs":19.34,"afterMs":1.06,"speedup":18.23,"identical":true}
+LARGE JOURNAL PASS: 30 pupils x 36 lessons, 8 viewport sizes, light/dark, scroll to totals and keyboard navigation; DOM cells 1200
+BROWSER PASS: 65 screenshots; real Chromium, offline reload, persistent IndexedDB, score/undo.
+```
+
+Медианы пяти измерений расчёта посещаемости на CI, а не скорости всего приложения. Восемь размеров: 320×740, 375×812, 390×844, 430×932, 768×1024, 844×390, 1280×720, 1920×1080. Проверка программных инвариантов и контрольные снимки не равны ручному визуальному аудиту. Unit 355 passed / 0 failed / 0 skipped. npm run validate PASS. Firebase Emulator не запускался в этой ветке (правила не изменены); PASS для 5.1.0.
+
+### Границы реализации и следующий этап
+
+- 5.1: восстановление доступа и перенос LIVE реализованы; ротация ключей шифрования, проверка двух физических устройств и реальная миграция v2 остаются. Серверный lease работает только в независимом синтетическом Platform API; действующий Firebase LIVE сохраняет CAS и добровольную передачу.
+- 5.2/6.0: автоматическая матрица журнала выполнена, ручная проверка физического iPhone и всех экранов, полный визуальный аудит и обновление PWA со старой версии остаются.
+- 5.5: настраиваемые регламенты реализованы для поддерживаемой модели; это не полное автоматическое судейство по FIVB. Сложные санкции/регламенты и ручная приёмка остаются.
+- 7.0: API и кабинеты доступны только в тестовой среде с синтетическими данными. Нет production-роутов. До реального использования нужны защищённое восстановление владельца, лимиты и защита от злоупотреблений, полный аудит и удаление/резервирование, роли учителя/организатора, полноценный протокол и согласованная интеграция с Firebase. Не передавать реальные данные учащихся в LAB.
+- 5.8/5.9: production-миграция архива/медиа и защищённые публичные реакции не выполнены. Платных API нет. Остальные незакрытые требования предыдущей матрицы сохраняются.
+
+PR #94 не объединён, новый релиз не опубликован. Все тесты на последнем проверенном кодовом SHA `6eb4213c6c7ed5e0c0669f7ef8afeaccd5079f50` зелёные; последующее документирование не меняет код.
+
+## Следующий этап: безопасность нагрузки — 25.11.2026
+
+- В PR #94 исправлено отображение всех уроков дня (включая слоты без созданной записи), разделены подтверждённые и возможные совпадения ограничений. Обычные массовые действия и сдача нормативов не обходят частное ограничение при общей категории; неопределённость не создаёт освобождение. Добавлены четыре регрессионных теста.
+- Кодовые коммиты [772cc66](https://github.com/Forz1k/teachapp/commit/772cc666dde47935af4fd859282e5f67270a85e4) и [5ae9509](https://github.com/Forz1k/teachapp/commit/5ae9509a61872d4c82e2ee96db97140a289ddbab). [CI](https://github.com/Forz1k/teachapp/actions/runs/45566608331), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45566608269), [Cloudflare](https://github.com/Forz1k/teachapp/actions/runs/45566608238), [Platform](https://github.com/Forz1k/teachapp/actions/runs/45566608262) SUCCESS. 359/359, 0 failed/skipped, validate PASS, Chromium/offline 65 screenshots. Физические устройства не проверялись; main и production не изменялись.
+
+## Incremental synchronization — client codec checkpoint
+- `d329dfe`: scoped changes, canonical base/result digests, authenticated encrypted replay, relationship validation, manual preview size comparison. Current v1/v2 transport unchanged.
+- Verified 364/364 tests, validate, browser/offline (65 screenshots), WebKit, Cloudflare and Platform synthetic: [CI](https://github.com/Forz1k/teachapp/actions/runs/45567811230), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45567811226), [Cloudflare](https://github.com/Forz1k/teachapp/actions/runs/45567811242), [Platform](https://github.com/Forz1k/teachapp/actions/runs/45567811229). See docs/SYNC_DELTA.md.
+
+## Delta compaction checkpoint — 25.11.2026
+- `a590937`: explicit separate compactor privilege, atomic new anchor at the next revision, CAS vs concurrent append, stale-reader 410 restart, fresh-device reconstruction, checkpoint comparison and explicit stale history review. Local-only test Worker, no production deployment. Old intermediate history is intentionally superseded; verified backup required.
+- 367/367 tests, zero failures/skips; validate, Chromium/offline (65 screenshots), WebKit, Cloudflare, Platform and Delta synthetic PASS: [CI](https://github.com/Forz1k/teachapp/actions/runs/45569335998), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45569335948), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45569336033).
+
+## Delta laboratory integration checkpoint — 25.11.2026
+- `b77d074`: checkpoint-tail reads and explicit synthetic adapter to ordinary prepare/preview/execute. Real local workerd + two synthetic IndexedDB states, separate edits, delta-only uploads, pull without revision churn, stale compacted history review and explicit conflict resolution.
+- 368/368 tests, validation, Chromium/offline (65 screenshots), WebKit, Cloudflare, Platform and Delta synthetic successful: [CI](https://github.com/Forz1k/teachapp/actions/runs/45569921608), [Delta](https://github.com/Forz1k/teachapp/actions/runs/45569921613), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45569921763). Production transport not changed.
+
+## Teacher Intelligence: all-class period review checkpoint — 25.11.2026
+- `9c1edee`: all-class period closure overview, slot-aware schedule gaps, explicit confirmation and missing attendance, due norm review vs pending results, filters, direct lesson drill-down, aggregate document preview. Corrected class-wide attendance inference; possible restrictions remain review candidates in norm and plan workflows.
+- 371/371 tests, zero failures/skips, validate, Chromium/offline (65 screenshots), WebKit, Cloudflare, Platform and Delta synthetic successful: [CI](https://github.com/Forz1k/teachapp/actions/runs/45571373549), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45571373493).
+
+## Teacher Intelligence: preparation checkpoint
+- `915f73c`, `d182a8e`: read-only per-slot preparation, dated restriction and norm context, selected plan preview, no implicit journal writes. Stabilized old browser journal check by waiting for populated columns, retaining geometry assertions.
+- 375/375, no failures/skips, both full CI runs PASS, 68 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic. [CI](https://github.com/Forz1k/teachapp/actions/runs/45572261118), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45572261190).
+
+## Teacher Intelligence: reserve plans and circuit builder checkpoint
+- `868c421`: reserve copy with separate reason, independent editable school plan, original inventory/hall assumptions cleared; parallel circuit builder with duration, group capacity, simultaneous inventory, per-exercise health review, ordinary plan draft, no timer or schema change.
+- 378/378, zero failures/skips; both full CI runs successful, 70 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic. [CI](https://github.com/Forz1k/teachapp/actions/runs/45573416951), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45573417013).
+
+## Volleyball Intelligence: rotation and connections checkpoint
+- `75f02f9`: phase-specific relative cycles, recorded adjacent set/attack pairs, substitution windows without causal claims; circuit transition matrix and coach library fix.
+- 382/382, no failures/skips, both CI runs, 70 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45574226496).
+
+## Pre-match dossier and training drafts checkpoint
+- `dfe3e48`: private team/opponent-scoped preparation, 14-day actual load, restrictions and goals; editable exercise selection with no automatic assignment or private metadata in plan. Coach potential restriction and no-test review corrected.
+- 386/386, zero failures/skips, both CI runs, 71 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45577502848).
+
+## Viewer fixture links and scoreboard checkpoint
+- `091250e`: canonical public fixture links and exact scheduledId matching, grouped schedule, scoreboard mode and prefilled matchday poster. Existing public schema unchanged. Once current finished match is replaced the fixture route directs to results, not a guessed match.
+- 389/389, zero failures/skips; both full CI runs, 73 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45578515703).
+
+## Studio 2.0 checkpoint
+- `6f80e7e`: team/device-local style, editable public post draft and batch PNG/TXT ZIP; no new runtime dependency or image persistence. Long title/score/footer layout corrected.
+- 394/394, zero failures/skips, 74 Chromium screenshots, offline batch export, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45581492539).
+
+## Public archive search checkpoint
+- `cdff237`: loaded-results search, bounded rendering, score-only PNG, current stream precedence and exact archive-key retention. 398/398, both CI runs, 75 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45582561893).
+
+## Synchronization interruption checkpoint
+- `0898ce8`: latched foreground/identity guard before upload, after acknowledgement and in local transaction; late remote acceptance leaves checkpoint unchanged for reconciliation. Identical authenticated envelope avoids redundant PBKDF2. Clean-status fast path rechecks actual local scope atomically.
+- 401/401, 0 failures/skips, both full CI runs, 75 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45589132164).
+- Guard is cooperative; cannot undo an already accepted server write, remotely revoke a bearer, or encrypt the browser profile at rest.
+
+## Performance checkpoint
+- `3b01829`: structural JSON equality (canonical digests unchanged), per-class lesson and final-grade indices, reuse of attendance assessment.
+- 404/404, 0 failures/skips, both full CI runs, 75 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45589869415).
+- Synthetic medians: 23,064 records equality 89.63 → 3.61 ms; period review 24 classes / 720 pupils / 864 lessons 15.80 → 12.39 ms. Calculation-only, identical compared outputs.
+
+## Release candidate checkpoint
+- `52c5b1c`: 5.1.1-rc.1, actual pinned 5.1.0 PWA upgrade via update banner, complete IndexedDB comparison, encrypted checkpoint reconciliation with zero redundant PUT, offline match edit, old encrypted backup restored independently.
+- 404/404, 0 failures/skips, both full CI runs, 75 Chromium screenshots, WebKit upgrade, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45592416145), [upgrade](https://github.com/Forz1k/teachapp/actions/runs/45592415996).
+- The first upgrade test raced controllerchange navigation; fixed by waiting for actual navigation and fresh document. Owner explicitly authorized static 5.1.1 publication; physical device acceptance not claimed. No production worker or rules deployment.

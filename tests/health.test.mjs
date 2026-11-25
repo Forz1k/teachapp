@@ -49,3 +49,18 @@ test('Группа, ограничения, тема и правка урока 
   assert.equal(S.state.activityRestrictions.length,0);
   assert.equal(S.state.studentHealthProfiles.length,0);
 });
+
+test('Общая категория не скрывает частное ограничение и не создаёт подтверждённое освобождение',()=>{
+  const students=[{id:'s',classId:'c'},{id:'other',classId:'other'}];
+  const r={studentId:'s',activityId:'sprint',type:'avoid',dateFrom:date,dateTo:date};
+  const check=(tags,patch={},day=date)=>H.checkLessonRestrictions({lesson:{classId:'c',date:day,activityIds:tags},activities:H.catalog,students,restrictions:[{...r,...patch}]});
+  const broad=check(['run']);
+  assert.equal(broad.matches.length,0);assert.equal(broad.potentialMatches.length,1);assert.equal(broad.needsReview,true);
+  assert.equal(check(['sprint']).matches.length,1);assert.equal(check(['run','sprint']).potentialMatches.length,0);
+  assert.equal(check(['long']).potentialMatches.length,0);assert.equal(check(['long']).needsReview,false);
+  assert.equal(check(['run'],{type:'no_test'}).potentialMatches.length,0);
+  assert.equal(check(['run','test'],{type:'no_test'}).potentialMatches.length,1);
+  assert.equal(check(['long','test'],{activityId:'30m',type:'no_test'}).potentialMatches.length,0);
+  assert.equal(check(['run'],{},'2026-11-25').potentialMatches.length,0);
+  assert.equal(check(['run'],{studentId:'other'}).potentialMatches.length,0);
+});

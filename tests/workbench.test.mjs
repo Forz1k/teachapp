@@ -32,3 +32,46 @@ test('alternative candidates exclude matching restrictions, unknown tags and ful
  const {catalog}=await import('../js/health.js'),lesson={classId:'c',date:'2026-11-24',activityIds:['run']},students=[{id:'a',classId:'c'},{id:'b',classId:'c'}],exercises=['run','jump','pass','unknown'].map(activityId=>({kind:'exercise',activityId})),ctx={students,activities:catalog,restrictions:[{studentId:'a',activityId:'jump',type:'avoid',dateFrom:'2026-01-01'}],exemptions:[{studentId:'b',dateFrom:'2026-01-01',dateTo:null}]};
  assert.deepEqual(W.alternativeExerciseCandidates(lesson,'a',exercises,ctx).rows.map(r=>r.exercise.activityId),['pass']);assert.equal(W.alternativeExerciseCandidates(lesson,'b',exercises,ctx).full,true);assert.deepEqual(W.alternativeExerciseCandidates(lesson,'b',exercises,ctx).rows,[]);assert.throws(()=>W.alternativeExerciseCandidates(lesson,'foreign',exercises,ctx));
 });
+
+test('Broad exercise preview includes potential restrictions without classifying them as confirmed',async()=>{
+ const {catalog}=await import('../js/health.js');
+ const plan={context:'school',items:[{phase:'main',exercise:{activityId:'run'},minutes:5}]};
+ const result=W.lessonPlanReview(plan,{classId:'c',date:'2026-11-24'},{students:[{id:'a',classId:'c'}],activities:catalog,restrictions:[{studentId:'a',activityId:'sprint',type:'avoid',dateFrom:'2026-11-01'}],exemptions:[]});
+ assert.equal(result.items[0].matches.length,0);assert.equal(result.items[0].potentialMatches.length,1);assert.equal(result.items[0].needsReview,true);
+});
+
+test('Reserve plan is an independent editable ordinary plan without original hall assumptions',async()=>{
+ await db.clearAll();await S.load();
+ const original=await W.saveWork({kind:'plan',name:'Основной',context:'school',minutes:45,goal:'Цель',equipment:'Мячи',audience:'7А',items:[{phase:'main',exercise:W.builtinExercises[1],minutes:8,notes:'Техника'}],resources:[{itemId:'stock',name:'Мячи',unit:'шт.',qty:8}],gymBoards:[]});
+ const before=structuredClone(original),draft=W.fallbackPlanDraft(original,'equipment');
+ assert.equal(draft.id,undefined);assert.equal(draft.resources.length,0);assert.equal(draft.equipment,'');assert.match(draft.goal,/Недостаточно инвентаря/);
+ draft.items[0].notes='Новые условия';const saved=await W.saveWork(draft);
+ assert.notEqual(saved.id,original.id);assert.deepEqual((await W.listWork('plan')).find(p=>p.id===original.id),before);
+ assert.throws(()=>W.fallbackPlanDraft(original,'wrong'));
+ const backup=await S.makeBackup();await S.restoreBackup(backup);assert.equal((await W.listWork('plan')).length,2);
+});
+test('Circuit uses parallel station inventory, actual elapsed slots, capacities and immutable exercise snapshots',()=>{
+ const stock={id:'balls',name:'Мячи',unit:'шт.',initial:{good:5,repair:2,unusable:0},movements:[],archived:false},r={itemId:'balls',name:'Мячи',unit:'шт.',qty:3};
+ const station={exercise:W.builtinExercises[1],capacity:8,notes:'',resources:[r]};
+ const args={name:'Круг',minutes:45,rounds:2,work:3,transition:1,warmup:{exercise:W.builtinExercises[0],minutes:5},cooldown:{exercise:W.builtinExercises[3],minutes:5},stations:[station,{...station,exercise:W.builtinExercises[2]}],pupilCount:17,inventory:[stock]};
+ const before=structuredClone(args),result=W.circuitDraft(args);
+ assert.equal(result.total,26);assert.deepEqual(result.rotation,[[1,2],[2,1]]);assert.equal(result.groups,2);assert.equal(result.groupSize,9);assert.equal(result.capacityIssues.length,2);
+ assert.equal(result.plan.resources[0].qty,6);assert.equal(result.stock[0].available,5);assert.equal(result.stock[0].shortage,1);
+ assert.equal(result.plan.items.length,6);assert.equal(result.plan.items.reduce((n,i)=>n+i.minutes,0),26);assert.match(result.plan.items[1].notes,/параллельно/);
+ assert.deepEqual(args,before);result.plan.items[1].exercise.name='Copy';assert.equal(args.stations[0].exercise.name,before.stations[0].exercise.name);
+ assert.throws(()=>W.circuitDraft({...args,minutes:25}),/не помещается/);
+ assert.throws(()=>W.circuitDraft({...args,stations:[station]}),/параметры/);
+ assert.throws(()=>W.circuitDraft({...args,stations:[{...station,resources:[r,r]},station]}),/Повторяющийся/);
+ assert.equal(W.circuitDraft({...args,inventory:[]}).stock[0].available,null);
+});
+
+test('Match training draft only copies explicitly selected library exercises, no private data or implicit writes',async()=>{
+ await db.clearAll();await S.load();const before=await db.dumpAll();
+ const e=W.builtinExercises[1],draft=W.matchTrainingDraft({exercises:W.builtinExercises,selectedIds:[e.id],minutes:45});
+ assert.equal(draft.total,18);assert.equal(draft.plan.context,'coach');assert.equal(draft.plan.items.length,3);assert.equal(draft.plan.audience,'');
+ assert.deepEqual(await db.dumpAll(),before);assert.throws(()=>W.matchTrainingDraft({exercises:W.builtinExercises,selectedIds:[e.id],minutes:17}),/не помещаются/);
+ assert.throws(()=>W.matchTrainingDraft({exercises:W.builtinExercises,selectedIds:[e.id,e.id],minutes:45}));
+ assert.throws(()=>W.matchTrainingDraft({exercises:W.builtinExercises,selectedIds:['unknown'],minutes:45}));
+ const saved=await W.saveWork(draft.plan);assert.equal(saved.kind,'plan');assert.equal((await W.listWork('plan')).length,1);
+ const backup=await S.makeBackup();await S.restoreBackup(backup);assert.equal((await W.listWork('plan'))[0].context,'coach');
+});

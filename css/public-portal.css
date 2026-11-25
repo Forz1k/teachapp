@@ -37,3 +37,22 @@ body{background:radial-gradient(ellipse at 85% 0%,#5578c119,transparent 44%),var
 .moment-note{display:block;font-size:.78rem;line-height:1.4;color:var(--accent,#62d6a2);font-weight:650;margin-top:.25rem}.portal-updated{color:var(--muted,#aab4c5);font-size:.78rem;text-align:right;margin:.2rem .4rem}.fan-fullscreen .portal-updated{display:none}
 
 .media-news{padding:.9rem 0;border-bottom:1px solid var(--line,#445063)}.media-news h3{margin:.3rem 0}.media-body{white-space:pre-wrap;overflow-wrap:anywhere}.media-news p{overflow-wrap:anywhere}
+
+/* Public fixture links and CSS scoreboard mode; retain freshness notices. */
+.fixture-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;min-width:0}
+.fixture-actions .archive-link{padding:8px 10px}
+.fixture-actions .share-fallback{flex-basis:100%;min-width:0}
+.fan-fullscreen .top,.fan-fullscreen .portal-nav,.fan-fullscreen .portal-footer{display:none}
+.fan-fullscreen #portal{width:100%;max-width:none}
+.fan-fullscreen #portal>.portal-updated{display:block}
+.fan-fullscreen #portal>:not(.hero):not(.notice):not(.portal-updated){display:none}
+.fan-fullscreen #portal>.hero{min-height:clamp(340px,82dvh,1000px);width:100%;align-content:center;justify-content:stretch}
+.fan-fullscreen .hero .teams{width:min(100%,1400px)}
+.fan-fullscreen .hero .team-score{font-size:clamp(48px,16vw,200px)}
+@media(max-width:440px){.fixture-actions{gap:6px}.fixture-actions .archive-link{font-size:12px;padding:8px;min-height:44px}}
+
+.archive-search-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.archive-search{flex:1 1 220px;min-width:0;max-width:100%;min-height:44px;padding:10px 12px;color:var(--ink);background:var(--panel-2);border:1px solid var(--border);border-radius:12px;font:inherit;font-size:16px}
+.archive-search:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+.results-panel [hidden]{display:none!important}
+@media(max-width:440px){.archive-search-row .archive-link{font-size:12px}}

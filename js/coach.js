@@ -115,8 +115,11 @@ export function trainingWarnings(training,players){
   const out=[];
   for(const p of players.filter(p=>training.roster.includes(p.id))){
     for(const r of p.restrictions.filter(r=>active(r,training.date))){
-      const exercises=training.exercises.filter(x=>ancestorIds(x.activityId,activityMap).ancestors.has(r.activityId));
+      const applicable=x=>r.type!=='no_test'||ancestorIds(x.activityId,activityMap).ancestors.has('test');
+      const exercises=training.exercises.filter(x=>applicable(x)&&ancestorIds(x.activityId,activityMap).ancestors.has(r.activityId));
+      const possible=training.exercises.filter(x=>applicable(x)&&!exercises.includes(x)&&ancestorIds(r.activityId,activityMap).ancestors.has(x.activityId));
       if(exercises.length)out.push({player:p,restriction:r,exercises});
+      if(possible.length)out.push({player:p,restriction:r,exercises:possible,potential:true});
     }
   }
   return out;
@@ -221,7 +224,7 @@ export async function startLiveMatch(input){
 export async function startDetailedMatch(input){
  const d={id:uid('live'),mode:'dual',teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),venue:String(input.venue||'').trim(),
    teamName:String(input.teamName||'').trim(),roster:[...input.roster],ourPlayers:input.ourPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),awayPlayers:input.awayPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),
-   lineup:[...input.lineup],awayLineup:[...input.awayLineup],libero:input.libero||null,...(input.libero2?{libero2:input.libero2}:{}),...(input.substitutionMode!==undefined?{substitutionMode:input.substitutionMode}:{}),...(input.limits!==undefined?{limits:{...input.limits}}:{}),...(input.boardColors!==undefined?{boardColors:{...input.boardColors}}:{}),...(input.boardLogos!==undefined?{boardLogos:{...input.boardLogos}}:{}),scheme:input.scheme,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,startedAt:new Date().toISOString(),events:[],revision:0};
+   lineup:[...input.lineup],awayLineup:[...input.awayLineup],libero:input.libero||null,...(input.libero2?{libero2:input.libero2}:{}),...(input.substitutionMode!==undefined?{substitutionMode:input.substitutionMode}:{}),...(input.limits!==undefined?{limits:{...input.limits}}:{}),...(input.regulation!==undefined?{regulation:structuredClone(input.regulation)}:{}),...(input.boardColors!==undefined?{boardColors:{...input.boardColors}}:{}),...(input.boardLogos!==undefined?{boardLogos:{...input.boardLogos}}:{}),scheme:input.scheme,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,startedAt:new Date().toISOString(),events:[],revision:0};
  assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
  return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&p.teamId===d.teamId&&!p.archived)),'Состав изменился');});
 }

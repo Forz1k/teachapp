@@ -45,18 +45,31 @@ export function checkLessonRestrictions({ lesson, activities, students, restrict
   const reviewReasons=[];
   if(lesson.activitiesConfirmed===false)reviewReasons.push('Виды нагрузки ещё не подтверждены');
   else if(!tags.length)reviewReasons.push('Не указаны виды нагрузки урока или темы КТП');
-  const matches = [];
-  for (const tag of new Set(tags)) {
+  const matches = [], potentialMatches = [];
+  const tagSet = new Set(tags);
+  const relevant = restrictions.filter(r => ids.has(r.studentId) && active(r,date));
+  const graph = new Map([...byId.keys()].map(id => [id,ancestorIds(id,byId)]));
+  for (const tag of tagSet) {
     const {ancestors,unknown} = ancestorIds(tag,byId);
     if (unknown) {needsReview = true;reviewReasons.push('Неизвестный или недоступный вид нагрузки: '+String(tag));}
-    for (const restriction of restrictions) {
-      if (ids.has(restriction.studentId) && active(restriction,date) && byId.has(restriction.activityId)
-          && ancestors.has(restriction.activityId) && (restriction.type !== 'no_test' || ancestors.has('test') || tags.includes('test'))) {
-        matches.push({ studentId: restriction.studentId, activityId: tag, restriction });
+    for (const restriction of relevant) {
+      const target = graph.get(restriction.activityId);
+      if (!target || (restriction.type === 'no_test' && !ancestors.has('test') && !tagSet.has('test'))) continue;
+      const item = { studentId: restriction.studentId, activityId: tag, restriction };
+      if (ancestors.has(restriction.activityId)) matches.push(item);
+      // A broad category is not evidence that its specific descendant is planned.
+      // "test" alongside an exercise denotes assessment, not every possible test.
+      else if (target.ancestors.has(tag) && !(tag === 'test' && tagSet.size > 1)) {
+        potentialMatches.push({...item,potential:true});
       }
     }
   }
-  return { matches, needsReview, reviewReasons:[...new Set(reviewReasons)] };
+  const unresolved = potentialMatches.filter(p => !matches.some(m => m.restriction === p.restriction));
+  if (unresolved.length) {
+    needsReview = true;
+    reviewReasons.push('Уточните конкретные упражнения: возможны ограничения внутри общей категории нагрузки');
+  }
+  return { matches, potentialMatches:unresolved, needsReview, reviewReasons:[...new Set(reviewReasons)] };
 }
 
 

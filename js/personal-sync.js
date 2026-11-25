@@ -46,6 +46,7 @@ export function readPersonalCode(storage){
 }
 export function savePersonalCode(code,storage=globalThis.localStorage){
  const parsed=parsePersonalCode(code);
+ if(storage.getItem('teachapp.trusted-device.v2')!==null)throw Error('Сначала явно отключите индивидуальный профиль v2');
  const old=readPersonalCode(storage);
  if(old&&old!==parsed.code)throw Error('Сначала забудьте старый личный код');
  storage.setItem(KEY,parsed.code);

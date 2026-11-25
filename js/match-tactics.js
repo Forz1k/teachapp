@@ -22,6 +22,71 @@ export function scoreMomentum(score,target){
  }
  return {ties,leadChanges,maxOurRun,maxTheirRun,closeWon,closeTotal,closeRate:pct(closeWon,closeTotal)};
 }
+/** Phase-specific rotation counts, computed before the rally changes serve or lineup.
+ * A relative cycle is not a court zone or a particular starting six. */
+export function rotationPerformance(timeline,{set=0,min=10}={}){
+ if(!Number.isInteger(set)||set<0||!Number.isInteger(min)||min<1||min>500)throw Error('Проверьте фильтры расстановки');
+ const rows=Object.fromEntries(['ours','theirs'].map(side=>[side,Array.from({length:6},(_,i)=>({...blank(),position:i+1}))]));
+ for(const e of timeline){
+  if(e.type!=='rally'||set&&e.set!==set)continue;
+  for(const side of ['ours','theirs']){
+   const row=rows[side][e.rotation[side]],won=Number(e.side===side),phase=e.before.serve===side?'serve':'receive';
+   row.rallies++;row.won+=won;row.lost+=1-won;row[phase]++;row[phase+'Won']+=won;
+  }
+ }
+ const result={};
+ for(const side of ['ours','theirs']){
+  const stats=rows[side].map(r=>({...finish(r),serveEligible:r.serve>=min,receiveEligible:r.receive>=min,eligible:r.rallies>=min}));
+  const comparisons=['serve','receive'].flatMap(phase=>{
+   const sorted=stats.filter(r=>r[phase+'Eligible']).sort((a,b)=>a[phase+'Rate']-b[phase+'Rate']||a.position-b.position);
+   if(sorted.length<2||sorted.at(-1)[phase+'Rate']-sorted[0][phase+'Rate']<20)return [];
+   const low=sorted[0][phase+'Rate'],high=sorted.at(-1)[phase+'Rate'];
+   return [{phase,low:sorted.filter(r=>r[phase+'Rate']===low).map(r=>r.position),high:sorted.filter(r=>r[phase+'Rate']===high).map(r=>r.position),gap:high-low}];
+  });
+  result[side]={rows:stats,comparisons};
+ }
+ return result;
+}
+/** Adjacent recorded set -> attack by different teammates, only in complete
+ * recorded rallies. No assumed assists or inference from terminal points. */
+export function recordedConnections(timelines,{side='ours',set=0,min=5}={}){
+ if(!['ours','theirs'].includes(side)||side==='theirs'&&timelines.length>1||!Number.isInteger(set)||set<0||!Number.isInteger(min)||min<1||min>500)throw Error('Проверьте выборку связок');
+ const pairs=new Map();let rallies=0,complete=0,linkedRallies=0;
+ for(const timeline of timelines)for(const e of timeline){
+  if(e.type!=='rally'||set&&e.set!==set)continue;rallies++;
+  if(!e.captureComplete)continue;complete++;
+  let linked=false;
+  for(let i=1;i<(e.touches||[]).length;i++){
+   const a=e.touches[i-1],b=e.touches[i];
+   if(a.side!==side||b.side!==side||a.action!=='set'||a.result!=='continue'||b.action!=='attack'||a.player===b.player||!['continue','point','error'].includes(b.result))continue;
+   const key=JSON.stringify([a.player,b.player]);
+   if(!pairs.has(key))pairs.set(key,{setter:a.player,attacker:b.player,attempts:0,points:0,errors:0,continued:0});
+   const r=pairs.get(key);r.attempts++;r.points+=Number(b.result==='point');r.errors+=Number(b.result==='error');r.continued+=Number(b.result==='continue');linked=true;
+  }
+  if(linked)linkedRallies++;
+ }
+ const rows=[...pairs.values()].map(r=>({...r,eligible:r.attempts>=min,efficiency:100*(r.points-r.errors)/r.attempts})).sort((a,b)=>Number(b.eligible)-Number(a.eligible)||b.attempts-a.attempts||a.setter.localeCompare(b.setter)||a.attacker.localeCompare(b.attacker));
+ return {rallies,complete,linkedRallies,rows};
+}
+/** Local before/after windows, never cross a party. Several substitutions can
+ * share the same window; this measures association, not an effect. */
+export function substitutionWindows(timeline,{set=0,window=5}={}){
+ if(!Number.isInteger(set)||set<0||!Number.isInteger(window)||window<1||window>10)throw Error('Проверьте окно замен');
+ const bySet=new Map();
+ for(const e of timeline){if(set&&e.set!==set)continue;if(!bySet.has(e.set))bySet.set(e.set,[]);bySet.get(e.set).push(e);}
+ const rows=[];
+ for(const [party,events] of bySet){
+  const rallies=events.filter(e=>e.type==='rally');let index=0;
+  for(const e of events){
+   if(e.type==='rally'){index++;continue;}if(e.type!=='sub')continue;
+   const before=rallies.slice(Math.max(0,index-window),index),after=rallies.slice(index,index+window);
+   const count=items=>{const won=items.filter(r=>r.side===e.side).length;return {won,total:items.length,rate:pct(won,items.length)};};
+   const a=count(before),b=count(after);
+   rows.push({set:party,side:e.side,score:e.score,out:e.out,in:e.in,zone:e.zone,before:a,after:b,delta:a.total===window&&b.total===window?b.rate-a.rate:null});
+  }
+ }
+ return rows;
+}
 export function matchTactics(d,windowSize=5,{set:onlySet=0,min=30}={}){
  if(!Number.isInteger(windowSize)||windowSize<1||windowSize>10)throw Error('Проверьте окно анализа');
  if(!Number.isInteger(onlySet)||onlySet<0||onlySet>d.bestOf||!Number.isInteger(min)||min<1||min>500)throw Error('Проверьте фильтр анализа');
@@ -56,7 +121,7 @@ export function matchTactics(d,windowSize=5,{set:onlySet=0,min=30}={}){
   const {events,rallyEvents,run,...summary}=set;
   return {...finish(summary),momentum:scoreMomentum(summary.score,summary.set===d.bestOf?d.decider:d.target)};
  });
- return {sets,overall:finish(all),rotations:rotations.map(finish),pairs:sortedRows(pairs,min),six:sortedRows(six,min),timeouts};
+ return {sets,overall:finish(all),rotations:rotations.map(finish),pairs:sortedRows(pairs,min),six:sortedRows(six,min),timeouts,substitutions:substitutionWindows(s.timeline,{set:onlySet,window:windowSize})};
 }
 export function opponentHistory(matches){
  const groups=new Map();

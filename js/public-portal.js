@@ -30,12 +30,39 @@ export function viewerTarget(input){
  const u=new URL(input),q=u.searchParams,keys=['db','owner','team'],explicit=keys.some(k=>q.has(k));
  const origin=explicit?q.get('db'):primaryPortal.origin,owner=explicit?q.get('owner'):primaryPortal.owner,slug=explicit?q.get('team'):primaryPortal.slug;
  const address=portalAddress(origin,owner,slug),primary=isPrimaryPortal(origin,owner,slug);
- if(primary){const match=q.get('match'),archive=q.get('archive');u.search='';if(match&&validId(match))u.searchParams.set('match',match);if(archive&&/^\d{16}_[A-Za-z0-9_-]{1,100}$/.test(archive))u.searchParams.set('archive',archive);u.hash='';if(u.pathname.endsWith('/index.html'))u.pathname=u.pathname.slice(0,-'index.html'.length);}
+ const match=q.get('match'),archive=q.get('archive'),fixture=q.get('fixture');
+ u.search='';u.hash='';u.username='';u.password='';
+ if(!primary){u.searchParams.set('db',firebaseOrigin(origin));u.searchParams.set('owner',owner);u.searchParams.set('team',slug);}
+ // A share link contains exactly one public target, never arbitrary query data.
+ if(archive&&/^\d{16}_[A-Za-z0-9_-]{1,100}$/.test(archive))u.searchParams.set('archive',archive);
+ else if(validId(match))u.searchParams.set('match',match);
+ else if(validId(fixture))u.searchParams.set('fixture',fixture);
+ if(u.pathname.endsWith('/index.html'))u.pathname=u.pathname.slice(0,-'index.html'.length);
  return {address,primary,share:u.href};
 }
 export function shareUrl(base,origin,owner,slug){
  portalAddress(origin,owner,slug);
  const u=new URL('live/',base);if(isPrimaryPortal(origin,owner,slug))return u.href;u.searchParams.set('db',firebaseOrigin(origin));u.searchParams.set('owner',owner);u.searchParams.set('team',slug);return u.href;
+}
+export function viewerPageLink(href){
+ const u=new URL(viewerTarget(href).share);for(const k of ['match','archive','fixture'])u.searchParams.delete(k);return u.href;
+}
+export function fixtureLink(href,id){
+ if(!validId(id))throw Error('Некорректная ссылка на встречу');
+ const u=new URL(viewerPageLink(href));u.searchParams.set('fixture',id);return u.href;
+}
+/** Exact public scheduledId only. Never guess a match from names or dates. */
+export function fixtureState(data,id,now=Date.now()){
+ if(!data)return {mode:'empty'};
+ if(!validId(id))return {mode:'unavailable'};
+ if(data.match?.scheduledId===id)return {mode:data.match.status,match:data.match};
+ const next=data.schedule.find(x=>x.id===id);
+ return next?{mode:next.startAt>now?'upcoming':'waiting',next,remaining:Math.max(0,next.startAt-now)}:{mode:'unavailable'};
+}
+export function scheduleSections(data,now=Date.now()){
+ const items=(data?.schedule||[]).filter(x=>x.id!==data?.match?.scheduledId).slice().sort((a,b)=>a.startAt-b.startAt||a.id.localeCompare(b.id));
+ const today=localDay(now);
+ return {today:items.filter(x=>localDay(x.startAt)===today),future:items.filter(x=>localDay(x.startAt)!==today&&x.startAt>now),past:items.filter(x=>localDay(x.startAt)!==today&&x.startAt<=now).reverse()};
 }
 export function scheduleItem(x){
  if(!x||!validId(x.id)||!clean(x.opponent)||!dateMs(x.startAt)||x.startAt===0)throw Error('Проверьте соперника и дату матча');
@@ -81,7 +108,8 @@ export function portalState(data,now=Date.now()){
  if(!data)return {mode:'empty'};
  const m=data.match;
  if(m&&['live','break'].includes(m.status))return {mode:m.status,match:m};
- const next=data.schedule.find(x=>x.id!==m?.scheduledId);
+ const groups=scheduleSections(data,now);
+ const next=groups.today.find(x=>x.startAt>now)||groups.today.at(-1)||groups.future[0]||groups.past[0];
  if(next)return {mode:next.startAt>now?'upcoming':'waiting',next,remaining:Math.max(0,next.startAt-now),last:m?.status==='finished'?m:null};
  return m?.status==='finished'?{mode:'finished',match:m}:{mode:'empty'};
 }
@@ -148,4 +176,20 @@ export function publicMatchMoments(match){
   prev={set:e.set,ours,theirs};
  }
  return result;
+}
+
+/** Only the public scoreboard and published suffix can be compared. This is
+ * not proof of identical private drafts. No unpublished data is returned. */
+export function checkHandoffMatch(local,remote){
+ if(!local||local.mode!=='dual'||!remote||!['live','break'].includes(remote.status))throw Error('Нужен локальный черновик текущего подробного матча');
+ const numbered=remote.events.some(e=>e.number!=null)||remote.stats.length>0;
+ const projected=projectMatch(local,{events:remote.events.length>0,numbers:numbered,stats:remote.stats.length>0,scheduledId:remote.scheduledId});
+ const keys=['id','opponent','startedAt','status','set','score','setsWon','sets','serve'];
+ const canonical=x=>Array.isArray(x)?'['+x.map(canonical).join(',')+']':x&&typeof x==='object'?'{'+Object.keys(x).sort().map(k=>JSON.stringify(k)+':'+canonical(x[k])).join(',')+'}':JSON.stringify(x);
+ const equal=(a,b)=>canonical(a)===canonical(b);
+ if(keys.some(k=>!equal(projected[k],remote[k])))throw Error('Локальный черновик и опубликованный счёт различаются. Передача остановлена.');
+ const suffix=projected.events.slice(-remote.events.length);
+ if(remote.events.length&&(!equal(suffix.map(e=>{const {number,...rest}=e;return rest;}),remote.events.map(e=>{const {number,...rest}=e;return rest;}))||remote.events.some((e,i)=>e.number!=null&&e.number!==suffix[i]?.number)))throw Error('Опубликованная история розыгрышей отличается от локального черновика.');
+ if(remote.stats.length&&!equal(projected.stats,remote.stats))throw Error('Опубликованная статистика отличается от локального черновика.');
+ return {id:remote.id,opponent:remote.opponent,set:remote.set,score:{...remote.score},setsWon:{...remote.setsWon},events:remote.events.length,stats:remote.stats.length};
 }

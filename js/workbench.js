@@ -1,3 +1,4 @@
+import {validateMatchRegulation} from './match-rules.js';
 import {validateNormRetake} from './norm-retakes.js';
 import {validateNewsDraft} from './public-media-drafts.js';
 import {validateSchoolCompetition,validateTeacherPortfolio} from './teacher-portfolio.js';
@@ -9,7 +10,7 @@ import {validateBriefing,validateGymBoard} from './methodical.js';
 import * as db from './db.js';
 import {uid,exemptionCovers} from './model.js';
 import {validateGradeHistory} from './grade-history.js';
-import {validateInventory,validateAchievement} from './resources.js';
+import {validateInventory,validateAchievement,equipmentStatus} from './resources.js';
 import {validateBoard} from './tactics.js';
 import {validateGoal} from './coach-goals.js';
 import {validateSeasonPlan} from './season-plan.js';
@@ -37,6 +38,7 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='matchRegulation'){validateMatchRegulation(r);return;}
  if(r.kind==='normRetake'){validateNormRetake(r);return;}
  if(r.kind==='publicNewsDraft'){validateNewsDraft(r);return;}
  if(r.kind==='schoolCompetition'){validateSchoolCompetition(r);return;}
@@ -80,6 +82,71 @@ export async function saveWork(input){
  });
 }
 export async function deleteWork(id,kind){return db.transaction(kind==='archive'?['workRecords','students','lessons']:['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');if(kind==='archive'){const pupils=new Set(old.snapshot.students.map(p=>p.id)),lessons=new Set(old.snapshot.lessons.map(l=>l.id));for(const p of await s.students.getAll())pupils.delete(p.id);for(const l of await s.lessons.getAll())lessons.delete(l.id);for(const r of await s.workRecords.index('kind').getAll('gradeHistory'))if(pupils.has(r.studentId)||lessons.has(r.lessonId))await s.workRecords.delete(r.id);}await s.workRecords.delete(id);});}
+export const fallbackReasons={weather:'Погода / перенос в зал',space:'Зал занят / мало места',equipment:'Недостаточно инвентаря',load:'Изменение нагрузки',other:'Другая причина'};
+/** Independent draft in the existing plan format. No new record type or schema.
+ * The teacher must revise equipment and exercises before explicitly saving. */
+export function fallbackPlanDraft(source,reason){
+ validateWorkRecord(source);
+ require(source.kind==='plan'&&source.context==='school'&&Object.hasOwn(fallbackReasons,reason),'Выберите школьный конспект и причину');
+ const copy=structuredClone(source);delete copy.id;
+ copy.name=('Резерв · '+source.name).slice(0,200);
+ copy.goal=('Резервный сценарий: '+fallbackReasons[reason]+'. Исходный конспект: '+source.name+'.\n'+source.goal).slice(0,4000);
+ // The original hall/stock assumptions may no longer hold.
+ copy.resources=[];copy.gymBoards=[];copy.equipment='';
+ return copy;
+}
+/** Plan stations in parallel, with equal slot duration including changeover.
+ * Every group visits every station once per round. No pupil is assigned or
+ * cleared for exercise here. Requirements count simultaneous station stock. */
+export function circuitDraft({name,minutes:duration,rounds,work,transition,warmup,cooldown,stations,pupilCount,inventory=[]}){
+ require(txt(name)&&minutes(duration)&&Number.isInteger(rounds)&&rounds>=1&&rounds<=8&&minutes(work)&&Number.isInteger(transition)&&transition>=0&&transition<=15&&Array.isArray(stations)&&stations.length>=2&&stations.length<=10&&Number.isInteger(pupilCount)&&pupilCount>=0&&pupilCount<=1000,'Проверьте параметры круговой тренировки');
+ validateExercise(warmup.exercise);validateExercise(cooldown.exercise);
+ require(minutes(warmup.minutes)&&minutes(cooldown.minutes),'Укажите время разминки и завершения');
+ const groups=stations.length,groupSize=Math.ceil(pupilCount/groups),requirements=new Map(),items=[];
+ const total=warmup.minutes+cooldown.minutes+rounds*groups*(work+transition);
+ require(total<=duration&&rounds*groups+2<=100,'Круговая тренировка не помещается во время занятия');
+ for(const station of stations){
+  validateExercise(station.exercise);
+  require(Number.isInteger(station.capacity)&&station.capacity>=1&&station.capacity<=1000&&opt(station.notes,500)&&Array.isArray(station.resources)&&station.resources.length<=10,'Проверьте вместимость и описание станции');
+  require(new Set(station.resources.map(r=>r.itemId)).size===station.resources.length,'Повторяющийся инвентарь станции');
+  for(const r of station.resources){
+   require(only(r,['itemId','name','unit','qty'])&&txt(r.itemId)&&txt(r.name)&&txt(r.unit,30)&&Number.isInteger(r.qty)&&r.qty>0&&r.qty<=1000000,'Проверьте инвентарь станции');
+   const prev=requirements.get(r.itemId);
+   require(!prev||prev.unit===r.unit,'Разные единицы инвентаря');
+   const qty=(prev?.qty||0)+r.qty;require(qty<=1000000,'Слишком большая потребность');
+   requirements.set(r.itemId,{...r,qty});
+  }
+ }
+ require(requirements.size<=50,'Не более 50 разных видов инвентаря');
+ const item=(phase,exercise,minutes,notes)=>({phase,exercise:structuredClone(exercise),minutes,notes});
+ items.push(item('intro',warmup.exercise,warmup.minutes,'Общая разминка; проверить индивидуальные ограничения.'));
+ for(let round=1;round<=rounds;round++)for(let i=0;i<groups;i++){
+  const s=stations[i];
+  items.push(item('main',s.exercise,work+transition,'Круг '+round+'/'+rounds+' · станция '+(i+1)+'/'+groups+' · работа '+work+' мин, переход/организация '+transition+' мин. Группы работают параллельно и циклически меняют станции; эта строка — один временной слот, не общая последовательная работа класса. Вместимость '+s.capacity+'. '+s.notes));
+ }
+ items.push(item('end',cooldown.exercise,cooldown.minutes,'Завершение; фактическую нагрузку подтвердить отдельно.'));
+ const resources=[...requirements.values()];
+ const plan={kind:'plan',name,context:'school',minutes:duration,goal:'Круговая организация: '+groups+' станций, '+rounds+' кругов. Группы одновременно работают на разных станциях, после каждого слота циклически переходят на следующую. Учитель проверяет допуск, состав групп и реальную нагрузку.',equipment:'Потребность рассчитана для одновременной работы всех станций. Проверить наличие и безопасность.',audience:'',items,resources,gymBoards:[]};
+ validateWorkRecord({...plan,id:'circuit-preview'});
+ const rotation=Array.from({length:groups},(_,slot)=>Array.from({length:groups},(_,group)=>(group+slot)%groups+1));
+ return {plan,total,groups,groupSize,rotation,capacityIssues:stations.map((s,i)=>({station:i+1,capacity:s.capacity,required:groupSize})).filter(s=>s.capacity<groupSize),stock:equipmentStatus(resources,inventory)};
+}
+/** Use the same stored plan format. No athlete names, goals, private notes,
+ * match identifiers or medical data are copied into portable plan snapshots. */
+export function matchTrainingDraft({exercises,selectedIds,minutes:duration}){
+ require(Array.isArray(exercises)&&Array.isArray(selectedIds)&&selectedIds.length>0&&selectedIds.length<=50&&new Set(selectedIds).size===selectedIds.length&&minutes(duration),'Выберите упражнения и длительность тренировки');
+ const byId=new Map(exercises.map(e=>[e.id,e])),items=[{phase:'intro',exercise:structuredClone(builtinExercises[0]),minutes:5,notes:'Разминка; проверить ограничения и адаптировать нагрузку.'}];
+ for(const id of selectedIds){
+  const e=byId.get(id);validateExercise(e);
+  require(e.category!=='warmup'&&e.category!=='cooldown','Выберите упражнения основной части');
+  items.push({phase:'main',exercise:structuredClone(e),minutes:e.minutes,notes:'Уточнить методику, число повторений и индивидуальную нагрузку перед занятием.'});
+ }
+ items.push({phase:'end',exercise:structuredClone(builtinExercises[3]),minutes:5,notes:'Спокойное завершение.'});
+ const total=items.reduce((n,i)=>n+i.minutes,0);
+ require(total<=duration,'Выбранные упражнения не помещаются в тренировку');
+ const plan={kind:'plan',name:'Тренировка по итогам матча',context:'coach',minutes:duration,goal:'Отработать выбранные тренером элементы по результатам наблюдений и действующим задачам. Состав и нагрузку подтвердить отдельно.',equipment:'Проверить инвентарь по выбранным упражнениям.',audience:'',items,resources:[]};
+ validateWorkRecord({...plan,id:'training-preview'});return {plan,total};
+}
 export function planExercises(plan){return plan.items.map(i=>({name:i.exercise.name,activityId:i.exercise.activityId,minutes:i.minutes}));}
 export function librarySearch(exercises,query='',category=''){const q=query.trim().toLowerCase();return exercises.filter(e=>(!category||e.category===category)&&(!q||[e.name,e.description,e.equipment].some(x=>x.toLowerCase().includes(q))));}
 
@@ -90,7 +157,7 @@ export function lessonPlanReview(plan,lesson,{students,activities,restrictions,e
  const full=new Set(exemptions.filter(e=>ids.has(e.studentId)&&exemptionCovers(e,lesson.date)).map(e=>e.studentId));
  const items=plan.items.map(item=>{
   const check=checkLessonRestrictions({lesson:{...lesson,activityIds:[item.exercise.activityId],activitiesConfirmed:true},activities,students:pupils,restrictions});
-  return {item,matches:check.matches,needsReview:check.needsReview};
+  return {item,matches:check.matches,potentialMatches:check.potentialMatches,needsReview:check.needsReview};
  });
  return {items,full:[...full],minutes:items.reduce((n,x)=>n+x.item.minutes,0),total:pupils.length};
 }

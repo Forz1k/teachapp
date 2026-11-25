@@ -47,11 +47,12 @@ export async function openLessonPlanReview(lessonId,back=ui.closeSheet){
       preview.append(el('h3',{text:plan.name}),p('Цель: '+(plan.goal||'Не указана')),p('Время упражнений: '+review.minutes+' / '+plan.minutes+' мин'),p('Инвентарь: '+(plan.equipment||'Не указан')),...(plan.resources||[]).map(r=>p(r.name+' · '+r.qty+' '+r.unit)),
         p('Документальные ОСВ: '+review.full.length+(review.full.length?' · '+review.full.map(id=>pupils.get(id)?.fullName).filter(Boolean).join(', '):'')),
         p('Сведения сверяются на дату урока. Отсутствие совпадений не является допуском. Проверьте фактическую нагрузку и основания.'));
-      for(const {item,matches,needsReview} of review.items){
+      for(const {item,matches,potentialMatches,needsReview} of review.items){
         const card=el('section',{class:'card-block'},[el('h3',{text:W.phases[item.phase]+' · '+item.exercise.name+' · '+item.minutes+' мин'}),p(item.exercise.description),item.exercise.equipment?p('Инвентарь: '+item.exercise.equipment):null,item.notes?p('Указания: '+item.notes):null]);
         if(needsReview)card.append(p('Категория нагрузки требует проверки.'));
         if(matches.length)for(const m of matches)card.append(el('p',{class:'session-warning has-warning',text:(pupils.get(m.studentId)?.fullName||'Ученик')+' · '+(H.types[m.restriction.type]||'Проверить')}));
-        else if(!needsReview)card.append(p('Совпадений по этому упражнению не найдено.'));
+        for(const m of potentialMatches)card.append(el('p',{class:'session-warning has-warning',text:(pupils.get(m.studentId)?.fullName||'Ученик')+' · возможное ограничение: '+(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'Уточните упражнение')}));
+        if(!matches.length&&!needsReview)card.append(p('Совпадений по этому упражнению не найдено.'));
         preview.append(card);
       }
     }
@@ -83,8 +84,8 @@ export function showLessonSession(lessonId){
     const lesson=lessonNow();if(!lesson){panel.replaceChildren(p('Урок больше недоступен'));return;}
     const cls=S.state.classes.find(c=>c.id===lesson.classId),students=S.studentsOfClass(lesson.classId),marks=S.markMap(lesson.classId);
     const parts=new Map(S.state.participation.filter(x=>x.lessonId===lessonId).map(x=>[x.studentId,x]));
-    const {matches,needsReview}=S.lessonCheck(lesson),byStudent=new Map();
-    for(const m of matches){if(!byStudent.has(m.studentId))byStudent.set(m.studentId,[]);byStudent.get(m.studentId).push(m);}
+    const {matches,potentialMatches,needsReview}=S.lessonCheck(lesson),byStudent=new Map();
+    for(const m of [...matches,...potentialMatches]){if(!byStudent.has(m.studentId))byStudent.set(m.studentId,[]);byStudent.get(m.studentId).push(m);}
     const rows=students.map(st=>{
       const mark=marks.get(lessonId+'|'+st.id),part=parts.get(st.id),covered=!!S.activeExemption(st.id,lesson.date)||M.hasOsv(mark),warnings=byStudent.get(st.id)||[];
       const absent=mark?.flag==='Н',present=!absent&&!!(part||mark?.value||mark?.source==='manual'||mark?.baseMark?.source==='manual');
@@ -94,7 +95,7 @@ export function showLessonSession(lessonId){
     const topic=S.state.topics.find(t=>t.id===lesson.topicId);
     head.replaceChildren(el('h2',{text:(cls?.name||'Класс')+' · Урок'}),p(M.lessonLabel(lesson)+' · '+(lesson.held?'Проведение подтверждено':'Рабочий экран')),
       el('h3',{class:'session-topic',text:topic?.name||'Тема КТП не указана'}),el('div',{class:'dashboard-metrics session-metrics'},[metric('Присутствуют',rows.filter(r=>r.present).length,'check'),metric('Отсутствуют',rows.filter(r=>r.absent).length,'classes'),metric('Не отмечено',unknown,'journal'),metric('ОСВ',rows.filter(r=>r.covered).length,'shield')]),
-      el('div',{class:'session-warning'+(byStudent.size?' has-warning':''),text:'Совпадения ограничений: '+byStudent.size}),
+      el('div',{class:'session-warning'+(byStudent.size?' has-warning':''),text:'Совпадения ограничений: '+new Set(matches.map(m=>m.studentId)).size+(potentialMatches.length?' · возможные: '+new Set(potentialMatches.map(m=>m.studentId)).size:'')}),
       needsReview?p('Содержание нагрузки требует проверки. Отсутствие совпадений не является допуском.'):p('Проверка по внесённым сведениям, не медицинский допуск.'));
     nav.replaceChildren(...Object.entries({attendance:'Явка',grades:'Оценки',participation:'Нагрузка',norms:'Нормативы',details:'Тема и завершение'}).map(([id,text])=>btn(text,()=>{mode=id;selected.clear();action=id==='grades'?'grade':'normal';draw();},mode===id?'primary':'')));
     body.replaceChildren();
@@ -133,7 +134,7 @@ export function showLessonSession(lessonId){
         const row=el('article',{class:'card-block lesson-session-row'+(warnings.length?' session-row-warning':''),},[el('div',{class:'session-person'},[el('span',{class:'session-number',text:st.number??'—'}),el('strong',{text:st.fullName})]),
           p((r.absent?'Отсутствует':r.present?'Присутствует':'Явка не отмечена')+' · '+(mark?.value?'Оценка '+mark.value:'Без оценки')+(covered?' · ОСВ':''))]);
         if(part)row.append(p(S.participationModes[part.mode]||'Участие записано'));
-        for(const m of warnings)row.append(el('p',{class:'session-warning has-warning',text:'Ограничение: '+(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'нагрузка')+' · '+(H.types[m.restriction.type]||'проверить')+(m.restriction.instruction?' · '+m.restriction.instruction:'')}));
+        for(const m of warnings)row.append(el('p',{class:'session-warning has-warning',text:(m.potential?'Возможное ограничение (уточните упражнение): ':'Ограничение: ')+(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'нагрузка')+' · '+(H.types[m.restriction.type]||'проверить')+(m.restriction.instruction?' · '+m.restriction.instruction:'')}));
         if(mode==='participation'||mode==='attendance')row.append(btn('Участие / основание',()=>openParticipation(st.id,lessonId,undefined,reopen),'wide'));
         if(mode==='grades'||mode==='attendance'){
           const check=el('input',{type:'checkbox','aria-label':'Выбрать '+st.fullName});check.checked=selected.has(st.id);check.disabled=!eligible(r);

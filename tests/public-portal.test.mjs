@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {primaryPortal,firebaseOrigin,portalAddress,shareUrl,viewerTarget,projectMatch,buildPortal,readPortal,portalState,countdown,matchingSchedule,archiveMatch} from '../js/public-portal.js';
+import {primaryPortal,firebaseOrigin,portalAddress,shareUrl,viewerTarget,projectMatch,buildPortal,readPortal,portalState,countdown,matchingSchedule,archiveMatch,fixtureLink,fixtureState,viewerPageLink,scheduleSections} from '../js/public-portal.js';
 import {detailEvent} from '../js/match-protocol.js';
 const players=Array.from({length:6},(_,i)=>({id:'a'+i,number:i+1,name:'PRIVATE '+i}));
 const away=players.map((p,i)=>({...p,id:'b'+i,name:'SECRET '+i}));
@@ -40,3 +40,26 @@ test('Короткая ссылка указывает на действующу
 
 import {publicMatchMoments} from '../js/public-portal.js';
 test('visible rally moments are derived only from consecutive published scores',()=>{const e=(score,side,set=1)=>({set,score,side,actor:side,kind:'point'});const m={sets:[{ours:5,theirs:3}],events:[e('1:2','theirs'),e('2:2','ours'),e('3:2','ours'),e('4:2','ours'),e('4:3','theirs'),e('5:3','ours'),e('8:4','ours',2),e('9:4','ours',2)]};const rows=publicMatchMoments(m);assert.ok(rows[1].notes.includes('Счёт сравнялся'));assert.ok(rows[2].notes.includes('Смена лидера'));assert.match(rows[3].notes.join(' '),/Серия: 3/);assert.ok(rows[5].notes.includes('Партия завершена'));assert.deepEqual(rows[6].notes,[]);assert.deepEqual(rows[7].notes,[]);});
+
+import {checkHandoffMatch} from '../js/public-portal.js';
+test('handoff rejects differing score, public reason and serve; returns only public summary',()=>{const local=detailEvent(d,{type:'rally',side:'ours',kind:'point'}),remote=projectMatch(local);assert.equal(checkHandoffMatch(local,remote).score.ours,1);assert.throws(()=>checkHandoffMatch(d,remote));assert.throws(()=>checkHandoffMatch(local,{...remote,serve:'theirs'}));assert.throws(()=>checkHandoffMatch(local,{...remote,events:[{...remote.events[0],kind:'kill'}]}));assert.ok(!JSON.stringify(checkHandoffMatch(local,remote)).includes('PRIVATE'));});
+
+test('Fixture deep links preserve public target, strip credentials and select exact scheduledId',()=>{
+ const base='https://example.com/live/?db=https%3A%2F%2Fdemo.firebaseio.com&owner=uid&team=slug&auth=secret#private';
+ const url=fixtureLink(base,'fixture1'),u=new URL(url);assert.equal(u.searchParams.get('fixture'),'fixture1');assert.equal(u.searchParams.get('team'),'slug');assert.ok(!url.includes('secret'));assert.ok(!u.hash);
+ assert.equal(viewerTarget(url).share,url);assert.equal(new URL(viewerPageLink(url)).searchParams.get('fixture'),null);
+ assert.equal(new URL(fixtureLink('https://example.com/live/?match=m','fixture1')).searchParams.has('match'),false);
+ const item={id:'fixture1',opponent:'Гости',startAt:100000},other={...item,id:'fixture2'},live=projectMatch(d,{scheduledId:'fixture2'});
+ assert.equal(fixtureState(buildPortal('Наши',[item,other],live,[],1),'fixture1',1).mode,'upcoming');
+ assert.equal(fixtureState(buildPortal('Наши',[item],live,[],1),'fixture1',100001).mode,'waiting');
+ assert.equal(fixtureState(buildPortal('Наши',[],live,[],1),'fixture2',1).match.id,live.id);
+ assert.equal(fixtureState(buildPortal('Наши',[],{...live,status:'finished'},[],1),'fixture2',1).mode,'finished');
+ assert.equal(fixtureState(buildPortal('Наши',[],live,[],1),'fixture1',1).mode,'unavailable');
+ assert.throws(()=>fixtureLink(base,'../bad'));
+});
+test('Schedule keeps past unpublished dates separate and does not let old fixtures hide the next one',()=>{
+ const now=new Date(2026,10,25,12).getTime(),make=(id,days)=>({id,opponent:id,startAt:now+days*86400000});
+ const data=buildPortal('Наши',[make('past',-3),make('next',2),make('later',4)],null,[],now);
+ const g=scheduleSections(data,now);assert.deepEqual(g.past.map(x=>x.id),['past']);assert.deepEqual(g.future.map(x=>x.id),['next','later']);
+ assert.equal(portalState(data,now).next.id,'next');
+});

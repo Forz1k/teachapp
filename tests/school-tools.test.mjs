@@ -36,3 +36,8 @@ test('Центр задолженностей отделяет сроки, ог�
  const rows=schoolDebtRows(s,[a,{...a,id:'future',from:'2026-12-01',to:'2026-12-15'}],'2026-11-24');
  assert.deepEqual(rows.map(x=>[x.studentId,x.status,x.overdue]),[['missing','missing',true],['restricted','review',false]]);
 });
+
+test('Неоднозначная нагрузка норматива требует проверки, а не образует задолженность',()=>{
+ const s={settings:{year},classes:[{id:'c',name:'8А'}],students:[student],norms:[{...d,activityId:'run'}],normResults:[],activityCategories:[],activityRestrictions:[{studentId:student.id,activityId:'sprint',type:'avoid',dateFrom:year.from}],exemptions:[]};
+ assert.equal(normChecklist(s,{classId:'c',normId:'n',from:year.from,to:year.to,today:'2026-11-24'})[0].status,'review');
+});

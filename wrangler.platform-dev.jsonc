@@ -1,0 +1,10 @@
+{
+  "name":"teachapp-platform-synthetic",
+  "main":"server/platform-worker.mjs",
+  "compatibility_date":"2026-11-01",
+  "workers_dev":false,
+  "preview_urls":false,
+  "observability":{"enabled":false},
+  "durable_objects":{"bindings":[{"name":"WORKSPACES","class_name":"PlatformWorkspace"}]},
+  "migrations":[{"tag":"v1","new_sqlite_classes":["PlatformWorkspace"]}]
+}

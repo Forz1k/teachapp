@@ -34,7 +34,7 @@ export function normChecklist(s,{classId,normId,from,to,targetGrade=null,today=M
  if(!cls||!norm||!H.validPeriod(from,to)||!to||targetGrade!==null&&![1,2,3,4,5].includes(targetGrade))throw Error('Выберите класс, норматив и период');
  const pupils=s.students.filter(p=>p.classId===classId),byId=new Map(pupils.map(p=>[p.id,[]]));
  for(const r of s.normResults)if(r.normId===normId&&byId.has(r.studentId)&&M.inRange(r.date,from,to)&&r.date<=today)byId.get(r.studentId).push(r);
- const activities=[...H.catalog,...s.activityCategories],matches=H.checkLessonRestrictions({lesson:{classId,date:today,activityIds:[norm.activityId,'test'],activitiesConfirmed:true},activities,students:pupils,restrictions:s.activityRestrictions}).matches;
+ const activities=[...H.catalog,...s.activityCategories],check=H.checkLessonRestrictions({lesson:{classId,date:today,activityIds:[norm.activityId,'test'],activitiesConfirmed:true},activities,students:pupils,restrictions:s.activityRestrictions}),matches=[...check.matches,...check.potentialMatches];
  return pupils.map(student=>{
   const history=byId.get(student.id),results=history.filter(r=>r.status==='done'),scale=selectNormScale(norm,cls,student);
   const meets=results.some(r=>targetGrade===null||r.grade!=null&&Number(r.grade)>=targetGrade);

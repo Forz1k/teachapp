@@ -1,9 +1,9 @@
-import {readSyncIdentity,identityCredentials,identityAreas,readTrustedProfile,forgetTrustedProfile,trustedCredentials} from '../device-trust.js';
+import {readSyncIdentity,identityCredentials,identityAreas,readTrustedProfile,forgetTrustedProfile,trustedCredentials,hasTrustedProfileRecord} from '../device-trust.js';
 import {openTrustedDevices} from './trusted-devices.js';
 import * as S from '../store.js';
 import * as db from '../db.js';
 import {ktpLinkIssues} from '../backup.js';
-import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,localSyncState,describeSyncConflict,disconnectSync} from '../sync.js';
+import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,localSyncState,describeSyncConflict,disconnectSync,localScopeUploadSize,syncUploadBytes,syncDeltaEstimate,defaultCloudflarePacketLimit} from '../sync.js';
 import {createDeviceInvite,redeemDeviceInvite,parseInvite} from '../device-invite.js';
 import {autoSyncStatus,withSyncSession,runPersonalSync} from '../auto-sync.js';
 import {parsePersonalCode,personalCredentials,readPersonalCode,savePersonalCode,forgetPersonalCode} from '../personal-sync.js';
@@ -13,6 +13,10 @@ import {el,openSheet,closeSheet,isSheetOpen,confirmDialog,promptDialog,toast} fr
 const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
 const field=(text,node)=>el('label',{class:'field'},[el('span',{text}),node]);
 const labels={meta:'Учебный год и настройки школы',classes:'Классы',students:'Ученики',lessons:'Уроки',topics:'Темы',ktp:'КТП',schedule:'Расписание',scheduleOverrides:'Замены',marks:'Оценки',exemptions:'Освобождения',studentHealthProfiles:'Группы здоровья',activityRestrictions:'Ограничения нагрузки',activityCategories:'Виды нагрузки',participation:'Участие',norms:'Нормативы',normResults:'Результаты',finalGrades:'Итоговые оценки',monthly:'Архивные отметки',coachTeams:'Команды',coachPlayers:'Состав',coachTrainings:'Тренировки',coachMatches:'Матчи',coachLineups:'Расстановки',coachTests:'Тесты',workRecords:'Рабочая запись / история'};
+const packetSizeText=bytes=>{
+ const percent=Math.round(100*bytes/defaultCloudflarePacketLimit);
+ return (bytes/1024).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+' КиБ · '+percent+'% лимита стандартного Cloudflare Worker (1 МиБ)'+(bytes>defaultCloudflarePacketLimit?' · превышение лимита':bytes>=defaultCloudflarePacketLimit*.8?' · приближение к лимиту':'');
+};
 const explain=v=>v===null?'Запись отсутствует (удаление)':JSON.stringify(v,null,2);
 const fieldNames={name:'Название / имя',date:'Дата',value:'Значение',mark:'Отметка',weight:'Вес',title:'Тема / заголовок',classId:'Класс (ID)',studentId:'Ученик (ID)',lessonId:'Урок (ID)',from:'Начало',to:'Окончание',status:'Статус',reason:'Причина',note:'Примечание',score:'Счёт',opponent:'Соперник'};
 function conflictValue(value){
@@ -72,6 +76,7 @@ export function openSync(){
  const status=el('p',{class:'profile-note','aria-live':'polite'}),results=el('div',{class:'coach-stack'}),choicesStatus=el('p',{class:'profile-note','aria-live':'polite'});
  let plan=null,client=null,secret=null,choices={},busy=false,seq=0,closed=false;
  const active=()=>!closed&&root.isConnected&&isSheetOpen();
+ const permitted=()=>active()&&document.visibilityState!=='hidden'&&!document.body.classList.contains('privacy-covered');
  function clear(){plan=null;client=null;secret=null;choices={};token.value='';password.value='';results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}
  function controls(disabled){area.disabled=endpoint.disabled=token.disabled=password.disabled=preview.disabled=detach.disabled=pairCreate.disabled=pairImport.disabled=personalConnect.disabled=personalForget.disabled=inviteCreate.disabled=inviteImport.disabled=both.disabled=disabled;}
  async function refresh(){
@@ -83,10 +88,10 @@ export function openSync(){
    if(saved&&identityAreas(saved).includes(selected)){const credentials=await identityCredentials(saved,selected);if(n!==seq||closed)return;
     if(!cp||cp.endpoint===credentials.endpoint){endpoint.value=credentials.endpoint;token.value=credentials.token;password.value=credentials.password;}
    }
-   const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)).join(' · ');
+   const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)+(r.reason==='packet-too-large'?' (пакет слишком велик)':r.reason==='remote-unconfirmed'?' (сервер мог принять пакет; сравните ревизии)':'')).join(' · ');
    const successes=report.areas.filter(r=>r.status==='synced'&&r.successfulAt).map(r=>syncAreas[r.area]+': '+new Date(r.successfulAt).toLocaleString('ru-RU')).join(' · ');
    personalStatus.textContent=saved?(readTrustedProfile()?'Индивидуальный профиль v2 сохранён.':'Личный код сохранён на этом устройстве.')+(report.phase==='offline'?' Нет сети.':report.phase==='running'?' Обмен выполняется.':report.phase==='interrupted'?' Обмен прерван.':'')+(report.at?' Последняя проверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:'')+(successes?' Успешный обмен в последней попытке: '+successes:''):'Личный код не сохранён.';
-   personalForget.hidden=!saved;inviteCreate.hidden=!saved||!!readTrustedProfile();both.hidden=!saved;inviteImport.hidden=Boolean(saved);personalConnect.hidden=!!readTrustedProfile();
+   personalForget.hidden=!saved&&!hasTrustedProfileRecord();inviteCreate.hidden=!saved||!!readTrustedProfile();both.hidden=!saved;inviteImport.hidden=Boolean(saved)||hasTrustedProfileRecord();personalConnect.hidden=hasTrustedProfileRecord();
    status.textContent=cp?'Последняя подтверждённая ревизия: '+cp.revision:'Контур пока не подключён.';
    detach.hidden=!cp;detach.style.display=cp?'':'none';
    localStatus.hidden=!saved;
@@ -109,7 +114,13 @@ export function openSync(){
    const next=previewSync(await db.dumpAll(),chosen,choices);
    if(n!==seq||chosen!==plan||closed)return;
    if(next.conflicts.length){choicesStatus.textContent='Осталось разрешить: '+next.conflicts.length;return;}
-   choicesStatus.textContent='На этом устройстве: новых '+next.counts.added+', изменённых '+next.counts.changed+', удалённых '+next.counts.deleted+'. Сервер получит итоговый зашифрованный снимок.';
+   choicesStatus.textContent='На этом устройстве: новых '+next.counts.added+', изменённых '+next.counts.changed+', удалённых '+next.counts.deleted+'. Сервер получит итоговый зашифрованный снимок. Размер PUT: '+packetSizeText(syncUploadBytes(next.snapshot,{area:chosen.area,workspaceId:chosen.workspaceId,expectedRevision:chosen.revision}))+'. У другого relay лимит может отличаться.';
+   if(chosen.revision>0){
+    try{
+     const delta=syncDeltaEstimate(chosen.remote,next.snapshot,{area:chosen.area,workspaceId:chosen.workspaceId,baseRevision:chosen.revision});
+     if(delta.changedRecords)choicesStatus.textContent+=' Экспериментальная оценка передачи только изменений: '+packetSizeText(delta.bytes)+' · записей: '+delta.changedRecords+'. Сейчас по-прежнему отправляется полный снимок.';
+    }catch{/* A comparison must never block the existing sync protocol. */}
+   }
    apply.disabled=busy;
   }catch(e){if(n===seq){choicesStatus.textContent=e.message;if(e.message.includes('разделе ktp'))results.append(btn('Проверить и исправить КТП',openKtpDiagnostics));}}
  }
@@ -121,7 +132,7 @@ export function openSync(){
   clear();busy=true;controls(true);
   try{
    if(!await confirmDialog({title:'Подключиться к своему серверу?',text:'Адрес: '+address+'. На этом этапе передаётся ключ доступа и запрашивается только зашифрованная ревизия. Используйте согласованный сервер и закройте другие окна TeachApp. Не используйте реальные данные до отдельной проверки безопасности.',ok:'Сравнить'}))return;
-   const profile=readTrustedProfile();if(profile){const v=trustedCredentials(profile,selected);if(v.endpoint!==address||v.token!==t||v.password!==pw)throw Error('Используйте параметры сохранённого индивидуального профиля');}client=relayClient(address,selected,t,{protocolVersion:profile?2:1});secret=pw;
+   const profile=readTrustedProfile();if(hasTrustedProfileRecord()&&!profile)throw Error('Индивидуальный профиль повреждён; откройте доверенные устройства');if(profile){const v=trustedCredentials(profile,selected);if(v.endpoint!==address||v.token!==t||v.password!==pw)throw Error('Используйте параметры сохранённого индивидуального профиля');}client=relayClient(address,selected,t,{protocolVersion:profile?2:1});secret=pw;
    plan=await prepareSync({area:selected,endpoint:address,password:secret,client});
    if(!active()){clear();return;}
    status.textContent='Ревизия на сервере: '+plan.revision+' · '+syncAreas[selected];
@@ -142,7 +153,9 @@ export function openSync(){
     if(repeat!==pw){if(repeat!==null)toast('Пароли не совпадают');return;}
    }
    if(!await confirmDialog({title:'Передать зашифрованные данные и применить изменения?',text:'Контур: '+syncAreas[selected.area]+'. Будут переданы записи выбранной области, в том числе персональные сведения и история, в зашифрованном виде. Создайте защищённую резервную копию заранее. Удаления также распространяются. Не закрывайте приложение во время записи.',ok:'Синхронизировать',danger:true}))return;
-   const result=await withSyncSession(()=>executeSync({plan:selected,choices:{...choices},password:pw,client:selectedClient,confirmed:true}));
+   let stopped=false;
+   const stillAllowed=()=>{if(!stopped)stopped=!permitted()||readSyncIdentity()!==code||navigator.onLine===false;return !stopped;};
+   const result=await withSyncSession(()=>executeSync({plan:selected,choices:{...choices},password:pw,client:selectedClient,confirmed:true,stillAllowed}));
    if(!result)throw Error('Закройте другие вкладки TeachApp перед синхронизацией.');
    await S.load();clear();if(active()){await refresh();status.textContent='Синхронизировано · ревизия '+result.revision;}
    toast('Синхронизация завершена · ревизия '+result.revision);
@@ -166,15 +179,15 @@ export function openSync(){
  async function exchangeBoth(){
   if(!readSyncIdentity())throw Error('Сначала подключите устройство');
   const result=await withSyncSession(async()=>{
-   const report=await runPersonalSync({initialize:true});await S.load();return report;
+   const report=await runPersonalSync({initialize:true,permitted});await S.load();return report;
   });
   if(!result)throw Error('Закройте другие вкладки TeachApp.');
   const statuses={synced:'готово',setup:'нужно подключение',conflict:'конфликт',review:'подтвердите изменения',error:'нужна проверка данных или подключения',paused:'обмен остановлен'};
-  simpleResult.textContent=identityAreas(readSyncIdentity()).map(a=>syncAreas[a]+': '+(statuses[result.areas.find(x=>x.area===a)?.status]||'обмен не выполнен')).join(' · ');
+  simpleResult.textContent=result.areas.map(r=>syncAreas[r.area]+': '+(r.reason==='packet-too-large'?'пакет превышает лимит сервера':r.reason==='remote-unconfirmed'?'сервер мог принять пакет — сравните ревизии':statuses[r.status]||'обмен не выполнен')).join(' · ')||'Обмен остановлен до записи.';
   const issues=ktpLinkIssues(await db.dumpAll());
   if(issues.length)simpleResult.textContent+=' · Исправьте КТП через диагностику.';
   await refresh();
-  return result.areas.length>0&&result.areas.every(x=>x.status==='synced');
+  return result.phase==='finished'&&result.areas.length>0&&result.areas.every(x=>x.status==='synced');
  }
  const simpleResult=el('p',{class:'profile-note','aria-live':'polite'});
  const both=btn('Синхронизировать доступные области',async()=>{
@@ -210,6 +223,20 @@ export function openSync(){
  },'primary');
  const personalStatus=el('p',{class:'profile-note','aria-live':'polite'});
  const localStatus=el('p',{class:'profile-note','aria-live':'polite',style:'white-space:pre-line',hidden:true});
+ const sizeStatus=el('div',{class:'profile-note','aria-live':'polite'});
+ const sizeCheck=btn('Проверить размер пакетов',async()=>{
+  if(busy||sizeCheck.disabled)return;
+  sizeCheck.disabled=true;
+  try{
+   const data=await db.dumpAll(),rows=[];
+   for(const scope of Object.keys(syncAreas)){
+    try{const size=localScopeUploadSize(data,scope);rows.push(p(syncAreas[scope]+': '+packetSizeText(size.bytes)+' · записей: '+size.records));}
+    catch(e){rows.push(p(syncAreas[scope]+': '+e.message));}
+   }
+   if(active())sizeStatus.replaceChildren(p('Локальная оценка, без отправки данных. После слияния размер может измениться. У другого relay лимит может отличаться.'),...rows);
+  }catch{if(active())sizeStatus.replaceChildren(p('Не удалось прочитать локальные данные.'));}
+  finally{sizeCheck.disabled=false;}
+ });
  const personalConnect=btn('Ввести личный код',async()=>{
   if(busy)return;
   busy=true;controls(true);apply.disabled=true;
@@ -231,7 +258,7 @@ export function openSync(){
  const personalForget=btn('Забыть личный код',async()=>{
   if(busy)return;
   if(!await confirmDialog({title:'Забыть личный код?',text:'Код удалится только из этого браузера. Локальные записи, ревизии и серверная копия останутся. Код на другом устройстве продолжит работать.',ok:'Забыть',danger:true}))return;
-  try{if(readTrustedProfile())forgetTrustedProfile();else forgetPersonalCode();clear();await refresh();S.notify();}catch(e){toast(e.message);}
+  try{if(hasTrustedProfileRecord())forgetTrustedProfile();else forgetPersonalCode();clear();await refresh();S.notify();}catch(e){toast(e.message);}
  });
  const pairCreate=btn('Создать код для другого устройства',async()=>{
   if(busy)return;
@@ -275,7 +302,7 @@ export function openSync(){
  });
  area.onchange=()=>{clear();refresh();};
  for(const input of [endpoint,token,password])input.oninput=()=>{if(plan){plan=null;client=null;secret=null;choices={};results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}};
- const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,localStatus,btn('Доверенные устройства v2',()=>openTrustedDevices(openSync)),personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
+ const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,localStatus,sizeCheck,sizeStatus,btn('Доверенные устройства v2',()=>openTrustedDevices(openSync)),personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
  openSheet(root,{fullHeight:true,onClose:()=>{closed=true;clear();}});
  refresh();
 }

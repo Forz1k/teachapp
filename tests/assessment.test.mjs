@@ -62,3 +62,20 @@ test('Шкалы по параллелям, категориям и конкре
  assert.equal(S.state.normResults.find(x=>x.id===noScale.id).grade,null);
  assert.equal(S.state.normResults.find(x=>x.id===r.id).definition.scale[4],165);
 });
+
+test('Неоднозначная категория норматива не разрешает обычную сдачу и не создаёт освобождение',async()=>{
+ await db.clearAll();await S.load();
+ const c=await S.addClass('8А'),s=await S.addStudent(c.id,'Ученик',1),l=await S.addLesson(c.id,'2026-01-01');
+ const broad=await S.saveNorm({name:'Бег',activityId:'run',unit:'с',direction:'min',scale:[10,9,8,7,6]});
+ await S.saveRestriction({studentId:s.id,activityId:'sprint',type:'avoid',dateFrom:'2025-01-01',dateTo:null});
+ const check=S.normCheck(broad,l,s.id);assert.equal(check.length,1);assert.equal(check[0].potential,true);
+ const input={normId:broad.id,studentId:s.id,lessonId:l.id};
+ await assert.rejects(S.saveNormResult({...input,status:'done',value:7}),/Уточните категорию/);
+ await assert.rejects(S.saveNormResult({...input,status:'restricted'}),/Нет внесённого основания/);
+ await assert.rejects(S.saveNormResultsBatch(broad.id,l.id,[{studentId:s.id,status:'done',value:7}],true),/Уточните категорию/);
+ assert.equal(S.state.normResults.length,0);
+ const specific=await S.saveNorm({...broad,activityId:'sprint'});
+ assert.equal(S.normCheck(specific,l,s.id).some(m=>!m.potential),true);
+ await assert.rejects(S.saveNormResult({...input,status:'done',value:7}),/не разрешена/);
+ assert.equal((await S.saveNormResult({...input,status:'restricted'})).status,'restricted');
+});

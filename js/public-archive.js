@@ -1,4 +1,5 @@
 // Public archive v2: score-only projection. Never stores a private match record.
+import {viewerPageLink,resultOutcome} from './public-portal.js';
 const id=/^[A-Za-z0-9_-]{1,100}$/,key=/^\d{16}_[A-Za-z0-9_-]{1,100}$/;
 const validScore=x=>Number.isInteger(x)&&x>=0&&x<=9999;
 export function archiveProjection(r){
@@ -16,7 +17,7 @@ function recordURL(target,k){if(typeof k!=='string'||!key.test(k))throw Error('�
 export async function fetchArchiveRecord(target,k,fetcher=fetch){const r=await request(recordURL(target,k),{},fetcher);if(!r.value)return null;const v=archiveProjection(r.value);if(archiveKey(v)!==k)throw Error('Некорректный ключ результата');return {...v,archiveKey:k};}
 export async function readArchiveVersion(target,k,fetcher=fetch){const r=await request(recordURL(target,k),{headers:{'X-Firebase-ETag':'true'}},fetcher);if(!r.etag)throw Error('Сервер не вернул версию записи');return {etag:r.etag,value:r.value?archiveProjection(r.value):null};}
 export async function writeArchiveRecord(target,k,value,token,etag,fetcher=fetch){if(!token||!etag)throw Error('Требуется подтверждённая версия и авторизация');if(value!==null&&archiveKey(value)!==k)throw Error('Некорректный ключ');const u=new URL(recordURL(target,k));u.searchParams.set('auth',token);return request(u.href,{method:value===null?'DELETE':'PUT',headers:{'If-Match':etag,'Content-Type':'application/json'},...(value===null?{}:{body:JSON.stringify(archiveProjection(value))})},fetcher);}
-export function resultLink(href,r){const u=new URL(href);u.searchParams.delete('match');u.searchParams.delete('archive');u.searchParams.set(r.archiveKey?'archive':'match',r.archiveKey||r.id);return u.href;}
+export function resultLink(href,r){const u=new URL(viewerPageLink(href));const value=r.archiveKey||r.id;if(!(r.archiveKey?key:id).test(value||''))throw Error('Некорректная ссылка на результат');u.searchParams.set(r.archiveKey?'archive':'match',value);return u.href;}
 export function fixtureCalendar(team,fixture){const safe=v=>String(v).replace(/\\/g,'\\\\').replace(/\r?\n|\r/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;');const dt=v=>new Date(v).toISOString().replace(/[-:]|\.\d{3}/g,'');return ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//TeachApp//Schedule//RU','BEGIN:VEVENT','UID:'+safe(fixture.id)+'-'+dt(fixture.startAt)+'@teachapp','DTSTAMP:'+dt(Date.now()),'DTSTART:'+dt(fixture.startAt),'SUMMARY:'+safe(team+' — '+fixture.opponent),'END:VEVENT','END:VCALENDAR',''].join('\r\n');}
 
 /** School/sport season is September through August, using UTC for stable grouping. */
@@ -25,3 +26,36 @@ export function archiveSeasons(rows){return [...new Set(rows.map(r=>archiveSeaso
 export function filterArchiveSeason(rows,season='all'){return season==='all'?rows:rows.filter(r=>String(archiveSeason(r.startedAt))===String(season));}
 /** Compare complete public score projections, not private match IDs or notes. */
 export function equalArchiveResult(a,b){try{return JSON.stringify(archiveProjection(a))===JSON.stringify(archiveProjection(b));}catch{return false;}}
+
+/** Search only public, already loaded rows. Search never changes the season
+ * summary or silently requests more pages from Firebase. */
+const searchKey=value=>String(value??'').normalize('NFKC').toLocaleLowerCase('ru').replace(/ё/g,'е').trim().replace(/\s+/g,' ');
+export function searchArchive(rows,{query='',season='all',outcome='all'}={}){
+ if(!['all','win','loss','draw'].includes(outcome))throw Error('Некорректный фильтр');
+ const words=searchKey(query).slice(0,200).split(' ').filter(Boolean);
+ return filterArchiveSeason(rows,season).filter(r=>{
+  if(outcome!=='all'&&resultOutcome(r)!==outcome)return false;
+  const name=searchKey(r.opponent);
+  if(words.length<=1)return !words.length||name.includes(words[0]);
+  // For several terms use word prefixes. "победа б" must not match
+  // "победа а" just because the letter б is inside the first word.
+  const tokens=name.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return words.every(w=>tokens.some(token=>token.startsWith(w)));
+ });
+}
+/** Current public stream wins over an older fetched archive copy. Keep the
+ * direct archive key only when the full public scores agree. */
+export function mergeLoadedResults(current,extra){
+ const rows=new Map(extra.map(r=>[r.id,r]));
+ for(const row of current){
+  const old=rows.get(row.id);
+  rows.set(row.id,old?.archiveKey&&equalArchiveResult(old,row)?{...row,archiveKey:old.archiveKey}:row);
+ }
+ return [...rows.values()].sort((a,b)=>b.startedAt-a.startedAt||a.id.localeCompare(b.id));
+}
+/** Build a card from validated score-only data; ignore all other fields. */
+export function publicResultCard(team,row){
+ const r=archiveProjection(row);
+ const date=new Intl.DateTimeFormat('ru-RU',{dateStyle:'long',...(r.id.startsWith('result_')?{timeZone:'UTC'}:{})}).format(r.startedAt);
+ return {template:'result',format:'square',team:String(team??'').trim().slice(0,100),opponent:r.opponent,score:r.setsWon.ours+' : '+r.setsWon.theirs,details:date+' · Партии: '+r.sets.map(s=>s.ours+':'+s.theirs).join(' / '),footer:'TeachApp · Опубликованный результат'};
+}

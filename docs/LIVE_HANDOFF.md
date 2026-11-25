@@ -1,0 +1,11 @@
+# Cooperative LIVE handoff (candidate after 5.1.0)
+
+Acknowledge all public writes, then pause on device A. The published score remains visible; local match data is untouched. Pause is stored in the browser and blocks all portal mutations, retries, automatic match projection and heartbeat, including on reconnect. Device B connecting to an active public match starts paused. Accepting a remote active match also starts paused. B needs the same full local detailed draft; active drafts are not automatically synchronized. Preview compares the public match identity, set score, serve, completed sets, published rally suffix and public statistics. Resume re-reads the ETag and compares again, never writes as part of confirmation, never broadens publication permissions. Future writes use the existing ETag CAS. Device A stays paused. If remote match is finished or removed, accepting the remote version explicitly releases the local pause.
+
+This is cooperative coordination, NOT an enforceable server lease or proof of equal private logs. The current Firebase owner account is shared; older clients and other sessions cannot be forcibly stopped by this action. A server-enforced per-device lease needs separately authorized identity/lease infrastructure. No production rules or database changes.
+
+The separate persisted pause marker is checked before subsequent writes, even if an older updated tab has a stale local draft. Close other tabs before handing off: this does not cancel a request that another tab already sent or revoke other devices. The only concurrency guarantee on the current server is ETag CAS.
+
+## Encrypted draft transfer
+
+The match center exports a single existing detailed, unfinished match as an encrypted password-protected JSON file. Import requires the exact team and player IDs, verifies replay and all coach links in a single IndexedDB transaction, refuses conflicting drafts and already-saved matches, and treats identical imports as idempotent. No existing record is overwritten. The user explicitly holds local publication before import; on failure it remains held. No credentials, private roster health records or unrelated data are exported. Names and events are private; only transfer to an authorized coach with the password communicated separately. The file is not a server lease or full-device backup.

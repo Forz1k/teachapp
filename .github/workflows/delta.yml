@@ -1,0 +1,28 @@
+name: TeachApp Delta synthetic
+on:
+  pull_request:
+    paths:
+      - 'server/delta-*.mjs'
+      - 'server/cloudflare-protocol.mjs'
+      - 'js/sync.js'
+      - 'js/privacy.js'
+      - 'tools/delta-smoke.mjs'
+      - 'wrangler.delta-dev.jsonc'
+      - '.github/workflows/delta.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npx --yes wrangler@4.161.0 deploy --config wrangler.delta-dev.jsonc --dry-run --outdir "${RUNNER_TEMP}/delta-build"
+      - run: node tools/delta-smoke.mjs

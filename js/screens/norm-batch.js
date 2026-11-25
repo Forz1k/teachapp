@@ -78,7 +78,7 @@ export function batchTable(norm,classId,lessonId,onReturn){
   for(const st of students){
     const scope=A.selectNormScale(norm,cls,st),matches=S.normCheck(norm,lesson,st.id),mark=marks.get(lessonId+'|'+st.id),full=S.activeExemption(st.id,lesson.date)||M.hasOsv(mark);
     const part=S.state.participation.find(p=>p.studentId===st.id&&p.lessonId===lessonId);
-    const blocked=full||mark?.flag==='Н'||part?.mode==='paused'||matches.some(m=>['avoid','no_test'].includes(m.restriction.type));
+    const blocked=full||mark?.flag==='Н'||part?.mode==='paused'||matches.some(m=>m.potential||['avoid','no_test'].includes(m.restriction.type));
     const row=el('div',{class:'card-block norm-batch-row'},[el('strong',{text:st.fullName}),p(scope?scope.label:'Нет подходящей шкалы')]);
     if(existing.has(st.id)){
       const r=existing.get(st.id);row.append(p('Уже записано: '+(r.status==='restricted'?'Не выполнялся по ограничению':r.value+' '+r.definition.unit+' · '+(r.grade||'без оценки'))));list.append(row);continue;
@@ -99,8 +99,8 @@ export function batchTable(norm,classId,lessonId,onReturn){
     if(mark?.flag==='Н')row.append(p('Отсутствует'));
     if(full)row.append(p('Освобождение / ОСВ'));
     if(part?.mode==='paused')row.append(p('По записи участия упражнения не выполнялись'));
-    for(const m of matches)row.append(p('Ограничение: '+(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'нагрузка')+' · '+m.restriction.type+' · '+(m.restriction.instruction||'')));
-    if((matches.length||full)&&mark?.flag!=='Н')row.append(field('Не выполнялся по ограничению',skip));
+    for(const m of matches)row.append(p((m.potential?'Возможное ограничение — уточните категорию норматива: ':'Ограничение: ')+(S.activities().find(a=>a.id===m.restriction.activityId)?.name||'нагрузка')+' · '+m.restriction.type+' · '+(m.restriction.instruction||'')));
+    if((matches.some(m=>!m.potential)||full)&&mark?.flag!=='Н')row.append(field('Не выполнялся по ограничению',skip));
     if(!blocked){row.append(field('Результат ('+norm.unit+')',result));if(matches.length||part?.mode==='adapted')row.append(field('Основание допуска',basis));}
     row.append(estimate);list.append(row);
   }

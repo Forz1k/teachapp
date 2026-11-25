@@ -133,19 +133,21 @@ export function editTags(entity, isTopic, done) {
 }
 
 export function warning(lesson,studentId,onBack) {
-  const {matches,needsReview,reviewReasons} = S.lessonCheck(lesson);
+  const {matches,potentialMatches,needsReview,reviewReasons} = S.lessonCheck(lesson);
   const rows = matches.filter(m => !studentId || m.studentId === studentId);
   const node = el('div');
   if (needsReview) node.append(el('p',{text:'Содержание нагрузки требует проверки: '+reviewReasons.join('. ')+'. Уточните нагрузку перед занятием.'}));
   if (rows.length) node.append(el('p',{role:'status',text:'Ограничение нагрузки · учеников: ' + new Set(rows.map(m => m.studentId)).size}));
+  const possible=potentialMatches.filter(m=>!studentId||m.studentId===studentId);
+  if(possible.length)node.append(el('p',{role:'status',text:'Возможные ограничения · учеников: '+new Set(possible.map(m=>m.studentId)).size}));
   node.append(btn('Проверить ограничения',()=>openLessonRestrictions(lesson,studentId,onBack)));
   return node;
 }
 export function openLessonRestrictions(lesson,studentId,onBack){
-  const {matches,needsReview,reviewReasons}=S.lessonCheck(lesson);
+  const {matches,potentialMatches,needsReview,reviewReasons}=S.lessonCheck(lesson);
   const rows=matches.filter(m=>!studentId||m.studentId===studentId);
   const topic=S.state.topics.find(t=>t.id===lesson.topicId);
-  const panel=el('div',{},[el('h2',{text:'Проверка ограничений'}),el('p',{text:M.fmtFull(lesson.date)+' · '+(topic?.name||'Тема не указана')})]);
+  const panel=el('div',{},[el('h2',{text:'Проверка ограничений'}),el('p',{text:M.lessonLabel(lesson)+' · '+(topic?.name||'Тема не указана')})]);
   if(needsReview)panel.append(el('p',{text:reviewReasons.join('. ')+'. Отсутствие совпадений не означает допуск.'}));
   if(!needsReview&&!rows.length)panel.append(el('p',{text:'По внесённым данным действующих совпадений не найдено'}));
   const full=S.studentsOfClass(lesson.classId).filter(s=>(!studentId||s.id===studentId)&&S.activeExemption(s.id,lesson.date));
@@ -163,13 +165,20 @@ export function openLessonRestrictions(lesson,studentId,onBack){
       btn('Подобрать варианты задания',()=>openAlternatives(lesson,id,reopen)),
       ...(lesson.id?[btn('Зафиксировать фактическое участие',()=>openParticipation(id,lesson.id,activityId))]:[])]));
   }
+  for(const {studentId:id,activityId,restriction:r} of potentialMatches.filter(m=>!studentId||m.studentId===studentId)){
+    const student=S.state.students.find(s=>s.id===id);if(!student)continue;
+    panel.append(el('div',{class:'card-block'},[btn(student.fullName,()=>openHealth(id)),
+      el('p',{text:'Возможное ограничение: '+nameOf(r.activityId)+' внутри категории '+nameOf(activityId)+'. Уточните упражнение; это не подтверждённое освобождение.'}),
+      btn('Подобрать варианты задания',()=>openAlternatives(lesson,id,reopen))]));
+  }
   for(const st of full)panel.append(btn('Варианты задания · '+st.fullName,()=>openAlternatives(lesson,st.id,reopen)));
   if(onBack)panel.append(btn('Вернуться к уроку',onBack));
   openSheet(panel);
 }
 export function checkGrade(lesson,id) {
-  return !S.lessonCheck(lesson).matches.some(m => m.studentId === id)
-    || window.confirm('Есть действующее ограничение на нагрузку урока. Вы проверили основание для выставления этой оценки?');
+  const {matches,potentialMatches}=S.lessonCheck(lesson);
+  return ![...matches,...potentialMatches].some(m => m.studentId === id)
+    || window.confirm('Есть действующее или возможное ограничение нагрузки. Вы уточнили упражнения и проверили основание для выставления этой оценки?');
 }
 
 export function prepareTest(lesson) {

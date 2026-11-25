@@ -3,7 +3,7 @@ import * as db from './db.js';
 import {validateBackup,BACKUP_VERSION} from './backup.js';
 import {defaultSettings,exemptionCovers,hasOsv} from './model.js';
 import {gradeState,finalState} from './grade-history.js';
-import {encryptBackup,decryptBackup,isEncryptedBackup} from './privacy.js';
+import {encryptBackup,decryptBackup,isEncryptedBackup,encryptedEnvelopeBytes} from './privacy.js';
 
 export const syncAreas={school:'Школа',coach:'Тренер'};
 const names=Object.keys(db.SCHEMA);
@@ -14,7 +14,22 @@ const check=(ok,message)=>{if(!ok)throw Error(message);};
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const copy=v=>JSON.parse(JSON.stringify(v));
 const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':plain(v)?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
-const same=(a,b)=>canonical(a)===canonical(b);
+// Equality of JSON records, not their serialized strings. Keep canonical()
+// solely for cryptographic digests so the wire format/hash stays unchanged.
+export function syncValuesEqual(a,b){
+ if(a===b)return true;
+ if(a===null||b===null||typeof a!=='object'||typeof b!=='object')return false;
+ if(Array.isArray(a)||Array.isArray(b)){
+  if(!Array.isArray(a)||!Array.isArray(b)||a.length!==b.length)return false;
+  for(let i=0;i<a.length;i++)if(Object.hasOwn(a,i)!==Object.hasOwn(b,i)||!syncValuesEqual(a[i],b[i]))return false;
+  return true;
+ }
+ const ak=Object.keys(a),bk=Object.keys(b);
+ if(ak.length!==bk.length)return false;
+ for(const k of ak)if(!Object.hasOwn(b,k)||!syncValuesEqual(a[k],b[k]))return false;
+ return true;
+}
+const same=syncValuesEqual;
 const sorted=rows=>copy(rows).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
 const keyOf=area=>'sync-checkpoint-'+area;
 // Small local-only metadata: excluded from backups and scoped cloud snapshots.
@@ -25,7 +40,7 @@ const validArea=a=>Object.hasOwn(syncAreas,a);
 const keysFor=area=>area==='school'?[...school,'workRecords','meta']:[...coach,'workRecords'];
 function recordArea(r){
  if(['archive','gradeHistory','rubric','normAssignment','briefing','gymBoard','ktpMaterial','documentMaterial','studentGoal','schoolCompetition','teacherPortfolio','normRetake'].includes(r.kind))return 'school';
- if(['coachGoal','tacticBoard','seasonPlan','videoReview','opponentNote','tacticMaterial','publicNewsDraft'].includes(r.kind))return 'coach';
+ if(['coachGoal','tacticBoard','seasonPlan','videoReview','opponentNote','tacticMaterial','publicNewsDraft','matchRegulation'].includes(r.kind))return 'coach';
  if(r.kind==='plan')return r.context;
  if(r.kind==='achievement')return ['class','student'].includes(r.subjectType)?'school':['team','player'].includes(r.subjectType)?'coach':null;
  return null;
@@ -195,6 +210,12 @@ async function readPacket(envelope,password,area,rev){
  validateScope(p.snapshot,area);
  return p;
 }
+/** Read-only verification for recovery: never merges, uploads, or accepts a checkpoint. */
+export async function verifySyncSnapshot(remote,password,area){
+ check(validArea(area)&&Number.isSafeInteger(remote?.revision)&&remote.revision>=0,'Некорректная ревизия');
+ if(!remote.revision){check(remote.envelope===null,'Некорректный пустой снимок');return {revision:0,empty:true};}
+ await readPacket(remote.envelope,password,area,remote.revision);return {revision:remote.revision,empty:false};
+}
 const snapshotLimit=90*1024*1024;
 export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeoutMs=45000,protocolVersion=1}={}){
  endpoint=normalizeEndpoint(endpoint);
@@ -211,7 +232,7 @@ export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeou
     throw error;
    }
    if([408,502,503,504].includes(res.status))throw Object.assign(Error('Временная недоступность сервера синхронизации (HTTP '+res.status+')'),{retryable:true});
-   if(res.status===413)throw Error('Пакет превышает лимит выбранного сервера. Локальные данные сохранены.');
+   if(res.status===413)throw Object.assign(Error('Пакет превышает лимит выбранного сервера. Локальные данные сохранены. Откройте диагностику размера пакетов.'),{code:'packet-too-large'});
    if(res.status===409)throw Error('На сервере появилась новая ревизия. Повторите предварительный просмотр.');
    if(res.status===401||res.status===403)throw Error('Сервер отказал в доступе. Проверьте ключ и область.');
    check(res.ok,'Сервер синхронизации недоступен (HTTP '+res.status+')');
@@ -231,6 +252,259 @@ export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeou
  return {get:()=>request('GET'),put:(expectedRevision,envelope)=>request('PUT',{expectedRevision,envelope})};
 }
 const getCheckpoint=(data,area)=>data.meta.find(r=>r.id===keyOf(area))??null;
+const packetPayload=(snapshot,area,workspaceId,revision)=>({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area,workspaceId,revision,snapshot});
+export const defaultCloudflarePacketLimit=1024*1024;
+// The current relay receives a JSON PUT wrapper as well as the encrypted envelope.
+export function syncUploadBytes(snapshot,{area,workspaceId,expectedRevision}){
+ check(validArea(area)&&uuid.test(workspaceId)&&Number.isSafeInteger(expectedRevision)&&expectedRevision>=0&&expectedRevision<Number.MAX_SAFE_INTEGER,'Некорректные параметры оценки размера');
+ return encryptedEnvelopeBytes(packetPayload(snapshot,area,workspaceId,expectedRevision+1))+
+  JSON.stringify({expectedRevision,envelope:null}).length-4;
+}
+// Read-only size estimate for the local scope, before contact with a relay.
+// A remote merge may change the size; use syncUploadBytes on its final preview.
+export function localScopeUploadSize(data,area){
+ const snapshot=projectScope(data,area),cp=getCheckpoint(data,area);
+ return {area,bytes:syncUploadBytes(snapshot,{area,workspaceId:cp?.workspaceId||'00000000-0000-4000-8000-000000000000',expectedRevision:cp?.revision??0}),records:Object.values(snapshot).reduce((n,rows)=>n+rows.length,0)};
+}
+
+/* Experimental incremental protocol: pure scoped delta and encrypted replay.
+   Deliberately not accepted by the existing v1/v2 endpoints or auto-sync.
+   The future relay must retain an authenticated full anchor plus ordered deltas. */
+const deltaApp='teachapp-sync-delta';
+const digestPattern=/^[0-9a-f]{64}$/;
+const exactFields=(v,keys)=>plain(v)&&Object.keys(v).length===keys.length&&keys.every(k=>Object.hasOwn(v,k));
+function deltaContext(area,workspaceId,baseRevision){
+ check(validArea(area)&&typeof workspaceId==='string'&&uuid.test(workspaceId)&&revision(baseRevision)&&baseRevision<Number.MAX_SAFE_INTEGER,'Некорректная базовая ревизия изменений');
+ return {area,workspaceId,baseRevision,revision:baseRevision+1};
+}
+function deltaOps(base,next,area){
+ validateScope(base,area);validateScope(next,area);
+ const changes={};
+ for(const store of keysFor(area)){
+  const b=byId(base[store]),n=byId(next[store]);
+  const upserts=sorted([...n.values()].filter(r=>!b.has(r.id)||!same(r,b.get(r.id))));
+  const deletes=[...b.keys()].filter(id=>!n.has(id)).sort();
+  if(upserts.length||deletes.length)changes[store]={upserts,deletes};
+ }
+ return changes;
+}
+async function scopeDigest(snapshot,area){
+ validateScope(snapshot,area);
+ const ordered=Object.fromEntries(keysFor(area).map(n=>[n,sorted(snapshot[n])]));
+ const bytes=new TextEncoder().encode(canonical(ordered));
+ return Array.from(new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+}
+function deltaPacket(context,changes,baseHash,resultHash){
+ return {app:deltaApp,version:1,backupVersion:BACKUP_VERSION,...context,baseHash,resultHash,changes};
+}
+export function syncDeltaEstimate(base,next,{area,workspaceId,baseRevision}){
+ const ctx=deltaContext(area,workspaceId,baseRevision),changes=deltaOps(base,next,area);
+ const changedRecords=Object.values(changes).reduce((n,c)=>n+c.upserts.length+c.deletes.length,0);
+ const bytes=encryptedEnvelopeBytes(deltaPacket(ctx,changes,'0'.repeat(64),'0'.repeat(64)))+
+  JSON.stringify({expectedRevision:baseRevision,envelope:null}).length-4;
+ return {bytes,changedRecords,fullBytes:syncUploadBytes(next,{area,workspaceId,expectedRevision:baseRevision})};
+}
+export async function buildSyncDelta(base,next,{area,workspaceId,baseRevision}){
+ const ctx=deltaContext(area,workspaceId,baseRevision),changes=deltaOps(base,next,area);
+ check(Object.keys(changes).length,'Нет изменений для инкрементальной передачи');
+ const [baseHash,resultHash]=await Promise.all([scopeDigest(base,area),scopeDigest(next,area)]);
+ return deltaPacket(ctx,changes,baseHash,resultHash);
+}
+function checkDeltaHeader(packet,{area,workspaceId,baseRevision}){
+ const ctx=deltaContext(area,workspaceId,baseRevision);
+ check(exactFields(packet,['app','version','backupVersion','area','workspaceId','baseRevision','revision','baseHash','resultHash','changes'])&&
+  packet.app===deltaApp&&packet.version===1&&packet.backupVersion===BACKUP_VERSION&&
+  Object.entries(ctx).every(([k,v])=>packet[k]===v)&&typeof packet.baseHash==='string'&&digestPattern.test(packet.baseHash)&&
+  typeof packet.resultHash==='string'&&digestPattern.test(packet.resultHash),'Несовместимый пакет изменений или неверная ревизия');
+}
+export async function applySyncDelta(base,packet,{area,workspaceId,baseRevision,current}){
+ checkDeltaHeader(packet,{area,workspaceId,baseRevision});
+ check(await scopeDigest(base,area)===packet.baseHash,'Базовый снимок изменений не совпадает');
+ const keys=keysFor(area);
+ check(plain(packet.changes)&&Object.keys(packet.changes).length>0&&Object.keys(packet.changes).every(n=>keys.includes(n)),'Некорректная область пакета изменений');
+ const result={};
+ for(const store of keys){
+  const rows=byId(base[store]);
+  if(Object.hasOwn(packet.changes,store)){
+   const c=packet.changes[store],seen=new Set();
+   check(exactFields(c,['upserts','deletes'])&&Array.isArray(c.upserts)&&Array.isArray(c.deletes)&&(c.upserts.length||c.deletes.length),'Некорректный список изменений');
+   for(const id of c.deletes){
+    check(typeof id==='string'&&rows.has(id)&&!seen.has(id),'Неизвестное или повторное удаление');
+    seen.add(id);rows.delete(id);
+   }
+   for(const row of c.upserts){
+    check(plain(row)&&typeof row.id==='string'&&row.id.trim()&&!seen.has(row.id)&&!same(rows.get(row.id),row),'Повторная или некорректная запись изменений');
+    seen.add(row.id);rows.set(row.id,row);
+   }
+  }
+  result[store]=sorted([...rows.values()]);
+ }
+ check(await scopeDigest(result,area)===packet.resultHash,'Итоговый снимок изменений не совпадает');
+ // Reuse the ordinary backup/relationship validation, including scope isolation.
+ // Never write to IndexedDB from this prototype.
+ combineScope(current,result,area);
+ return result;
+}
+export async function replaySyncDeltas({base,baseRevision,area,workspaceId,entries,password,current}){
+ deltaContext(area,workspaceId,baseRevision);
+ check(Array.isArray(entries)&&entries.length<=128,'Слишком длинная цепочка изменений; требуется новый проверенный снимок');
+ let snapshot=copy(base),rev=baseRevision;
+ combineScope(current,snapshot,area);
+ for(const entry of entries){
+  check(exactFields(entry,['revision','envelope'])&&entry.revision===rev+1&&isEncryptedBackup(entry.envelope),'Пропущена или подменена ревизия изменений');
+  const packet=await decryptBackup(entry.envelope,password);
+  snapshot=await applySyncDelta(snapshot,packet,{area,workspaceId,baseRevision:rev,current});
+  rev=entry.revision;
+ }
+ return {snapshot,revision:rev};
+}
+
+/* Local synthetic relay only. No change to the production v1/v2 client.
+   Keep credential roles separate; never persist tokens or plaintext snapshots. */
+export function deltaLabClient(endpoint,area,token,{compactToken,fetcher=globalThis.fetch,timeoutMs=15000}={}){
+ endpoint=normalizeEndpoint(endpoint);
+ check(validArea(area)&&['localhost','127.0.0.1','[::1]'].includes(new URL(endpoint).hostname)&&new URL(endpoint).protocol==='http:','Delta LAB доступен только на localhost');
+ const validToken=t=>typeof t==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(t);
+ check(validToken(token)&&(compactToken===undefined||validToken(compactToken)&&compactToken!==token),'Проверьте отдельные тестовые ключи');
+ const url=endpoint+'/v1/delta/'+area+'/';
+ async function request(path,body,secret=token){
+  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),timeoutMs);
+  try{
+   const res=await fetcher(url+path,{method:body?'PUT':'GET',headers:{Authorization:'Bearer '+secret,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:ctl.signal});
+   if(!res.ok)throw Object.assign(Error(res.status===410?'История уплотнена, повторите чтение':'Delta LAB: HTTP '+res.status),{status:res.status});
+   const limit=defaultCloudflarePacketLimit+4096;
+   check(Number(res.headers.get('content-length')||0)<=limit,'Слишком большой ответ Delta LAB');
+   check(res.body?.getReader,'Пустой ответ Delta LAB');
+   const reader=res.body.getReader(),decoder=new TextDecoder('utf-8',{fatal:true});let size=0,text='';
+   try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>limit){await reader.cancel();throw Error('Слишком большой ответ Delta LAB');}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}
+   finally{reader.releaseLock();}
+   return JSON.parse(text);
+  }finally{clearTimeout(timer);}
+ }
+ return {head:()=>request('head'),getRevision:rev=>{check(revision(rev),'Некорректная ревизия');return request('revision/'+rev);},
+  anchor:envelope=>request('anchor',{expectedRevision:0,envelope}),
+  append:(expectedRevision,envelope)=>request('append',{expectedRevision,envelope}),
+  compact:(expectedRevision,envelope)=>{check(validToken(compactToken),'Нужен отдельный ключ компактизации');return request('compact',{expectedRevision,envelope},compactToken);}
+ };
+}
+function validDeltaHead(h){
+ return plain(h)&&Number.isSafeInteger(h.revision)&&h.revision>=0&&Number.isSafeInteger(h.anchorRevision)&&Number.isInteger(h.count)&&h.count>=0&&h.count<=129&&
+  (h.revision===0?h.anchorRevision===0&&h.count===0:revision(h.anchorRevision)&&h.anchorRevision<=h.revision&&h.count===h.revision-h.anchorRevision+1);
+}
+// Read an immutable prefix. If compaction removed a requested revision, restart
+// from the new anchor at most twice. No silent fallback after an integrity error.
+export async function readDeltaLab({client,area,password,current,checkpoint=null}){
+ check(validArea(area)&&typeof password==='string'&&password.length>=12,'Проверьте параметры Delta LAB');
+ if(checkpoint){check(revision(checkpoint.revision)&&uuid.test(checkpoint.workspaceId),'Некорректная локальная ревизия');combineScope(current,checkpoint.snapshot,area);}
+ for(let attempt=0;attempt<3;attempt++){
+  try{
+   const head=await client.head();check(validDeltaHead(head),'Некорректная цепочка Delta LAB');
+   check(!checkpoint||head.revision>=checkpoint.revision,'Сервер вернул устаревшую ревизию');
+   if(!head.revision)return {revision:0,anchorRevision:0,workspaceId:null,snapshot:null,compactedPastCheckpoint:false};
+   // With an authenticated local checkpoint, validate the corresponding remote
+   // entry, then fetch only its tail. A new or very stale device needs the anchor.
+   const start=checkpoint&&checkpoint.revision>=head.anchorRevision?checkpoint.revision:head.anchorRevision;
+   const first=await client.getRevision(start);
+   check(first?.revision===start,'Отсутствует базовый снимок Delta LAB');
+   let workspaceId,snapshot;
+   if(start===head.anchorRevision){
+    check(first.kind==='anchor','Отсутствует базовый снимок Delta LAB');
+    const initial=await readPacket(first.envelope,password,area,start);
+    workspaceId=initial.workspaceId;snapshot=initial.snapshot;
+    check(!checkpoint||workspaceId===checkpoint.workspaceId,'Сервер заменил рабочее пространство');
+    if(checkpoint?.revision===start)check(await scopeDigest(snapshot,area)===await scopeDigest(checkpoint.snapshot,area),'Содержимое ранее принятой ревизии изменилось');
+   }else{
+    check(checkpoint&&first.kind==='delta','Некорректная контрольная точка Delta LAB');
+    workspaceId=checkpoint.workspaceId;snapshot=copy(checkpoint.snapshot);
+    const packet=await decryptBackup(first.envelope,password);
+    checkDeltaHeader(packet,{area,workspaceId,baseRevision:start-1});
+    check(await scopeDigest(snapshot,area)===packet.resultHash,'Содержимое ранее принятой ревизии изменилось');
+   }
+   combineScope(current,snapshot,area);
+   for(let rev=start+1;rev<=head.revision;rev++){
+    const row=await client.getRevision(rev);
+    check(row?.kind==='delta'&&row.revision===rev,'Пропущена или подменена ревизия изменений');
+    snapshot=await applySyncDelta(snapshot,await decryptBackup(row.envelope,password),{area,workspaceId,baseRevision:rev-1,current});
+   }
+   return {revision:head.revision,anchorRevision:head.anchorRevision,workspaceId,snapshot,compactedPastCheckpoint:!!checkpoint&&checkpoint.revision<head.anchorRevision};
+  }catch(e){if(e.status!==410||attempt===2)throw e;}
+ }
+}
+// Compaction never takes its snapshot from local edits. Reconstruct the remote
+// chain first, then submit a full anchor at the next revision under an explicit CAS.
+export async function compactDeltaLab({client,area,password,current,checkpoint=null,expectedRevision,confirmed=false}){
+ check(confirmed&&revision(expectedRevision),'Подтвердите компактизацию проверенной ревизии');
+ const remote=await readDeltaLab({client,area,password,current,checkpoint});
+ check(remote.revision===expectedRevision&&remote.anchorRevision<remote.revision,'История изменилась или уже уплотнена');
+ check(!remote.compactedPastCheckpoint,'Локальная контрольная точка старше базового снимка; сначала согласуйте данные');
+ check(syncUploadBytes(remote.snapshot,{area,workspaceId:remote.workspaceId,expectedRevision})<=defaultCloudflarePacketLimit,'Полный снимок превышает лимит компактизации; история сохранена');
+ const envelope=await encryptBackup(packetPayload(remote.snapshot,area,remote.workspaceId,expectedRevision+1),password);
+ const result=await client.compact(expectedRevision,envelope);
+ check(result?.revision===expectedRevision+1,'Сервер не подтвердил компактизацию');
+ return {revision:result.revision,workspaceId:remote.workspaceId,snapshot:remote.snapshot,envelope};
+}
+
+/* Explicit laboratory adapter for the existing prepare/preview/execute pipeline.
+   The full envelopes returned to that pipeline are generated locally; only
+   an initial anchor or encrypted delta travels across the network.
+   No normal app callers: data access is injected by the synthetic test harness. */
+export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synthetic=false,acceptCompactedHistory=false,fetcher,timeoutMs}){
+ check(synthetic===true&&typeof readData==='function','Интеграция Delta LAB только для синтетических данных');
+ check(typeof password==='string'&&password.length>=12,'Проверьте пароль Delta LAB');
+ endpoint=normalizeEndpoint(endpoint);
+ const client=deltaLabClient(endpoint,area,token,{fetcher,timeoutMs});
+ let baseline=null,pending=null,busy=false;
+ async function exclusive(task){
+  check(!busy,'Дождитесь завершения обмена Delta LAB');busy=true;
+  try{return await task();}finally{busy=false;}
+ }
+ return {
+  get:()=>exclusive(async()=>{
+   baseline=null;pending=null;
+   const current=await readData(),cp=getCheckpoint(current,area);
+   let checkpoint=null;
+   if(cp){
+    check(cp.endpoint===endpoint&&revision(cp.revision)&&uuid.test(cp.workspaceId),'Этот контур связан с другим сервером или повреждён');
+    const packet=await readPacket(cp.envelope,password,area,cp.revision);
+    check(packet.workspaceId===cp.workspaceId,'Неверная общая ревизия');
+    checkpoint={revision:cp.revision,workspaceId:cp.workspaceId,snapshot:packet.snapshot};
+   }
+   const remote=await readDeltaLab({client,area,password,current,checkpoint});
+   check(!remote.compactedPastCheckpoint||acceptCompactedHistory,'История уплотнена после локальной ревизии. Нужно явное согласование с проверенным снимком.');
+   const envelope=!remote.revision?null:checkpoint?.revision===remote.revision?cp.envelope:
+    await encryptBackup(packetPayload(remote.snapshot,area,remote.workspaceId,remote.revision),password);
+   baseline=remote;
+   return {revision:remote.revision,envelope};
+  }),
+  put:(expectedRevision,envelope)=>exclusive(async()=>{
+   check(baseline&&baseline.revision===expectedRevision,'Сначала прочитайте актуальную ревизию Delta LAB');
+   const next=await readPacket(envelope,password,area,expectedRevision+1),current=await readData();
+   combineScope(current,next.snapshot,area);
+   check(!expectedRevision||baseline.workspaceId===next.workspaceId,'Неверное рабочее пространство Delta LAB');
+   // A retry of the exact local envelope must reuse the same encrypted delta.
+   if(pending){check(pending.expectedRevision===expectedRevision&&same(pending.envelope,envelope),'Предыдущая запись не согласована. Повторите чтение ревизии.');}
+   else{
+    let payload=envelope;
+    if(expectedRevision){
+     const estimate=syncDeltaEstimate(baseline.snapshot,next.snapshot,{area,workspaceId:next.workspaceId,baseRevision:expectedRevision});
+     check(estimate.changedRecords>0,'Нет изменений; используйте получение без повторной записи');
+     check(estimate.bytes<=defaultCloudflarePacketLimit,'Пакет изменений превышает лимит; данные не отправлены');
+     const delta=await buildSyncDelta(baseline.snapshot,next.snapshot,{area,workspaceId:next.workspaceId,baseRevision:expectedRevision});
+     await applySyncDelta(baseline.snapshot,delta,{area,workspaceId:next.workspaceId,baseRevision:expectedRevision,current});
+     payload=await encryptBackup(delta,password);
+    }else check(new TextEncoder().encode(JSON.stringify({expectedRevision,envelope})).length<=defaultCloudflarePacketLimit,'Первичный снимок превышает лимит; данные не отправлены');
+    pending={expectedRevision,envelope:copy(envelope),payload,ack:null};
+   }
+   if(!pending.ack){
+    const accepted=await (expectedRevision?client.append(expectedRevision,pending.payload):client.anchor(pending.payload));
+    check(accepted?.revision===expectedRevision+1&&typeof accepted.replayed==='boolean','Сервер не подтвердил ожидаемую ревизию');
+    pending.ack={revision:accepted.revision,envelope:copy(pending.envelope)};
+   }
+   return copy(pending.ack);
+  })
+ };
+}
+
 export async function prepareSync({area,endpoint,password,client,data}){
  endpoint=normalizeEndpoint(endpoint);
  check(validArea(area),'Выберите рабочую область');
@@ -250,7 +524,10 @@ export async function prepareSync({area,endpoint,password,client,data}){
   combineScope(current,remoteSnapshot,area);
   if(checkpoint){
    check(checkpoint.workspaceId===workspaceId&&remote.revision>=checkpoint.revision,'Сервер заменён или вернул устаревшую ревизию');
-   const ancestor=await readPacket(checkpoint.envelope,password,area,checkpoint.revision);
+   // The already authenticated remote packet is the checkpoint only when
+   // revision AND exact encrypted envelope agree. Otherwise decrypt separately
+   // to preserve rollback and same-revision tamper detection.
+   const ancestor=remote.revision===checkpoint.revision&&same(checkpoint.envelope,remote.envelope)?p:await readPacket(checkpoint.envelope,password,area,checkpoint.revision);
    check(ancestor.workspaceId===workspaceId,'Неверная общая ревизия');
    if(remote.revision===checkpoint.revision)check(same(ancestor.snapshot,remoteSnapshot),'Содержимое ранее принятой ревизии изменилось');
    base=ancestor.snapshot;
@@ -269,32 +546,48 @@ export function previewSync(current,plan,choices={}){
  combineScope(current,result.snapshot,plan.area);
  return {...result,counts:counts(plan.local,result.snapshot)};
 }
-export async function executeSync({plan,choices,password,client,confirmed=false,reuseRemote=false}){
+// Cooperative guard, not server-side revocation. An already transmitted PUT
+// may commit even if the user locks the app or forgets the local credentials.
+function guardSync(stillAllowed,remoteMayHaveCommitted=false){
+ if(!stillAllowed())throw Object.assign(Error(remoteMayHaveCommitted?'Обмен остановлен. Сервер мог принять пакет; локальные изменения не применены. При повторном подключении сравните ревизии.':'Обмен остановлен до записи.'),{code:'sync-paused',remoteMayHaveCommitted});
+}
+export async function executeSync({plan,choices,password,client,confirmed=false,reuseRemote=false,stillAllowed=()=>true}){
  check(confirmed,'Подтвердите синхронизацию');
+ guardSync(stillAllowed);
  const preview=previewSync(await db.dumpAll(),plan,choices);
+ guardSync(stillAllowed);
  check(!preview.conflicts.length,'Сначала разрешите все конфликты');
  const pullOnly=reuseRemote&&plan.revision>0&&same(preview.snapshot,plan.remote)&&isEncryptedBackup(plan.remoteEnvelope);
  if(pullOnly&&plan.checkpoint?.revision===plan.revision&&same(plan.local,plan.remote)){
   // No network write and no rewrite of the potentially large encrypted checkpoint.
-  await db.transaction(['meta'],'readwrite',async s=>{
-   const cp=await s.meta.get(keyOf(plan.area));
-   check(same(cp,plan.checkpoint),'Локальная ревизия изменилась. Повторите проверку.');
-   await s.meta.put(successRecord(plan.area,cp));
+  const stores=[...new Set([...keysFor(plan.area),'meta'])];
+  await db.transaction(stores,'readwrite',async s=>{
+   guardSync(stillAllowed);
+   const current=Object.fromEntries(await Promise.all(stores.map(async n=>[n,await s[n].getAll()])));
+   const cp=getCheckpoint(current,plan.area);
+   check(same(cp,plan.checkpoint)&&same(projectScope(current,plan.area),plan.local),'Локальные данные изменились. Повторите проверку.');
+   guardSync(stillAllowed);await s.meta.put(successRecord(plan.area,cp));guardSync(stillAllowed);
   });
   return {revision:plan.revision,counts:preview.counts};
  }
  const nextRevision=pullOnly?plan.revision:plan.revision+1;
  check(revision(nextRevision),'Лимит ревизий');
- const envelope=pullOnly?plan.remoteEnvelope:await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:plan.area,workspaceId:plan.workspaceId,revision:nextRevision,snapshot:preview.snapshot},password);
+ const envelope=pullOnly?plan.remoteEnvelope:await encryptBackup(packetPayload(preview.snapshot,plan.area,plan.workspaceId,nextRevision),password);
  // Recheck after expensive encryption; the transaction below checks again after CAS.
+ guardSync(stillAllowed);
  previewSync(await db.dumpAll(),plan,choices);
+ guardSync(stillAllowed);
  if(!pullOnly){
-  const committed=await client.put(plan.revision,envelope);
+  let committed;
+  try{committed=await client.put(plan.revision,envelope);}catch(e){guardSync(stillAllowed,true);throw e;}
+  guardSync(stillAllowed,true);
   check(committed.revision===nextRevision&&same(committed.envelope,envelope),'Сервер не подтвердил запись ожидаемой ревизии');
  }
  try{
   return await db.transaction(names,'readwrite',async s=>{
+   guardSync(stillAllowed,!pullOnly);
    const current=Object.fromEntries(await Promise.all(names.map(async n=>[n,await s[n].getAll()])));
+   guardSync(stillAllowed,!pullOnly);
    const final=previewSync(current,plan,choices);
    check(!final.conflicts.length&&same(final.snapshot,preview.snapshot),'Изменился результат слияния');
    const data=combineScope(current,final.snapshot,plan.area);
@@ -302,25 +595,31 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
    data.meta=data.meta.filter(r=>r.id!==cp.id&&r.id!==statusKey(plan.area)).concat(cp,successRecord(plan.area,cp));
    // Delete changed keys first to avoid transient unique-index collisions. One atomic transaction.
    for(const n of [...new Set([...keysFor(plan.area),'meta'])]){
+    guardSync(stillAllowed,!pullOnly);
     const a=byId(current[n]),b=byId(data[n]);
     for(const [id,row] of a)if(!b.has(id)||!same(row,b.get(id)))await s[n].delete(id);
     for(const [id,row] of b)if(!a.has(id)||!same(row,a.get(id)))await s[n].put(row);
    }
+   guardSync(stillAllowed,!pullOnly);
    return {revision:nextRevision,counts:final.counts};
   });
- }catch{throw Error((pullOnly?'Локальная запись не завершилась.':'Сервер принял пакет, но локальная запись не завершилась.')+' Ваши данные не заменены этой операцией. Повторите синхронизацию; при конфликте проверьте обе версии.');}
+ }catch(e){if(e?.code==='sync-paused')throw e;throw Error((pullOnly?'Локальная запись не завершилась.':'Сервер принял пакет, но локальная запись не завершилась.')+' Ваши данные не заменены этой операцией. Повторите синхронизацию; при конфликте проверьте обе версии.');}
 }
 // Automatic sync only for an already confirmed workspace; never auto-propagate deletions.
 export async function syncPersonalArea({area,endpoint,password,client,stillAllowed=()=>true,initialize=false}){
  if(!initialize&&!await syncStatus(area))return {area,status:'setup'};
+ if(!stillAllowed())return {area,status:'paused'};
  const plan=await prepareSync({area,endpoint,password,client});
+ if(!stillAllowed())return {area,status:'paused'};
  if(!initialize&&!plan.checkpoint)return {area,status:'setup'};
  if(plan.conflicts.length)return {area,status:'conflict'};
  const current=await db.dumpAll(),preview=previewSync(current,plan,{});
  if(preview.conflicts.length||counts(plan.base,preview.snapshot).deleted||preview.counts.deleted)return {area,status:'review'};
  if(!stillAllowed())return {area,status:'paused'};
- const result=await executeSync({plan,choices:{},password,client,confirmed:true,reuseRemote:true});
- return {area,status:'synced',revision:result.revision,changed:result.counts.added+result.counts.changed>0};
+ try{
+  const result=await executeSync({plan,choices:{},password,client,confirmed:true,reuseRemote:true,stillAllowed});
+  return {area,status:'synced',revision:result.revision,changed:result.counts.added+result.counts.changed>0};
+ }catch(e){if(e?.code==='sync-paused')return {area,status:'paused',...(e.remoteMayHaveCommitted?{reason:'remote-unconfirmed'}:{})};throw e;}
 }
 export async function syncStatus(area){
  check(validArea(area),'Выберите рабочую область');
