@@ -5,12 +5,15 @@ import {DeviceRegistry,validDeviceHash,validRegistration,validRevocation} from '
 const areas=['school','coach'];
 const tokenPattern=/^[A-Za-z0-9_-]{32,256}$/;
 const digestPattern=/^[0-9a-f]{64}$/;
+const migrationIdPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const loopback=['127.0.0.1','localhost','[::1]'];
+const validFencePacket=b=>b&&typeof b==='object'&&!Array.isArray(b)&&Object.keys(b).sort().join(',')==='expectedRevision,migrationId'&&Number.isSafeInteger(b.expectedRevision)&&b.expectedRevision>0&&typeof b.migrationId==='string'&&migrationIdPattern.test(b.migrationId);
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 function json(status,body,extra={}){
  return new Response(JSON.stringify(body),{status,headers:{...headers,'Content-Type':'application/json; charset=utf-8',...extra}});
 }
 function config(env){
- let origin,hashes,adminHash=null;
+ let origin,hashes,adminHash=null,fenceHashes={};
  try{
   const url=new URL(env.TEACHAPP_SYNC_ORIGIN);
   if(url.protocol!=='https:'||url.origin!==env.TEACHAPP_SYNC_ORIGIN)throw Error();
@@ -28,8 +31,14 @@ function config(env){
   // v2 is opt-in. A legacy shared token can never become the administrative token.
   if(validDeviceHash(admin)&&!seen.has(admin))adminHash=admin;
   if(!seen.size&&!adminHash)throw Error();
+  // Only the separately configured synthetic source may expose migration routes.
+  if(env.TEACHAPP_SYNC_MIGRATION_SYNTHETIC==='true'){
+   const f=JSON.parse(env.TEACHAPP_SYNC_FENCE_HASHES||'{}');
+   if(!f||typeof f!=='object'||Array.isArray(f)||Object.keys(f).some(a=>!areas.includes(a)))throw Error();
+   for(const [area,h] of Object.entries(f)){if(!validDeviceHash(h)||seen.has(h)||h===adminHash||!hashes[area].length&&!adminHash)throw Error();seen.add(h);fenceHashes[area]=h;}
+  }
  }catch{return null;}
- return {origin,hashes,adminHash};
+ return {origin,hashes,adminHash,fenceHashes};
 }
 function equal(a,b){let diff=0;for(let i=0;i<64;i++)diff|=a.charCodeAt(i)^b.charCodeAt(i);return diff===0;}
 async function authorized(request,hashes){
@@ -75,10 +84,12 @@ export default {async fetch(request,env){
  }
  const match=/^\/v1\/snapshot\/(school|coach)$/.exec(url.pathname),pair=/^\/v1\/pairing\/(create|redeem)$/.exec(url.pathname);
  const v2Snapshot=/^\/v2\/snapshot\/(school|coach)$/.exec(url.pathname),devices=/^\/v2\/devices\/(school|coach)(\/revoke)?$/.exec(url.pathname),pairV2=/^\/v2\/pairing\/(create|redeem)$/.exec(url.pathname);
- if((!match&&!pair&&!pairV2&&!v2Snapshot&&!devices)||url.search)return json(404,{error:'route'});
+ const fence=/^\/v1\/migration-fence\/(school|coach)$/.exec(url.pathname),fenceStatus=/^\/v([12])\/migration-fence-status\/(school|coach)$/.exec(url.pathname);
+ if((!match&&!pair&&!pairV2&&!v2Snapshot&&!devices&&!fence&&!fenceStatus)||url.search)return json(404,{error:'route'});
  const settings=config(env);
  if(!settings)return json(503,{error:'not-configured'});
- if((v2Snapshot||devices||pairV2)&&!settings.adminHash)return json(404,{error:'route'});
+ if((v2Snapshot||devices||pairV2||fenceStatus?.[1]==='2')&&!settings.adminHash)return json(404,{error:'route'});
+ if((fence||fenceStatus)&&(env.TEACHAPP_SYNC_MIGRATION_SYNTHETIC!=='true'||!loopback.includes(url.hostname)||url.protocol!=='http:'||!settings.fenceHashes[fence?.[1]??fenceStatus[2]]))return json(404,{error:'route'});
  const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};
  if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
  if(request.method==='OPTIONS'){
@@ -86,6 +97,34 @@ export default {async fetch(request,env){
   return new Response(null,{status:204,headers:{...headers,...cors,'Access-Control-Allow-Methods':'GET, PUT, POST, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'}});
  }
  try{
+  if(fence||fenceStatus){
+   const area=fence?.[1]??fenceStatus[2],version=fenceStatus?.[1];
+   const init={method:request.method,headers:{}};let internal;
+   if(fence){
+    if(!await authorized(request,[settings.fenceHashes[area]]))return json(401,{error:'unauthorized'},cors);
+    if(!['GET','PUT'].includes(request.method))return json(405,{error:'method'},cors);
+    // A pre-existing device token cannot acquire administrative privilege, even across contours.
+    for(const a of areas){const object=env.SNAPSHOTS.get(env.SNAPSHOTS.idFromName(a));const r=await object.fetch(new Request('https://internal/migration-key-available',{method:'POST',body:JSON.stringify({hash:settings.fenceHashes[area]})}));if(r.status!==200)return json(409,{error:'fence-key-reuse'},cors);}
+    internal='/migration-fence';
+    if(request.method==='PUT'){
+     if(!/^application\/json(?:;|$)/i.test(request.headers.get('Content-Type')||''))return json(415,{error:'content-type'},cors);
+     const packet=await readSmallJson(request);if(packet.error)return json(packet.error,{error:'packet'},cors);
+     if(!validFencePacket(packet.body))return json(400,{error:'packet'},cors);init.body=JSON.stringify(packet.body);
+    }
+   }else{
+    if(request.method!=='GET')return json(405,{error:'method'},cors);
+    if(version==='1'){
+     if(!await authorized(request,settings.hashes[area]))return json(401,{error:'unauthorized'},cors);
+     internal='/migration-fence-status';
+    }else{
+     const auth=/^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(request.headers.get('Authorization')||'');if(!auth)return json(401,{error:'unauthorized'},cors);
+     const hash=await digestToken(auth[1]);if(equal(hash,settings.adminHash)||Object.values(settings.fenceHashes).includes(hash)||areas.some(a=>settings.hashes[a].includes(hash)))return json(401,{error:'unauthorized'},cors);
+     init.headers['X-TeachApp-Device-Hash']=hash;internal='/migration-fence-status-v2';
+    }
+   }
+   const stub=env.SNAPSHOTS.get(env.SNAPSHOTS.idFromName(area));const result=await stub.fetch(new Request('https://internal'+internal,init));
+   return new Response(result.body,{status:result.status,headers:{...headers,...cors,'Content-Type':'application/json; charset=utf-8'}});
+  }
   if(devices){
    if(!await authorized(request,[settings.adminHash]))return json(401,{error:'unauthorized'},cors);
    const revoke=Boolean(devices[2]);
@@ -97,7 +136,7 @@ export default {async fetch(request,env){
     if(packet.error)return json(packet.error,{error:packet.error===413?'too-large':'packet'},cors);
     const body=packet.body;
     if(revoke?!validRevocation(body):!validRegistration(body))return json(400,{error:'packet'},cors);
-    if(!revoke&&(equal(body.tokenHash,settings.adminHash)||areas.some(a=>settings.hashes[a].some(h=>equal(body.tokenHash,h)))))return json(400,{error:'shared-key-not-allowed'},cors);
+    if(!revoke&&(equal(body.tokenHash,settings.adminHash)||Object.values(settings.fenceHashes).includes(body.tokenHash)||areas.some(a=>settings.hashes[a].some(h=>equal(body.tokenHash,h)))))return json(400,{error:'shared-key-not-allowed'},cors);
     init.body=JSON.stringify(body);
    }
    const stub=env.SNAPSHOTS.get(env.SNAPSHOTS.idFromName(devices[1]));
@@ -109,7 +148,7 @@ export default {async fetch(request,env){
    if(!auth)return json(401,{error:'unauthorized'},cors);
    if(!['GET','PUT'].includes(request.method))return json(405,{error:'method'},cors);
    const hash=await digestToken(auth[1]);
-   if(equal(hash,settings.adminHash)||areas.some(a=>settings.hashes[a].some(h=>equal(hash,h))))return json(401,{error:'unauthorized'},cors);
+   if(equal(hash,settings.adminHash)||Object.values(settings.fenceHashes).includes(hash)||areas.some(a=>settings.hashes[a].some(h=>equal(hash,h))))return json(401,{error:'unauthorized'},cors);
    const init={method:request.method,headers:{'X-TeachApp-Device-Hash':hash}};
    if(request.method==='PUT'){
     if(!/^application\/json(?:;|$)/i.test(request.headers.get('Content-Type')||''))return json(415,{error:'content-type'},cors);
@@ -169,6 +208,7 @@ export class SyncSnapshot extends DurableObject{
   this.storage=ctx.storage;
   this.sql=ctx.storage.sql;
   this.sql.exec('CREATE TABLE IF NOT EXISTS snapshot (id INTEGER PRIMARY KEY CHECK (id = 1), revision INTEGER NOT NULL, envelope TEXT NOT NULL)');
+  this.sql.exec('CREATE TABLE IF NOT EXISTS migration_fence (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, migration_id TEXT NOT NULL)');
  }
  get(){
   const row=this.sql.exec('SELECT revision, envelope FROM snapshot WHERE id=1').toArray()[0];
@@ -178,6 +218,11 @@ export class SyncSnapshot extends DurableObject{
   if(!envelopeValid(envelope))throw Error('Invalid envelope');
   return {revision:row.revision,envelope};
  }
+ fence(){
+  const row=this.sql.exec('SELECT revision,migration_id FROM migration_fence WHERE id=1').toArray()[0];
+  return row?{revision:row.revision,migrationId:row.migration_id}:null;
+ }
+ fenceState(){const revision=this.get().revision,fence=this.fence();if(fence&&(fence.revision!==revision||!migrationIdPattern.test(fence.migrationId)))throw Error('Invalid migration fence');return {revision,fence};}
  // Must be called inside the same synchronous transaction as v2 authorization.
  write(expectedRevision,envelope){
   const current=this.get();
@@ -195,6 +240,26 @@ export class SyncSnapshot extends DurableObject{
  async fetch(request){
   try{
    const path=new URL(request.url).pathname,pair=/^\/pairing\/(create|redeem)$/.exec(path);
+   if(path==='/migration-key-available'&&request.method==='POST'){
+    const {hash}=await request.json();if(!validDeviceHash(hash))return json(400,{error:'packet'});
+    new DeviceRegistry(this.sql);
+    return this.sql.exec('SELECT id FROM trusted_device WHERE token_hash=?',hash).toArray().length?json(409,{error:'key-reuse'}):json(200,{available:true});
+   }
+   if(path==='/migration-fence-status-v2'&&request.method==='GET'){
+    const registry=new DeviceRegistry(this.sql),hash=request.headers.get('X-TeachApp-Device-Hash');
+    return this.storage.transactionSync(()=>registry.active(hash)?json(200,this.fenceState()):json(401,{error:'unauthorized'}));
+   }
+   if((path==='/migration-fence'||path==='/migration-fence-status')&&request.method==='GET')return json(200,this.fenceState());
+   if(path==='/migration-fence'&&request.method==='PUT'){
+    const body=await request.json();if(!validFencePacket(body))return json(400,{error:'packet'});
+    return this.storage.transactionSync(()=>{
+     const state=this.fenceState();
+     if(state.fence)return state.fence.revision===body.expectedRevision&&state.fence.migrationId===body.migrationId?json(200,state):json(423,{error:'migration-frozen'});
+     if(state.revision!==body.expectedRevision)return json(409,{error:'stale'});
+     this.sql.exec('INSERT INTO migration_fence(id,revision,migration_id) VALUES(1,?,?)',state.revision,body.migrationId);
+     return json(200,this.fenceState());
+    });
+   }
    if(path==='/devices'||path==='/devices/revoke'){
     const registry=new DeviceRegistry(this.sql);
     if(path==='/devices'&&request.method==='GET')return json(200,{devices:registry.list()});
@@ -219,6 +284,7 @@ export class SyncSnapshot extends DurableObject{
     if(packet.error)return json(packet.error,{error:packet.error===413?'too-large':'packet'});
     const result=this.storage.transactionSync(()=>{
      const id=registry.active(hash);if(!id)return {status:401,error:'unauthorized'};
+     if(this.fence())return {status:423,error:'migration-frozen'};
      const next=this.write(packet.body.expectedRevision,packet.body.envelope);
      if(!next)return {status:409,error:'stale'};
      registry.touch(id,Date.now(),true);return {status:200,snapshot:next};
@@ -248,8 +314,11 @@ export class SyncSnapshot extends DurableObject{
    const packet=await readPacket(request);
    if(packet.error)return json(packet.error,{error:packet.error===413?'too-large':'packet'});
    const {expectedRevision,envelope}=packet.body;
-   const next=this.storage.transactionSync(()=>this.write(expectedRevision,envelope));
-   return next?json(200,next):json(409,{error:'stale'});
+   return this.storage.transactionSync(()=>{
+    if(this.fence())return json(423,{error:'migration-frozen'});
+    const next=this.write(expectedRevision,envelope);
+    return next?json(200,next):json(409,{error:'stale'});
+   });
   }catch{return json(503,{error:'storage-unavailable'});}
  }
 }

@@ -542,6 +542,113 @@ try{
   assert.equal((await legacyCoach.get()).revision,3);
   console.log('DELTA MIGRATION PASS: real legacy relay to isolated fresh Worker; large encrypted file, distinct workspace/password, dirty/stale preflight, source race before/after copy, no source writes or overwrite, exact retry, restart and independent scope verification.');
  }finally{await new Promise(resolve=>legacy.close(resolve));}
+
+ // Cloudflare source compatibility: a second local workerd (distinct config and storage).
+ await stop();workerState=join(state,'cf-migration-target');await start();
+ const cfPortProbe=createServer();await new Promise(r=>cfPortProbe.listen(0,'127.0.0.1',r));
+ const cfPort=cfPortProbe.address().port;await new Promise(r=>cfPortProbe.close(r));
+ const cfSource='http://127.0.0.1:'+cfPort,cfOrigin='https://synthetic-migration.example';
+ const cfLegacy='M'.repeat(43),cfCoach='N'.repeat(43),cfDevice='O'.repeat(43),cfAdmin='P'.repeat(43),cfFence='Q'.repeat(43),cfSchoolFence='R'.repeat(43),cfRevoked='S'.repeat(43);
+ let cfProcess=null,cfOutput='';
+ const cfHashes={school:[await digestToken(cfLegacy)],coach:[await digestToken(cfCoach)]};
+ async function startCf(enabled=true,fenceHashOverride){
+  cfOutput='';
+  const fenceHashes=fenceHashOverride??{school:await digestToken(cfSchoolFence),coach:await digestToken(cfFence)};
+  cfProcess=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.migration-source-dev.jsonc','--local','--ip','127.0.0.1','--port',String(cfPort),'--persist-to',join(state,'cf-migration-source'),'--var','TEACHAPP_SYNC_ORIGIN:'+cfOrigin,'--var','TEACHAPP_SYNC_TOKEN_HASHES:'+JSON.stringify(cfHashes),'--var','TEACHAPP_SYNC_ADMIN_HASH:'+await digestToken(cfAdmin),...(enabled?['--var','TEACHAPP_SYNC_MIGRATION_SYNTHETIC:true','--var','TEACHAPP_SYNC_FENCE_HASHES:'+JSON.stringify(fenceHashes)]:[])],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
+  cfProcess.stdout.on('data',x=>cfOutput=(cfOutput+x).slice(-8000));cfProcess.stderr.on('data',x=>cfOutput=(cfOutput+x).slice(-8000));
+  for(let i=0;i<150;i++){if(cfProcess.exitCode!==null)throw Error(cfOutput);try{if((await fetch(cfSource+'/healthz',{signal:AbortSignal.timeout(1000)})).ok)return;}catch{}await sleep(500);}
+  throw Error('Cloudflare migration source startup '+cfOutput);
+ }
+ async function stopCf(){
+  const p=cfProcess;cfProcess=null;if(!p||p.exitCode!==null)return;
+  const exit=once(p,'exit');try{process.kill(-p.pid,'SIGTERM');}catch(e){if(e.code!=='ESRCH')throw e;}
+  await Promise.race([exit,sleep(5000)]);if(p.exitCode===null&&p.signalCode===null){process.kill(-p.pid,'SIGKILL');await exit;}
+ }
+ async function cfCall(path,token,method='GET',body){
+  const res=await fetch(cfSource+path,{method,headers:{Origin:cfOrigin,Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
+  return {status:res.status,...await res.json()};
+ }
+ try{
+  await startCf(false);
+  assert.equal((await cfCall('/v1/migration-fence/coach',cfFence)).status,404);
+  const deviceId='cf_migration_device_01',revokedId='cf_migration_device_02';
+  for(const [id,t] of [[deviceId,cfDevice],[revokedId,cfRevoked]]){
+   assert.equal((await cfCall('/v2/devices/coach',cfAdmin,'POST',{id,name:'Synthetic '+id,tokenHash:await digestToken(t)})).status,201);
+  }
+  assert.equal((await cfCall('/v2/devices/coach/revoke',cfAdmin,'POST',{id:revokedId})).status,200);
+  const legacyCf=relayClient(cfSource,'coach',cfCoach),trustedCf=relayClient(cfSource,'coach',cfDevice,{protocolVersion:2});
+  const cfPass='synthetic-cf-source-password',cfDestPass='synthetic-cf-target-password',cfBackup='synthetic-cf-backup-password';
+  const cfData=freshDb();cfData.coachTeams=[{id:'cf-team-1',name:'Synthetic Cloudflare team',archived:false}];
+  const cfWorkspace=crypto.randomUUID(),cfSnapshot=projectScope(cfData,'coach');
+  const cfEnv=rev=>encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:'coach',workspaceId:cfWorkspace,revision:rev,snapshot:cfSnapshot},cfPass);
+  const cfFirst=await legacyCf.put(0,await cfEnv(1));assert.deepEqual(await trustedCf.get(),cfFirst);
+  // Configured migration key must never reuse a previously registered (even revoked) credential.
+  await stopCf();await startCf(true,{school:await digestToken(cfRevoked),coach:await digestToken(cfFence)});
+  assert.equal((await cfCall('/v1/migration-fence/school',cfRevoked)).status,409);
+  await stopCf();await startCf();
+  const schoolCf=relayClient(cfSource,'school',cfLegacy);
+  const schoolEnv=await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:'school',workspaceId:cfWorkspace,revision:1,snapshot:base},cfPass);
+  assert.equal((await schoolCf.put(0,schoolEnv)).revision,1);
+  const cfStatus='/v2/migration-fence-status/coach',cfFencePath='/v1/migration-fence/coach';
+  assert.equal((await cfCall(cfFencePath,cfCoach)).status,401);
+  assert.equal((await cfCall(cfFencePath,cfAdmin)).status,401);
+  assert.equal((await cfCall(cfStatus,cfCoach)).status,401);
+  assert.equal((await cfCall(cfStatus,cfRevoked)).status,401);
+  assert.equal((await cfCall('/v1/migration-fence-status/school',cfCoach)).status,401);
+  assert.equal((await cfCall('/v2/devices/school',cfAdmin,'POST',{id:'cf_migration_device_03',name:'Reserved key',tokenHash:await digestToken(cfFence)})).status,400);
+  const cfRaceId=crypto.randomUUID(),cfCandidate=await cfEnv(2);
+  const cfRace=await Promise.all([cfCall('/v2/snapshot/coach',cfDevice,'PUT',{expectedRevision:1,envelope:cfCandidate}),cfCall(cfFencePath,cfFence,'PUT',{expectedRevision:1,migrationId:cfRaceId})]);
+  // If freeze wins, keep this contour for a separate fence race test. The
+  // migration itself uses the independent school contour with a v2 device.
+  assert.ok(cfRace[0].status===200&&cfRace[1].status===409||cfRace[0].status===423&&cfRace[1].status===200);
+  const cfSchoolDevice='T'.repeat(43),cfSchoolDeviceId='cf_migration_device_04';
+  assert.equal((await cfCall('/v2/devices/school',cfAdmin,'POST',{id:cfSchoolDeviceId,name:'Synthetic school device',tokenHash:await digestToken(cfSchoolDevice)})).status,201);
+  const sourceSchoolV2=relayClient(cfSource,'school',cfSchoolDevice,{protocolVersion:2}),sourceSchoolHead=await sourceSchoolV2.get();
+  const cfCurrent=structuredClone(baseData);
+  cfCurrent.meta.push({id:'sync-checkpoint-school',endpoint:cfSource,workspaceId:cfWorkspace,revision:1,envelope:sourceSchoolHead.envelope});
+  await db.replaceAll(cfCurrent);
+  const cfArgs={sourceEndpoint:cfSource,destinationEndpoint:endpoint,sourceToken:cfSchoolDevice,destinationToken:a,sourcePassword:cfPass,destinationPassword:cfDestPass,backupPassword:cfBackup,area:'school',current:await db.dumpAll(),protocolVersion:2,synthetic:true};
+  const cfPlan=await prepareDeltaMigration(cfArgs),cfConfirm={...cfArgs,file:cfPlan.file,confirmed:true,backupVerified:true,expectedMigrationId:cfPlan.migrationId,expectedSourceRevision:1};
+  const cfOwner={...cfConfirm,sourceFenceToken:cfSchoolFence,sourceFenceId:cfPlan.migrationId,sourceFrozen:true};
+  const cfAdminFence=deltaMigrationFenceClient(cfOwner);
+  await assert.rejects(commitDeltaMigration(cfOwner),/не заблокирован/);
+  const cfFrozen=await cfAdminFence.freeze({expectedRevision:1,migrationId:cfPlan.migrationId,confirmed:true,backupVerified:true});
+  assert.deepEqual(cfFrozen,{revision:1,fence:{revision:1,migrationId:cfPlan.migrationId}});
+  assert.deepEqual(await deltaMigrationFenceStatus(cfConfirm),cfFrozen);
+  assert.deepEqual(await deltaMigrationFenceStatus({...cfConfirm,sourceToken:cfLegacy,protocolVersion:1}),cfFrozen);
+  const cfNewSchool=await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:'school',workspaceId:cfWorkspace,revision:2,snapshot:next},cfPass);
+  await assert.rejects(sourceSchoolV2.put(1,cfNewSchool),e=>e.code==='migration-frozen');
+  await assert.rejects(schoolCf.put(1,cfNewSchool),e=>e.code==='migration-frozen');
+  assert.deepEqual(await sourceSchoolV2.get(),sourceSchoolHead);
+  assert.equal((await commitDeltaMigration(cfOwner)).status,'verified-fenced-copy');
+  const cfBefore=await db.dumpAll();
+  const cfPreview=await cutoverDeltaMigrationDevice({...cfConfirm,confirmed:false});assert.equal(cfPreview.status,'cutover-preview');
+  assert.deepEqual(await db.dumpAll(),cfBefore);
+  assert.equal((await cutoverDeltaMigrationDevice(cfConfirm)).status,'cutover-completed');
+  assert.equal((await db.get('meta','sync-checkpoint-migration-school')).sourceProtocolVersion,2);
+  const cfAdapter=deltaLabSyncAdapter({endpoint,area:'school',token:a,password:cfDestPass,synthetic:true,readData:()=>db.dumpAll()});
+  const cfNewPlan=await prepareSync({area:'school',endpoint,password:cfDestPass,client:cfAdapter});
+  assert.equal((await executeSync({plan:cfNewPlan,choices:{},password:cfDestPass,client:cfAdapter,confirmed:true,reuseRemote:true})).revision,1);
+  await stopCf();await startCf(false);
+  assert.equal((await cfCall('/v2/migration-fence-status/school',cfSchoolDevice)).status,404);
+  await assert.rejects(sourceSchoolV2.put(1,cfNewSchool),e=>e.code==='migration-frozen');
+  await assert.rejects(schoolCf.put(1,cfNewSchool),e=>e.code==='migration-frozen');
+  await stopCf();await startCf();
+  assert.deepEqual(await deltaMigrationFenceStatus(cfConfirm),cfFrozen);
+  assert.equal((await cfCall('/v1/migration-rollback/school',cfSchoolFence,'PUT',{expectedRevision:1,migrationId:cfPlan.migrationId})).status,404);
+  assert.equal((await sealDeltaMigrationRollback({...cfConfirm,destinationSealToken:sealKey})).status,'rollback-sealed');
+  assert.equal((await rollbackDeltaMigrationDevice(cfConfirm)).status,'rollback-completed');
+  assert.equal((await db.get('meta','sync-checkpoint-school')).endpoint,cfSource);
+  assert.equal((await db.get('meta','sync-checkpoint-migration-school')),undefined);
+  assert.deepEqual(projectScope(await db.dumpAll(),'school'),base);
+  // Cloudflare source stays fenced: no release endpoint or false rollback completion.
+  await assert.rejects(sourceSchoolV2.put(1,cfNewSchool),e=>e.code==='migration-frozen');
+  assert.equal((await cfCall('/v2/devices/school/revoke',cfAdmin,'POST',{id:cfSchoolDeviceId})).status,200);
+  assert.equal((await cfCall('/v2/migration-fence-status/school',cfSchoolDevice)).status,401);
+  assert.equal((await cfCall('/v2/snapshot/school',cfSchoolDevice)).status,401);
+  assert.deepEqual(await schoolCf.get(),sourceSchoolHead);
+  console.log('CLOUDFLARE MIGRATION PASS: real independent workerd source/target, v1/v2 shared fence CAS, reserved and revoked keys, immutable copy, v2 device cutover and local rollback, persisted write refusal, no Cloudflare source release or production profile change.');
+ }finally{await stopCf();}
  const sizes=syncDeltaEstimate(base,next,{area,workspaceId,baseRevision:1});assert.ok(sizes.bytes<sizes.fullBytes);
  console.log('DELTA SIZE '+JSON.stringify(sizes));
  console.log('DELTA WORKER PASS: real workerd, opaque encrypted anchor and deltas, two scoped devices, CAS race and exact retry, bounds, isolation, restart persistence and verified reconstruction');

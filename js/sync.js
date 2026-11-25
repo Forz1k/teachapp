@@ -642,10 +642,10 @@ export async function inspectDeltaMigrationDevice(args){
  return {...result,status:ready?'clean-source':'local-changes',ready};
 }
 // Separate loopback-only fence request. Normal devices can read status but never freeze.
-async function migrationFenceRequest(source,area,token,path,fetcher,body){
+async function migrationFenceRequest(source,area,token,path,fetcher,body,version=1){
  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),15000);
  try{
-  const res=await fetcher(source+'/v1/'+path+'/'+area,{method:body?'PUT':'GET',headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:ctl.signal});
+  const res=await fetcher(source+'/v'+version+'/'+path+'/'+area,{method:body?'PUT':'GET',headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:ctl.signal});
   check(res.ok,'Барьер записи LAB: HTTP '+res.status);
   const reader=res.body?.getReader();check(reader,'Нет ответа барьера записи');let size=0,text='';const decoder=new TextDecoder('utf-8',{fatal:true});
   try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>4096){await reader.cancel();throw Error('Слишком большой ответ барьера');}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}finally{reader.releaseLock();}
@@ -657,20 +657,20 @@ async function migrationFenceRequest(source,area,token,path,fetcher,body){
 }
 export function deltaMigrationFenceClient({sourceEndpoint,destinationEndpoint,area,sourceToken,destinationToken,sourceFenceToken,protocolVersion=1,synthetic=false,fetcher=globalThis.fetch}){
  const {source}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
- check(protocolVersion===1&&validArea(area)&&typeof sourceFenceToken==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(sourceFenceToken)&&sourceFenceToken!==sourceToken&&sourceFenceToken!==destinationToken,'Нужен отдельный ключ блокировки Node LAB');
+ check([1,2].includes(protocolVersion)&&validArea(area)&&typeof sourceFenceToken==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(sourceFenceToken)&&sourceFenceToken!==sourceToken&&sourceFenceToken!==destinationToken,'Нужен отдельный ключ блокировки источника LAB');
  const request=body=>migrationFenceRequest(source,area,sourceFenceToken,'migration-fence',fetcher,body);
  return {get:()=>request(),freeze:({expectedRevision,migrationId,confirmed,backupVerified})=>{
   check(confirmed===true&&backupVerified===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите резервную копию и необратимую блокировку LAB');
   return request({expectedRevision,migrationId:migrationId.toLowerCase()});
  },resumeSource:({expectedRevision,migrationId,confirmed,backupVerified,allDevicesReconciled})=>{
-  check(confirmed===true&&backupVerified===true&&allDevicesReconciled===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите проверенные копии и возврат всех устройств');
+  check(protocolVersion===1&&confirmed===true&&backupVerified===true&&allDevicesReconciled===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите проверенные копии и возврат всех устройств');
   return migrationFenceRequest(source,area,sourceFenceToken,'migration-rollback',fetcher,{expectedRevision,migrationId:migrationId.toLowerCase()});
  }};
 }
 export async function deltaMigrationFenceStatus({sourceEndpoint,destinationEndpoint,area,sourceToken,protocolVersion=1,synthetic=false,fetcher=globalThis.fetch}){
  const {source}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
- check(protocolVersion===1&&validArea(area)&&typeof sourceToken==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(sourceToken),'Нужен ключ исходного контура Node LAB');
- return migrationFenceRequest(source,area,sourceToken,'migration-fence-status',fetcher);
+ check([1,2].includes(protocolVersion)&&validArea(area)&&typeof sourceToken==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(sourceToken),'Нужен ключ исходного контура LAB');
+ return migrationFenceRequest(source,area,sourceToken,'migration-fence-status',fetcher,undefined,protocolVersion);
 }
 export async function commitDeltaMigration(args){
  check(args.confirmed===true&&args.backupVerified===true&&args.sourceFrozen===true,'Подтвердите проверенный файл и остановку записи на всех исходных устройствах');
@@ -712,11 +712,11 @@ export async function commitDeltaMigration(args){
 // stay in the operator's encrypted files; never change the ordinary TAP1/TAD2 profile.
 const migrationBindingKey=area=>'sync-checkpoint-migration-'+area;
 export async function cutoverDeltaMigrationDevice(args){
- check(args.synthetic===true&&args.protocolVersion!==2,'Переключение доступно только для Node Delta LAB');
+ check(args.synthetic===true,'Переключение доступно только для Delta LAB');
  check(args.sourceFenceToken===undefined,'Не передавайте административный ключ устройству');
  const current=await db.dumpAll(),p=await openDeltaMigration({...args,current}),{sourceRead,target}=migrationClients(args);
  const cp=getCheckpoint(current,p.area),local=projectScope(current,p.area);
- const binding={id:migrationBindingKey(p.area),protocol:'delta-lab-v1',area:p.area,migrationId:p.workspaceId,sourceEndpoint:p.source,sourceWorkspaceId:p.sourceWorkspaceId,sourceRevision:p.sourceRevision,destinationEndpoint:p.destination,destinationWorkspaceId:p.workspaceId,destinationRevision:1,digest:p.digest};
+ const binding={id:migrationBindingKey(p.area),protocol:'delta-lab-v1',sourceProtocolVersion:p.protocolVersion,area:p.area,migrationId:p.workspaceId,sourceEndpoint:p.source,sourceWorkspaceId:p.sourceWorkspaceId,sourceRevision:p.sourceRevision,destinationEndpoint:p.destination,destinationWorkspaceId:p.workspaceId,destinationRevision:1,digest:p.digest};
  const prior=current.meta.find(r=>r.id===binding.id)??null;
  const next={id:keyOf(p.area),endpoint:p.destination,workspaceId:p.workspaceId,revision:1,envelope:p.envelope};
  const replay=prior!==null;
@@ -783,11 +783,11 @@ export async function sealDeltaMigrationRollback(args){
  return {area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision,destinationRevision:1,replayed:before.seal!==null,status:'rollback-sealed'};
 }
 export async function rollbackDeltaMigrationDevice(args){
- check(args.synthetic===true&&args.protocolVersion!==2&&args.sourceFenceToken===undefined&&args.destinationSealToken===undefined,'Возврат устройства только в LAB, без административных ключей');
+ check(args.synthetic===true&&args.sourceFenceToken===undefined&&args.destinationSealToken===undefined,'Возврат устройства только в LAB, без административных ключей');
  const current=await db.dumpAll(),p=await openDeltaMigration({...args,current}),{sourceRead,target}=migrationClients(args);
  const cp=getCheckpoint(current,p.area),local=projectScope(current,p.area),bindingId=migrationBindingKey(p.area);
  const binding=current.meta.find(r=>r.id===bindingId)??null;
- const expectedBinding={id:bindingId,protocol:'delta-lab-v1',area:p.area,migrationId:p.workspaceId,sourceEndpoint:p.source,sourceWorkspaceId:p.sourceWorkspaceId,sourceRevision:p.sourceRevision,destinationEndpoint:p.destination,destinationWorkspaceId:p.workspaceId,destinationRevision:1,digest:p.digest};
+ const expectedBinding={id:bindingId,protocol:'delta-lab-v1',sourceProtocolVersion:p.protocolVersion,area:p.area,migrationId:p.workspaceId,sourceEndpoint:p.source,sourceWorkspaceId:p.sourceWorkspaceId,sourceRevision:p.sourceRevision,destinationEndpoint:p.destination,destinationWorkspaceId:p.workspaceId,destinationRevision:1,digest:p.digest};
  const next={id:keyOf(p.area),endpoint:p.source,workspaceId:p.sourceWorkspaceId,revision:p.sourceRevision,envelope:p.sourceEnvelope};
  const replay=binding===null;
  if(replay)check(same(cp,next),'Нет точной исходной контрольной точки; возврат требует отдельной проверки');

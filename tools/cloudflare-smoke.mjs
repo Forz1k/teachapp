@@ -51,6 +51,8 @@ try{
  const school=relayClient(base,'school',A),other=relayClient(base,'school',B),coach=relayClient(base,'coach',C);
  assert.deepEqual(await school.get(),{revision:0,envelope:null});
  assert.equal((await fetch(base+'/v2/devices/school')).status,404);
+ assert.equal((await fetch(base+'/v1/migration-fence/school',{headers:{Authorization:'Bearer '+A}})).status,404);
+ assert.equal((await fetch(base+'/v1/migration-fence-status/school',{headers:{Authorization:'Bearer '+A}})).status,404);
  assert.equal((await fetch(base+'/v1/snapshot/school')).status,401);
  assert.equal((await fetch(base+'/v1/snapshot/coach',{headers:{Authorization:'Bearer '+A}})).status,401);
  assert.equal((await fetch(base+'/v1/snapshot/school',{headers:{Origin:'https://wrong.example',Authorization:'Bearer '+A}})).status,403);
@@ -109,6 +111,7 @@ try{
  assert.deepEqual(await (await get('school',device1)).json(),snapshot);
  assert.deepEqual(await (await get('school',device2)).json(),snapshot);
  assert.deepEqual(await (await get('coach',coachDevice)).json(),{revision:0,envelope:null});
+ assert.equal((await call('/v2/migration-fence-status/school',device2)).status,404);
  const list=await (await call('/v2/devices/school',admin)).json();
  assert.equal(list.devices.length,2);assert.ok(list.devices.every(x=>x.lastSeen>0));
  assert.ok(list.devices.every(x=>!Object.hasOwn(x,'tokenHash')&&!Object.hasOwn(x,'token_hash')));
