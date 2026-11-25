@@ -5,3 +5,7 @@ Production config `firebase.json` and `firebase-portal.rules.json` are unchanged
 Run emulator using workflow or equivalent command. Copy existing results only by explicit confirmation, don't export local private matches in bulk. Keep old public URL working. Test with synthetic accounts, 45 matches, guest bounded pagination, denial of private fields and foreign writers, stale revisions and removal. Existing legacy data is not changed by adding a new path. No real data migration performed.
 
 Remaining: owner-side full archive manager (pagination, deletion), server validation of key/body equality and score consistency, seasons/events schema, explicit migration of published old history. Candidate rules are not a release.
+
+## Owner archive manager
+
+The owner can list bounded pages, open permanent links, copy already-published recent results without replacing any existing record, and explicitly remove an extended result with ETag protection. Legacy and extended result removals remain independent. The public results screen supports September–August UTC season filtering for loaded rows only. Production deployment is still not authorized.

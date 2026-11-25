@@ -1,3 +1,4 @@
+import {resultLink} from '../public-archive.js';
 import {openStudio} from './studio.js';
 import * as P from '../public-publisher.js';
 import {loadCoach,matchScore} from '../coach.js';
@@ -35,6 +36,7 @@ export function openPublicPortal(team,back=closeSheet){
     editing?btn('Отмена редактирования',()=>{editing=null;draw();},'wide'):null,
     ...d.schedule.map(x=>el('div',{class:'vp-portal-fixture'},[el('strong',{text:(d.team||team.name)+' — '+x.opponent}),p(date(x.startAt)+(x.startAt<Date.now()?' · проверьте актуальность':'')),el('div',{class:'vp-actions'},[btn('Изменить',()=>{editing=x;draw();}),btn('Удалить',()=>run(async()=>{if(await confirmDialog({title:'Убрать матч из расписания?',text:'Зрители больше не увидят эту встречу.',ok:'Удалить',danger:true}))P.removeFixture(id,x.id);}))])]))),
    card('TeachApp Studio',p('Афиши, результаты, грамоты и другие изображения без интернета.'),btn('Открыть студию',()=>openStudio({team:d.team||team.name},()=>openPublicPortal(team,back)),'wide')),
+   card('Расширенный архив',p('Постоянные ссылки и отдельные записи. Требуются согласованные правила Firebase v2.'),btn('Управлять расширенным архивом',()=>openExtendedArchive(team,()=>openPublicPortal(team,back)),'wide')),
    card('Опубликованные результаты',p('Добавляйте результаты из истории матчей. Здесь можно убрать отдельную встречу, не удаляя локальную запись.'),btn('+ Добавить результат из истории',()=>openSavedResults(team,()=>openPublicPortal(team,back)),'primary wide'),...d.archive.map(x=>el('div',{class:'vp-portal-fixture'},[el('strong',{text:x.opponent+' · '+x.setsWon.ours+':'+x.setsWon.theirs}),p(x.sets.map(s=>s.ours+':'+s.theirs).join(' / ')),btn('Убрать с сайта',()=>run(async()=>{if(await confirmDialog({title:'Убрать результат с сайта?',text:'Локальный матч и статистика сохранятся. Изменение станет видимым после синхронизации.',ok:'Убрать',danger:true}))P.unpublishResult(id,x.id);}), 'wide')])),!d.archive.length?p('Пока нет опубликованных результатов.'):null),
    card('Что видят зрители',check('Лента событий', 'events'),check('Номера игроков (при наличии разрешений)','numbers'),check('Результативность игроков (требуются номера)','stats'),check('Автозапуск трансляции запланированного матча','auto'),p('Автозапуск срабатывает только при открытии подробного матча с одним совпадением соперника и даты. Можно начать вручную из матча. Имена, тактика и медицинские данные закрыты.')),
    card('Текущая трансляция',d.match?p(d.match.opponent+' · '+d.match.status+' · '+d.match.score.ours+':'+d.match.score.theirs):p('Трансляция не запущена.'),d.activeId?btn('Остановить текущую трансляцию',()=>run(async()=>{if(await confirmDialog({title:'Остановить трансляцию?',text:'Страница вернётся к расписанию. Запись локального матча продолжится.',ok:'Остановить'}))P.stopPortalMatch(id);}), 'wide'):null,p('Матч продолжает записываться без интернета. Для зрителей показывается последний полученный счёт.'),p('Архив опубликованных матчей: '+d.archive.length)),
@@ -74,4 +76,26 @@ async function openSavedResults(team,back){
   function draw(){const q=search.value.trim().toLocaleLowerCase('ru'),chosen=matches.filter(m=>(m.opponent+' '+m.date).toLocaleLowerCase('ru').includes(q));rows.replaceChildren(...chosen.slice(0,limit).map(m=>{const s=matchScore(m);return card(m.opponent+' · '+s.ours+':'+s.theirs,p(m.date+' · '+m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),btn('Выбрать результат',()=>openPublicResult(team,m,()=>openSavedResults(team,back)),'wide'));}));if(!chosen.length)rows.append(p('Нет сохранённых результатов по выбранному условию.'));more.hidden=chosen.length<=limit;more.style.display=more.hidden?'none':'';}
   search.oninput=()=>{limit=20;draw();};draw();openSheet(el('div',{class:'vb-stack'},[el('h2',{text:'Добавить результат из истории'}),search,rows,more,btn('Назад',back,'wide')]));
  }catch(e){toast(e.message);}
+}
+
+async function openExtendedArchive(team,back){
+ const id=team.id,body=el('div',{class:'vb-stack'}),list=el('div',{class:'vb-stack'}),notice=p(''),link=P.portalLink(id);let rows=[],cursor=null,busy=false,loaded=false;
+ const run=async fn=>{if(busy)return;busy=true;draw();try{await fn();}catch(e){notice.textContent=e.message;}finally{busy=false;draw();}};
+ const load=async(next=false)=>{const page=await P.listExtendedArchive(id,{cursor:next?cursor:null});rows=[...new Map([...(next?rows:[]),...page.rows].map(r=>[r.archiveKey,r])).values()];cursor=page.cursor;loaded=true;notice.textContent='Получено '+rows.length+' записей'+(cursor?' · есть следующие страницы':'');};
+ const refresh=btn('Обновить список',()=>run(()=>load()),'wide');
+ const copy=btn('Перенести последние опубликованные результаты',()=>run(async()=>{
+  const result=await P.migrateExtendedArchive(id,{confirm:n=>confirmDialog({title:'Перенести '+n+' опубликованных результатов?',text:'Копируются только уже опубликованные счета. Отличающиеся записи не заменяются. Локальные матчи не затрагиваются.',ok:'Перенести'})});
+  if(result.cancelled)return;const text='Добавлено: '+result.copied+' · уже есть: '+result.existing+' · конфликты: '+result.conflicts+' · ошибки: '+result.failed;await load();notice.textContent=text;
+ }),'primary wide');
+ function draw(){
+  const more=btn('Следующая страница',()=>run(()=>load(true)),'wide');more.disabled=busy;
+  refresh.disabled=copy.disabled=busy;list.replaceChildren(...rows.map(r=>{
+   const remove=btn('Убрать расширенную запись',()=>run(async()=>{
+    const ok=await P.removeExtendedResult(id,r,{confirm:old=>confirmDialog({title:'Убрать '+old.opponent+' · '+old.setsWon.ours+':'+old.setsWon.theirs+'?',text:'Удаляется только расширенная публичная запись. Последние 20 результатов и локальная история не изменяются.',ok:'Убрать',danger:true})});
+    if(ok){await load();notice.textContent='Расширенная запись удалена.';}
+   }),'wide');remove.disabled=busy;
+   return card(r.opponent+' · '+r.setsWon.ours+':'+r.setsWon.theirs,p(date(r.startedAt)),p(r.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),link?el('a',{class:'btn wide',href:resultLink(link,r),target:'_blank',rel:'noopener noreferrer',text:'Постоянная ссылка матча'}):null,remove);
+  }),cursor?more:null,loaded&&!rows.length?p('Архив пуст.'):null);
+ }
+ body.append(el('h2',{text:'Расширенный архив'}),p('Расширенная история хранится отдельно от последних 20 матчей. Снятие страницы с публикации скрывает архив; повторная публикация снова открывает оставленные записи. Чтобы удалить результат полностью, уберите его из обоих публичных списков.'),notice,refresh,copy,list,btn('Назад',back,'wide'));openSheet(body,{fullHeight:true});await run(()=>load());
 }

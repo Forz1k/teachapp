@@ -1,4 +1,4 @@
-import {archiveTarget,archiveKey,readArchiveVersion,writeArchiveRecord} from './public-archive.js';
+import {archiveTarget,archiveKey,readArchiveVersion,writeArchiveRecord,fetchArchivePage,equalArchiveResult} from './public-archive.js';
 /* Team portal state is separate from school/coach records. Opt-in publishing only. */
 import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures} from './public-portal.js';
 import {firebaseSignIn,firebasePublisher,samePortalContent} from './firebase-portal.js';
@@ -166,4 +166,37 @@ export function unpublishResult(id,resultId){
  save(e);enqueue(e);
 }
 
-export async function publishExtendedResult(id,result,{confirm,fetcher=fetch}={}){const e=entry(id),d=e.data;if(!e.session||!d.enabled||e.conflict||e.dirty||e.running)throw Error('Сначала завершите синхронизацию публичной страницы');const session=e.session,epoch=e.epoch,target=archiveTarget(portalAddress(d.origin,d.owner,d.slug)),k=archiveKey(result),version=await readArchiveVersion(target,k,fetcher);if(!await confirm?.(version.value))return false;if(e.session!==session||e.epoch!==epoch||!d.enabled||e.conflict)throw Error('Состояние публикации изменилось');await writeArchiveRecord(target,k,result,await session.getToken(),version.etag,fetcher);return true;}
+function archiveSession(id){
+ const e=entry(id),d=e.data;if(!e.session||!d.enabled||d.pendingDelete||e.conflict||e.dirty||e.running)throw Error('Сначала завершите синхронизацию публичной страницы');
+ const session=e.session,epoch=e.epoch,target=archiveTarget(portalAddress(d.origin,d.owner,d.slug));
+ const stillAllowed=()=>{if(e.session!==session||e.epoch!==epoch||!d.enabled||d.pendingDelete||e.conflict||e.dirty||e.running)throw Error('Состояние публикации изменилось. Обновите список.');};
+ return {session,target,stillAllowed};
+}
+export async function listExtendedArchive(id,{cursor=null,fetcher=fetch}={}){
+ const access=archiveSession(id),page=await fetchArchivePage(access.target,{cursor,fetcher});access.stillAllowed();return page;
+}
+export async function publishExtendedResult(id,result,{confirm,fetcher=fetch}={}){
+ const access=archiveSession(id),k=archiveKey(result),version=await readArchiveVersion(access.target,k,fetcher);
+ access.stillAllowed();if(!await confirm?.(version.value))return false;access.stillAllowed();
+ const token=await access.session.getToken();access.stillAllowed();await writeArchiveRecord(access.target,k,result,token,version.etag,fetcher);return true;
+}
+export async function removeExtendedResult(id,result,{confirm,fetcher=fetch}={}){
+ const access=archiveSession(id),k=archiveKey(result),version=await readArchiveVersion(access.target,k,fetcher);
+ access.stillAllowed();if(!version.value)return false;
+ if(!equalArchiveResult(version.value,result))throw Error('Запись изменилась. Обновите список перед удалением.');
+ if(!await confirm?.(version.value))return false;access.stillAllowed();
+ const token=await access.session.getToken();access.stillAllowed();await writeArchiveRecord(access.target,k,null,token,version.etag,fetcher);return true;
+}
+/** Copy only already-confirmed public score projections; never replace existing records. */
+export async function migrateExtendedArchive(id,{confirm,fetcher=fetch}={}){
+ const access=archiveSession(id),rows=clone(entry(id).data.archive);
+ if(!await confirm?.(rows.length))return {cancelled:true,copied:0,existing:0,conflicts:0,failed:0};
+ const report={cancelled:false,copied:0,existing:0,conflicts:0,failed:0};
+ for(const row of rows){access.stillAllowed();try{
+  const k=archiveKey(row),version=await readArchiveVersion(access.target,k,fetcher);access.stillAllowed();
+  if(version.value){if(equalArchiveResult(version.value,row))report.existing++;else report.conflicts++;continue;}
+  const token=await access.session.getToken();access.stillAllowed();
+  await writeArchiveRecord(access.target,k,row,token,version.etag,fetcher);report.copied++;
+ }catch(e){access.stillAllowed();if(e.status===412)report.conflicts++;else report.failed++;}}
+ return report;
+}
