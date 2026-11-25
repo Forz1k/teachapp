@@ -16,7 +16,7 @@ import {validateInventory,validateAchievement,equipmentStatus} from './resources
 import {validateBoard} from './tactics.js';
 import {validateGoal} from './coach-goals.js';
 import {validateSeasonPlan} from './season-plan.js';
-import {validateRubric,validateNormAssignment} from './school-tools.js';
+import {validateRubric,validateNormAssignment,assignmentsOverlap} from './school-tools.js';
 import {validateTournament} from './tournaments.js';
 import {validateEvent} from './work-calendar.js';
 import {catalog,checkLessonRestrictions} from './health.js';
@@ -41,6 +41,7 @@ function validateExercise(e){
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
  if(r.kind==='lessonAlternative'){validateLessonAlternative(r);return;}
+ if(r.kind==='stationTemplate'){validateStationTemplate(r);return;}
  if(r.kind==='ktpVersion'){validateKtpVersion(r);return;}
  if(r.kind==='matchRegulation'){validateMatchRegulation(r);return;}
  if(r.kind==='normRetake'){validateNormRetake(r);return;}
@@ -79,9 +80,17 @@ export async function listWork(kind){return db.transaction(['workRecords'],'read
 export async function saveWork(input){
  require(['exercise','plan','event','rubric','normAssignment','videoReview','opponentNote','publicNewsDraft'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
  const r=structuredClone({...input,id:input.id||uid(input.kind)});validateWorkRecord(r);
- return db.transaction(['workRecords'],'readwrite',async s=>{
+ return db.transaction(r.kind==='normAssignment'?['workRecords','classes','students','norms','meta']:['workRecords'],'readwrite',async s=>{
   const old=await s.workRecords.get(r.id);require(!old||old.kind===r.kind,'Нельзя изменить тип записи');if(input.id)require(old,'Запись уже удалена');
-  if(r.kind==='normAssignment'){const others=await s.workRecords.index('kind').getAll('normAssignment');require(!others.some(a=>a.id!==r.id&&a.classId===r.classId&&a.normId===r.normId&&a.yearFrom===r.yearFrom&&a.yearTo===r.yearTo&&a.from<=r.to&&r.from<=a.to),'Для этого класса и норматива уже есть пересекающееся назначение');}
+  if(r.kind==='normAssignment'){
+   require(!old||(old.revision??0)===(input.revision??0),'Назначение изменилось. Откройте заново');
+   const year=(await s.meta.get('settings'))?.year;
+   require(await s.classes.get(r.classId)&&await s.norms.get(r.normId)&&(!year||year.from===r.yearFrom&&year.to===r.yearTo),'Класс, норматив или учебный год недоступны');
+   if(r.studentIds){const pupils=new Set((await s.students.index('classId').getAll(r.classId)).map(p=>p.id));require(r.studentIds.every(id=>pupils.has(id)),'Выберите учеников этого класса');}
+   const others=await s.workRecords.index('kind').getAll('normAssignment');require(!others.some(a=>a.id!==r.id&&assignmentsOverlap(a,r)),'Для этого класса и норматива уже есть пересекающееся назначение');
+   if(old){const linked=(await s.workRecords.index('kind').getAll('normRetake')).filter(x=>x.assignmentId===r.id&&x.status!=='cancelled');require(!linked.length||old.classId===r.classId&&old.normId===r.normId&&old.yearFrom===r.yearFrom&&old.yearTo===r.yearTo&&linked.every(x=>!r.studentIds||r.studentIds.includes(x.studentId)),'Есть планы пересдач: нельзя изменить класс, норматив или исключить их участников');}
+   r.revision=old?(old.revision??0)+1:0;validateNormAssignment(r);
+  }
   await s.workRecords.put(r);return r;
  });
 }
@@ -102,6 +111,17 @@ export function fallbackPlanDraft(source,reason){
 /** Plan stations in parallel, with equal slot duration including changeover.
  * Every group visits every station once per round. No pupil is assigned or
  * cleared for exercise here. Requirements count simultaneous station stock. */
+export function validateStationTemplate(r){
+ require(only(r,['id','kind','name','exercise','capacity','notes','resources','revision'])&&r.kind==='stationTemplate'&&txt(r.id)&&txt(r.name)&&Number.isInteger(r.capacity)&&r.capacity>=1&&r.capacity<=1000&&opt(r.notes,500)&&Array.isArray(r.resources)&&r.resources.length<=10&&Number.isInteger(r.revision)&&r.revision>=0&&r.revision<=1000000,'Проверьте шаблон станции');
+ validateExercise(r.exercise);
+ require(new Set(r.resources.map(x=>x.itemId)).size===r.resources.length&&r.resources.every(x=>only(x,['itemId','name','unit','qty'])&&txt(x.itemId)&&txt(x.name)&&txt(x.unit,30)&&Number.isInteger(x.qty)&&x.qty>0&&x.qty<=1000000),'Проверьте инвентарь станции');
+ return r;
+}
+export async function saveStationTemplate(input){
+ const r=structuredClone({...input,kind:'stationTemplate',id:input.id||uid('stationTemplate'),revision:input.id?input.revision+1:0});validateStationTemplate(r);
+ return db.transaction(['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(r.id);require(input.id?old?.kind==='stationTemplate'&&old.revision===input.revision:!old,'Шаблон изменился. Откройте заново');await s.workRecords.put(r);return r;});
+}
+export function stationFromTemplate(r){validateStationTemplate(r);return structuredClone({exercise:r.exercise,capacity:r.capacity,notes:r.notes,resources:r.resources});}
 export function circuitDraft({name,minutes:duration,rounds,work,transition,warmup,cooldown,stations,pupilCount,inventory=[]}){
  require(txt(name)&&minutes(duration)&&Number.isInteger(rounds)&&rounds>=1&&rounds<=8&&minutes(work)&&Number.isInteger(transition)&&transition>=0&&transition<=15&&Array.isArray(stations)&&stations.length>=2&&stations.length<=10&&Number.isInteger(pupilCount)&&pupilCount>=0&&pupilCount<=1000,'Проверьте параметры круговой тренировки');
  validateExercise(warmup.exercise);validateExercise(cooldown.exercise);

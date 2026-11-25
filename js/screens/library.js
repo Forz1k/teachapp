@@ -5,7 +5,7 @@ import {exportLocalLibrary,parseLibrary,importLocalLibrary,MAX_LIBRARY_BYTES} fr
 import {openGymBoards,openGymView} from './methodical.js';
 import * as W from '../workbench.js';
 import {catalog,validPeriod} from '../health.js';
-import {el,openSheet,closeSheet,toast,confirmDialog,downloadBlob} from '../ui.js';
+import {el,openSheet,closeSheet,toast,confirmDialog,downloadBlob,promptDialog} from '../ui.js';
 import {equipmentCard} from './resources.js';
 import {openBoardView} from './tactics.js';
 import {dashboardHeading} from '../dashboard.js';
@@ -64,14 +64,15 @@ export async function openFallbackBuilder(back=closeSheet,initialSource){
 }
 export async function openCircuitBuilder(back=closeSheet,initialClass=S.state.currentClassId,initialDate=M.todayIso()){
  try{
-  const exercises=[...W.builtinExercises,...await W.listWork('exercise')],stock=await W.listWork('inventory'),byExercise=id=>exercises.find(e=>e.id===id);
-  const exerciseSelect=(value)=>select(exercises.map(e=>[e.id,e.name]),value);
+  const exercises=[...W.builtinExercises,...await W.listWork('exercise')],stock=await W.listWork('inventory'),templates=await W.listWork('stationTemplate'),snapshots=new Map(),byExercise=id=>snapshots.get(id)||exercises.find(e=>e.id===id);
+  const exerciseSelect=(value)=>select([...exercises.map(e=>[e.id,e.name]),...[...snapshots].map(([id,e])=>[id,e.name+' · сохранённый снимок'])],value);
   const name=inp('Круговая тренировка'),duration=inp(45,'number',{min:1,max:600}),rounds=inp(2,'number',{min:1,max:8}),work=inp(3,'number',{min:1,max:600}),transition=inp(1,'number',{min:0,max:15});
   const cls=select([['','Без класса'],...S.state.classes.map(c=>[c.id,c.name])],initialClass||''),date=inp(initialDate,'date');
   const warmup=exerciseSelect('builtin-warmup'),warmMinutes=inp(5,'number',{min:1,max:600}),cooldown=exerciseSelect('builtin-cool'),coolMinutes=inp(5,'number',{min:1,max:600});
   const stations=[{exerciseId:'builtin-pass',capacity:8,notes:'',resources:[]},{exerciseId:'builtin-serve',capacity:8,notes:'',resources:[]}];
-  const list=el('div',{class:'coach-stack circuit-stations'}),result=el('div',{class:'coach-stack','aria-live':'polite'});let draft=null;
+  const templatePicker=select([]),templateControls=el('div',{class:'coach-stack'}),list=el('div',{class:'coach-stack circuit-stations'}),result=el('div',{class:'coach-stack','aria-live':'polite'});let draft=null;
   function draw(){
+   const previous=templatePicker.value;templatePicker.replaceChildren(el('option',{value:'',text:'Выберите сохранённую станцию'}),...templates.map(t=>el('option',{value:t.id,text:t.name})));if(templates.some(t=>t.id===previous))templatePicker.value=previous;
    list.replaceChildren(...stations.map((station,index)=>{
     const pick=exerciseSelect(station.exerciseId),capacity=inp(station.capacity,'number',{min:1,max:1000}),notes=area(station.notes,500),resource=select([['','Выберите инвентарь'],...stock.filter(r=>!r.archived).map(r=>[r.id,r.name])]),qty=inp(1,'number',{min:1,max:1000000});
     pick.onchange=()=>{station.exerciseId=pick.value;refresh();};capacity.oninput=()=>{station.capacity=num(capacity);refresh();};notes.oninput=()=>{station.notes=notes.value;refresh();};
@@ -79,7 +80,7 @@ export async function openCircuitBuilder(back=closeSheet,initialClass=S.state.cu
      field('Инвентарь станции',resource),field('Количество на всю станцию',qty),
      btn('+ Добавить инвентарь',()=>{const item=stock.find(r=>r.id===resource.value),q=num(qty);if(!item||!Number.isInteger(q)||q<1||q>1000000)return toast('Выберите инвентарь и количество');const value={itemId:item.id,name:item.name,unit:item.unit,qty:q};const at=station.resources.findIndex(r=>r.itemId===item.id);if(at>=0)station.resources[at]=value;else if(station.resources.length<10)station.resources.push(value);else return toast('Не более 10 видов на станцию');draw();}),
      ...station.resources.map((r,i)=>btn('Убрать '+r.name+' · '+r.qty+' '+r.unit,()=>{station.resources.splice(i,1);draw();})),
-     btn('Удалить станцию',()=>{if(stations.length<=2)return toast('Нужно минимум две станции');stations.splice(index,1);draw();})]);
+     btn('Сохранить станцию в библиотеку',async()=>{try{const label=await promptDialog({title:'Название шаблона станции',value:(byExercise(station.exerciseId)?.name||'Станция').slice(0,200)});if(!label?.trim())return;const saved=await W.saveStationTemplate({name:label.trim(),exercise:byExercise(station.exerciseId),capacity:station.capacity,notes:station.notes,resources:station.resources});templates.push(saved);draw();toast('Шаблон сохранён');}catch(e){toast(e.message);}}),btn('Удалить станцию',()=>{if(stations.length<=2)return toast('Нужно минимум две станции');stations.splice(index,1);draw();})]);
    }));refresh();
   }
   const save=btn('Открыть черновик конспекта',async()=>{if(!draft||save.disabled)return;save.disabled=true;try{const candidate=draft.plan,fresh=await W.listWork('inventory');if(JSON.stringify(fresh)!==JSON.stringify(stock)){toast('Остатки инвентаря изменились. Откройте конструктор заново.');return;}await planForm(candidate,back,'school');}catch(e){toast(e.message);}finally{save.disabled=!draft;}},'primary');
@@ -98,8 +99,9 @@ export async function openCircuitBuilder(back=closeSheet,initialClass=S.state.cu
   }catch(e){draft=null;save.disabled=true;result.replaceChildren(p(e.message));}}
   for(const n of [name,duration,rounds,work,transition,warmMinutes,coolMinutes,date])n.oninput=refresh;
   for(const n of [cls,warmup,cooldown,date])n.onchange=refresh;
+  templateControls.append(field('Библиотека станций',templatePicker),btn('Добавить станцию из библиотеки',()=>{try{const t=templates.find(x=>x.id===templatePicker.value);if(!t)throw Error('Выберите шаблон');if(stations.length>=10)throw Error('Не более 10 станций');const s=W.stationFromTemplate(t),id='template:'+M.uid('snapshot');snapshots.set(id,s.exercise);stations.push({exerciseId:id,capacity:s.capacity,notes:s.notes,resources:s.resources});draw();}catch(e){toast(e.message);}}),btn('Удалить шаблон из библиотеки',async()=>{const t=templates.find(x=>x.id===templatePicker.value);if(!t)return toast('Выберите шаблон');if(!await confirmDialog({title:'Удалить шаблон?',text:'Станции, уже добавленные в конструктор и сохранённые конспекты, не изменятся.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(t.id,'stationTemplate');templates.splice(templates.indexOf(t),1);draw();}catch(e){toast(e.message);}}));
   draw();
-  openSheet(stack([el('h2',{text:'Конструктор круговой тренировки'}),p('Станции работают одновременно; каждый круг содержит один временной слот на станцию. Это планирование, не таймер.'),field('Название',name),field('Класс',cls),field('Дата проверки',date),field('Длительность занятия',duration),field('Кругов',rounds),field('Работа на станции (мин)',work),field('Переход / организация (мин)',transition),field('Разминка',warmup),field('Минуты разминки',warmMinutes),field('Завершение',cooldown),field('Минуты завершения',coolMinutes),list,btn('+ Станция',()=>{if(stations.length>=10)return toast('Не более 10 станций');stations.push({exerciseId:exercises[0].id,capacity:8,notes:'',resources:[]});draw();}),result,save,btn('Назад',back)]),{fullHeight:true});
+  openSheet(stack([el('h2',{text:'Конструктор круговой тренировки'}),p('Станции работают одновременно; каждый круг содержит один временной слот на станцию. Это планирование, не таймер.'),field('Название',name),field('Класс',cls),field('Дата проверки',date),field('Длительность занятия',duration),field('Кругов',rounds),field('Работа на станции (мин)',work),field('Переход / организация (мин)',transition),field('Разминка',warmup),field('Минуты разминки',warmMinutes),field('Завершение',cooldown),field('Минуты завершения',coolMinutes),templateControls,list,btn('+ Станция',()=>{if(stations.length>=10)return toast('Не более 10 станций');stations.push({exerciseId:exercises[0].id,capacity:8,notes:'',resources:[]});draw();}),result,save,btn('Назад',back)]),{fullHeight:true});
  }catch(e){toast(e.message);}
 }
 export async function openLibrary(context='school'){
