@@ -347,3 +347,6 @@ PR #94 не объединён, новый релиз не опубликова�
 ## Studio 2.0 checkpoint
 - `6f80e7e`: team/device-local style, editable public post draft and batch PNG/TXT ZIP; no new runtime dependency or image persistence. Long title/score/footer layout corrected.
 - 394/394, zero failures/skips, 74 Chromium screenshots, offline batch export, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45581492539).
+
+## Public archive search checkpoint
+- `cdff237`: loaded-results search, bounded rendering, score-only PNG, current stream precedence and exact archive-key retention. 398/398, both CI runs, 75 Chromium screenshots, WebKit, Firebase archive emulator, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45582561893).

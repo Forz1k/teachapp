@@ -74,3 +74,38 @@ test('lost response after server commit recovers with fresh revision and no dupl
  assert.equal(writes,2);assert.equal((await localSyncState(params)).status,'clean');
  assert.ok(await db.get('classes','synthetic-lost-response'));
 });
+
+test('Permission loss blocks upload and pull, and leaves accepted remote PUT for explicit revision reconciliation',async()=>{
+ const endpoint='https://synthetic.example.test',area='school',password='synthetic-guard-password';
+ let remote={revision:0,envelope:null},writes=0,allowed=true;
+ const client={get:async()=>structuredClone(remote),put:async(revision,envelope)=>{assert.equal(revision,remote.revision);writes++;remote={revision:revision+1,envelope};return structuredClone(remote);}};
+ const params={endpoint,area,password,client};
+ await db.replaceAll(Object.fromEntries(Object.keys(db.SCHEMA).map(n=>[n,[]])));await db.put('meta',defaultSettings());
+ await executeSync({plan:await prepareSync(params),choices:{},password,client,confirmed:true});
+ await db.put('classes',{id:'guard',name:'Guard test'});
+ const plan=await prepareSync(params),before=await db.dumpAll();
+ allowed=false;
+ await assert.rejects(executeSync({plan,choices:{},password,client,confirmed:true,stillAllowed:()=>allowed}),e=>e.code==='sync-paused'&&!e.remoteMayHaveCommitted);
+ assert.deepEqual(await db.dumpAll(),before);assert.equal(writes,1);
+ // An actual accepted PUT may race disconnect. Never accept its checkpoint
+ // or silently discard local records after permission is lost.
+ allowed=true;const interrupted={...client,put:async(...args)=>{const ack=await client.put(...args);allowed=false;return ack;}};
+ const paused=await syncPersonalArea({...params,client:interrupted,stillAllowed:()=>allowed});
+ assert.deepEqual(paused,{area,status:'paused',reason:'remote-unconfirmed'});
+ assert.equal(remote.revision,2);assert.equal(writes,2);assert.deepEqual(await db.dumpAll(),before);
+ allowed=true;assert.equal((await syncPersonalArea(params)).revision,2);assert.equal(writes,2);
+ // Abort a pull during the remote GET; keep local snapshot and checkpoint.
+ await db.put('classes',{id:'remote-only',name:'Remote only'});const old=await db.dumpAll();await syncPersonalArea(params);await db.replaceAll(before);
+ const readPaused={...client,get:async()=>{const value=await client.get();allowed=false;return value;}};
+ assert.deepEqual(await syncPersonalArea({...params,client:readPaused,stillAllowed:()=>allowed}),{area,status:'paused'});
+ assert.deepEqual(await db.dumpAll(),before);assert.ok(old.classes.some(x=>x.id==='remote-only'));
+ allowed=true;assert.equal((await syncPersonalArea(params)).revision,3);assert.ok(await db.get('classes','remote-only'));assert.equal(writes,3);
+});
+test('Guard is rechecked after asynchronous encryption and before sending any PUT',async()=>{
+ const endpoint='https://synthetic.example.test',area='school',password='synthetic-preflight-guard';
+ await db.replaceAll(Object.fromEntries(Object.keys(db.SCHEMA).map(n=>[n,[]])));await db.put('meta',defaultSettings());
+ let writes=0,calls=0;const client={get:async()=>({revision:0,envelope:null}),put:async()=>{writes++;throw Error('must not upload');}};
+ const plan=await prepareSync({endpoint,area,password,client}),before=await db.dumpAll();
+ await assert.rejects(executeSync({plan,choices:{},password,client,confirmed:true,stillAllowed:()=>++calls<=2}),e=>e.code==='sync-paused'&&!e.remoteMayHaveCommitted);
+ assert.equal(writes,0);assert.deepEqual(await db.dumpAll(),before);
+});

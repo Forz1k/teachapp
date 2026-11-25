@@ -76,6 +76,7 @@ export function openSync(){
  const status=el('p',{class:'profile-note','aria-live':'polite'}),results=el('div',{class:'coach-stack'}),choicesStatus=el('p',{class:'profile-note','aria-live':'polite'});
  let plan=null,client=null,secret=null,choices={},busy=false,seq=0,closed=false;
  const active=()=>!closed&&root.isConnected&&isSheetOpen();
+ const permitted=()=>active()&&document.visibilityState!=='hidden'&&!document.body.classList.contains('privacy-covered');
  function clear(){plan=null;client=null;secret=null;choices={};token.value='';password.value='';results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}
  function controls(disabled){area.disabled=endpoint.disabled=token.disabled=password.disabled=preview.disabled=detach.disabled=pairCreate.disabled=pairImport.disabled=personalConnect.disabled=personalForget.disabled=inviteCreate.disabled=inviteImport.disabled=both.disabled=disabled;}
  async function refresh(){
@@ -87,7 +88,7 @@ export function openSync(){
    if(saved&&identityAreas(saved).includes(selected)){const credentials=await identityCredentials(saved,selected);if(n!==seq||closed)return;
     if(!cp||cp.endpoint===credentials.endpoint){endpoint.value=credentials.endpoint;token.value=credentials.token;password.value=credentials.password;}
    }
-   const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)+(r.reason==='packet-too-large'?' (пакет слишком велик)':'')).join(' · ');
+   const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)+(r.reason==='packet-too-large'?' (пакет слишком велик)':r.reason==='remote-unconfirmed'?' (сервер мог принять пакет; сравните ревизии)':'')).join(' · ');
    const successes=report.areas.filter(r=>r.status==='synced'&&r.successfulAt).map(r=>syncAreas[r.area]+': '+new Date(r.successfulAt).toLocaleString('ru-RU')).join(' · ');
    personalStatus.textContent=saved?(readTrustedProfile()?'Индивидуальный профиль v2 сохранён.':'Личный код сохранён на этом устройстве.')+(report.phase==='offline'?' Нет сети.':report.phase==='running'?' Обмен выполняется.':report.phase==='interrupted'?' Обмен прерван.':'')+(report.at?' Последняя проверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:'')+(successes?' Успешный обмен в последней попытке: '+successes:''):'Личный код не сохранён.';
    personalForget.hidden=!saved&&!hasTrustedProfileRecord();inviteCreate.hidden=!saved||!!readTrustedProfile();both.hidden=!saved;inviteImport.hidden=Boolean(saved)||hasTrustedProfileRecord();personalConnect.hidden=hasTrustedProfileRecord();
@@ -152,7 +153,9 @@ export function openSync(){
     if(repeat!==pw){if(repeat!==null)toast('Пароли не совпадают');return;}
    }
    if(!await confirmDialog({title:'Передать зашифрованные данные и применить изменения?',text:'Контур: '+syncAreas[selected.area]+'. Будут переданы записи выбранной области, в том числе персональные сведения и история, в зашифрованном виде. Создайте защищённую резервную копию заранее. Удаления также распространяются. Не закрывайте приложение во время записи.',ok:'Синхронизировать',danger:true}))return;
-   const result=await withSyncSession(()=>executeSync({plan:selected,choices:{...choices},password:pw,client:selectedClient,confirmed:true}));
+   let stopped=false;
+   const stillAllowed=()=>{if(!stopped)stopped=!permitted()||readSyncIdentity()!==code||navigator.onLine===false;return !stopped;};
+   const result=await withSyncSession(()=>executeSync({plan:selected,choices:{...choices},password:pw,client:selectedClient,confirmed:true,stillAllowed}));
    if(!result)throw Error('Закройте другие вкладки TeachApp перед синхронизацией.');
    await S.load();clear();if(active()){await refresh();status.textContent='Синхронизировано · ревизия '+result.revision;}
    toast('Синхронизация завершена · ревизия '+result.revision);
@@ -176,15 +179,15 @@ export function openSync(){
  async function exchangeBoth(){
   if(!readSyncIdentity())throw Error('Сначала подключите устройство');
   const result=await withSyncSession(async()=>{
-   const report=await runPersonalSync({initialize:true});await S.load();return report;
+   const report=await runPersonalSync({initialize:true,permitted});await S.load();return report;
   });
   if(!result)throw Error('Закройте другие вкладки TeachApp.');
   const statuses={synced:'готово',setup:'нужно подключение',conflict:'конфликт',review:'подтвердите изменения',error:'нужна проверка данных или подключения',paused:'обмен остановлен'};
-  simpleResult.textContent=identityAreas(readSyncIdentity()).map(a=>syncAreas[a]+': '+((result.areas.find(x=>x.area===a)?.reason==='packet-too-large'?'пакет превышает лимит сервера':statuses[result.areas.find(x=>x.area===a)?.status])||'обмен не выполнен')).join(' · ');
+  simpleResult.textContent=result.areas.map(r=>syncAreas[r.area]+': '+(r.reason==='packet-too-large'?'пакет превышает лимит сервера':r.reason==='remote-unconfirmed'?'сервер мог принять пакет — сравните ревизии':statuses[r.status]||'обмен не выполнен')).join(' · ')||'Обмен остановлен до записи.';
   const issues=ktpLinkIssues(await db.dumpAll());
   if(issues.length)simpleResult.textContent+=' · Исправьте КТП через диагностику.';
   await refresh();
-  return result.areas.length>0&&result.areas.every(x=>x.status==='synced');
+  return result.phase==='finished'&&result.areas.length>0&&result.areas.every(x=>x.status==='synced');
  }
  const simpleResult=el('p',{class:'profile-note','aria-live':'polite'});
  const both=btn('Синхронизировать доступные области',async()=>{

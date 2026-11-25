@@ -174,3 +174,11 @@ test('413 identifies oversized packet without fast retry or leaking error conten
  assert.equal(report.areas[0].status,'error');assert.equal(report.areas[0].reason,'packet-too-large');assert.equal(syncRetryDelay(report,0),null);
  assert.equal(report.areas[1].status,'synced');
 });
+
+test('Foreground permission loss is latched across the attempt and does not start the second area',async()=>{
+ const code=createPersonalCode(endpoint);let allowed=true,seen=[];
+ const report=await runPersonalSync({getCode:()=>code,online:()=>true,permitted:()=>allowed,clientFactory:()=>({}),runArea:async({area,stillAllowed})=>{
+  seen.push(area);allowed=false;assert.equal(stillAllowed(),false);allowed=true;assert.equal(stillAllowed(),false);return {area,status:'paused'};
+ }});
+ assert.equal(report.phase,'interrupted');assert.deepEqual(seen,['school']);assert.deepEqual(report.areas.map(r=>r.status),['paused','paused']);
+});

@@ -509,7 +509,10 @@ export async function prepareSync({area,endpoint,password,client,data}){
   combineScope(current,remoteSnapshot,area);
   if(checkpoint){
    check(checkpoint.workspaceId===workspaceId&&remote.revision>=checkpoint.revision,'Сервер заменён или вернул устаревшую ревизию');
-   const ancestor=await readPacket(checkpoint.envelope,password,area,checkpoint.revision);
+   // The already authenticated remote packet is the checkpoint only when
+   // revision AND exact encrypted envelope agree. Otherwise decrypt separately
+   // to preserve rollback and same-revision tamper detection.
+   const ancestor=remote.revision===checkpoint.revision&&same(checkpoint.envelope,remote.envelope)?p:await readPacket(checkpoint.envelope,password,area,checkpoint.revision);
    check(ancestor.workspaceId===workspaceId,'Неверная общая ревизия');
    if(remote.revision===checkpoint.revision)check(same(ancestor.snapshot,remoteSnapshot),'Содержимое ранее принятой ревизии изменилось');
    base=ancestor.snapshot;
@@ -528,17 +531,27 @@ export function previewSync(current,plan,choices={}){
  combineScope(current,result.snapshot,plan.area);
  return {...result,counts:counts(plan.local,result.snapshot)};
 }
-export async function executeSync({plan,choices,password,client,confirmed=false,reuseRemote=false}){
+// Cooperative guard, not server-side revocation. An already transmitted PUT
+// may commit even if the user locks the app or forgets the local credentials.
+function guardSync(stillAllowed,remoteMayHaveCommitted=false){
+ if(!stillAllowed())throw Object.assign(Error(remoteMayHaveCommitted?'Обмен остановлен. Сервер мог принять пакет; локальные изменения не применены. При повторном подключении сравните ревизии.':'Обмен остановлен до записи.'),{code:'sync-paused',remoteMayHaveCommitted});
+}
+export async function executeSync({plan,choices,password,client,confirmed=false,reuseRemote=false,stillAllowed=()=>true}){
  check(confirmed,'Подтвердите синхронизацию');
+ guardSync(stillAllowed);
  const preview=previewSync(await db.dumpAll(),plan,choices);
+ guardSync(stillAllowed);
  check(!preview.conflicts.length,'Сначала разрешите все конфликты');
  const pullOnly=reuseRemote&&plan.revision>0&&same(preview.snapshot,plan.remote)&&isEncryptedBackup(plan.remoteEnvelope);
  if(pullOnly&&plan.checkpoint?.revision===plan.revision&&same(plan.local,plan.remote)){
   // No network write and no rewrite of the potentially large encrypted checkpoint.
-  await db.transaction(['meta'],'readwrite',async s=>{
-   const cp=await s.meta.get(keyOf(plan.area));
-   check(same(cp,plan.checkpoint),'Локальная ревизия изменилась. Повторите проверку.');
-   await s.meta.put(successRecord(plan.area,cp));
+  const stores=[...new Set([...keysFor(plan.area),'meta'])];
+  await db.transaction(stores,'readwrite',async s=>{
+   guardSync(stillAllowed);
+   const current=Object.fromEntries(await Promise.all(stores.map(async n=>[n,await s[n].getAll()])));
+   const cp=getCheckpoint(current,plan.area);
+   check(same(cp,plan.checkpoint)&&same(projectScope(current,plan.area),plan.local),'Локальные данные изменились. Повторите проверку.');
+   guardSync(stillAllowed);await s.meta.put(successRecord(plan.area,cp));guardSync(stillAllowed);
   });
   return {revision:plan.revision,counts:preview.counts};
  }
@@ -546,14 +559,20 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
  check(revision(nextRevision),'Лимит ревизий');
  const envelope=pullOnly?plan.remoteEnvelope:await encryptBackup(packetPayload(preview.snapshot,plan.area,plan.workspaceId,nextRevision),password);
  // Recheck after expensive encryption; the transaction below checks again after CAS.
+ guardSync(stillAllowed);
  previewSync(await db.dumpAll(),plan,choices);
+ guardSync(stillAllowed);
  if(!pullOnly){
-  const committed=await client.put(plan.revision,envelope);
+  let committed;
+  try{committed=await client.put(plan.revision,envelope);}catch(e){guardSync(stillAllowed,true);throw e;}
+  guardSync(stillAllowed,true);
   check(committed.revision===nextRevision&&same(committed.envelope,envelope),'Сервер не подтвердил запись ожидаемой ревизии');
  }
  try{
   return await db.transaction(names,'readwrite',async s=>{
+   guardSync(stillAllowed,!pullOnly);
    const current=Object.fromEntries(await Promise.all(names.map(async n=>[n,await s[n].getAll()])));
+   guardSync(stillAllowed,!pullOnly);
    const final=previewSync(current,plan,choices);
    check(!final.conflicts.length&&same(final.snapshot,preview.snapshot),'Изменился результат слияния');
    const data=combineScope(current,final.snapshot,plan.area);
@@ -561,25 +580,31 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
    data.meta=data.meta.filter(r=>r.id!==cp.id&&r.id!==statusKey(plan.area)).concat(cp,successRecord(plan.area,cp));
    // Delete changed keys first to avoid transient unique-index collisions. One atomic transaction.
    for(const n of [...new Set([...keysFor(plan.area),'meta'])]){
+    guardSync(stillAllowed,!pullOnly);
     const a=byId(current[n]),b=byId(data[n]);
     for(const [id,row] of a)if(!b.has(id)||!same(row,b.get(id)))await s[n].delete(id);
     for(const [id,row] of b)if(!a.has(id)||!same(row,a.get(id)))await s[n].put(row);
    }
+   guardSync(stillAllowed,!pullOnly);
    return {revision:nextRevision,counts:final.counts};
   });
- }catch{throw Error((pullOnly?'Локальная запись не завершилась.':'Сервер принял пакет, но локальная запись не завершилась.')+' Ваши данные не заменены этой операцией. Повторите синхронизацию; при конфликте проверьте обе версии.');}
+ }catch(e){if(e?.code==='sync-paused')throw e;throw Error((pullOnly?'Локальная запись не завершилась.':'Сервер принял пакет, но локальная запись не завершилась.')+' Ваши данные не заменены этой операцией. Повторите синхронизацию; при конфликте проверьте обе версии.');}
 }
 // Automatic sync only for an already confirmed workspace; never auto-propagate deletions.
 export async function syncPersonalArea({area,endpoint,password,client,stillAllowed=()=>true,initialize=false}){
  if(!initialize&&!await syncStatus(area))return {area,status:'setup'};
+ if(!stillAllowed())return {area,status:'paused'};
  const plan=await prepareSync({area,endpoint,password,client});
+ if(!stillAllowed())return {area,status:'paused'};
  if(!initialize&&!plan.checkpoint)return {area,status:'setup'};
  if(plan.conflicts.length)return {area,status:'conflict'};
  const current=await db.dumpAll(),preview=previewSync(current,plan,{});
  if(preview.conflicts.length||counts(plan.base,preview.snapshot).deleted||preview.counts.deleted)return {area,status:'review'};
  if(!stillAllowed())return {area,status:'paused'};
- const result=await executeSync({plan,choices:{},password,client,confirmed:true,reuseRemote:true});
- return {area,status:'synced',revision:result.revision,changed:result.counts.added+result.counts.changed>0};
+ try{
+  const result=await executeSync({plan,choices:{},password,client,confirmed:true,reuseRemote:true,stillAllowed});
+  return {area,status:'synced',revision:result.revision,changed:result.counts.added+result.counts.changed>0};
+ }catch(e){if(e?.code==='sync-paused')return {area,status:'paused',...(e.remoteMayHaveCommitted?{reason:'remote-unconfirmed'}:{})};throw e;}
 }
 export async function syncStatus(area){
  check(validArea(area),'Выберите рабочую область');

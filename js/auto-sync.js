@@ -4,16 +4,19 @@ import {readSyncIdentity,identityCredentials,identityAreas} from './device-trust
 let last={phase:'idle',areas:[],at:null},activeSession=null;
 export const withSyncSession=task=>activeSession?activeSession.exclusive(task):task();
 export const autoSyncStatus=()=>({...last,areas:last.areas.map(x=>({...x}))});
-export async function runPersonalSync({getCode=readSyncIdentity,online=()=>globalThis.navigator?.onLine!==false,clientFactory=relayClient,runArea=syncPersonalArea,initialize=false}={}){
+export async function runPersonalSync({getCode=readSyncIdentity,online=()=>globalThis.navigator?.onLine!==false,clientFactory=relayClient,runArea=syncPersonalArea,initialize=false,permitted=()=>true}={}){
  // Do not replace an active attempt with a concurrent offline/disconnected request.
  if(last.phase==='running')return autoSyncStatus();
  const code=getCode();
  if(!code){last={phase:'off',areas:[],at:null};return autoSyncStatus();}
  if(!online()){last={phase:'offline',areas:[],at:null};return autoSyncStatus();}
+ if(!permitted()){last={phase:'interrupted',areas:[],at:null};return autoSyncStatus();}
+ let scopes;
+ try{scopes=identityAreas(code);}catch{last={phase:'interrupted',areas:[],at:null};return autoSyncStatus();}
  last={phase:'running',areas:[],at:null};
- const areas=[];
- const stillAllowed=()=>getCode()===code&&online();
- for(const area of identityAreas(code)){
+ const areas=[];let stopped=false;
+ const stillAllowed=()=>{if(!stopped)stopped=getCode()!==code||!online()||!permitted();return !stopped;};
+ for(const area of scopes){
   if(!stillAllowed()){areas.push({area,status:'paused'});continue;}
   try{
    const credentials=await identityCredentials(code,area);
@@ -21,7 +24,7 @@ export async function runPersonalSync({getCode=readSyncIdentity,online=()=>globa
    const client=clientFactory(credentials.endpoint,area,credentials.token,{timeoutMs:7000,...(credentials.protocolVersion===2?{protocolVersion:2}:{})});
    const result=await runArea({...credentials,client,initialize,stillAllowed});
    areas.push(result.status==='synced'?{...result,successfulAt:new Date().toISOString()}:result);
-  }catch(error){const allowed=stillAllowed();areas.push({area,status:allowed?'error':'paused',...(allowed&&error?.retryable===true?{retryable:true}:{}),...(allowed&&error?.code==='packet-too-large'?{reason:'packet-too-large'}:{})});}
+  }catch(error){const allowed=stillAllowed();areas.push({area,status:allowed?'error':'paused',...(allowed&&error?.retryable===true?{retryable:true}:{}),...(error?.remoteMayHaveCommitted?{reason:'remote-unconfirmed'}:allowed&&error?.code==='packet-too-large'?{reason:'packet-too-large'}:{})});}
  }
  last={phase:stillAllowed()?'finished':'interrupted',areas,at:new Date().toISOString()};
  return autoSyncStatus();
