@@ -156,6 +156,33 @@ try{
  assert.match(await shown.textContent(),/По длительности партий: 7:00/);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'historical time overflow');
  await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
  console.log('WEBKIT VOLLEYPOINT TIME PASS: actual synthetic PDF upload, timing preview, re-import same ID with preserved record, historical player profile and mobile layout.');
+ // Real mobile lineup screen using a persisted imported match and a completed
+ // detailed synthetic match. No real names/data in the fixture.
+ const lineupFixture=await page.evaluate(async f=>{
+  const C=await import('./js/coach.js'),V=await import('./js/match-protocol.js'),D=await import('./js/db.js'),M=await import('./js/model.js');
+  const data=await C.loadCoach(),team=data.coachTeams.find(t=>t.id===f.teamId),players=data.coachPlayers.filter(p=>p.teamId===team.id),ordered=[players.find(p=>p.id===f.playerId),...players.filter(p=>p.id!==f.playerId)].slice(0,6).map(p=>p.id);
+  let d=await C.startDetailedMatch({teamId:team.id,date:M.todayIso(),teamName:team.name,opponent:'Синтетический LIVE',competition:'',venue:'',roster:players.map(p=>p.id),ourPlayers:players,awayPlayers:[],lineup:ordered,awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours'});
+  const start=Date.parse(d.startedAt),add=(e,t)=>{d=V.detailEvent(d,e,new Date(start+t*1000).toISOString());d.revision++;};add({type:'clock',running:true},0);
+  for(let i=1;i<=15;i++)add({type:'rally',side:'ours',kind:'kill',player:ordered[0]},i*60);
+  add({type:'next',lineup:ordered,awayLineup:[],serve:'ours'},1000);add({type:'clock',running:true},1000);
+  for(let i=1;i<=15;i++)add({type:'rally',side:'ours',kind:'point'},1000+i*60);
+  await D.put('coachLive',d);const m=await C.finishLiveMatch(d.id,d.revision),view=C.teamView(await C.loadCoach(),team.id);
+  (await import('./js/screens/lineup-analysis.js')).openLineupAnalysis(view,{initial:{from:'',to:''}});
+  return {matchId:m.id,playerId:f.playerId,teamId:team.id};
+ },vpFixture);
+ await shown.getByRole('heading',{name:'Аналитика игровых составов',exact:true}).waitFor();
+ assert.match(await shown.textContent(),/LIVE-розыгрыши: 30/);
+ assert.match(await shown.textContent(),/Совместное время LIVE: 30:00/);
+ await shown.getByLabel('Источник составов',{exact:true}).selectOption('imported');assert.match(await shown.textContent(),/LIVE-розыгрыши: 0/);
+ await shown.getByLabel('Вид состава',{exact:true}).selectOption('orderedStarts');assert.match(await shown.textContent(),/P1/);assert.match(await shown.textContent(),/Выиграно партий/);
+ await shown.getByLabel('Вид состава',{exact:true}).selectOption('pairs');await shown.getByLabel('Игрок в составе',{exact:true}).selectOption(lineupFixture.playerId);
+ assert.match(await shown.textContent(),/На подаче \(break-point\): нет данных/);assert.match(await shown.textContent(),/Длительность подтверждённых полных партий PDF: 7:00/);
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'lineup analysis overflow');
+ await page.evaluate(async f=>{const C=await import('./js/coach.js'),S=await import('./js/screens/coach.js');S.openCoachSearchResult(await C.loadCoach(),{kind:'player',teamId:f.teamId,id:f.playerId},async()=>{});},lineupFixture);
+ await shown.getByRole('heading',{name:'Результативность за 10 минут LIVE',exact:true}).waitFor();assert.match(await shown.textContent(),/Отмеченные личные очки за 10 минут: 5/);
+ await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
+ console.log('WEBKIT LINEUP ANALYSIS PASS: actual persisted LIVE and VolleyPoint, measured joint time, source and player filters, starting positions and player points per 10 minutes.');
+
  await page.evaluate(async()=>{(await import('./js/screens/studio.js')).openStudio({scope:'test',template:'result',team:'Демо',opponent:'Гости',score:'2:1'});});
  await page.locator('.studio-editor canvas').waitFor();assert.equal(await page.locator('.studio-editor textarea[aria-label="Текст публикации"]').inputValue(),'Итоговый результат\n\nДемо — Гости\n\n2:1');
  await page.getByRole('button',{name:'Сохранить фирменный стиль',exact:true}).click();
