@@ -3,7 +3,7 @@ import * as db from './db.js';
 import {validateBackup,BACKUP_VERSION} from './backup.js';
 import {defaultSettings,exemptionCovers,hasOsv} from './model.js';
 import {gradeState,finalState} from './grade-history.js';
-import {encryptBackup,decryptBackup,isEncryptedBackup} from './privacy.js';
+import {encryptBackup,decryptBackup,isEncryptedBackup,encryptedEnvelopeBytes} from './privacy.js';
 
 export const syncAreas={school:'Школа',coach:'Тренер'};
 const names=Object.keys(db.SCHEMA);
@@ -217,7 +217,7 @@ export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeou
     throw error;
    }
    if([408,502,503,504].includes(res.status))throw Object.assign(Error('Временная недоступность сервера синхронизации (HTTP '+res.status+')'),{retryable:true});
-   if(res.status===413)throw Error('Пакет превышает лимит выбранного сервера. Локальные данные сохранены.');
+   if(res.status===413)throw Object.assign(Error('Пакет превышает лимит выбранного сервера. Локальные данные сохранены. Откройте диагностику размера пакетов.'),{code:'packet-too-large'});
    if(res.status===409)throw Error('На сервере появилась новая ревизия. Повторите предварительный просмотр.');
    if(res.status===401||res.status===403)throw Error('Сервер отказал в доступе. Проверьте ключ и область.');
    check(res.ok,'Сервер синхронизации недоступен (HTTP '+res.status+')');
@@ -237,6 +237,20 @@ export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeou
  return {get:()=>request('GET'),put:(expectedRevision,envelope)=>request('PUT',{expectedRevision,envelope})};
 }
 const getCheckpoint=(data,area)=>data.meta.find(r=>r.id===keyOf(area))??null;
+const packetPayload=(snapshot,area,workspaceId,revision)=>({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area,workspaceId,revision,snapshot});
+export const defaultCloudflarePacketLimit=1024*1024;
+// The current relay receives a JSON PUT wrapper as well as the encrypted envelope.
+export function syncUploadBytes(snapshot,{area,workspaceId,expectedRevision}){
+ check(validArea(area)&&uuid.test(workspaceId)&&Number.isSafeInteger(expectedRevision)&&expectedRevision>=0&&expectedRevision<Number.MAX_SAFE_INTEGER,'Некорректные параметры оценки размера');
+ return encryptedEnvelopeBytes(packetPayload(snapshot,area,workspaceId,expectedRevision+1))+
+  JSON.stringify({expectedRevision,envelope:null}).length-4;
+}
+// Read-only size estimate for the local scope, before contact with a relay.
+// A remote merge may change the size; use syncUploadBytes on its final preview.
+export function localScopeUploadSize(data,area){
+ const snapshot=projectScope(data,area),cp=getCheckpoint(data,area);
+ return {area,bytes:syncUploadBytes(snapshot,{area,workspaceId:cp?.workspaceId||'00000000-0000-4000-8000-000000000000',expectedRevision:cp?.revision??0}),records:Object.values(snapshot).reduce((n,rows)=>n+rows.length,0)};
+}
 export async function prepareSync({area,endpoint,password,client,data}){
  endpoint=normalizeEndpoint(endpoint);
  check(validArea(area),'Выберите рабочую область');
@@ -291,7 +305,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
  }
  const nextRevision=pullOnly?plan.revision:plan.revision+1;
  check(revision(nextRevision),'Лимит ревизий');
- const envelope=pullOnly?plan.remoteEnvelope:await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area:plan.area,workspaceId:plan.workspaceId,revision:nextRevision,snapshot:preview.snapshot},password);
+ const envelope=pullOnly?plan.remoteEnvelope:await encryptBackup(packetPayload(preview.snapshot,plan.area,plan.workspaceId,nextRevision),password);
  // Recheck after expensive encryption; the transaction below checks again after CAS.
  previewSync(await db.dumpAll(),plan,choices);
  if(!pullOnly){

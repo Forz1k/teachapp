@@ -302,3 +302,8 @@ BROWSER PASS: 65 screenshots; real Chromium, offline reload, persistent IndexedD
 - 5.8/5.9: production-миграция архива/медиа и защищённые публичные реакции не выполнены. Платных API нет. Остальные незакрытые требования предыдущей матрицы сохраняются.
 
 PR #94 не объединён, новый релиз не опубликован. Все тесты на последнем проверенном кодовом SHA `6eb4213c6c7ed5e0c0669f7ef8afeaccd5079f50` зелёные; последующее документирование не меняет код.
+
+## Следующий этап: безопасность нагрузки — 25.11.2026
+
+- В PR #94 исправлено отображение всех уроков дня (включая слоты без созданной записи), разделены подтверждённые и возможные совпадения ограничений. Обычные массовые действия и сдача нормативов не обходят частное ограничение при общей категории; неопределённость не создаёт освобождение. Добавлены четыре регрессионных теста.
+- Кодовые коммиты [772cc66](https://github.com/Forz1k/teachapp/commit/772cc666dde47935af4fd859282e5f67270a85e4) и [5ae9509](https://github.com/Forz1k/teachapp/commit/5ae9509a61872d4c82e2ee96db97140a289ddbab). [CI](https://github.com/Forz1k/teachapp/actions/runs/45566608331), [WebKit](https://github.com/Forz1k/teachapp/actions/runs/45566608269), [Cloudflare](https://github.com/Forz1k/teachapp/actions/runs/45566608238), [Platform](https://github.com/Forz1k/teachapp/actions/runs/45566608262) SUCCESS. 359/359, 0 failed/skipped, validate PASS, Chromium/offline 65 screenshots. Физические устройства не проверялись; main и production не изменялись.

@@ -3,7 +3,7 @@ import {openTrustedDevices} from './trusted-devices.js';
 import * as S from '../store.js';
 import * as db from '../db.js';
 import {ktpLinkIssues} from '../backup.js';
-import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,localSyncState,describeSyncConflict,disconnectSync} from '../sync.js';
+import {syncAreas,normalizeEndpoint,relayClient,prepareSync,previewSync,executeSync,syncStatus,localSyncState,describeSyncConflict,disconnectSync,localScopeUploadSize,syncUploadBytes,defaultCloudflarePacketLimit} from '../sync.js';
 import {createDeviceInvite,redeemDeviceInvite,parseInvite} from '../device-invite.js';
 import {autoSyncStatus,withSyncSession,runPersonalSync} from '../auto-sync.js';
 import {parsePersonalCode,personalCredentials,readPersonalCode,savePersonalCode,forgetPersonalCode} from '../personal-sync.js';
@@ -13,6 +13,10 @@ import {el,openSheet,closeSheet,isSheetOpen,confirmDialog,promptDialog,toast} fr
 const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
 const field=(text,node)=>el('label',{class:'field'},[el('span',{text}),node]);
 const labels={meta:'Учебный год и настройки школы',classes:'Классы',students:'Ученики',lessons:'Уроки',topics:'Темы',ktp:'КТП',schedule:'Расписание',scheduleOverrides:'Замены',marks:'Оценки',exemptions:'Освобождения',studentHealthProfiles:'Группы здоровья',activityRestrictions:'Ограничения нагрузки',activityCategories:'Виды нагрузки',participation:'Участие',norms:'Нормативы',normResults:'Результаты',finalGrades:'Итоговые оценки',monthly:'Архивные отметки',coachTeams:'Команды',coachPlayers:'Состав',coachTrainings:'Тренировки',coachMatches:'Матчи',coachLineups:'Расстановки',coachTests:'Тесты',workRecords:'Рабочая запись / история'};
+const packetSizeText=bytes=>{
+ const percent=Math.round(100*bytes/defaultCloudflarePacketLimit);
+ return (bytes/1024).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+' КиБ · '+percent+'% лимита стандартного Cloudflare Worker (1 МиБ)'+(bytes>defaultCloudflarePacketLimit?' · превышение лимита':bytes>=defaultCloudflarePacketLimit*.8?' · приближение к лимиту':'');
+};
 const explain=v=>v===null?'Запись отсутствует (удаление)':JSON.stringify(v,null,2);
 const fieldNames={name:'Название / имя',date:'Дата',value:'Значение',mark:'Отметка',weight:'Вес',title:'Тема / заголовок',classId:'Класс (ID)',studentId:'Ученик (ID)',lessonId:'Урок (ID)',from:'Начало',to:'Окончание',status:'Статус',reason:'Причина',note:'Примечание',score:'Счёт',opponent:'Соперник'};
 function conflictValue(value){
@@ -83,7 +87,7 @@ export function openSync(){
    if(saved&&identityAreas(saved).includes(selected)){const credentials=await identityCredentials(saved,selected);if(n!==seq||closed)return;
     if(!cp||cp.endpoint===credentials.endpoint){endpoint.value=credentials.endpoint;token.value=credentials.token;password.value=credentials.password;}
    }
-   const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)).join(' · ');
+   const report=autoSyncStatus(),summary=report.areas.map(r=>syncAreas[r.area]+': '+({synced:'синхронизировано',setup:'нужно первое подключение',conflict:'конфликт',review:'требуется подтверждение удаления',error:'не удалось обменяться данными',paused:'приостановлено'}[r.status]||r.status)+(r.reason==='packet-too-large'?' (пакет слишком велик)':'')).join(' · ');
    const successes=report.areas.filter(r=>r.status==='synced'&&r.successfulAt).map(r=>syncAreas[r.area]+': '+new Date(r.successfulAt).toLocaleString('ru-RU')).join(' · ');
    personalStatus.textContent=saved?(readTrustedProfile()?'Индивидуальный профиль v2 сохранён.':'Личный код сохранён на этом устройстве.')+(report.phase==='offline'?' Нет сети.':report.phase==='running'?' Обмен выполняется.':report.phase==='interrupted'?' Обмен прерван.':'')+(report.at?' Последняя проверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:'')+(successes?' Успешный обмен в последней попытке: '+successes:''):'Личный код не сохранён.';
    personalForget.hidden=!saved&&!hasTrustedProfileRecord();inviteCreate.hidden=!saved||!!readTrustedProfile();both.hidden=!saved;inviteImport.hidden=Boolean(saved)||hasTrustedProfileRecord();personalConnect.hidden=hasTrustedProfileRecord();
@@ -109,7 +113,7 @@ export function openSync(){
    const next=previewSync(await db.dumpAll(),chosen,choices);
    if(n!==seq||chosen!==plan||closed)return;
    if(next.conflicts.length){choicesStatus.textContent='Осталось разрешить: '+next.conflicts.length;return;}
-   choicesStatus.textContent='На этом устройстве: новых '+next.counts.added+', изменённых '+next.counts.changed+', удалённых '+next.counts.deleted+'. Сервер получит итоговый зашифрованный снимок.';
+   choicesStatus.textContent='На этом устройстве: новых '+next.counts.added+', изменённых '+next.counts.changed+', удалённых '+next.counts.deleted+'. Сервер получит итоговый зашифрованный снимок. Размер PUT: '+packetSizeText(syncUploadBytes(next.snapshot,{area:chosen.area,workspaceId:chosen.workspaceId,expectedRevision:chosen.revision}))+'. У другого relay лимит может отличаться.';
    apply.disabled=busy;
   }catch(e){if(n===seq){choicesStatus.textContent=e.message;if(e.message.includes('разделе ktp'))results.append(btn('Проверить и исправить КТП',openKtpDiagnostics));}}
  }
@@ -170,7 +174,7 @@ export function openSync(){
   });
   if(!result)throw Error('Закройте другие вкладки TeachApp.');
   const statuses={synced:'готово',setup:'нужно подключение',conflict:'конфликт',review:'подтвердите изменения',error:'нужна проверка данных или подключения',paused:'обмен остановлен'};
-  simpleResult.textContent=identityAreas(readSyncIdentity()).map(a=>syncAreas[a]+': '+(statuses[result.areas.find(x=>x.area===a)?.status]||'обмен не выполнен')).join(' · ');
+  simpleResult.textContent=identityAreas(readSyncIdentity()).map(a=>syncAreas[a]+': '+((result.areas.find(x=>x.area===a)?.reason==='packet-too-large'?'пакет превышает лимит сервера':statuses[result.areas.find(x=>x.area===a)?.status])||'обмен не выполнен')).join(' · ');
   const issues=ktpLinkIssues(await db.dumpAll());
   if(issues.length)simpleResult.textContent+=' · Исправьте КТП через диагностику.';
   await refresh();
@@ -210,6 +214,20 @@ export function openSync(){
  },'primary');
  const personalStatus=el('p',{class:'profile-note','aria-live':'polite'});
  const localStatus=el('p',{class:'profile-note','aria-live':'polite',style:'white-space:pre-line',hidden:true});
+ const sizeStatus=el('div',{class:'profile-note','aria-live':'polite'});
+ const sizeCheck=btn('Проверить размер пакетов',async()=>{
+  if(busy||sizeCheck.disabled)return;
+  sizeCheck.disabled=true;
+  try{
+   const data=await db.dumpAll(),rows=[];
+   for(const scope of Object.keys(syncAreas)){
+    try{const size=localScopeUploadSize(data,scope);rows.push(p(syncAreas[scope]+': '+packetSizeText(size.bytes)+' · записей: '+size.records));}
+    catch(e){rows.push(p(syncAreas[scope]+': '+e.message));}
+   }
+   if(active())sizeStatus.replaceChildren(p('Локальная оценка, без отправки данных. После слияния размер может измениться. У другого relay лимит может отличаться.'),...rows);
+  }catch{if(active())sizeStatus.replaceChildren(p('Не удалось прочитать локальные данные.'));}
+  finally{sizeCheck.disabled=false;}
+ });
  const personalConnect=btn('Ввести личный код',async()=>{
   if(busy)return;
   busy=true;controls(true);apply.disabled=true;
@@ -275,7 +293,7 @@ export function openSync(){
  });
  area.onchange=()=>{clear();refresh();};
  for(const input of [endpoint,token,password])input.oninput=()=>{if(plan){plan=null;client=null;secret=null;choices={};results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}};
- const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,localStatus,btn('Доверенные устройства v2',()=>openTrustedDevices(openSync)),personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
+ const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p('Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,localStatus,sizeCheck,sizeStatus,btn('Доверенные устройства v2',()=>openTrustedDevices(openSync)),personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
  openSheet(root,{fullHeight:true,onClose:()=>{closed=true;clear();}});
  refresh();
 }

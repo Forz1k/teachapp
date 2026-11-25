@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import * as db from '../js/db.js';
 import {defaultSettings} from '../js/model.js';
-import {prepareSync,executeSync,syncPersonalArea,localSyncState,disconnectSync,relayClient,describeSyncConflict} from '../js/sync.js';
+import {prepareSync,executeSync,syncPersonalArea,localSyncState,disconnectSync,relayClient,describeSyncConflict,syncUploadBytes,localScopeUploadSize,projectScope,defaultCloudflarePacketLimit} from '../js/sync.js';
 import {createPersonalCode} from '../js/personal-sync.js';
 import {runPersonalSync,openSyncSession,autoSyncStatus,syncRetryDelay} from '../js/auto-sync.js';
 const endpoint='https://sync.example.test',area='school',password='synthetic-only-long-passphrase';
@@ -146,4 +146,31 @@ test('conflict summary explains only divergent fields and does not modify record
  assert.deepEqual({base,local,remote},originals);
  assert.equal(describeSyncConflict({base,local:null,remote}).kind,'deleted');
  assert.equal(describeSyncConflict({base:null,local,remote}).kind,'created');
+});
+
+test('Sync packet byte estimate equals real encrypted PUT, including non-ASCII data',async()=>{
+ const data=empty();data.meta.push(defaultSettings());data.classes.push({id:'c-size',name:'Класс «А» 🏐'});
+ const before=structuredClone(data),snapshot=projectScope(data,'school');
+ const estimate=localScopeUploadSize(data,'school');
+ assert.deepEqual(data,before);assert.equal(estimate.bytes,syncUploadBytes(snapshot,{area:'school',workspaceId:'00000000-0000-4000-8000-000000000000',expectedRevision:0}));
+ assert.equal(defaultCloudflarePacketLimit,1048576);assert.ok(estimate.bytes>0);
+ await db.replaceAll(data);let writes=0;
+ const client={get:async()=>({revision:0,envelope:null}),put:async(expectedRevision,envelope)=>{
+  writes++;
+  assert.equal(new TextEncoder().encode(JSON.stringify({expectedRevision,envelope})).length,estimate.bytes);
+  return {revision:1,envelope};
+ }};
+ const plan=await prepareSync({area,endpoint,password,client});
+ await executeSync({plan,choices:{},password,client,confirmed:true});assert.equal(writes,1);
+});
+test('413 identifies oversized packet without fast retry or leaking error content',async()=>{
+ const client=relayClient(endpoint,area,'a'.repeat(43),{fetcher:async()=>new Response('{}',{status:413})});
+ await assert.rejects(client.put(0,{}),e=>e.code==='packet-too-large'&&!e.retryable);
+ const code=createPersonalCode(endpoint);
+ const report=await runPersonalSync({getCode:()=>code,online:()=>true,clientFactory:()=>client,runArea:async({area})=>{
+  if(area==='school')await client.put(0,{});
+  return {area,status:'synced'};
+ }});
+ assert.equal(report.areas[0].status,'error');assert.equal(report.areas[0].reason,'packet-too-large');assert.equal(syncRetryDelay(report,0),null);
+ assert.equal(report.areas[1].status,'synced');
 });
