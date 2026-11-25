@@ -125,3 +125,27 @@ export function resultSummary(rows){
  }
  return {...counts,total:rows.length,streak};
 }
+
+/** Describe only the published, consecutive suffix of rallies. No rules or
+ * complete-history assumptions; scores are checked against each point. */
+export function publicMatchMoments(match){
+ const result=[];let prev=null,run=0,runSide=null,leader=null;
+ for(const e of match.events||[]){
+  if(!/^\d{1,4}:\d{1,4}$/.test(e.score)||!sides.includes(e.side)||!Number.isInteger(e.set))continue;
+  const [ours,theirs]=e.score.split(':').map(Number);
+  const consecutive=prev&&prev.set===e.set&&ours-prev.ours===(e.side==='ours'?1:0)&&theirs-prev.theirs===(e.side==='theirs'?1:0);
+  if(!consecutive){run=0;runSide=null;leader=null;}
+  const notes=[];
+  if(consecutive&&ours===theirs)notes.push('Счёт сравнялся');
+  const ahead=ours===theirs?null:ours>theirs?'ours':'theirs';
+  if(ahead&&leader&&ahead!==leader)notes.push('Смена лидера');
+  if(ahead)leader=ahead;
+  run=runSide===e.side?run+1:1;runSide=e.side;
+  if(run>=3)notes.push('Серия: '+run+' очка'+(run>=5?' подряд':' подряд')+' (видимая история)');
+  const final=match.sets?.[e.set-1];
+  if(final&&final.ours===ours&&final.theirs===theirs)notes.push('Партия завершена');
+  result.push({...e,notes});
+  prev={set:e.set,ours,theirs};
+ }
+ return result;
+}

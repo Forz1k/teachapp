@@ -33,3 +33,5 @@ body{background:radial-gradient(ellipse at 85% 0%,#5578c119,transparent 44%),var
 .result-link{color:inherit;text-decoration:underline;text-underline-offset:4px}.fan-fullscreen .site-header,.fan-fullscreen nav,.fan-fullscreen footer{display:none}.fan-fullscreen #portal{max-width:none}.fan-fullscreen #portal>.hero{min-height:90vh;justify-content:center}.fan-fullscreen #portal>.card:not(.hero){display:none}
 
 .season-filter{display:block;width:100%;max-width:320px;min-height:44px;margin:12px 0;padding:8px 12px;color:inherit;background:var(--panel,#182235);border:1px solid var(--border,#536078);border-radius:12px;font:inherit}
+
+.moment-note{display:block;font-size:.78rem;line-height:1.4;color:var(--accent,#62d6a2);font-weight:650;margin-top:.25rem}.portal-updated{color:var(--muted,#aab4c5);font-size:.78rem;text-align:right;margin:.2rem .4rem}.fan-fullscreen .portal-updated{display:none}
