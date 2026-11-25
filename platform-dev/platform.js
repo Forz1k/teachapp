@@ -67,7 +67,8 @@ function newMatch(){
 function liveCard(){
  const selector=input('ID матча LIVE',member.matchIds?.[0]||''),matches=e('div'),body=e('div');
  const path=()=> 'matches/'+selector.value.trim(),same=()=>active?.id===selector.value.trim();
- const load=async()=>{stopTimer();const res=await api.request(path());active=res.match;draw();};
+ const load=async()=>{stopTimer();const requested=selector.value.trim();const res=await api.request(path());if(requested!==selector.value.trim())return;active=res.match;draw();};
+ selector.oninput=()=>{stopTimer();active=null;body.replaceChildren(p('Откройте выбранный матч.'));};
  const modify=async(op,packet)=>{if(!same())throw Error('Сначала откройте матч');const res=await api.request(path()+'/'+op,'POST',packet);active=res.match;draw();};
  const op=async(action,side)=>{if(!same()||active.lease?.holderId!==member.id)throw Error('Сначала получите право управления');if(pending)throw Error('Сначала повторите или отмените неподтверждённый запрос');pending={matchId:active.id,action,body:{generation:active.generation,expectedRevision:active.revision,opId:crypto.randomUUID(),...(side?{side}:{})}};await retry();};
  async function retry(){if(!pending||pending.matchId!==selector.value.trim())throw Error('Нет запроса для этого матча');try{await modify(pending.action,pending.body);pending=null;draw();}catch(err){if(err.status>=400&&err.status<500)pending=null;draw();throw err;}}
@@ -75,7 +76,7 @@ function liveCard(){
   stopTimer();if(!active)return;const own=active.lease?.holderId===member.id&&active.lease.until>Date.now()&&active.status==='live';
   body.replaceChildren(e('h3',active.opponent),e('div',active.score.ours+' : '+active.score.theirs,{class:'score','aria-label':'Счёт'}),p('Партия '+active.set+' · ревизия '+active.revision+' · '+(active.status==='finished'?'Завершён':active.lease&&active.lease.until>Date.now()?own?'Управление у вас':'Другой участник управляет':'Свободно')),row(button('Обновить счёт',()=>run(load)),button('Получить управление',()=>run(()=>modify('acquire',{expectedRevision:active.revision})),true)),own?row(button('+ Наши',()=>run(()=>op('score','ours')),true),button('+ Соперник',()=>run(()=>op('score','theirs')),true)):null,own?row(button('Следующая партия',()=>run(()=>op('next'))),member.role!=='assistant'?button('Завершить матч',()=>run(()=>op('finish'))):null,button('Передать управление',()=>run(async()=>{if(pending)throw Error('Сначала подтвердите результат предыдущей операции');await modify('release',{generation:active.generation});}))):null,pending?row(button('Повторить последний запрос',()=>run(retry)),button('Отменить повтор',()=>{pending=null;void run(load);})):null);
   // Lease lives only in the foreground. Revocation or network failure ends renewals.
-  if(own)scoreTimer=setInterval(()=>{if(document.visibilityState!=='visible'||busy)return;void run(()=>modify('renew',{generation:active.generation}));},15000);
+  if(own)scoreTimer=setInterval(()=>{if(document.visibilityState!=='visible'||busy||!same()||pending)return;void run(()=>modify('renew',{generation:active.generation}));},15000);
  }
  return box('Серверный LIVE · тест',p('Право вести счёт выдаётся на 45 секунд. Не связано с опубликованной страницей Firebase.'),field('ID матча',selector),button('Доступные матчи',()=>run(async()=>{const res=await api.request('matches');matches.replaceChildren(...res.matches.map(m=>button(m.opponent+' · '+m.id,()=>{selector.value=m.id;void run(load);})));})),matches,button('Открыть LIVE',()=>run(load)),body);
 }
