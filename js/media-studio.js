@@ -48,7 +48,7 @@ export function studioInk(background){
 export function studioCrop(width,height,w,h,focus='center'){
  if(![width,height,w,h].every(x=>Number.isFinite(x)&&x>0))throw Error('Некорректные размеры фотографии');
  const k=Math.max(w/width,h/height),x=focus==='left'?0:focus==='right'?1:.5,y=focus==='top'?0:focus==='bottom'?1:.5;
- return {x:(w-width*k)*x,y:(h-height*k)*y,width:width*k,height:height*k};
+ return {x:(w-width*k)*x||0,y:(h-height*k)*y||0,width:width*k,height:height*k};
 }
 export function studioModel(raw={}){
  const template=Object.hasOwn(templates,raw.template)?raw.template:'matchday';
