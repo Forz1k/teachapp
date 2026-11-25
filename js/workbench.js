@@ -1,3 +1,4 @@
+import {validateNormRetake} from './norm-retakes.js';
 import {validateNewsDraft} from './public-media-drafts.js';
 import {validateSchoolCompetition,validateTeacherPortfolio} from './teacher-portfolio.js';
 import {validateStudentGoal} from './student-goals.js';
@@ -36,6 +37,7 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='normRetake'){validateNormRetake(r);return;}
  if(r.kind==='publicNewsDraft'){validateNewsDraft(r);return;}
  if(r.kind==='schoolCompetition'){validateSchoolCompetition(r);return;}
  if(r.kind==='teacherPortfolio'){validateTeacherPortfolio(r);return;}
