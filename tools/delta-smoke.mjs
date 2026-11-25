@@ -71,6 +71,9 @@ try{
  assert.equal((await call('append',a,'PUT',{expectedRevision:3,envelope:{...third,data:'A'.repeat(1024*1024)}})).status,413);
  assert.equal((await call('append',a,'PUT',{expectedRevision:3,envelope:{...third,unexpected:'x'}})).status,400);
  assert.equal((await call('head',c,'GET',undefined,'coach')).revision,0);
+ assert.equal((await call('rollback-seal',a,'PUT',{expectedRevision:1,migrationId:workspaceId})).status,401);
+ assert.equal((await call('rollback-seal',sealKey,'PUT',{expectedRevision:1,migrationId:workspaceId})).status,409);
+ assert.equal((await call('rollback-status',a)).seal,null);
  await stop();await start();
  const head=await call('head',b);assert.equal(head.revision,3);assert.equal(head.anchorRevision,1);assert.equal(head.count,3);
  const first=await call('revision/1',b);assert.equal(first.kind,'anchor');await verifySyncSnapshot({revision:1,envelope:first.envelope},password,area);
@@ -478,6 +481,8 @@ try{
   const privileged=deltaLabClient(endpoint,'coach',c,{compactToken:coachAdmin,rotateToken:coachRotator});
   await assert.rejects(privileged.compact(1,(await target.getRevision(1)).envelope),e=>e.status===423);
   await assert.rejects(target.anchor((await target.getRevision(1)).envelope),e=>e.status===423);
+  assert.equal((await call('multipart/rotate/'+'a'.repeat(64)+'/begin',coachRotator,'PUT',{},'coach')).status,423);
+  await assert.rejects(commitDeltaMigration(fencedArgs),/закрыто для отката/);
   await assert.rejects(cutoverDeltaMigrationDevice(confirmation),/закрыто/);
   const beforeRollback=await db.dumpAll();
   const rollbackPreview=await rollbackDeltaMigrationDevice({...confirmation,confirmed:false});
@@ -526,6 +531,12 @@ try{
   assert.deepEqual((await readDeltaLab({client:schoolTarget,area:'school',password:newPass,current:freshDb()})).snapshot,base);
   const repeated=await commitDeltaMigration({...schoolArgs,file:schoolPlan.file,confirmed:true,backupVerified:true,sourceFrozen:true});
   assert.equal(repeated.status,'source-changed');assert.equal(repeated.replayed,true);
+  const schoolDelta=await encryptBackup(await buildSyncDelta(base,next,{area:'school',workspaceId:schoolPlan.migrationId,baseRevision:1}),newPass);
+  const sealRace=await Promise.all([call('append',a,'PUT',{expectedRevision:1,envelope:schoolDelta}),call('rollback-seal',sealKey,'PUT',{expectedRevision:1,migrationId:schoolPlan.migrationId})]);
+  assert.ok(sealRace[0].status===201&&sealRace[1].status===409||sealRace[0].status===423&&sealRace[1].status===200);
+  const racedHead=await schoolTarget.head();
+  assert.equal(racedHead.revision,sealRace[0].status===201?2:1);
+  assert.deepEqual((await readDeltaLab({client:schoolTarget,area:'school',password:newPass,current:freshDb()})).snapshot,sealRace[0].status===201?next:base);
   await stop();await start();
   assert.deepEqual((await readDeltaLab({client:target,area:'coach',password:newPass,current:freshDb()})).snapshot,nextLarge);
   assert.equal((await legacyCoach.get()).revision,3);

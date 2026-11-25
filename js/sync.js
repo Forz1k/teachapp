@@ -682,6 +682,7 @@ export async function commitDeltaMigration(args){
  const verifyFence=async()=>{if(!fenced)return;const state=await fenceClient.get();check(state.revision===p.sourceRevision&&state.fence?.migrationId===args.sourceFenceId.toLowerCase(),'Источник не заблокирован на ревизии файла переноса');};
  await verifyFence();
  const before=await sourceRead(),h=await target.head();
+ check((await target.rollbackStatus()).seal===null,'Назначение необратимо закрыто для отката');
  check(validDeltaHead(h),'Некорректная история назначения');
  const sourceMatches=r=>r.revision===p.sourceRevision&&same(r.envelope,p.sourceEnvelope);
  let replayed=false;
@@ -700,6 +701,7 @@ export async function commitDeltaMigration(args){
  check(row.revision===1&&row.kind==='anchor'&&same(row.envelope,p.envelope)&&remote.revision===1&&remote.workspaceId===p.workspaceId&&await scopeDigest(remote.snapshot,p.area)===p.digest&&same(remote.snapshot,p.snapshot),'Назначение изменилось; переход запрещён');
  const after=await sourceRead();
  await verifyFence();
+ check((await target.rollbackStatus()).seal===null,'Назначение необратимо закрыто для отката');
  // Client-side confirmation cannot actually freeze a legacy server. A late
  // source write leaves a verified *copy*, not permission to change devices.
  const unchanged=sourceMatches(before)&&sourceMatches(after);
