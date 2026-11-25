@@ -30,6 +30,11 @@ test('Node LAB migration fence is scoped, privileged, CAS-serialized, durable an
   assert.equal((await request(snapshot,admin)).status,401);
   assert.equal((await request('/v1/migration-fence/school',admin)).status,404);
   assert.deepEqual(await request(fence,admin),{status:200,body:{revision:0,fence:null}});
+  const status='/v1/migration-fence-status/coach';
+  assert.deepEqual(await request(status,coach),{status:200,body:{revision:0,fence:null}});
+  assert.equal((await request(status,school)).status,401);
+  assert.equal((await request(status,admin)).status,401);
+  assert.equal((await request(status,coach,freeze(1))).status,405);
   assert.equal((await request(fence,admin,freeze(1))).status,409);
   assert.equal((await request(snapshot,coach,put(0))).status,200);
   assert.equal((await request(fence,admin,freeze(1,'invalid'))).status,400);
@@ -48,6 +53,7 @@ test('Node LAB migration fence is scoped, privileged, CAS-serialized, durable an
   await close(server,dir);server=null;
   await start(false);
   assert.equal((await request(fence,admin)).status,404);
+  assert.deepEqual(await request(status,coach),{status:200,body:frozen});
   assert.equal((await request(snapshot,coach,put(revision))).status,423);
   assert.deepEqual(await request(snapshot,coach),{status:200,body:{revision,envelope}});
   assert.equal((await request('/v1/snapshot/school',school,put(1))).status,200);

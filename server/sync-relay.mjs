@@ -83,6 +83,20 @@ export async function createRelay({directory,tokens,allowedOrigin,migrationFence
    const requestOrigin=req.headers.origin;
    if(requestOrigin&&requestOrigin!==origin){json(res,403,{error:'origin'});return;}
    if(requestOrigin===origin){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}
+   // A normal scoped device may verify an existing freeze without receiving the administrative key.
+   const fenceStatus=/^\/v1\/migration-fence-status\/(school|coach)$/.exec(req.url||'');
+   if(fenceStatus){
+    const area=fenceStatus[1];
+    if(req.method==='OPTIONS'){
+     if(requestOrigin!==origin){json(res,403,{error:'origin'});return;}
+     res.writeHead(204,{'Access-Control-Allow-Methods':'GET, OPTIONS','Access-Control-Allow-Headers':'Authorization','Access-Control-Max-Age':'300','Cache-Control':'no-store'});res.end();return;
+    }
+    if(!authorize(req,area)){json(res,401,{error:'unauthorized'});return;}
+    if(req.method!=='GET'){json(res,405,{error:'method'});return;}
+    const current=await serial(area,()=>get(area));
+    if(!fenceDigests[area]&&!current.fence){json(res,404,{error:'route'});return;}
+    json(res,200,{revision:current.revision,fence:current.fence??null});return;
+   }
    const fenceMatch=/^\/v1\/migration-fence\/(school|coach)$/.exec(req.url||'');
    if(fenceMatch){
     const area=fenceMatch[1],digest=fenceDigests[area];

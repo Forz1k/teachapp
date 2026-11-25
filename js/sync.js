@@ -616,7 +616,7 @@ export async function prepareDeltaMigration(args){
  check(envelope.data.length<=DELTA_MAX_DATA&&old.envelope.data.length<=DELTA_MAX_DATA,'Снимок превышает лимит переноса');
  const payload={app:'teachapp-delta-migration',version:1,source,destination,area,protocolVersion,sourceRevision:old.revision,sourceWorkspaceId:packet.workspaceId,workspaceId,digest,sourceEnvelope:old.envelope,envelope};
  const file=await encryptBackup(payload,backupPassword);
- return {area,sourceRevision:old.revision,destinationRevision:1,records:migrationRecordCount(packet.snapshot),encryptedBytes:envelope.data.length,file};
+ return {area,migrationId:workspaceId,sourceRevision:old.revision,destinationRevision:1,records:migrationRecordCount(packet.snapshot),encryptedBytes:envelope.data.length,file};
 }
 export async function openDeltaMigration({sourceEndpoint,destinationEndpoint,area,protocolVersion=1,current,file,sourcePassword,destinationPassword,backupPassword,synthetic=false}){
  const {source,destination}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
@@ -641,27 +641,33 @@ export async function inspectDeltaMigrationDevice(args){
  const ready=await scopeDigest(local,p.area)===p.digest;
  return {...result,status:ready?'clean-source':'local-changes',ready};
 }
-// Separate privileged loopback-only fence. No automatic unfreeze or production caller.
+// Separate loopback-only fence request. Normal devices can read status but never freeze.
+async function migrationFenceRequest(source,area,token,path,fetcher,body){
+ const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),15000);
+ try{
+  const res=await fetcher(source+'/v1/'+path+'/'+area,{method:body?'PUT':'GET',headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:ctl.signal});
+  check(res.ok,'Барьер записи LAB: HTTP '+res.status);
+  const reader=res.body?.getReader();check(reader,'Нет ответа барьера записи');let size=0,text='';const decoder=new TextDecoder('utf-8',{fatal:true});
+  try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>4096){await reader.cancel();throw Error('Слишком большой ответ барьера');}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}finally{reader.releaseLock();}
+  const state=JSON.parse(text);
+  check(exactFields(state,['revision','fence'])&&Number.isSafeInteger(state.revision)&&state.revision>=0&&(state.fence===null||exactFields(state.fence,['revision','migrationId'])&&revision(state.revision)&&state.fence.revision===state.revision&&typeof state.fence.migrationId==='string'&&uuid.test(state.fence.migrationId)),'Некорректный ответ барьера записи');
+  if(body)check(state.revision===body.expectedRevision&&state.fence?.migrationId===body.migrationId,'Барьер не подтверждён');
+  return state;
+ }finally{clearTimeout(timer);}
+}
 export function deltaMigrationFenceClient({sourceEndpoint,destinationEndpoint,area,sourceToken,destinationToken,sourceFenceToken,protocolVersion=1,synthetic=false,fetcher=globalThis.fetch}){
  const {source}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
  check(protocolVersion===1&&validArea(area)&&typeof sourceFenceToken==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(sourceFenceToken)&&sourceFenceToken!==sourceToken&&sourceFenceToken!==destinationToken,'Нужен отдельный ключ блокировки Node LAB');
- async function request(body){
-  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),15000);
-  try{
-   const res=await fetcher(source+'/v1/migration-fence/'+area,{method:body?'PUT':'GET',headers:{Authorization:'Bearer '+sourceFenceToken,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:ctl.signal});
-   check(res.ok,'Барьер записи LAB: HTTP '+res.status);
-   const reader=res.body?.getReader();check(reader,'Нет ответа барьера записи');let size=0,text='';const decoder=new TextDecoder('utf-8',{fatal:true});
-   try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>4096){await reader.cancel();throw Error('Слишком большой ответ барьера');}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}finally{reader.releaseLock();}
-   const state=JSON.parse(text);
-   check(exactFields(state,['revision','fence'])&&Number.isSafeInteger(state.revision)&&state.revision>=0&&(state.fence===null||exactFields(state.fence,['revision','migrationId'])&&revision(state.revision)&&state.fence.revision===state.revision&&typeof state.fence.migrationId==='string'&&uuid.test(state.fence.migrationId)),'Некорректный ответ барьера записи');
-   if(body)check(state.revision===body.expectedRevision&&state.fence?.migrationId===body.migrationId,'Барьер не подтверждён');
-   return state;
-  }finally{clearTimeout(timer);}
- }
+ const request=body=>migrationFenceRequest(source,area,sourceFenceToken,'migration-fence',fetcher,body);
  return {get:()=>request(),freeze:({expectedRevision,migrationId,confirmed,backupVerified})=>{
   check(confirmed===true&&backupVerified===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите резервную копию и необратимую блокировку LAB');
   return request({expectedRevision,migrationId:migrationId.toLowerCase()});
  }};
+}
+export async function deltaMigrationFenceStatus({sourceEndpoint,destinationEndpoint,area,sourceToken,protocolVersion=1,synthetic=false,fetcher=globalThis.fetch}){
+ const {source}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
+ check(protocolVersion===1&&validArea(area)&&typeof sourceToken==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(sourceToken),'Нужен ключ исходного контура Node LAB');
+ return migrationFenceRequest(source,area,sourceToken,'migration-fence-status',fetcher);
 }
 export async function commitDeltaMigration(args){
  check(args.confirmed===true&&args.backupVerified===true&&args.sourceFrozen===true,'Подтвердите проверенный файл и остановку записи на всех исходных устройствах');
@@ -669,7 +675,7 @@ export async function commitDeltaMigration(args){
  const {sourceRead,target}=migrationClients(args);
  const fenced=args.sourceFenceToken!==undefined||args.sourceFenceId!==undefined;
  const fenceClient=fenced?deltaMigrationFenceClient(args):null;
- if(fenced)check(typeof args.sourceFenceId==='string'&&uuid.test(args.sourceFenceId),'Укажите ID подтверждённого барьера');
+ if(fenced)check(args.sourceFenceId===p.workspaceId,'ID барьера должен совпадать с ID нового пространства из проверенного файла');
  const verifyFence=async()=>{if(!fenced)return;const state=await fenceClient.get();check(state.revision===p.sourceRevision&&state.fence?.migrationId===args.sourceFenceId.toLowerCase(),'Источник не заблокирован на ревизии файла переноса');};
  await verifyFence();
  const before=await sourceRead(),h=await target.head();
@@ -695,6 +701,52 @@ export async function commitDeltaMigration(args){
  // source write leaves a verified *copy*, not permission to change devices.
  const unchanged=sourceMatches(before)&&sourceMatches(after);
  return {area:p.area,sourceRevision:p.sourceRevision,observedSourceRevision:after.revision,destinationRevision:1,replayed,status:unchanged?(fenced?'verified-fenced-copy':'verified-copy'):'source-changed',cutoverAllowed:false,requiresManualCutover:true};
+}
+
+// Local-only Delta LAB binding and checkpoint are committed together. Credentials
+// stay in the operator's encrypted files; never change the ordinary TAP1/TAD2 profile.
+const migrationBindingKey=area=>'sync-checkpoint-migration-'+area;
+export async function cutoverDeltaMigrationDevice(args){
+ check(args.synthetic===true&&args.protocolVersion!==2,'Переключение доступно только для Node Delta LAB');
+ check(args.sourceFenceToken===undefined,'Не передавайте административный ключ устройству');
+ const current=await db.dumpAll(),p=await openDeltaMigration({...args,current}),{sourceRead,target}=migrationClients(args);
+ const cp=getCheckpoint(current,p.area),local=projectScope(current,p.area);
+ const binding={id:migrationBindingKey(p.area),protocol:'delta-lab-v1',area:p.area,migrationId:p.workspaceId,sourceEndpoint:p.source,sourceWorkspaceId:p.sourceWorkspaceId,sourceRevision:p.sourceRevision,destinationEndpoint:p.destination,destinationWorkspaceId:p.workspaceId,destinationRevision:1,digest:p.digest};
+ const prior=current.meta.find(r=>r.id===binding.id)??null;
+ const next={id:keyOf(p.area),endpoint:p.destination,workspaceId:p.workspaceId,revision:1,envelope:p.envelope};
+ const replay=prior!==null;
+ if(replay)check(same(prior,binding)&&same(cp,next),'Устройство уже переключено или контрольная точка изменилась; повторное переключение запрещено');
+ else{
+  check(cp&&cp.endpoint===p.source&&cp.workspaceId===p.sourceWorkspaceId&&cp.revision===p.sourceRevision,'Исходная контрольная точка отсутствует или устарела');
+  const ancestor=await readPacket(cp.envelope,args.sourcePassword,p.area,cp.revision);
+  check(ancestor.workspaceId===p.sourceWorkspaceId&&same(ancestor.snapshot,p.snapshot),'Исходная контрольная точка не совпадает с файлом переноса');
+ }
+ check(same(local,p.snapshot),'Локальные изменения не согласованы; переключение запрещено');
+ const verifySource=async()=>{
+  const f=await deltaMigrationFenceStatus(args),source=await sourceRead();
+  check(f.revision===p.sourceRevision&&f.fence?.migrationId===p.workspaceId&&source.revision===p.sourceRevision&&same(source.envelope,p.sourceEnvelope),'Нет подтверждённого барьера для этого файла переноса');
+ };
+ const verifyTarget=async()=>{
+  const h=await target.head();
+  check(validDeltaHead(h)&&h.revision===1&&h.anchorRevision===1&&h.count===1,'Целевой контур должен оставаться на начальной ревизии до переключения');
+  const row=await target.getRevision(1);
+  check(row.revision===1&&row.kind==='anchor'&&same(row.envelope,p.envelope),'Целевая контрольная точка не совпадает с файлом');
+ };
+ await verifySource();await verifyTarget();
+ const summary={area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision,destinationRevision:1,replayed:replay};
+ if(args.confirmed!==true)return {...summary,status:'cutover-preview'};
+ check(args.backupVerified===true&&args.expectedMigrationId===p.workspaceId&&args.expectedSourceRevision===p.sourceRevision,'Подтвердите проверенную копию и точную ревизию предпросмотра');
+ // Network verification outside IndexedDB. Even if destination advances after
+ // this check, the authenticated revision-1 ancestor is retained locally.
+ await verifySource();await verifyTarget();
+ await db.transaction(names,'readwrite',async s=>{
+  const latest=Object.fromEntries(await Promise.all(names.map(async n=>[n,await s[n].getAll()])));
+  check(same(getCheckpoint(latest,p.area),cp)&&same(projectScope(latest,p.area),local)&&same(latest.meta.find(r=>r.id===binding.id)??null,prior),'Локальные данные изменились; повторите предпросмотр');
+  if(!replay){
+   await s.meta.put(next);await s.meta.put(binding);await s.meta.delete(statusKey(p.area));
+  }
+ });
+ return {...summary,status:'cutover-completed'};
 }
 
 /* Explicit laboratory adapter for the existing prepare/preview/execute pipeline.

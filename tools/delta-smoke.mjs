@@ -20,7 +20,7 @@ import {defaultSettings} from '../js/model.js';
 import {BACKUP_VERSION} from '../js/backup.js';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
 import {splitDeltaAnchor} from '../js/delta-anchor.js';
-import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation,createDeltaDeviceRecovery,openDeltaDeviceRecovery,rebindDeltaDevice,relayClient,deltaMigrationFenceClient,prepareDeltaMigration,openDeltaMigration,inspectDeltaMigrationDevice,commitDeltaMigration} from '../js/sync.js';
+import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation,createDeltaDeviceRecovery,openDeltaDeviceRecovery,rebindDeltaDevice,relayClient,deltaMigrationFenceClient,deltaMigrationFenceStatus,cutoverDeltaMigrationDevice,prepareDeltaMigration,openDeltaMigration,inspectDeltaMigrationDevice,commitDeltaMigration} from '../js/sync.js';
 
 const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),coachAdmin='E'.repeat(43),rotator='F'.repeat(43),coachRotator='G'.repeat(43),area='school',password='synthetic-delta-test-password';
 const workspaceId='00000000-0000-4000-8000-000000000001';
@@ -361,7 +361,7 @@ try{
  // snapshot relay. Source is read-only to the migration helpers.
  await stop();workerState=join(state,'migration');await start();
  const sourceSchool='H'.repeat(43),sourceCoach='I'.repeat(43),oldPass='synthetic-legacy-password',newPass='synthetic-destination-password',backupPassword='synthetic-migration-backup-password';
- const sourceFenceToken='J'.repeat(43),sourceFenceId='00000000-0000-4000-8000-000000000001';
+ const sourceFenceToken='J'.repeat(43);
  const legacy=await createRelay({directory:join(state,'legacy'),tokens:{school:[sourceSchool],coach:[sourceCoach]},allowedOrigin:origin,migrationFenceTokens:{coach:sourceFenceToken}});
  await new Promise((resolve,reject)=>{legacy.once('error',reject);legacy.listen(0,'127.0.0.1',resolve);});
  try{
@@ -394,7 +394,7 @@ try{
   const latest=await prepareDeltaMigration(args);
   assert.equal((await inspectDeltaMigrationDevice({...args,file:latest.file})).status,'stale-checkpoint');
   const exact={...args,file:latest.file,confirmed:true,backupVerified:true,sourceFrozen:true};
-  const fencedArgs={...exact,sourceFenceToken,sourceFenceId};
+  const sourceFenceId=latest.migrationId,fencedArgs={...exact,sourceFenceToken,sourceFenceId};
   const fence=deltaMigrationFenceClient(fencedArgs);
   await assert.rejects(commitDeltaMigration(fencedArgs),/не заблокирован/);
   assert.equal((await target.head()).revision,0);
@@ -409,8 +409,61 @@ try{
   const destination=await readDeltaLab({client:target,area:'coach',password:newPass,current:freshDb()});
   assert.equal(destination.revision,1);assert.notEqual(destination.workspaceId,workspaceId);assert.deepEqual(destination.snapshot,nextLarge);
   assert.deepEqual(await commitDeltaMigration(fencedArgs),{...copied,replayed:true});
+  await assert.rejects(commitDeltaMigration({...fencedArgs,sourceFenceId:workspaceId}),/ID барьера/);
   await assert.rejects(prepareDeltaMigration(args),/должен быть пустым/);
   await assert.rejects(readDeltaLab({client:target,area:'coach',password:oldPass,current:freshDb()}));
+  // Independent local device cutover: no privileged token, no saved credentials.
+  const cleanSource=structuredClone(sourceCurrent);
+  cleanSource.coachTeams=structuredClone(nextLarge.coachTeams);
+  cleanSource.classes=structuredClone(baseData.classes);cleanSource.students=structuredClone(baseData.students);
+  cleanSource.meta=cleanSource.meta.filter(r=>r.id!=='sync-checkpoint-coach');
+  cleanSource.meta.push({id:'sync-checkpoint-coach',endpoint:sourceEndpoint,workspaceId,revision:2,envelope:src2.envelope},{id:'sync-checkpoint-school',endpoint:sourceEndpoint,workspaceId,revision:1,envelope:srcSchool1.envelope},{id:'sync-checkpoint-status-coach',endpoint:sourceEndpoint,workspaceId,revision:2,successfulAt:new Date().toISOString()});
+  await db.replaceAll(cleanSource);
+  const deviceArgs={...args,file:latest.file,confirmed:false};
+  assert.deepEqual(await deltaMigrationFenceStatus(deviceArgs),frozen);
+  await assert.rejects(deltaMigrationFenceStatus({...deviceArgs,sourceToken:sourceSchool}),/401/);
+  const localBefore=await db.dumpAll(),preview=await cutoverDeltaMigrationDevice(deviceArgs);
+  assert.deepEqual(preview,{area:'coach',migrationId:sourceFenceId,sourceRevision:2,destinationRevision:1,replayed:false,status:'cutover-preview'});
+  assert.deepEqual(await db.dumpAll(),localBefore);
+  const confirmation={...deviceArgs,confirmed:true,backupVerified:true,expectedMigrationId:sourceFenceId,expectedSourceRevision:2};
+  await assert.rejects(cutoverDeltaMigrationDevice({...confirmation,expectedSourceRevision:1}),/Подтвердите/);
+  await assert.rejects(cutoverDeltaMigrationDevice({...confirmation,sourceFenceToken}),/административный/);
+  // A local edit arriving during network verification invalidates the atomic cutover.
+  let touched=false;
+  const localRace=async(url,init)=>{
+   const response=await fetch(url,init);
+   if(!touched&&String(url)===endpoint+'/v1/delta/coach/head'){
+    touched=true;await db.put('coachTeams',{...nextLarge.coachTeams[0],name:'Локальное изменение в процессе перехода'});
+   }
+   return response;
+  };
+  await assert.rejects(cutoverDeltaMigrationDevice({...confirmation,fetcher:localRace}),/Локальные данные изменились/);
+  assert.equal(touched,true);
+  assert.equal((await db.get('meta','sync-checkpoint-coach')).revision,2);
+  assert.equal(await db.get('meta','sync-checkpoint-migration-coach'),undefined);
+  await assert.rejects(cutoverDeltaMigrationDevice(confirmation),/Локальные изменения/);
+  await db.replaceAll(localBefore);
+  const switched=await cutoverDeltaMigrationDevice(confirmation);
+  assert.equal(switched.status,'cutover-completed');assert.equal(switched.replayed,false);
+  const afterSwitch=await db.dumpAll(),bound=await db.get('meta','sync-checkpoint-migration-coach'),checkpoint=await db.get('meta','sync-checkpoint-coach');
+  assert.equal(bound.migrationId,sourceFenceId);assert.equal(bound.protocol,'delta-lab-v1');
+  assert.equal(checkpoint.endpoint,endpoint);assert.equal(checkpoint.workspaceId,sourceFenceId);assert.equal(checkpoint.revision,1);
+  assert.equal(await db.get('meta','sync-checkpoint-status-coach'),undefined);
+  assert.deepEqual(await db.get('meta','sync-checkpoint-school'),localBefore.meta.find(r=>r.id==='sync-checkpoint-school'));
+  for(const name of Object.keys(SCHEMA).filter(n=>n!=='meta'))assert.deepEqual(afterSwitch[name],localBefore[name]);
+  assert.deepEqual(await cutoverDeltaMigrationDevice(confirmation),{...switched,replayed:true});
+  assert.deepEqual(await db.dumpAll(),afterSwitch);
+  // The new adapter uses the new authenticated ancestor and never writes an unchanged snapshot.
+  const switchedAdapter=deltaLabSyncAdapter({endpoint,area:'coach',token:c,password:newPass,synthetic:true,readData:()=>db.dumpAll()});
+  const newPlan=await prepareSync({area:'coach',endpoint,password:newPass,client:switchedAdapter});
+  assert.equal(newPlan.revision,1);assert.equal(newPlan.workspaceId,sourceFenceId);assert.equal(newPlan.conflicts.length,0);
+  assert.equal((await executeSync({plan:newPlan,choices:{},password:newPass,client:switchedAdapter,confirmed:true,reuseRemote:true})).revision,1);
+  assert.equal((await target.head()).revision,1);
+  await assert.rejects(prepareSync({area:'coach',endpoint:sourceEndpoint,password:oldPass,client:legacyCoach}),/другим сервером/);
+  // Verify no source privileged token or password is persisted in the binding.
+  for(const secret of [sourceFenceToken,sourceCoach,c,oldPass,newPass,backupPassword])assert.ok(!JSON.stringify(bound).includes(secret));
+  console.log('DELTA CUTOVER PASS: device-scoped read-only fence, preview, local edit race, atomic checkpoint/binding, exact retry, isolated school, preserved records and no redundant destination write.');
+
   // Simulate a late source write while the target's initial anchor commits.
   const schoolArgs={...args,sourceToken:sourceSchool,destinationToken:a,area:'school',current:baseData};
   const schoolPlan=await prepareDeltaMigration(schoolArgs);
