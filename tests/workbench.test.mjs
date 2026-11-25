@@ -29,6 +29,6 @@ test('lesson plan preview uses per-exercise restrictions and lesson date without
 });
 
 test('alternative candidates exclude matching restrictions, unknown tags and full exemptions',async()=>{
- const {catalog}=await import('../js/health.js'),lesson={classId:'c',date:'2026-11-24',activityIds:['run']},students=[{id:'a',classId:'c'},{id:'b',classId:'c'}],exercises=['run','jump','pass','unknown'].map(activityId=>({kind:'exercise',activityId})),ctx={students,activities:catalog,restrictions:[{studentId:'a',activityId:'jump',type:'avoid',dateFrom:'2026-01-01'}],exemptions:[{studentId:'b',dateFrom:'2026-01-01'}]};
+ const {catalog}=await import('../js/health.js'),lesson={classId:'c',date:'2026-11-24',activityIds:['run']},students=[{id:'a',classId:'c'},{id:'b',classId:'c'}],exercises=['run','jump','pass','unknown'].map(activityId=>({kind:'exercise',activityId})),ctx={students,activities:catalog,restrictions:[{studentId:'a',activityId:'jump',type:'avoid',dateFrom:'2026-01-01'}],exemptions:[{studentId:'b',dateFrom:'2026-01-01',dateTo:null}]};
  assert.deepEqual(W.alternativeExerciseCandidates(lesson,'a',exercises,ctx).rows.map(r=>r.exercise.activityId),['pass']);assert.equal(W.alternativeExerciseCandidates(lesson,'b',exercises,ctx).full,true);assert.deepEqual(W.alternativeExerciseCandidates(lesson,'b',exercises,ctx).rows,[]);assert.throws(()=>W.alternativeExerciseCandidates(lesson,'foreign',exercises,ctx));
 });
