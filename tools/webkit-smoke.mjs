@@ -182,6 +182,36 @@ try{
  await shown.getByRole('heading',{name:'Результативность за 10 минут LIVE',exact:true}).waitFor();assert.match(await shown.textContent(),/Отмеченные личные очки за 10 минут: 5/);
  await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
  console.log('WEBKIT LINEUP ANALYSIS PASS: actual persisted LIVE and VolleyPoint, measured joint time, source and player filters, starting positions and player points per 10 minutes.');
+ // Actual weekly dynamics: two weeks with different effort coverage, plus the
+ // persisted match time. The test uses a synthetic training date range.
+ const trainingFixture=await page.evaluate(async f=>{
+  const C=await import('./js/coach.js'),M=await import('./js/model.js'),U=await import('./js/screens/training-dynamics.js'),today=M.todayIso(),week=M.addDays(today,1-M.weekdayOf(today)),prev=M.addDays(week,-7);
+  const training={teamId:f.teamId,time:'12:00',title:'Синтетическая тренировка',minutes:60,exercises:[],roster:[f.playerId],held:true,attendance:{[f.playerId]:'present'}};
+  await C.saveTraining({...training,date:prev,effort:{[f.playerId]:{minutes:50,rpe:4}}});
+  await C.saveTraining({...training,date:week});
+  U.openTrainingDynamics(C.teamView(await C.loadCoach(),f.teamId),{playerId:f.playerId,initial:{from:prev,to:today}});
+  return {week,prev};
+ },lineupFixture);
+ await shown.getByRole('heading',{name:'Недельная динамика подготовки',exact:true}).waitFor();
+ assert.match(await shown.textContent(),/sRPE: 200/);assert.match(await shown.textContent(),/Фактические замеры: 0\/1/);
+ assert.match(await shown.textContent(),/LIVE 30:00/);
+ await shown.getByLabel('Спортсменка для нагрузки',{exact:true}).selectOption('');assert.match(await shown.textContent(),/сумма записей спортсменка × занятие/);
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'weekly dynamics overflow');
+ await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
+ console.log('WEBKIT TRAINING DYNAMICS PASS: persisted training, missing effort coverage, match exposure, player filter and mobile layout.');
+ // Historical PDF video journal is usable without a file for notes; no guessed timestamps.
+ await page.evaluate(async f=>{const C=await import('./js/coach.js'),W=await import('./js/workbench.js'),U=await import('./js/screens/video-review.js'),data=await C.loadCoach(),m=data.coachMatches.find(m=>m.id===f.matchId);await W.saveWork({kind:'videoReview',matchId:m.id,anchors:[{index:1,seconds:5},{index:4,seconds:90}],notes:[]});await U.openVideoReview(m,{players:data.coachPlayers.filter(p=>p.teamId===f.teamId)});},vpFixture);
+ await shown.getByRole('heading',{name:'Видеоразбор · Старое имя соперника',exact:true}).waitFor();
+ const unlinked=shown.locator('[data-review-rally="2"]');assert.match(await unlinked.textContent(),/Без привязки/);assert.equal(await unlinked.getByRole('button',{name:/Без привязки/}).isDisabled(),true);
+ assert.match(await shown.locator('[data-review-rally="1"]').textContent(),/0:05/);
+ await shown.getByLabel('Только привязанные события',{exact:true}).check();assert.equal(await shown.locator('[data-review-rally]').count(),2);
+ await shown.getByLabel('Только привязанные события',{exact:true}).uncheck();
+ await shown.locator('[data-review-rally="2"]').getByRole('button',{name:'☆ Добавить в подборку',exact:true}).click();await shown.locator('[data-review-rally="2"]').getByRole('button',{name:'★ Убрать из подборки',exact:true}).waitFor();
+ await shown.getByLabel('Только подборка',{exact:true}).check();assert.equal(await shown.locator('[data-review-rally]').count(),1);assert.match(await shown.textContent(),/Без привязки/);
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'historical video review overflow');
+ await shown.getByRole('button',{name:'Закрыть',exact:true}).click();
+ console.log('WEBKIT HISTORICAL VIDEO PASS: imported journal, manually saved anchors, unlinked seek disabled, favorite and linked filters, local-only UI.');
+
 
  await page.evaluate(async()=>{(await import('./js/screens/studio.js')).openStudio({scope:'test',template:'result',team:'Демо',opponent:'Гости',score:'2:1'});});
  await page.locator('.studio-editor canvas').waitFor();assert.equal(await page.locator('.studio-editor textarea[aria-label="Текст публикации"]').inputValue(),'Итоговый результат\n\nДемо — Гости\n\n2:1');
