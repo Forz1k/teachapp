@@ -363,11 +363,11 @@ export async function replaySyncDeltas({base,baseRevision,area,workspaceId,entri
 
 /* Local synthetic relay only. No change to the production v1/v2 client.
    Keep credential roles separate; never persist tokens or plaintext snapshots. */
-export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,fetcher=globalThis.fetch,timeoutMs=15000}={}){
+export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sealToken,fetcher=globalThis.fetch,timeoutMs=15000}={}){
  endpoint=normalizeEndpoint(endpoint);
  check(validArea(area)&&['localhost','127.0.0.1','[::1]'].includes(new URL(endpoint).hostname)&&new URL(endpoint).protocol==='http:','Delta LAB доступен только на localhost');
  const validToken=t=>typeof t==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(t);
- check(validToken(token)&&(compactToken===undefined||validToken(compactToken)&&compactToken!==token)&&(rotateToken===undefined||validToken(rotateToken)&&rotateToken!==token&&rotateToken!==compactToken),'Проверьте отдельные тестовые ключи');
+ check(validToken(token)&&(compactToken===undefined||validToken(compactToken)&&compactToken!==token)&&(rotateToken===undefined||validToken(rotateToken)&&rotateToken!==token&&rotateToken!==compactToken)&&(sealToken===undefined||validToken(sealToken)&&![token,compactToken,rotateToken].includes(sealToken)),'Проверьте отдельные тестовые ключи');
  const url=endpoint+'/v1/delta/'+area+'/';
  async function request(path,body,secret=token){
   const encoded=body===undefined?undefined:JSON.stringify(body);
@@ -400,7 +400,7 @@ export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,fet
   check(ack?.revision===expectedRevision+1&&typeof ack.replayed==='boolean','Сервер не подтвердил снимок');
   return ack;
  }
- return {head:()=>request('head'),getRevision:async rev=>{
+ return {head:()=>request('head'),rollbackStatus:()=>request('rollback-status'),sealRollback:migrationId=>{check(validToken(sealToken)&&typeof migrationId==='string'&&uuid.test(migrationId),'Нужен отдельный ключ закрытия назначения');return request('rollback-seal',{expectedRevision:1,migrationId},sealToken);},getRevision:async rev=>{
    check(revision(rev),'Некорректная ревизия');const row=await request('revision/'+rev);
    if(!Object.hasOwn(row,'multipart'))return row;
    const manifest=normalizeAnchorManifest(row.multipart);
@@ -651,7 +651,7 @@ async function migrationFenceRequest(source,area,token,path,fetcher,body){
   try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>4096){await reader.cancel();throw Error('Слишком большой ответ барьера');}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}finally{reader.releaseLock();}
   const state=JSON.parse(text);
   check(exactFields(state,['revision','fence'])&&Number.isSafeInteger(state.revision)&&state.revision>=0&&(state.fence===null||exactFields(state.fence,['revision','migrationId'])&&revision(state.revision)&&state.fence.revision===state.revision&&typeof state.fence.migrationId==='string'&&uuid.test(state.fence.migrationId)),'Некорректный ответ барьера записи');
-  if(body)check(state.revision===body.expectedRevision&&state.fence?.migrationId===body.migrationId,'Барьер не подтверждён');
+  if(body)check(path==='migration-rollback'?state.revision>=body.expectedRevision&&state.fence===null:state.revision===body.expectedRevision&&state.fence?.migrationId===body.migrationId,'Барьер не подтверждён');
   return state;
  }finally{clearTimeout(timer);}
 }
@@ -662,6 +662,9 @@ export function deltaMigrationFenceClient({sourceEndpoint,destinationEndpoint,ar
  return {get:()=>request(),freeze:({expectedRevision,migrationId,confirmed,backupVerified})=>{
   check(confirmed===true&&backupVerified===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите резервную копию и необратимую блокировку LAB');
   return request({expectedRevision,migrationId:migrationId.toLowerCase()});
+ },resumeSource:({expectedRevision,migrationId,confirmed,backupVerified,allDevicesReconciled})=>{
+  check(confirmed===true&&backupVerified===true&&allDevicesReconciled===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите проверенные копии и возврат всех устройств');
+  return migrationFenceRequest(source,area,sourceFenceToken,'migration-rollback',fetcher,{expectedRevision,migrationId:migrationId.toLowerCase()});
  }};
 }
 export async function deltaMigrationFenceStatus({sourceEndpoint,destinationEndpoint,area,sourceToken,protocolVersion=1,synthetic=false,fetcher=globalThis.fetch}){
@@ -727,6 +730,7 @@ export async function cutoverDeltaMigrationDevice(args){
   check(f.revision===p.sourceRevision&&f.fence?.migrationId===p.workspaceId&&source.revision===p.sourceRevision&&same(source.envelope,p.sourceEnvelope),'Нет подтверждённого барьера для этого файла переноса');
  };
  const verifyTarget=async()=>{
+  const status=await target.rollbackStatus();check(status.revision===1&&status.seal===null,'Назначение закрыто для отката или уже изменилось');
   const h=await target.head();
   check(validDeltaHead(h)&&h.revision===1&&h.anchorRevision===1&&h.count===1,'Целевой контур должен оставаться на начальной ревизии до переключения');
   const row=await target.getRevision(1);
@@ -747,6 +751,56 @@ export async function cutoverDeltaMigrationDevice(args){
   }
  });
  return {...summary,status:'cutover-completed'};
+}
+
+// Conservative rollback: only the original, unused destination anchor can
+// be permanently sealed. No deleting records or rolling back a live ledger.
+async function verifyRollbackDestination(p,target,requireSeal){
+ const h=await target.head(),status=await target.rollbackStatus();
+ check(validDeltaHead(h)&&h.revision===1&&h.anchorRevision===1&&h.count===1&&status.revision===1,'Назначение уже использовалось; автоматический откат запрещён');
+ const row=await target.getRevision(1);
+ check(row.revision===1&&row.kind==='anchor'&&same(row.envelope,p.envelope),'Якорь назначения не совпадает с файлом');
+ const expected={migrationId:p.workspaceId,revision:1};
+ check(requireSeal?same(status.seal,expected):status.seal===null||same(status.seal,expected),'Нет подходящего необратимого барьера назначения');
+ return status;
+}
+async function verifyRollbackSource(p,args,sourceRead){
+ const f=await deltaMigrationFenceStatus(args),source=await sourceRead();
+ check(f.revision===p.sourceRevision&&f.fence?.migrationId===p.workspaceId&&source.revision===p.sourceRevision&&same(source.envelope,p.sourceEnvelope),'Источник больше не заблокирован на исходном снимке');
+}
+export async function sealDeltaMigrationRollback(args){
+ const p=await openDeltaMigration(args),{sourceRead}=migrationClients(args);
+ check(args.confirmed===true&&args.backupVerified===true&&args.expectedMigrationId===p.workspaceId&&args.expectedSourceRevision===p.sourceRevision,'Подтвердите проверенный файл и точную ревизию отката');
+ check(typeof args.destinationSealToken==='string'&&![args.sourceToken,args.destinationToken,args.sourceFenceToken].includes(args.destinationSealToken),'Нужен отдельный ключ закрытия назначения');
+ const target=deltaLabClient(p.destination,p.area,args.destinationToken,{sealToken:args.destinationSealToken,fetcher:args.fetcher});
+ await verifyRollbackSource(p,args,sourceRead);
+ const before=await verifyRollbackDestination(p,target,false);
+ const ack=await target.sealRollback(p.workspaceId);
+ check(ack.revision===1&&same(ack.seal,{migrationId:p.workspaceId,revision:1}),'Закрытие назначения не подтверждено');
+ await verifyRollbackDestination(p,target,true);
+ return {area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision,destinationRevision:1,replayed:before.seal!==null,status:'rollback-sealed'};
+}
+export async function rollbackDeltaMigrationDevice(args){
+ check(args.synthetic===true&&args.protocolVersion!==2&&args.sourceFenceToken===undefined&&args.destinationSealToken===undefined,'Возврат устройства только в LAB, без административных ключей');
+ const current=await db.dumpAll(),p=await openDeltaMigration({...args,current}),{sourceRead,target}=migrationClients(args);
+ const cp=getCheckpoint(current,p.area),local=projectScope(current,p.area),bindingId=migrationBindingKey(p.area);
+ const binding=current.meta.find(r=>r.id===bindingId)??null;
+ const expectedBinding={id:bindingId,protocol:'delta-lab-v1',area:p.area,migrationId:p.workspaceId,sourceEndpoint:p.source,sourceWorkspaceId:p.sourceWorkspaceId,sourceRevision:p.sourceRevision,destinationEndpoint:p.destination,destinationWorkspaceId:p.workspaceId,destinationRevision:1,digest:p.digest};
+ const next={id:keyOf(p.area),endpoint:p.source,workspaceId:p.sourceWorkspaceId,revision:p.sourceRevision,envelope:p.sourceEnvelope};
+ const replay=binding===null;
+ if(replay)check(same(cp,next),'Нет точной исходной контрольной точки; возврат требует отдельной проверки');
+ else check(same(binding,expectedBinding)&&same(cp,{id:keyOf(p.area),endpoint:p.destination,workspaceId:p.workspaceId,revision:1,envelope:p.envelope}),'Назначение или контрольная точка изменились; возврат запрещён');
+ check(same(local,p.snapshot),'Есть несогласованные локальные изменения; сохраните их и не откатывайте устройство автоматически');
+ await verifyRollbackSource(p,args,sourceRead);await verifyRollbackDestination(p,target,true);
+ const summary={area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision,destinationRevision:1,replayed:replay};
+ if(args.confirmed!==true)return {...summary,status:'rollback-preview'};
+ check(args.backupVerified===true&&args.expectedMigrationId===p.workspaceId&&args.expectedSourceRevision===p.sourceRevision,'Подтвердите проверенный файл и точную ревизию');
+ await db.transaction(names,'readwrite',async s=>{
+  const latest=Object.fromEntries(await Promise.all(names.map(async n=>[n,await s[n].getAll()])));
+  check(same(getCheckpoint(latest,p.area),cp)&&same(projectScope(latest,p.area),local)&&same(latest.meta.find(r=>r.id===bindingId)??null,binding),'Локальные данные изменились; повторите предпросмотр');
+  if(!replay){await s.meta.put(next);await s.meta.delete(bindingId);await s.meta.delete(statusKey(p.area));}
+ });
+ return {...summary,status:'rollback-completed'};
 }
 
 /* Explicit laboratory adapter for the existing prepare/preview/execute pipeline.

@@ -4,6 +4,7 @@ import {LIMIT,digestToken} from './cloudflare-protocol.mjs';
 import {normalizeDeltaWrite,decideDeltaWrite,MAX_DELTA_ENTRIES,MAX_LEDGER_BYTES} from './delta-ledger.mjs';
 import {normalizeAnchorManifest,anchorUploadId,verifyAnchorPart} from '../js/delta-anchor.js';
 const UPLOAD_TTL=10*60*1000,utf8=new TextEncoder();
+const migrationId=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const multipartRoute=/^\/multipart\/(anchor|compact|rotate)\/([a-f0-9]{64})\/(begin|commit|abort|part\/(0|[1-9]\d?))$/;
 const partRoute=/^\/revision\/([1-9]\d{0,14})\/part\/(0|[1-9]\d?)$/;
 const exact=(v,keys)=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===keys.length&&keys.every(k=>Object.hasOwn(v,k));
@@ -12,7 +13,7 @@ const H={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-
 const json=(status,body,cors={})=>new Response(JSON.stringify(body),{status,headers:{...H,...cors}});
 function config(env,url){
  try{
-  const origin=new URL(env.TEACHAPP_DELTA_ORIGIN),hashes=JSON.parse(env.TEACHAPP_DELTA_TOKEN_HASHES||'{}'),compactors=JSON.parse(env.TEACHAPP_DELTA_COMPACT_HASHES||'{}'),rotators=JSON.parse(env.TEACHAPP_DELTA_ROTATE_HASHES||'{}'),seen=new Set();
+  const origin=new URL(env.TEACHAPP_DELTA_ORIGIN),hashes=JSON.parse(env.TEACHAPP_DELTA_TOKEN_HASHES||'{}'),compactors=JSON.parse(env.TEACHAPP_DELTA_COMPACT_HASHES||'{}'),rotators=JSON.parse(env.TEACHAPP_DELTA_ROTATE_HASHES||'{}'),sealers=JSON.parse(env.TEACHAPP_DELTA_SEAL_HASHES||'{}'),seen=new Set();
   if(env.TEACHAPP_DELTA_SYNTHETIC!=='true'||!loopback.includes(url.hostname)||origin.protocol!=='http:'||!loopback.includes(origin.hostname)||origin.origin!==env.TEACHAPP_DELTA_ORIGIN||!hashes||typeof hashes!=='object'||Array.isArray(hashes)||Object.keys(hashes).some(k=>!areas.includes(k)))return null;
   for(const area of areas){
    const list=hashes[area]??[];
@@ -29,7 +30,9 @@ function config(env,url){
   }
   if(!rotators||typeof rotators!=='object'||Array.isArray(rotators)||Object.keys(rotators).some(k=>!areas.includes(k)))return null;
   for(const area of areas){const h=rotators[area];if(h===undefined)continue;if(typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)||seen.has(h)||!hashes[area].length||!compactors[area])return null;seen.add(h);}
-  return readCount?{origin:origin.origin,hashes,compactors,rotators,reserved:[...seen]}:null;
+  if(!sealers||typeof sealers!=='object'||Array.isArray(sealers)||Object.keys(sealers).some(k=>!areas.includes(k)))return null;
+  for(const area of areas){const h=sealers[area];if(h===undefined)continue;if(typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)||seen.has(h)||!hashes[area].length)return null;seen.add(h);}
+  return readCount?{origin:origin.origin,hashes,compactors,rotators,sealers,reserved:[...seen]}:null;
  }catch{return null;}
 }
 function equal(a,b){let d=0;for(let i=0;i<64;i++)d|=a.charCodeAt(i)^b.charCodeAt(i);return d===0;}
@@ -54,11 +57,11 @@ export default {async fetch(request,env){
  const route=/^\/v1\/delta\/(school|coach)(\/.*)$/.exec(u.pathname);
  if(!route||u.search)return json(404,{error:'route'});
  const [,area,internal]=route,path=internal.slice(1),multi=multipartRoute.exec(internal),part=partRoute.exec(internal);
- if(!multi&&!part&&!/^(head|anchor|append|compact|revision\/[1-9]\d{0,14})$/.test(path))return json(404,{error:'route'});
+ if(!multi&&!part&&!/^(head|anchor|append|compact|rollback-seal|rollback-status|revision\/[1-9]\d{0,14})$/.test(path))return json(404,{error:'route'});
  const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};
  if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
  if(request.method==='OPTIONS')return origin===settings.origin?new Response(null,{status:204,headers:{...cors,'Access-Control-Allow-Methods':'GET, PUT, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'}}):json(403,{error:'origin'});
- const write=!!multi||['anchor','append','compact'].includes(path);
+ const write=!!multi||['anchor','append','compact','rollback-seal'].includes(path);
  if(request.method!==(write?'PUT':'GET'))return json(405,{error:'method'},cors);
  try{
   const token=/^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(request.headers.get('Authorization')||'');
@@ -80,6 +83,7 @@ export class DeltaLedger extends DurableObject{
   this.sql.exec('CREATE TABLE IF NOT EXISTS anchor_parts (revision INTEGER NOT NULL, part INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(revision,part))');
   this.sql.exec('CREATE TABLE IF NOT EXISTS credential_state (id INTEGER PRIMARY KEY CHECK(id=1), epoch INTEGER NOT NULL, hashes TEXT NOT NULL, compact TEXT NOT NULL)');
   this.sql.exec('CREATE TABLE IF NOT EXISTS retired_hashes (hash TEXT PRIMARY KEY)');
+  this.sql.exec('CREATE TABLE IF NOT EXISTS rollback_seal (id INTEGER PRIMARY KEY CHECK(id=1), migration_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision=1))');
  }
  credentials(area){
   const r=this.sql.exec('SELECT epoch,hashes,compact FROM credential_state WHERE id=1').toArray()[0];
@@ -87,7 +91,7 @@ export class DeltaLedger extends DurableObject{
  }
  allowed(area,digest,kind){
   const c=this.credentials(area);
-  return authorized(digest,kind==='rotate'?[this.settings.rotators[area]].filter(Boolean):kind==='compact'?[c.compactHash].filter(Boolean):c.readHashes);
+  return authorized(digest,kind==='seal'?[this.settings.sealers[area]].filter(Boolean):kind==='rotate'?[this.settings.rotators[area]].filter(Boolean):kind==='compact'?[c.compactHash].filter(Boolean):c.readHashes);
  }
  validRotation(area,rotation){
   const c=this.credentials(area),used=new Set([...this.settings.reserved,...c.readHashes,c.compactHash,...this.sql.exec('SELECT hash FROM retired_hashes').toArray().map(r=>r.hash)]);
@@ -98,6 +102,7 @@ export class DeltaLedger extends DurableObject{
   for(const h of [...c.readHashes,c.compactHash].filter(Boolean))this.sql.exec('INSERT OR IGNORE INTO retired_hashes(hash) VALUES(?)',h);
   this.sql.exec('INSERT OR REPLACE INTO credential_state(id,epoch,hashes,compact) VALUES(1,?,?,?)',c.epoch+1,JSON.stringify(rotation.readHashes),rotation.compactHash);
  }
+ seal(){const r=this.sql.exec('SELECT migration_id,revision FROM rollback_seal WHERE id=1').toArray()[0];return r?{migrationId:r.migration_id,revision:r.revision}:null;}
  last(revision){return this.sql.exec('SELECT revision,kind,envelope AS serialized FROM revisions WHERE revision=?',revision).toArray()[0];}
  stage(){return this.sql.exec('SELECT id,manifest,expires FROM staged_anchor LIMIT 1').toArray()[0];}
  clearStage(id){this.sql.exec('DELETE FROM staged_parts WHERE id=?',id);this.sql.exec('DELETE FROM staged_anchor WHERE id=?',id);}
@@ -119,6 +124,7 @@ export class DeltaLedger extends DurableObject{
    const packet=this.packet(m,id);
    return this.storage.transactionSync(()=>{
     if(!this.allowed(area,digest,kind))return json(401,{error:'unauthorized'});
+    if(this.seal())return json(423,{error:'rollback-sealed'});
     const h=this.head();this.pruneStage(h);
     const d=decideDeltaWrite(h,kind,packet,this.last(h.revision));
     if(d.status===200)return json(200,{revision:d.revision,replayed:true});
@@ -135,6 +141,7 @@ export class DeltaLedger extends DurableObject{
    if(!exact(input,[]))return json(400,{error:'packet'});
    return this.storage.transactionSync(()=>{
     if(!this.allowed(area,digest,kind))return json(401,{error:'unauthorized'});
+    if(this.seal())return json(423,{error:'rollback-sealed'});
     const h=this.head();this.pruneStage(h);
     const last=this.last(h.revision),stored=last&&JSON.parse(last.serialized);
     if(action==='commit'&&stored?.uploadId===id&&stored.multipart?.kind===kind&&stored.multipart.expectedRevision+1===h.revision)return json(200,{revision:h.revision,replayed:true});
@@ -162,6 +169,7 @@ export class DeltaLedger extends DurableObject{
   try{await verifyAnchorPart(m,index,input.data);}catch{return json(400,{error:'part'});}
   return this.storage.transactionSync(()=>{
    if(!this.allowed(area,digest,kind))return json(401,{error:'unauthorized'});
+   if(this.seal())return json(423,{error:'rollback-sealed'});
    const h=this.head();this.pruneStage(h);
    const s=this.stage();
    if(!s||s.id!==id||s.manifest!==stage.manifest||s.expires!==stage.expires)return json(409,{error:'upload-missing-or-stale'});
@@ -174,10 +182,11 @@ export class DeltaLedger extends DurableObject{
  head(){return this.sql.exec('SELECT COALESCE(MAX(revision),0) AS revision, COALESCE(MIN(revision),0) AS anchorRevision, COUNT(*) AS count, COALESCE(SUM(bytes),0) AS bytes FROM revisions').toArray()[0];}
  async fetch(request){
   const path=new URL(request.url).pathname,area=request.headers.get('X-Delta-Area'),digest=request.headers.get('X-Delta-Digest'),multi=multipartRoute.exec(path);
-  const role=multi?.[1]|| (path==='/compact'?'compact':'read');
+  const role=multi?.[1]|| (path==='/rollback-seal'?'seal':path==='/compact'?'compact':'read');
   try{
    if(!this.settings||!areas.includes(area)||!this.allowed(area,digest,role))return json(401,{error:'unauthorized'});
    if(request.method==='GET'){
+    if(path==='/rollback-status')return json(200,{revision:this.head().revision,seal:this.seal()});
     if(path==='/head'){
      const h=this.head();return json(200,{revision:h.revision,anchorRevision:h.anchorRevision,count:h.count,bytes:h.bytes,maxEntries:MAX_DELTA_ENTRIES+1,maxBytes:MAX_LEDGER_BYTES,keyEpoch:this.credentials(area).epoch});
     }
@@ -193,12 +202,31 @@ export class DeltaLedger extends DurableObject{
     if(row){const e=JSON.parse(row.envelope);return json(200,{revision:row.revision,kind:row.kind,...(e.multipart?e:{envelope:e})});}
     const h=this.head();return h.anchorRevision&&Number(m[1])<h.anchorRevision?json(410,{error:'compacted',anchorRevision:h.anchorRevision}):json(404,{error:'revision'});
    }
-   if(request.method==='PUT'&&multi)return await this.multipart(multi,await request.json(),area,digest);
+   if(request.method==='PUT'&&path==='/rollback-seal'){
+    const input=await request.json();
+    if(!exact(input,['expectedRevision','migrationId'])||input.expectedRevision!==1||typeof input.migrationId!=='string'||!migrationId.test(input.migrationId))return json(400,{error:'packet'});
+    return this.storage.transactionSync(()=>{
+     if(!this.allowed(area,digest,'seal'))return json(401,{error:'unauthorized'});
+     const h=this.head(),old=this.seal();
+     if(old)return old.migrationId===input.migrationId?json(200,{revision:h.revision,seal:old}):json(423,{error:'rollback-sealed'});
+     // Never discard a committed delta, compaction or rotation. The seal races
+     // all other commits inside the same synchronous transaction.
+     if(h.revision!==1||h.anchorRevision!==1||h.count!==1||this.credentials(area).epoch!==0)return json(409,{error:'destination-already-used'});
+     const staged=this.stage();if(staged)this.clearStage(staged.id);
+     this.sql.exec('INSERT INTO rollback_seal(id,migration_id,revision) VALUES(1,?,1)',input.migrationId);
+     return json(200,{revision:1,seal:this.seal()});
+    });
+   }
+   if(request.method==='PUT'&&multi){
+    if(this.seal())return json(423,{error:'rollback-sealed'});
+    return await this.multipart(multi,await request.json(),area,digest);
+   }
    if(request.method!=='PUT'||!['/anchor','/append','/compact'].includes(path))return json(404,{error:'route'});
    const packet=normalizeDeltaWrite(await request.json()),kind=path==='/anchor'?'anchor':path==='/compact'?'compact':'delta';
    if(!packet)return json(400,{error:'packet'});
    const result=this.storage.transactionSync(()=>{
     if(!this.allowed(area,digest,role))return {status:401,error:'unauthorized'};
+    if(this.seal())return {status:423,error:'rollback-sealed'};
     const h=this.head(),last=this.last(h.revision);this.pruneStage(h);
     const decision=decideDeltaWrite(h,kind,packet,last);
     if(decision.status===201){

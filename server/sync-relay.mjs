@@ -20,7 +20,7 @@ async function readBody(req,maxBytes=limit){
  for await(const part of req){total+=part.length;if(total>maxBytes)throw Object.assign(Error(),{status:413});parts.push(part);}
  try{return JSON.parse(Buffer.concat(parts).toString('utf8'));}catch{throw Object.assign(Error(),{status:400});}
 }
-export async function createRelay({directory,tokens,allowedOrigin,migrationFenceTokens}){
+export async function createRelay({directory,tokens,allowedOrigin,migrationFenceTokens,migrationRollbackTargets}){
  if(typeof directory!=='string'||!directory)throw Error('Configure a private storage directory');
  let origin;
  try{const u=new URL(allowedOrigin);if(u.origin!==allowedOrigin||!['https:','http:'].includes(u.protocol)||u.protocol==='http:'&&!['localhost','127.0.0.1','[::1]'].includes(u.hostname))throw Error();origin=u.origin;}catch{throw Error('Configure exact HTTPS client origin (loopback HTTP only for tests)');}
@@ -41,6 +41,27 @@ export async function createRelay({directory,tokens,allowedOrigin,migrationFence
    if(typeof t!=='string'||!tokenPattern.test(t)||all.has(t)||!digests[area].length)throw Error('Configure separate migration fence tokens');
    all.add(t);fenceDigests[area]=hash(t);
   }
+ }
+ const rollbackTargets={};
+ if(migrationRollbackTargets!==undefined){
+  if(!migrationRollbackTargets||typeof migrationRollbackTargets!=='object'||Array.isArray(migrationRollbackTargets)||Object.keys(migrationRollbackTargets).some(a=>!areas.includes(a)))throw Error('Invalid rollback targets');
+  for(const [area,target] of Object.entries(migrationRollbackTargets)){
+   const u=new URL(target?.endpoint);
+   if(!fenceDigests[area]||!target||Object.keys(target).sort().join(',')!=='endpoint,token'||u.protocol!=='http:'||!['localhost','127.0.0.1','[::1]'].includes(u.hostname)||u.origin!==target.endpoint||!u.port||typeof target.token!=='string'||!tokenPattern.test(target.token)||all.has(target.token))throw Error('Configure distinct pinned loopback rollback target');
+   all.add(target.token);rollbackTargets[area]={endpoint:u.origin,token:target.token};
+  }
+ }
+ async function verifiedRollbackSeal(area,id){
+  const target=rollbackTargets[area];
+  if(!target)return false;
+  try{
+   const r=await fetch(target.endpoint+'/v1/delta/'+area+'/rollback-status',{headers:{Authorization:'Bearer '+target.token},redirect:'error',signal:AbortSignal.timeout(10000)});
+   if(!r.ok||!r.body)return false;
+   const reader=r.body.getReader();let size=0;const parts=[];
+   try{for(;;){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>4096){await reader.cancel();return false;}parts.push(value);}}finally{reader.releaseLock();}
+   const v=JSON.parse(Buffer.concat(parts).toString('utf8'));
+   return v&&Object.keys(v).sort().join(',')==='revision,seal'&&v.revision===1&&validFence(v.seal,1)&&v.seal.migrationId===id;
+  }catch{return false;}
  }
  directory=resolve(directory);
  await mkdir(directory,{recursive:true,mode:0o700});
@@ -64,6 +85,7 @@ export async function createRelay({directory,tokens,allowedOrigin,migrationFence
   catch(e){if(e.code==='ENOENT')return {revision:0,envelope:null};throw e;}
   if(!Number.isSafeInteger(data.revision)||data.revision<1||!envelopeValid(data.envelope))throw Error('Invalid stored revision');
   if(Object.hasOwn(data,'fence')&&!validFence(data.fence,data.revision))throw Error('Invalid stored migration fence');
+  if(Object.hasOwn(data,'rollback')&&(data.fence||!Number.isSafeInteger(data.rollback?.revision)||data.rollback.revision<1||data.rollback.revision>data.revision||!validFence(data.rollback,data.rollback.revision)))throw Error('Invalid stored migration rollback');
   return data;
  }
  async function write(area,data){
@@ -97,6 +119,33 @@ export async function createRelay({directory,tokens,allowedOrigin,migrationFence
     if(!fenceDigests[area]&&!current.fence){json(res,404,{error:'route'});return;}
     json(res,200,{revision:current.revision,fence:current.fence??null});return;
    }
+   const rollbackMatch=/^\/v1\/migration-rollback\/(school|coach)$/.exec(req.url||'');
+   if(rollbackMatch){
+    const area=rollbackMatch[1],digest=fenceDigests[area];
+    if(!digest||!rollbackTargets[area]){json(res,404,{error:'route'});return;}
+    if(req.method==='OPTIONS'){
+     if(requestOrigin!==origin){json(res,403,{error:'origin'});return;}
+     res.writeHead(204,{'Access-Control-Allow-Methods':'PUT, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300','Cache-Control':'no-store'});res.end();return;
+    }
+    const auth=/^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(req.headers.authorization||'');
+    if(!auth||!timingSafeEqual(hash(auth[1]),digest)){json(res,401,{error:'unauthorized'});return;}
+    if(req.method!=='PUT'){json(res,405,{error:'method'});return;}
+    if(!/^application\/json(?:;|$)/i.test(req.headers['content-type']||'')){json(res,415,{error:'content-type'});return;}
+    const body=await readBody(req,4096);
+    if(!body||Object.keys(body).sort().join(',')!=='expectedRevision,migrationId'||!Number.isSafeInteger(body.expectedRevision)||body.expectedRevision<1||typeof body.migrationId!=='string'||!migrationIdPattern.test(body.migrationId)){json(res,400,{error:'packet'});return;}
+    const result=await serial(area,async()=>{
+     const current=await get(area);
+     if(current.rollback?.migrationId===body.migrationId&&current.rollback.revision===body.expectedRevision)return {status:200,body:{revision:current.revision,fence:null}};
+     if(current.revision!==body.expectedRevision||current.fence?.migrationId!==body.migrationId)return {status:409,body:{error:'fence-mismatch'}};
+     // The destination address/token are pinned by the operator, never supplied by
+     // the requesting device. A permanent seal cannot race with source release.
+     if(!await verifiedRollbackSeal(area,body.migrationId))return {status:409,body:{error:'destination-not-sealed'}};
+     const {fence,...snapshot}=current;
+     await write(area,{...snapshot,rollback:fence});
+     return {status:200,body:{revision:current.revision,fence:null}};
+    });
+    json(res,result.status,result.body);return;
+   }
    const fenceMatch=/^\/v1\/migration-fence\/(school|coach)$/.exec(req.url||'');
    if(fenceMatch){
     const area=fenceMatch[1],digest=fenceDigests[area];
@@ -116,6 +165,7 @@ export async function createRelay({directory,tokens,allowedOrigin,migrationFence
     if(!body||Object.keys(body).sort().join(',')!=='expectedRevision,migrationId'||!Number.isSafeInteger(body.expectedRevision)||body.expectedRevision<1||typeof body.migrationId!=='string'||!migrationIdPattern.test(body.migrationId)){json(res,400,{error:'packet'});return;}
     const result=await serial(area,async()=>{
      const current=await get(area);
+     if(current.rollback)return {status:409,body:{error:'rollback-completed'}};
      if(current.fence){
       if(current.fence.revision===body.expectedRevision&&current.fence.migrationId===body.migrationId)return {status:200,body:{revision:current.revision,fence:current.fence}};
       return {status:423,body:{error:'migration-frozen'}};
@@ -145,7 +195,7 @@ export async function createRelay({directory,tokens,allowedOrigin,migrationFence
     if(current.fence)return {frozen:true};
     if(current.revision!==body.expectedRevision)return null;
     if(current.revision===Number.MAX_SAFE_INTEGER)throw Error('Revision limit');
-    const next={revision:current.revision+1,envelope:body.envelope};
+    const next={revision:current.revision+1,envelope:body.envelope,...(current.rollback?{rollback:current.rollback}:{})};
     await write(area,next);return next;
    });
    if(result?.frozen){json(res,423,{error:'migration-frozen'});return;}

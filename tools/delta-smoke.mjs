@@ -20,9 +20,9 @@ import {defaultSettings} from '../js/model.js';
 import {BACKUP_VERSION} from '../js/backup.js';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
 import {splitDeltaAnchor} from '../js/delta-anchor.js';
-import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation,createDeltaDeviceRecovery,openDeltaDeviceRecovery,rebindDeltaDevice,relayClient,deltaMigrationFenceClient,deltaMigrationFenceStatus,cutoverDeltaMigrationDevice,prepareDeltaMigration,openDeltaMigration,inspectDeltaMigrationDevice,commitDeltaMigration} from '../js/sync.js';
+import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation,createDeltaDeviceRecovery,openDeltaDeviceRecovery,rebindDeltaDevice,relayClient,deltaMigrationFenceClient,deltaMigrationFenceStatus,cutoverDeltaMigrationDevice,sealDeltaMigrationRollback,rollbackDeltaMigrationDevice,prepareDeltaMigration,openDeltaMigration,inspectDeltaMigrationDevice,commitDeltaMigration} from '../js/sync.js';
 
-const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),coachAdmin='E'.repeat(43),rotator='F'.repeat(43),coachRotator='G'.repeat(43),area='school',password='synthetic-delta-test-password';
+const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),coachAdmin='E'.repeat(43),rotator='F'.repeat(43),coachRotator='G'.repeat(43),sealKey='K'.repeat(43),coachSealKey='L'.repeat(43),area='school',password='synthetic-delta-test-password';
 const workspaceId='00000000-0000-4000-8000-000000000001';
 const webRoot=process.cwd(),site=httpServer(async(req,res)=>{try{const u=new URL(req.url,'http://127.0.0.1'),path=resolve(webRoot,'.'+decodeURIComponent(u.pathname));if(!path.startsWith(webRoot+sep))throw Error();const bytes=await readFile(path);res.writeHead(200,{'Content-Type':{'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'}[extname(path)]||'application/octet-stream','Cache-Control':'no-store'});res.end(bytes);}catch{if(!res.headersSent)res.writeHead(404);res.end();}});
 await new Promise(r=>site.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+site.address().port;
@@ -31,7 +31,7 @@ await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address()
 const endpoint='http://127.0.0.1:'+port;let proc,output='',workerState=join(state,'primary');
 async function start(){
  const hashes={school:[await digestToken(a),await digestToken(b)],coach:[await digestToken(c)]};
- proc=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.delta-dev.jsonc','--local','--ip','127.0.0.1','--port',String(port),'--persist-to',workerState,'--var','TEACHAPP_DELTA_SYNTHETIC:true','--var','TEACHAPP_DELTA_ORIGIN:'+origin,'--var','TEACHAPP_DELTA_TOKEN_HASHES:'+JSON.stringify(hashes),'--var','TEACHAPP_DELTA_COMPACT_HASHES:'+JSON.stringify({school:await digestToken(admin),coach:await digestToken(coachAdmin)}),'--var','TEACHAPP_DELTA_ROTATE_HASHES:'+JSON.stringify({school:await digestToken(rotator),coach:await digestToken(coachRotator)})],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
+ proc=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.delta-dev.jsonc','--local','--ip','127.0.0.1','--port',String(port),'--persist-to',workerState,'--var','TEACHAPP_DELTA_SYNTHETIC:true','--var','TEACHAPP_DELTA_ORIGIN:'+origin,'--var','TEACHAPP_DELTA_TOKEN_HASHES:'+JSON.stringify(hashes),'--var','TEACHAPP_DELTA_COMPACT_HASHES:'+JSON.stringify({school:await digestToken(admin),coach:await digestToken(coachAdmin)}),'--var','TEACHAPP_DELTA_ROTATE_HASHES:'+JSON.stringify({school:await digestToken(rotator),coach:await digestToken(coachRotator)}),'--var','TEACHAPP_DELTA_SEAL_HASHES:'+JSON.stringify({school:await digestToken(sealKey),coach:await digestToken(coachSealKey)})],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
  proc.stdout.on('data',x=>output=(output+x).slice(-8000));proc.stderr.on('data',x=>output=(output+x).slice(-8000));
  for(let i=0;i<150;i++){if(proc.exitCode!==null)throw Error(output);try{if((await fetch(endpoint+'/healthz',{signal:AbortSignal.timeout(1000)})).ok)return;}catch{}await sleep(500);}
  throw Error('Startup timeout '+output);
@@ -362,7 +362,7 @@ try{
  await stop();workerState=join(state,'migration');await start();
  const sourceSchool='H'.repeat(43),sourceCoach='I'.repeat(43),oldPass='synthetic-legacy-password',newPass='synthetic-destination-password',backupPassword='synthetic-migration-backup-password';
  const sourceFenceToken='J'.repeat(43);
- const legacy=await createRelay({directory:join(state,'legacy'),tokens:{school:[sourceSchool],coach:[sourceCoach]},allowedOrigin:origin,migrationFenceTokens:{coach:sourceFenceToken}});
+ const legacy=await createRelay({directory:join(state,'legacy'),tokens:{school:[sourceSchool],coach:[sourceCoach]},allowedOrigin:origin,migrationFenceTokens:{coach:sourceFenceToken},migrationRollbackTargets:{coach:{endpoint,token:c}}});
  await new Promise((resolve,reject)=>{legacy.once('error',reject);legacy.listen(0,'127.0.0.1',resolve);});
  try{
   const sourceEndpoint='http://127.0.0.1:'+legacy.address().port,legacyCoach=relayClient(sourceEndpoint,'coach',sourceCoach),legacySchool=relayClient(sourceEndpoint,'school',sourceSchool);
@@ -464,6 +464,50 @@ try{
   for(const secret of [sourceFenceToken,sourceCoach,c,oldPass,newPass,backupPassword])assert.ok(!JSON.stringify(bound).includes(secret));
   console.log('DELTA CUTOVER PASS: device-scoped read-only fence, preview, local edit race, atomic checkpoint/binding, exact retry, isolated school, preserved records and no redundant destination write.');
 
+  const resume={expectedRevision:2,migrationId:sourceFenceId,confirmed:true,backupVerified:true,allDevicesReconciled:true};
+  await assert.rejects(fence.resumeSource(resume),/409/);
+  await assert.rejects(rollbackDeltaMigrationDevice(confirmation),/барьера назначения/);
+  const ownerRollback={...confirmation,current:await db.dumpAll(),destinationSealToken:coachSealKey};
+  await assert.rejects(sealDeltaMigrationRollback({...ownerRollback,destinationSealToken:c}),/отдельный ключ/);
+  const sealed=await sealDeltaMigrationRollback(ownerRollback);
+  assert.equal(sealed.status,'rollback-sealed');assert.equal(sealed.replayed,false);
+  assert.deepEqual(await sealDeltaMigrationRollback(ownerRollback),{...sealed,replayed:true});
+  assert.equal((await target.rollbackStatus()).seal.migrationId,sourceFenceId);
+  const unusedDelta=await encryptBackup(await buildSyncDelta(nextLarge,large,{area:'coach',workspaceId:sourceFenceId,baseRevision:1}),newPass);
+  await assert.rejects(target.append(1,unusedDelta),e=>e.status===423);
+  const privileged=deltaLabClient(endpoint,'coach',c,{compactToken:coachAdmin,rotateToken:coachRotator});
+  await assert.rejects(privileged.compact(1,(await target.getRevision(1)).envelope),e=>e.status===423);
+  await assert.rejects(target.anchor((await target.getRevision(1)).envelope),e=>e.status===423);
+  await assert.rejects(cutoverDeltaMigrationDevice(confirmation),/закрыто/);
+  const beforeRollback=await db.dumpAll();
+  const rollbackPreview=await rollbackDeltaMigrationDevice({...confirmation,confirmed:false});
+  assert.equal(rollbackPreview.status,'rollback-preview');assert.deepEqual(await db.dumpAll(),beforeRollback);
+  await db.put('coachTeams',{...nextLarge.coachTeams[0],name:'Несогласованная правка после перехода'});
+  await assert.rejects(rollbackDeltaMigrationDevice(confirmation),/локальные изменения/);
+  assert.equal((await db.get('meta','sync-checkpoint-coach')).endpoint,endpoint);
+  await db.replaceAll(beforeRollback);
+  const rollback=await rollbackDeltaMigrationDevice(confirmation);
+  assert.equal(rollback.status,'rollback-completed');assert.equal(rollback.replayed,false);
+  assert.deepEqual(await rollbackDeltaMigrationDevice(confirmation),{...rollback,replayed:true});
+  const reverted=await db.dumpAll();
+  assert.equal((await db.get('meta','sync-checkpoint-coach')).endpoint,sourceEndpoint);
+  assert.equal((await db.get('meta','sync-checkpoint-coach')).revision,2);
+  assert.equal(await db.get('meta','sync-checkpoint-migration-coach'),undefined);
+  assert.deepEqual(await db.get('meta','sync-checkpoint-school'),localBefore.meta.find(r=>r.id==='sync-checkpoint-school'));
+  for(const name of Object.keys(SCHEMA).filter(n=>n!=='meta'))assert.deepEqual(reverted[name],localBefore[name]);
+  await assert.rejects(fence.resumeSource({...resume,allDevicesReconciled:false}),/возврат всех устройств/);
+  await stop();await start();
+  assert.deepEqual(await target.rollbackStatus(),{revision:1,seal:{migrationId:sourceFenceId,revision:1}});
+  await assert.rejects(target.append(1,unusedDelta),e=>e.status===423);
+  assert.deepEqual(await fence.resumeSource(resume),{revision:2,fence:null});
+  assert.deepEqual(await fence.resumeSource(resume),{revision:2,fence:null});
+  const resumed=await legacyCoach.put(2,await sourceEnvelope(nextLarge,'coach',3));
+  assert.equal(resumed.revision,3);
+  assert.deepEqual(await fence.resumeSource(resume),{revision:3,fence:null});
+  await assert.rejects(fence.freeze({expectedRevision:3,migrationId:sourceFenceId,confirmed:true,backupVerified:true}),/409/);
+  console.log('DELTA ROLLBACK PASS: unused destination permanently sealed, all writes rejected, dirty device preserved, atomic checkpoint return, restart persistence, pinned destination verification and source resumed exactly once.');
+
+
   // Simulate a late source write while the target's initial anchor commits.
   const schoolArgs={...args,sourceToken:sourceSchool,destinationToken:a,area:'school',current:baseData};
   const schoolPlan=await prepareDeltaMigration(schoolArgs);
@@ -484,7 +528,7 @@ try{
   assert.equal(repeated.status,'source-changed');assert.equal(repeated.replayed,true);
   await stop();await start();
   assert.deepEqual((await readDeltaLab({client:target,area:'coach',password:newPass,current:freshDb()})).snapshot,nextLarge);
-  assert.equal((await legacyCoach.get()).revision,2);
+  assert.equal((await legacyCoach.get()).revision,3);
   console.log('DELTA MIGRATION PASS: real legacy relay to isolated fresh Worker; large encrypted file, distinct workspace/password, dirty/stale preflight, source race before/after copy, no source writes or overwrite, exact retry, restart and independent scope verification.');
  }finally{await new Promise(resolve=>legacy.close(resolve));}
  const sizes=syncDeltaEstimate(base,next,{area,workspaceId,baseRevision:1});assert.ok(sizes.bytes<sizes.fullBytes);
