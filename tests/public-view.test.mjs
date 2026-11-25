@@ -26,3 +26,20 @@ test('Страница зрителя переключается по опубл
 test('Публичная страница содержит подпись разработчика и настоящий URL репозитория',()=>{const html=readFileSync(new URL('../live/index.html',import.meta.url),'utf8');assert.match(html,/Разработано <strong>Forzik<\/strong>/);assert.match(html,/https:\/\/github\.com\/Forz1k\/teachapp/);});
 
 test('Серия побед не включает live, дубли и неизвестный порядок матчей одного дня',()=>{const row=(id,date,ours,theirs)=>({id,startedAt:Date.parse(date),setsWon:{ours,theirs},opponent:'Гости',sets:[]});const a=row('result_a','2026-11-20T12:00:00Z',3,0),b=row('result_b','2026-11-19T12:00:00Z',3,2),c=row('result_c','2026-11-18T12:00:00Z',0,3);assert.deepEqual(resultSummary(fanResults({archive:[c,a,b],match:{...a,status:'finished'}})),{win:2,loss:1,draw:0,total:3,streak:2});assert.equal(resultSummary(fanResults({archive:[a,b,c],match:{...row('m','2026-11-21T12:00:00Z',0,0),status:'live'}})).streak,2);assert.equal(resultSummary(fanResults({archive:[a,{...c,startedAt:a.startedAt},b]})).streak,0);const x=row('match_a','2026-11-22T16:00:00Z',2,0),y=row('match_b','2026-11-22T14:00:00Z',0,2);assert.equal(resultSummary(fanResults({archive:[x,y]})).streak,1);});
+
+test('Pinned fixture follows only its published match and scoreboard survives updates',async()=>{
+ const dom=new JSDOM('<header id="connection"></header><nav id="portal-nav"></nav><main id="portal"></main>',{url:'https://example.com/live/?fixture=target'});
+ const w=dom.window;Object.assign(globalThis,{document:w.document,window:w,location:w.location});let stream;
+ globalThis.EventSource=class{constructor(){this.listeners={};stream=this;}addEventListener(type,fn){this.listeners[type]=fn;}close(){}emit(data){this.listeners.put({type:'put',data:JSON.stringify({path:'/',data})});}};
+ try{
+  await import('../js/public-view.js?fixture-test=1');stream.onopen();
+  const payload={schema:1,team:'Команда',updatedAt:Date.now(),schedule:[{id:'target',opponent:'Цель',startAt:Date.now()+600000},{id:'other',opponent:'Другие',startAt:Date.now()+1000}],archive:[]};
+  const match={id:'m',opponent:'Другие',startedAt:Date.now(),status:'live',set:1,score:{ours:4,theirs:3},setsWon:{ours:0,theirs:0},sets:[],serve:'ours',colors:{ours:'blue',theirs:'red'},events:[],stats:[],scheduledId:'other'};
+  stream.emit({...payload,match});assert.match(document.querySelector('.hero').textContent,/Цель/);assert.ok(document.querySelector('.clock'));assert.equal(document.querySelector('.team-score'),null);
+  document.querySelector('.scoreboard-toggle').click();assert.equal(document.body.classList.contains('fan-fullscreen'),true);
+  stream.emit({...payload,match:{...match,opponent:'Цель',scheduledId:'target'}});assert.equal(document.querySelector('.team-score').textContent,'4');assert.equal(document.querySelector('.scoreboard-toggle').getAttribute('aria-pressed'),'true');assert.equal(document.querySelector('.scoreboard-toggle').textContent,'Выйти из табло');
+  document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape'}));assert.equal(document.body.classList.contains('fan-fullscreen'),false);
+  stream.emit({...payload,schedule:[],match:{...match,opponent:'Цель',scheduledId:'target',status:'finished',setsWon:{ours:2,theirs:0}}});assert.match(document.querySelector('.hero').textContent,/Матч завершён/);
+  stream.emit({...payload,schedule:[],match});assert.match(document.body.textContent,/Встреча недоступна/);assert.equal(document.querySelector('.team-score'),null);
+ }finally{w.dispatchEvent(new w.Event('pagehide'));w.close();}
+});

@@ -335,3 +335,7 @@ PR #94 не объединён, новый релиз не опубликова�
 ## Volleyball Intelligence: rotation and connections checkpoint
 - `75f02f9`: phase-specific relative cycles, recorded adjacent set/attack pairs, substitution windows without causal claims; circuit transition matrix and coach library fix.
 - 382/382, no failures/skips, both CI runs, 70 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45574226496).
+
+## Pre-match dossier and training drafts checkpoint
+- `dfe3e48`: private team/opponent-scoped preparation, 14-day actual load, restrictions and goals; editable exercise selection with no automatic assignment or private metadata in plan. Coach potential restriction and no-test review corrected.
+- 386/386, zero failures/skips, both CI runs, 71 Chromium screenshots, WebKit, Cloudflare, Platform and Delta synthetic PASS. [CI](https://github.com/Forz1k/teachapp/actions/runs/45577502848).

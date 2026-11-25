@@ -4,7 +4,7 @@ import {openMediaCenter} from './public-media.js';
 import * as P from '../public-publisher.js';
 import {loadCoach,matchScore} from '../coach.js';
 import {prepareLogo} from '../match-protocol.js';
-import {primaryPortal,savedResult,resultFixtures} from '../public-portal.js';
+import {primaryPortal,savedResult,resultFixtures,fixtureLink} from '../public-portal.js';
 import {resetPortalPassword} from '../firebase-portal.js';
 import {uid} from '../model.js';
 import {el,openSheet,closeSheet,toast,confirmDialog} from '../ui.js';
@@ -35,7 +35,7 @@ export function openPublicPortal(team,back=closeSheet){
    card('Предстоящие матчи',p('Время вводится в часовом поясе устройства тренера. У зрителя отображается его местное время.'),
     field('Соперник',opponent),field('Дата и время',when),el('details',{},[el('summary',{text:'Эмблемы команд'}),field('Наша команда',ours),field('Соперник',theirs)]),btn(editing?'Сохранить изменения':'+ Добавить матч',()=>run(async()=>{if(!when.value)throw Error('Укажите дату и время');P.saveFixture(id,{id:editing?.id||uid('fixture'),opponent:opponent.value,startAt:new Date(when.value).getTime(),logos:{ours:await fixtureLogo(ours,'ours'),theirs:await fixtureLogo(theirs,'theirs')}});editing=null;}),'primary wide'),
     editing?btn('Отмена редактирования',()=>{editing=null;draw();},'wide'):null,
-    ...d.schedule.map(x=>el('div',{class:'vp-portal-fixture'},[el('strong',{text:(d.team||team.name)+' — '+x.opponent}),p(date(x.startAt)+(x.startAt<Date.now()?' · проверьте актуальность':'')),el('div',{class:'vp-actions'},[btn('Изменить',()=>{editing=x;draw();}),btn('Удалить',()=>run(async()=>{if(await confirmDialog({title:'Убрать матч из расписания?',text:'Зрители больше не увидят эту встречу.',ok:'Удалить',danger:true}))P.removeFixture(id,x.id);}))])]))),
+    ...d.schedule.map(x=>el('div',{class:'vp-portal-fixture'},[el('strong',{text:(d.team||team.name)+' — '+x.opponent}),p(date(x.startAt)+(x.startAt<Date.now()?' · проверьте актуальность':'')),el('div',{class:'vp-actions'},[btn('Изменить',()=>{editing=x;draw();}),link?btn('Скопировать ссылку встречи',async()=>{const url=fixtureLink(link,x.id);try{await navigator.clipboard.writeText(url);toast('Ссылка скопирована. Доступна после публикации встречи.');}catch{const field=input('url',url,{readonly:true,'aria-label':'Ссылка встречи'});const parent=body.querySelectorAll('.vp-portal-fixture')[d.schedule.indexOf(x)];if(parent){parent.append(field);field.focus();field.select();}}}):null,link?el('a',{class:'btn',href:fixtureLink(link,x.id),target:'_blank',rel:'noopener noreferrer',text:'Открыть встречу'}):null,btn('Афиша',()=>openStudio({template:'matchday',team:d.team||team.name,opponent:x.opponent,details:date(x.startAt)},()=>openPublicPortal(team,back))),btn('Удалить',()=>run(async()=>{if(await confirmDialog({title:'Убрать матч из расписания?',text:'Зрители больше не увидят эту встречу.',ok:'Удалить',danger:true}))P.removeFixture(id,x.id);}))])]))),
    card('Новости и публичные турниры',p('Отдельные черновики, предпросмотр и публикация.'),btn('Медиацентр команды',()=>openMediaCenter(team,()=>openPublicPortal(team,back)),'wide')),
    card('TeachApp Studio',p('Афиши, результаты, грамоты и другие изображения без интернета.'),btn('Открыть студию',()=>openStudio({team:d.team||team.name},()=>openPublicPortal(team,back)),'wide')),
    card('Расширенный архив',p('Постоянные ссылки и отдельные записи. Требуются согласованные правила Firebase v2.'),btn('Управлять расширенным архивом',()=>openExtendedArchive(team,()=>openPublicPortal(team,back)),'wide')),

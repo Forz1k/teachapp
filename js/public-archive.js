@@ -1,4 +1,5 @@
 // Public archive v2: score-only projection. Never stores a private match record.
+import {viewerPageLink} from './public-portal.js';
 const id=/^[A-Za-z0-9_-]{1,100}$/,key=/^\d{16}_[A-Za-z0-9_-]{1,100}$/;
 const validScore=x=>Number.isInteger(x)&&x>=0&&x<=9999;
 export function archiveProjection(r){
@@ -16,7 +17,7 @@ function recordURL(target,k){if(typeof k!=='string'||!key.test(k))throw Error('�
 export async function fetchArchiveRecord(target,k,fetcher=fetch){const r=await request(recordURL(target,k),{},fetcher);if(!r.value)return null;const v=archiveProjection(r.value);if(archiveKey(v)!==k)throw Error('Некорректный ключ результата');return {...v,archiveKey:k};}
 export async function readArchiveVersion(target,k,fetcher=fetch){const r=await request(recordURL(target,k),{headers:{'X-Firebase-ETag':'true'}},fetcher);if(!r.etag)throw Error('Сервер не вернул версию записи');return {etag:r.etag,value:r.value?archiveProjection(r.value):null};}
 export async function writeArchiveRecord(target,k,value,token,etag,fetcher=fetch){if(!token||!etag)throw Error('Требуется подтверждённая версия и авторизация');if(value!==null&&archiveKey(value)!==k)throw Error('Некорректный ключ');const u=new URL(recordURL(target,k));u.searchParams.set('auth',token);return request(u.href,{method:value===null?'DELETE':'PUT',headers:{'If-Match':etag,'Content-Type':'application/json'},...(value===null?{}:{body:JSON.stringify(archiveProjection(value))})},fetcher);}
-export function resultLink(href,r){const u=new URL(href);u.searchParams.delete('match');u.searchParams.delete('archive');u.searchParams.set(r.archiveKey?'archive':'match',r.archiveKey||r.id);return u.href;}
+export function resultLink(href,r){const u=new URL(viewerPageLink(href));const value=r.archiveKey||r.id;if(!(r.archiveKey?key:id).test(value||''))throw Error('Некорректная ссылка на результат');u.searchParams.set(r.archiveKey?'archive':'match',value);return u.href;}
 export function fixtureCalendar(team,fixture){const safe=v=>String(v).replace(/\\/g,'\\\\').replace(/\r?\n|\r/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;');const dt=v=>new Date(v).toISOString().replace(/[-:]|\.\d{3}/g,'');return ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//TeachApp//Schedule//RU','BEGIN:VEVENT','UID:'+safe(fixture.id)+'-'+dt(fixture.startAt)+'@teachapp','DTSTAMP:'+dt(Date.now()),'DTSTART:'+dt(fixture.startAt),'SUMMARY:'+safe(team+' — '+fixture.opponent),'END:VEVENT','END:VCALENDAR',''].join('\r\n');}
 
 /** School/sport season is September through August, using UTC for stable grouping. */
