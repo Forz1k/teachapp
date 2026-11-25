@@ -84,10 +84,14 @@ try{
  await shown.getByRole('button',{name:'Подготовить следующий этап',exact:true}).click();
  await shown.getByRole('heading',{name:'Следующий этап · Муниципальный',exact:true}).waitFor();
  await shown.getByRole('checkbox').check();
+ // Reproduce the update notification while a long form is open; do not force-click through it.
+ await page.evaluate(()=>{if(!document.querySelector('.update-banner')){const b=document.createElement('div');b.className='update-banner';b.dataset.testBanner='yes';b.textContent='Доступна новая версия TeachApp';document.body.append(b);}});
+ assert.equal(await page.locator('.update-banner').first().evaluate(n=>getComputedStyle(n).visibility),'hidden');
  await shown.getByLabel('Срок заявки',{exact:true}).fill(schoolFixture.date);
  await shown.getByRole('button',{name:'Создать следующий этап',exact:true}).click();
  await dialog.getByRole('button',{name:'Создать',exact:true}).click();
  await shown.getByText('Предыдущий этап: Школьный',{exact:true}).waitFor();
+ await page.evaluate(()=>document.querySelector('.update-banner[data-test-banner]')?.remove());
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'olympiad overflow');
  await page.evaluate(async f=>{const S=await import('./js/store.js');(await import('./js/screens/health.js')).openLessonRestrictions(S.state.lessons.find(l=>l.id===f.lessonId));},fixture);
  await shown.getByRole('button',{name:'Альтернативные задания урока',exact:true}).click();
@@ -191,6 +195,8 @@ try{
   const db=await import('./js/db.js');return (await db.getAll('marks')).find(m=>m.studentId===studentId&&m.lessonId===lessonId);
  },fixture);
  assert.equal(imported?.value,'5','encrypted sync between two WebKit contexts');
+ const importedSchool=await otherPage.evaluate(async()=>{const W=await import('./js/workbench.js');return {events:(await W.listWork('schoolCompetition')).length,alternatives:(await W.listWork('lessonAlternative')).length,assignments:(await W.listWork('normAssignment')).map(a=>a.minAttempts),stations:(await W.listWork('stationTemplate')).length};});
+ assert.deepEqual(importedSchool,schoolRecords,'new school tools must survive encrypted synchronization into another independent browser context');
  await second.close();
  // Only in this synthetic browser test: map the personal code's HTTPS endpoint to the real loopback relay.
  // Use native browser fetch, including CORS/preflight, rather than WebKit's unreliable request interception.
