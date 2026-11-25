@@ -55,6 +55,6 @@ test('Clock persists with final match, backup, school isolation and coach CSV',a
  const anchor=Date.parse(d.startedAt);const add=(e,s)=>{d=detailEvent(d,e,new Date(anchor+s*1000).toISOString());d.revision++;};
  add(run,1);for(let i=0;i<15;i++)add(point,2+i);add({type:'next',lineup:ids.slice(1,7),awayLineup:base.awayLineup,serve:'ours'},30);add(run,31);for(let i=0;i<15;i++)add(point,32+i);
  await db.put('coachLive',d);const m=await C.finishLiveMatch(d.id,d.revision);const t=reportData(m.detail).courtTime;assert.equal(t.elapsedMs,30000);assert.equal(t.players.ours[ids[0]],15000);assert.equal(t.players.ours[ids[6]],15000);
- const backup=await S.makeBackup();assert.equal(projectScope(backup.data,'school').coachMatches.length,0);await S.restoreBackup(backup);
+ const backup=await S.makeBackup();assert.equal(projectScope(backup.data,'school').coachMatches,undefined);assert.equal(projectScope(backup.data,'coach').coachMatches.length,1);await S.restoreBackup(backup);
  const view=C.teamView(await C.loadCoach(),team.id);assert.equal(C.playerSeasonStats(view.matches,ids[1]).playingTime.totalMs,30000);assert.match(C.coachCsv(view),/Время на площадке/);assert.match(C.coachCsv(view),/0:30/);
 });
