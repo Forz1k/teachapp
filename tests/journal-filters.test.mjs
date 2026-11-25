@@ -8,3 +8,6 @@ test('Journal density is device-local, validated, and defaults safely',async()=>
  assert.equal(readJournalDensity(storage),'standard');assert.equal(saveJournalDensity('compact',storage),'compact');assert.equal(readJournalDensity(storage),'compact');
  assert.throws(()=>saveJournalDensity('unknown',storage));map.set('teachapp.journal.density','bad');assert.equal(readJournalDensity(storage),'standard');
 });
+
+import {planJournalPaste} from '../js/journal-filters.js';
+test('Journal TSV respects explicit anchor and preserves blanks and same-day lesson IDs',()=>{const pupils=[{id:'p',fullName:'P'},{id:'q',fullName:'Q'}],plan=planJournalPaste('5\t\n\tН\n',pupils,rows,{studentId:'p',lessonId:'b'});assert.deepEqual(plan.entries.map(x=>[x.studentId,x.lessonId,x.value]),[['p','b','5'],['q','c','Н']]);assert.throws(()=>planJournalPaste('5\t4\n3',pupils,rows,{studentId:'p',lessonId:'b'}));assert.throws(()=>planJournalPaste('5\t4',pupils,rows,{studentId:'p',lessonId:'d'}));assert.throws(()=>planJournalPaste('=SUM(A1)',pupils,rows,{studentId:'p',lessonId:'b'}));});

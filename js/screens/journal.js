@@ -1,4 +1,4 @@
-import {filterJournalLessons,lessonFilterLabels,periodMarks,journalDensityLabels,readJournalDensity,saveJournalDensity} from '../journal-filters.js';
+import {filterJournalLessons,lessonFilterLabels,periodMarks,journalDensityLabels,readJournalDensity,saveJournalDensity,planJournalPaste} from '../journal-filters.js';
 import {animateOnce} from '../motion.js';
 import { openHealth, warning, checkGrade } from './health.js';
 /* screens/journal.js — сетка журнала класса: ученики × даты уроков.
@@ -104,6 +104,7 @@ export function renderJournal(root, ctx) {
   const viewMode=(()=>{try{return localStorage.getItem('teachapp.journal.view')==='cards'?'cards':'table';}catch{return 'table';}})();
   const viewToggle=el('button',{type:'button',class:'btn small',text:viewMode==='cards'?'Таблица':'Карточки',onclick:()=>{try{localStorage.setItem('teachapp.journal.view',viewMode==='cards'?'table':'cards');}catch{}store.notify();}});
   const tools=el('div',{class:'journal-tools'},[viewToggle]);topbar.append(tools);
+  if(students.length&&lessons.length)tools.append(el('button',{type:'button',class:'btn small',text:'Вставить оценки',onclick:()=>{const q=search.value.trim().toLocaleLowerCase('ru');openJournalPaste(classId,students.filter(s=>s.fullName.toLocaleLowerCase('ru').includes(q)),lessons);}}));
   const statusFilter=el('select',{'aria-label':'Статус уроков'},Object.entries(lessonFilterLabels).map(([value,text])=>el('option',{value,text})));statusFilter.value=filters.status;
   const fromFilter=el('input',{type:'date',min:tr.from,max:tr.to,value:filters.from,'aria-label':'Уроки с даты'}),toFilter=el('input',{type:'date',min:tr.from,max:tr.to,value:filters.to,'aria-label':'Уроки по дату'}),topicFilter=el('input',{type:'search',value:filters.query,placeholder:'Поиск по теме','aria-label':'Поиск по теме урока'});
   const saveFilters=next=>{try{sessionStorage.setItem(filterKey,JSON.stringify(next));}catch{}store.notify();};
@@ -833,4 +834,16 @@ export function openQuickEntrySheet(classId, initialDate) {
       ui.openSheet(sheet);
     } catch { ui.toast('Не удалось открыть урок'); }
   })();
+}
+
+/** Explicit start cell, local TSV preview, then transactional write. */
+export function openJournalPaste(classId,students,lessons){
+ if(!students.length||!lessons.length)return ui.toast('Нет видимых учеников или уроков');
+ const select=(label,rows)=>el('select',{'aria-label':label},rows.map(([value,text])=>el('option',{value,text}))),field=(title,node)=>el('label',{class:'field'},[title,node]);
+ const pupil=select('Начальный ученик',students.map(s=>[s.id,s.fullName])),lesson=select('Начальный урок',lessons.map(l=>[l.id,M.lessonLabel(l)])),source=el('textarea',{rows:6,maxlength:20000,placeholder:'5\\t4\\tН\\n3\\t5\\t4','aria-label':'Блок оценок TSV'}),preview=el('div',{role:'status','aria-live':'polite'});let planned=null,busy=false;
+ const apply=el('button',{type:'button',class:'btn primary wide',text:'Записать блок',disabled:true,onclick:async()=>{if(!planned||busy)return;const snapshot=planned;busy=true;apply.disabled=true;try{if(!await ui.confirmDialog({title:'Записать оценки?',text:'Отметок: '+snapshot.entries.length+'. Существующие ячейки не перезаписываются. Подтвердите участие и ограничения нагрузки для всех выбранных уроков.',ok:'Записать'}))return;if(!preview.isConnected||planned!==snapshot)return;const n=await store.applyJournalPaste(classId,snapshot.entries,true);ui.closeSheet();ui.toast('Записано отметок: '+n);}catch(e){preview.replaceChildren(el('p',{text:e.message}));planned=null;}finally{busy=false;apply.disabled=!planned;}}});
+ const invalidate=()=>{planned=null;preview.replaceChildren();apply.disabled=true;};pupil.onchange=lesson.onchange=source.oninput=invalidate;
+ const inspect=el('button',{type:'button',class:'btn wide',text:'Предпросмотр',onclick:()=>{invalidate();try{const plan=planJournalPaste(source.value,students,lessons,{studentId:pupil.value,lessonId:lesson.value}),marks=store.markMap(classId),byLesson=new Map(),parts=new Map(store.state.participation.map(p=>[p.lessonId+'|'+p.studentId,p])),blocked=[];for(const e of plan.entries){const l=lessons.find(x=>x.id===e.lessonId);if(!byLesson.has(l.id)){const check=store.lessonCheck(l);byLesson.set(l.id,new Set([...check.matches,...check.potentialMatches].map(m=>m.studentId)));}const reason=l.date>M.todayIso()?'Будущий урок':store.lessonBatchReason(e.value==='Н'?'absent':'grade',marks.get(e.lessonId+'|'+e.studentId),parts.get(e.lessonId+'|'+e.studentId),!!store.activeExemption(e.studentId,l.date),byLesson.get(l.id).has(e.studentId));if(reason)blocked.push(e.studentName+' · '+M.lessonLabel(l)+' · '+reason);}
+  preview.append(el('p',{text:plan.rows+' строк × '+plan.columns+' столбцов · '+plan.entries.length+' отметок'}),...plan.entries.map(e=>el('p',{text:e.studentName+' · '+M.lessonLabel(lessons.find(l=>l.id===e.lessonId))+' → '+e.value})));if(blocked.length){preview.prepend(el('p',{class:'profile-note',text:'Весь блок заблокирован: '+blocked.join('; ')}));return;}planned=plan;apply.disabled=false;}catch(e){preview.replaceChildren(el('p',{text:e.message}));}}});
+ ui.openSheet(el('div',{class:'coach-stack'},[el('h2',{text:'Вставка блока оценок'}),el('p',{text:'Скопируйте прямоугольный блок без заголовков из электронной таблицы. Порядок — видимые ученики и уроки. Пустые ячейки пропускаются. Допустимы 1–5 и Н. Существующие отметки не заменяются.'}),field('Начальная строка',pupil),field('Начальный столбец',lesson),source,inspect,preview,apply]));
 }

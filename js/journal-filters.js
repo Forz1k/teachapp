@@ -11,3 +11,15 @@ export const journalDensityLabels={standard:'Стандартно',compact:'Ко
 const densityKey='teachapp.journal.density';
 export function readJournalDensity(storage){try{const value=(storage??globalThis.localStorage).getItem(densityKey);return Object.hasOwn(journalDensityLabels,value)?value:'standard';}catch{return 'standard';}}
 export function saveJournalDensity(value,storage=globalThis.localStorage){if(!Object.hasOwn(journalDensityLabels,value))throw Error('Некорректный масштаб журнала');storage.setItem(densityKey,value);if(readJournalDensity(storage)!==value)throw Error('Не удалось сохранить масштаб');return value;}
+
+/** Paste a rectangular TSV block into visible, explicitly ordered journal rows/columns. */
+export function planJournalPaste(text,students,lessons,{studentId,lessonId}={}){
+ if(typeof text!=='string'||text.length>20000)throw Error('Вставьте блок до 20 000 символов');
+ const startRow=students.findIndex(s=>s.id===studentId),startCol=lessons.findIndex(l=>l.id===lessonId);
+ if(startRow<0||startCol<0)throw Error('Выберите начальную ячейку');
+ const rows=text.replace(/\r\n|\r/g,'\n').replace(/\n$/,'').split('\n').map(r=>r.split('\t'));
+ const width=rows[0]?.length??0;if(!width||rows.some(r=>r.length!==width))throw Error('Вставьте прямоугольный блок из таблицы');
+ if(rows.length*width>500||startRow+rows.length>students.length||startCol+width>lessons.length)throw Error('Блок выходит за видимые границы журнала или превышает 500 ячеек');
+ const entries=[];for(let i=0;i<rows.length;i++)for(let j=0;j<width;j++){const value=rows[i][j].trim();if(!value)continue;if(!['1','2','3','4','5','Н'].includes(value))throw Error('Строка '+(i+1)+', столбец '+(j+1)+': допустимы 1–5, Н или пусто');const s=students[startRow+i],l=lessons[startCol+j];entries.push({studentId:s.id,studentName:s.fullName,lessonId:l.id,date:l.date,slot:l.slot??null,time:l.time||'',value});}
+ if(!entries.length)throw Error('В блоке нет отметок');return {entries,rows:rows.length,columns:width};
+}

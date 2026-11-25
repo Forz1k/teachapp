@@ -442,3 +442,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 8.0 Ecosystem — integrated checkpoint, not release
 - Consolidated all preceding checkpoints against main for full CI, with cross-feature regression covering public results, conflict handling, Studio export, reminder privacy and stable calendar identities. Hardened screen lock against a throwing global storage getter, and stopped stale calendar/assistant UI responses from continuing after navigation. Version remains 6.0.1 candidate. No production migration or release claim.
+
+### 6.3 follow-up in integration branch
+- Added explicit-anchor multi-cell TSV journal paste with preview, empty-cell-only writes, grade/absence values and atomic rejection of conflicts, future or changed lessons, invalid class membership and restrictions. Added pure parser and IndexedDB regressions. No clipboard permission or bulk overwrite.

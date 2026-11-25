@@ -1348,3 +1348,19 @@ export async function repairLessonTopics(classId,changes){
   for(const l of records){const cached=state.lessons.find(x=>x.id===l.id);if(cached)Object.assign(cached,l);}
   notify();
 }
+
+/** Atomic import into empty journal cells. Identity and load constraints are rechecked in the write transaction. */
+export async function applyJournalPaste(classId,entries,confirmed=false){
+ if(!confirmed||typeof classId!=='string'||!Array.isArray(entries)||!entries.length||entries.length>500||entries.some(e=>!e||typeof e.studentId!=='string'||typeof e.studentName!=='string'||typeof e.lessonId!=='string'||typeof e.date!=='string'||!['1','2','3','4','5','Н'].includes(e.value))||new Set(entries.map(e=>JSON.stringify([e.studentId,e.lessonId]))).size!==entries.length)throw Error('Проверьте блок и подтвердите вставку');
+ const next=await db.transaction(['students','lessons','topics','marks','participation','exemptions','activityRestrictions','activityCategories','workRecords'],'readwrite',async s=>{
+  const [students,lessons,exemptions,restrictions,custom]=await Promise.all([s.students.index('classId').getAll(classId),s.lessons.index('classId').getAll(classId),s.exemptions.getAll(),s.activityRestrictions.getAll(),s.activityCategories.getAll()]);
+  const pupilMap=new Map(students.map(p=>[p.id,p])),lessonMap=new Map(lessons.map(l=>[l.id,l])),byLesson=new Map(),records=[];
+  for(const entry of entries){const l=lessonMap.get(entry.lessonId),p=pupilMap.get(entry.studentId);if(!l||!p||p.fullName!==entry.studentName||l.date!==entry.date||(l.slot??null)!==entry.slot||(l.time||'')!==entry.time||l.date>M.todayIso())throw Error('Ученик, урок или дата изменились. Обновите предпросмотр');if(!byLesson.has(l.id))byLesson.set(l.id,[]);byLesson.get(l.id).push(entry);}
+  for(const [lessonId,rows] of byLesson){const l=lessonMap.get(lessonId),[marks,parts,topic]=await Promise.all([s.marks.index('lessonId').getAll(lessonId),s.participation.index('lessonId').getAll(lessonId),l.topicId?s.topics.get(l.topicId):Promise.resolve(null)]);const byMark=new Map(marks.map(m=>[m.studentId,m])),byPart=new Map(parts.map(p=>[p.studentId,p]));const review=H.checkLessonRestrictions({lesson:effectiveLessonLoad(l,topic),students,activities:[...H.catalog,...custom],restrictions}),restricted=new Set([...review.matches,...review.potentialMatches].map(m=>m.studentId));
+   for(const e of rows){const id=e.studentId,action=e.value==='Н'?'absent':'grade',covered=exemptions.some(x=>x.studentId===id&&M.exemptionCovers(x,l.date)),reason=lessonBatchReason(action,byMark.get(id),byPart.get(id),covered,restricted.has(id));if(reason)throw Error('Вставка отменена: '+e.studentName+' · '+M.lessonLabel(l)+' · '+reason);const m={id:M.uid('mk'),studentId:id,lessonId,value:action==='grade'?e.value:null,flag:action==='absent'?'Н':null,source:'manual'};records.push(withCoverage(m,null,l,id,exemptions,null));}
+  }
+  for(const m of records){await s.marks.add(m);await appendGradeHistory(s.workRecords,{scope:'lesson',studentId:m.studentId,lessonId:m.lessonId},gradeState(null),gradeState(baseMark(m)),'batch');}
+  return records;
+ });
+ cacheMarks(next.map(m=>({id:m.id,next:m})));for(const id of new Set(next.map(m=>m.studentId)))notify(id);return next.length;
+}
