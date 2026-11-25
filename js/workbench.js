@@ -1,4 +1,5 @@
 import {validateMatchRegulation} from './match-rules.js';
+import {validateLessonAlternative} from './lesson-alternatives.js';
 import {validateKtpVersion} from './ktp-history.js';
 import {validateNormRetake} from './norm-retakes.js';
 import {validateNewsDraft} from './public-media-drafts.js';
@@ -39,6 +40,7 @@ function validateExercise(e){
 }
 export function validateWorkRecord(r){
  require(txt(r?.id),'Некорректная рабочая запись');
+ if(r.kind==='lessonAlternative'){validateLessonAlternative(r);return;}
  if(r.kind==='ktpVersion'){validateKtpVersion(r);return;}
  if(r.kind==='matchRegulation'){validateMatchRegulation(r);return;}
  if(r.kind==='normRetake'){validateNormRetake(r);return;}
@@ -83,7 +85,7 @@ export async function saveWork(input){
   await s.workRecords.put(r);return r;
  });
 }
-export async function deleteWork(id,kind){return db.transaction(kind==='archive'?['workRecords','students','lessons']:['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');if(kind==='archive'){const pupils=new Set(old.snapshot.students.map(p=>p.id)),lessons=new Set(old.snapshot.lessons.map(l=>l.id));for(const p of await s.students.getAll())pupils.delete(p.id);for(const l of await s.lessons.getAll())lessons.delete(l.id);for(const r of await s.workRecords.index('kind').getAll('gradeHistory'))if(pupils.has(r.studentId)||lessons.has(r.lessonId))await s.workRecords.delete(r.id);}await s.workRecords.delete(id);});}
+export async function deleteWork(id,kind){return db.transaction(kind==='archive'?['workRecords','students','lessons']:['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');if(kind==='schoolCompetition')require(!(await s.workRecords.index('kind').getAll('schoolCompetition')).some(x=>x.previousStageId===id),'Сначала удалите связанный следующий этап');if(kind==='archive'){const pupils=new Set(old.snapshot.students.map(p=>p.id)),lessons=new Set(old.snapshot.lessons.map(l=>l.id));for(const p of await s.students.getAll())pupils.delete(p.id);for(const l of await s.lessons.getAll())lessons.delete(l.id);for(const r of await s.workRecords.index('kind').getAll('gradeHistory'))if(pupils.has(r.studentId)||lessons.has(r.lessonId))await s.workRecords.delete(r.id);}await s.workRecords.delete(id);});}
 export const fallbackReasons={weather:'Погода / перенос в зал',space:'Зал занят / мало места',equipment:'Недостаточно инвентаря',load:'Изменение нагрузки',other:'Другая причина'};
 /** Independent draft in the existing plan format. No new record type or schema.
  * The teacher must revise equipment and exercises before explicitly saving. */

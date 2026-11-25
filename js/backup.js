@@ -3,6 +3,7 @@ import { validateNorm, validateNormSnapshot, validNormGroup, validGradeLevel, gr
 import { validateCoachData, coachStores } from './coach.js';
 import {validateArchive} from './school-archive.js';
 import {validateWorkRecord} from './workbench.js';
+import {validateOlympiadSeries} from './teacher-portfolio.js';
 import { SCHEMA } from './db.js';
 import {validLessonSlot,validLessonTime} from './model.js';
 
@@ -109,6 +110,7 @@ export function validateBackup(payload) {
     && (!r.lastBackupAt || typeof r.lastBackupAt === 'string')));
   validateCoachData(tables);
   for(const r of tables.workRecords){if(r.kind==='archive')validateArchive(r);else validateWorkRecord(r);if(r.kind==='coachGoal'&&(!index.coachTeams.has(r.teamId)||index.coachPlayers.get(r.playerId)?.teamId!==r.teamId))throw Error('Некорректная связь индивидуальной цели');if(r.kind==='tacticBoard'&&!index.coachTeams.has(r.teamId))throw Error('Некорректная связь тактической схемы');if(r.kind==='seasonPlan'&&!index.coachTeams.has(r.teamId))throw Error('Некорректная связь плана сезона');}
+  validateOlympiadSeries(tables.workRecords.filter(r=>r.kind==='schoolCompetition'));
   const historical=[tables,...tables.workRecords.filter(r=>r.kind==='archive').map(r=>r.snapshot)];
   for(const r of tables.workRecords.filter(r=>r.kind==='gradeHistory'))if(!historical.some(d=>{const st=d.students.find(p=>p.id===r.studentId);return st&&(r.scope==='final'||d.lessons.some(l=>l.id===r.lessonId&&l.classId===st.classId));}))throw Error('История оценки не связана с учеником и уроком');
   return tables;

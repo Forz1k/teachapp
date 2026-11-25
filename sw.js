@@ -77,7 +77,7 @@ const PRECACHE = [
   './js/screens/norms.js',
   './js/screens/health.js',
   './js/ui.js',
-  './js/export.js','./js/ktp-docx.js','./js/ktp-history.js','./js/journal-filters.js',
+  './js/export.js','./js/ktp-docx.js','./js/ktp-history.js','./js/lesson-alternatives.js','./js/journal-filters.js',
   './js/demo.js',
   './js/screens/classes.js',
   './js/screens/today.js',
