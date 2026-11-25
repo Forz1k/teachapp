@@ -6,19 +6,21 @@ import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const areas=['school','coach'],limit=90*1024*1024;
 const tokenPattern=/^[A-Za-z0-9_-]{32,256}$/;
+const migrationIdPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const validFence=(f,revision)=>f&&Object.keys(f).sort().join(',')==='migrationId,revision'&&migrationIdPattern.test(f.migrationId)&&f.revision===revision;
 const hash=s=>createHash('sha256').update(s).digest();
 const json=(res,status,body)=>{const data=JSON.stringify(body);res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Content-Length':Buffer.byteLength(data),'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(data);};
 function envelopeValid(e){
  return e&&typeof e==='object'&&!Array.isArray(e)&&Object.keys(e).sort().join(',')==='app,cipher,data,iterations,iv,kdf,salt,version'&&e.app==='teachapp-encrypted'&&e.version===1&&e.kdf==='PBKDF2-SHA256'&&e.iterations===600000&&e.cipher==='AES-256-GCM'&&typeof e.salt==='string'&&/^[A-Za-z0-9+/]{22}==$/.test(e.salt)&&typeof e.iv==='string'&&/^[A-Za-z0-9+/]{16}$/.test(e.iv)&&typeof e.data==='string'&&e.data.length>=24&&e.data.length<=limit&&e.data.length%4===0&&/^[A-Za-z0-9+/]+={0,2}$/.test(e.data);
 }
-async function readBody(req){
+async function readBody(req,maxBytes=limit){
  const size=Number(req.headers['content-length']||0);
- if(!Number.isFinite(size)||size<0||size>limit)throw Object.assign(Error(),{status:413});
+ if(!Number.isFinite(size)||size<0||size>maxBytes)throw Object.assign(Error(),{status:413});
  let total=0,parts=[];
- for await(const part of req){total+=part.length;if(total>limit)throw Object.assign(Error(),{status:413});parts.push(part);}
+ for await(const part of req){total+=part.length;if(total>maxBytes)throw Object.assign(Error(),{status:413});parts.push(part);}
  try{return JSON.parse(Buffer.concat(parts).toString('utf8'));}catch{throw Object.assign(Error(),{status:400});}
 }
-export async function createRelay({directory,tokens,allowedOrigin}){
+export async function createRelay({directory,tokens,allowedOrigin,migrationFenceTokens}){
  if(typeof directory!=='string'||!directory)throw Error('Configure a private storage directory');
  let origin;
  try{const u=new URL(allowedOrigin);if(u.origin!==allowedOrigin||!['https:','http:'].includes(u.protocol)||u.protocol==='http:'&&!['localhost','127.0.0.1','[::1]'].includes(u.hostname))throw Error();origin=u.origin;}catch{throw Error('Configure exact HTTPS client origin (loopback HTTP only for tests)');}
@@ -30,6 +32,16 @@ export async function createRelay({directory,tokens,allowedOrigin}){
   digests[area]=list.map(hash);
  }
  if(!all.size)throw Error('No enabled sync areas');
+ // Explicit constructor-only LAB configuration, never enabled by the normal CLI.
+ const fenceDigests={};
+ if(migrationFenceTokens!==undefined){
+  const u=new URL(origin);
+  if(u.protocol!=='http:'||!['localhost','127.0.0.1','[::1]'].includes(u.hostname)||!migrationFenceTokens||typeof migrationFenceTokens!=='object'||Array.isArray(migrationFenceTokens)||Object.keys(migrationFenceTokens).some(a=>!areas.includes(a)))throw Error('Migration fencing is loopback LAB only');
+  for(const [area,t] of Object.entries(migrationFenceTokens)){
+   if(typeof t!=='string'||!tokenPattern.test(t)||all.has(t)||!digests[area].length)throw Error('Configure separate migration fence tokens');
+   all.add(t);fenceDigests[area]=hash(t);
+  }
+ }
  directory=resolve(directory);
  await mkdir(directory,{recursive:true,mode:0o700});
  const lockPath=join(directory,'.relay-lock'),lock=await open(lockPath,'wx',0o600);
@@ -51,6 +63,7 @@ export async function createRelay({directory,tokens,allowedOrigin}){
   try{data=JSON.parse(await readFile(join(directory,area+'.json'),'utf8'));}
   catch(e){if(e.code==='ENOENT')return {revision:0,envelope:null};throw e;}
   if(!Number.isSafeInteger(data.revision)||data.revision<1||!envelopeValid(data.envelope))throw Error('Invalid stored revision');
+  if(Object.hasOwn(data,'fence')&&!validFence(data.fence,data.revision))throw Error('Invalid stored migration fence');
   return data;
  }
  async function write(area,data){
@@ -70,6 +83,36 @@ export async function createRelay({directory,tokens,allowedOrigin}){
    const requestOrigin=req.headers.origin;
    if(requestOrigin&&requestOrigin!==origin){json(res,403,{error:'origin'});return;}
    if(requestOrigin===origin){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}
+   const fenceMatch=/^\/v1\/migration-fence\/(school|coach)$/.exec(req.url||'');
+   if(fenceMatch){
+    const area=fenceMatch[1],digest=fenceDigests[area];
+    if(!digest){json(res,404,{error:'route'});return;}
+    if(req.method==='OPTIONS'){
+     if(requestOrigin!==origin){json(res,403,{error:'origin'});return;}
+     res.writeHead(204,{'Access-Control-Allow-Methods':'GET, PUT, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300','Cache-Control':'no-store'});res.end();return;
+    }
+    const auth=/^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(req.headers.authorization||'');
+    if(!auth||!timingSafeEqual(hash(auth[1]),digest)){json(res,401,{error:'unauthorized'});return;}
+    if(req.method==='GET'){
+     const state=await serial(area,()=>get(area));json(res,200,{revision:state.revision,fence:state.fence??null});return;
+    }
+    if(req.method!=='PUT'){json(res,405,{error:'method'});return;}
+    if(!/^application\/json(?:;|$)/i.test(req.headers['content-type']||'')){json(res,415,{error:'content-type'});return;}
+    const body=await readBody(req,4096);
+    if(!body||Object.keys(body).sort().join(',')!=='expectedRevision,migrationId'||!Number.isSafeInteger(body.expectedRevision)||body.expectedRevision<1||typeof body.migrationId!=='string'||!migrationIdPattern.test(body.migrationId)){json(res,400,{error:'packet'});return;}
+    const result=await serial(area,async()=>{
+     const current=await get(area);
+     if(current.fence){
+      if(current.fence.revision===body.expectedRevision&&current.fence.migrationId===body.migrationId)return {status:200,body:{revision:current.revision,fence:current.fence}};
+      return {status:423,body:{error:'migration-frozen'}};
+     }
+     if(current.revision!==body.expectedRevision)return {status:409,body:{error:'stale'}};
+     const fence={revision:current.revision,migrationId:body.migrationId};
+     // Same serialized, fsynced atomic record as the snapshot, including across restart.
+     await write(area,{...current,fence});return {status:200,body:{revision:current.revision,fence}};
+    });
+    json(res,result.status,result.body);return;
+   }
    const match=/^\/v1\/snapshot\/(school|coach)$/.exec(req.url||'');
    if(!match){json(res,404,{error:'route'});return;}
    const area=match[1];
@@ -78,18 +121,20 @@ export async function createRelay({directory,tokens,allowedOrigin}){
     res.writeHead(204,{'Access-Control-Allow-Methods':'GET, PUT, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300','Cache-Control':'no-store'});res.end();return;
    }
    if(!authorize(req,area)){json(res,401,{error:'unauthorized'});return;}
-   if(req.method==='GET'){json(res,200,await serial(area,()=>get(area)));return;}
+   if(req.method==='GET'){const {revision,envelope}=await serial(area,()=>get(area));json(res,200,{revision,envelope});return;}
    if(req.method!=='PUT'){json(res,405,{error:'method'});return;}
    if(!/^application\/json(?:;|$)/i.test(req.headers['content-type']||'')){json(res,415,{error:'content-type'});return;}
    const body=await readBody(req);
    if(!body||Object.keys(body).sort().join(',')!=='envelope,expectedRevision'||!Number.isSafeInteger(body.expectedRevision)||body.expectedRevision<0||!envelopeValid(body.envelope)){json(res,400,{error:'packet'});return;}
    const result=await serial(area,async()=>{
     const current=await get(area);
+    if(current.fence)return {frozen:true};
     if(current.revision!==body.expectedRevision)return null;
     if(current.revision===Number.MAX_SAFE_INTEGER)throw Error('Revision limit');
     const next={revision:current.revision+1,envelope:body.envelope};
     await write(area,next);return next;
    });
+   if(result?.frozen){json(res,423,{error:'migration-frozen'});return;}
    if(!result){json(res,409,{error:'stale'});return;}
    json(res,200,result);
   }catch(e){if(!res.headersSent&&!res.destroyed)json(res,e.status||500,{error:e.status?'request':'storage'});else if(!res.destroyed)res.destroy();}

@@ -234,6 +234,7 @@ export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeou
    }
    if([408,502,503,504].includes(res.status))throw Object.assign(Error('Временная недоступность сервера синхронизации (HTTP '+res.status+')'),{retryable:true});
    if(res.status===413)throw Object.assign(Error('Пакет превышает лимит выбранного сервера. Локальные данные сохранены. Откройте диагностику размера пакетов.'),{code:'packet-too-large'});
+   if(res.status===423)throw Object.assign(Error('Исходный сервер закрыт для записи на время переноса. Локальные данные сохранены.'),{code:'migration-frozen'});
    if(res.status===409)throw Error('На сервере появилась новая ревизия. Повторите предварительный просмотр.');
    if(res.status===401||res.status===403)throw Error('Сервер отказал в доступе. Проверьте ключ и область.');
    check(res.ok,'Сервер синхронизации недоступен (HTTP '+res.status+')');
@@ -640,10 +641,37 @@ export async function inspectDeltaMigrationDevice(args){
  const ready=await scopeDigest(local,p.area)===p.digest;
  return {...result,status:ready?'clean-source':'local-changes',ready};
 }
+// Separate privileged loopback-only fence. No automatic unfreeze or production caller.
+export function deltaMigrationFenceClient({sourceEndpoint,destinationEndpoint,area,sourceToken,destinationToken,sourceFenceToken,protocolVersion=1,synthetic=false,fetcher=globalThis.fetch}){
+ const {source}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
+ check(protocolVersion===1&&validArea(area)&&typeof sourceFenceToken==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(sourceFenceToken)&&sourceFenceToken!==sourceToken&&sourceFenceToken!==destinationToken,'Нужен отдельный ключ блокировки Node LAB');
+ async function request(body){
+  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),15000);
+  try{
+   const res=await fetcher(source+'/v1/migration-fence/'+area,{method:body?'PUT':'GET',headers:{Authorization:'Bearer '+sourceFenceToken,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:ctl.signal});
+   check(res.ok,'Барьер записи LAB: HTTP '+res.status);
+   const reader=res.body?.getReader();check(reader,'Нет ответа барьера записи');let size=0,text='';const decoder=new TextDecoder('utf-8',{fatal:true});
+   try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>4096){await reader.cancel();throw Error('Слишком большой ответ барьера');}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}finally{reader.releaseLock();}
+   const state=JSON.parse(text);
+   check(exactFields(state,['revision','fence'])&&Number.isSafeInteger(state.revision)&&state.revision>=0&&(state.fence===null||exactFields(state.fence,['revision','migrationId'])&&revision(state.revision)&&state.fence.revision===state.revision&&typeof state.fence.migrationId==='string'&&uuid.test(state.fence.migrationId)),'Некорректный ответ барьера записи');
+   if(body)check(state.revision===body.expectedRevision&&state.fence?.migrationId===body.migrationId,'Барьер не подтверждён');
+   return state;
+  }finally{clearTimeout(timer);}
+ }
+ return {get:()=>request(),freeze:({expectedRevision,migrationId,confirmed,backupVerified})=>{
+  check(confirmed===true&&backupVerified===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите резервную копию и необратимую блокировку LAB');
+  return request({expectedRevision,migrationId:migrationId.toLowerCase()});
+ }};
+}
 export async function commitDeltaMigration(args){
  check(args.confirmed===true&&args.backupVerified===true&&args.sourceFrozen===true,'Подтвердите проверенный файл и остановку записи на всех исходных устройствах');
  const p=await openDeltaMigration(args);
  const {sourceRead,target}=migrationClients(args);
+ const fenced=args.sourceFenceToken!==undefined||args.sourceFenceId!==undefined;
+ const fenceClient=fenced?deltaMigrationFenceClient(args):null;
+ if(fenced)check(typeof args.sourceFenceId==='string'&&uuid.test(args.sourceFenceId),'Укажите ID подтверждённого барьера');
+ const verifyFence=async()=>{if(!fenced)return;const state=await fenceClient.get();check(state.revision===p.sourceRevision&&state.fence?.migrationId===args.sourceFenceId.toLowerCase(),'Источник не заблокирован на ревизии файла переноса');};
+ await verifyFence();
  const before=await sourceRead(),h=await target.head();
  check(validDeltaHead(h),'Некорректная история назначения');
  const sourceMatches=r=>r.revision===p.sourceRevision&&same(r.envelope,p.sourceEnvelope);
@@ -662,10 +690,11 @@ export async function commitDeltaMigration(args){
  const row=await target.getRevision(1),remote=await readDeltaLab({client:target,area:p.area,password:args.destinationPassword,current:args.current});
  check(row.revision===1&&row.kind==='anchor'&&same(row.envelope,p.envelope)&&remote.revision===1&&remote.workspaceId===p.workspaceId&&await scopeDigest(remote.snapshot,p.area)===p.digest&&same(remote.snapshot,p.snapshot),'Назначение изменилось; переход запрещён');
  const after=await sourceRead();
+ await verifyFence();
  // Client-side confirmation cannot actually freeze a legacy server. A late
  // source write leaves a verified *copy*, not permission to change devices.
  const unchanged=sourceMatches(before)&&sourceMatches(after);
- return {area:p.area,sourceRevision:p.sourceRevision,observedSourceRevision:after.revision,destinationRevision:1,replayed,status:unchanged?'verified-copy':'source-changed',cutoverAllowed:false,requiresManualCutover:true};
+ return {area:p.area,sourceRevision:p.sourceRevision,observedSourceRevision:after.revision,destinationRevision:1,replayed,status:unchanged?(fenced?'verified-fenced-copy':'verified-copy'):'source-changed',cutoverAllowed:false,requiresManualCutover:true};
 }
 
 /* Explicit laboratory adapter for the existing prepare/preview/execute pipeline.

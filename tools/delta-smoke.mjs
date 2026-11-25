@@ -20,7 +20,7 @@ import {defaultSettings} from '../js/model.js';
 import {BACKUP_VERSION} from '../js/backup.js';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
 import {splitDeltaAnchor} from '../js/delta-anchor.js';
-import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation,createDeltaDeviceRecovery,openDeltaDeviceRecovery,rebindDeltaDevice,relayClient,prepareDeltaMigration,openDeltaMigration,inspectDeltaMigrationDevice,commitDeltaMigration} from '../js/sync.js';
+import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation,createDeltaDeviceRecovery,openDeltaDeviceRecovery,rebindDeltaDevice,relayClient,deltaMigrationFenceClient,prepareDeltaMigration,openDeltaMigration,inspectDeltaMigrationDevice,commitDeltaMigration} from '../js/sync.js';
 
 const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),coachAdmin='E'.repeat(43),rotator='F'.repeat(43),coachRotator='G'.repeat(43),area='school',password='synthetic-delta-test-password';
 const workspaceId='00000000-0000-4000-8000-000000000001';
@@ -361,7 +361,8 @@ try{
  // snapshot relay. Source is read-only to the migration helpers.
  await stop();workerState=join(state,'migration');await start();
  const sourceSchool='H'.repeat(43),sourceCoach='I'.repeat(43),oldPass='synthetic-legacy-password',newPass='synthetic-destination-password',backupPassword='synthetic-migration-backup-password';
- const legacy=await createRelay({directory:join(state,'legacy'),tokens:{school:[sourceSchool],coach:[sourceCoach]},allowedOrigin:origin});
+ const sourceFenceToken='J'.repeat(43),sourceFenceId='00000000-0000-4000-8000-000000000001';
+ const legacy=await createRelay({directory:join(state,'legacy'),tokens:{school:[sourceSchool],coach:[sourceCoach]},allowedOrigin:origin,migrationFenceTokens:{coach:sourceFenceToken}});
  await new Promise((resolve,reject)=>{legacy.once('error',reject);legacy.listen(0,'127.0.0.1',resolve);});
  try{
   const sourceEndpoint='http://127.0.0.1:'+legacy.address().port,legacyCoach=relayClient(sourceEndpoint,'coach',sourceCoach),legacySchool=relayClient(sourceEndpoint,'school',sourceSchool);
@@ -393,12 +394,21 @@ try{
   const latest=await prepareDeltaMigration(args);
   assert.equal((await inspectDeltaMigrationDevice({...args,file:latest.file})).status,'stale-checkpoint');
   const exact={...args,file:latest.file,confirmed:true,backupVerified:true,sourceFrozen:true};
-  const copied=await commitDeltaMigration(exact);
-  assert.equal(copied.status,'verified-copy');assert.equal(copied.cutoverAllowed,false);assert.equal(copied.replayed,false);
+  const fencedArgs={...exact,sourceFenceToken,sourceFenceId};
+  const fence=deltaMigrationFenceClient(fencedArgs);
+  await assert.rejects(commitDeltaMigration(fencedArgs),/не заблокирован/);
+  assert.equal((await target.head()).revision,0);
+  await assert.rejects(fence.freeze({expectedRevision:1,migrationId:sourceFenceId,confirmed:true,backupVerified:true}),/409/);
+  const frozen=await fence.freeze({expectedRevision:2,migrationId:sourceFenceId,confirmed:true,backupVerified:true});
+  assert.deepEqual(frozen,{revision:2,fence:{revision:2,migrationId:sourceFenceId}});
+  assert.deepEqual(await fence.freeze({expectedRevision:2,migrationId:sourceFenceId,confirmed:true,backupVerified:true}),frozen);
+  await assert.rejects(legacyCoach.put(2,await sourceEnvelope(large,'coach',3)),e=>e.code==='migration-frozen');
+  const copied=await commitDeltaMigration(fencedArgs);
+  assert.equal(copied.status,'verified-fenced-copy');assert.equal(copied.cutoverAllowed,false);assert.equal(copied.replayed,false);
   assert.deepEqual(await legacyCoach.get(),src2);
   const destination=await readDeltaLab({client:target,area:'coach',password:newPass,current:freshDb()});
   assert.equal(destination.revision,1);assert.notEqual(destination.workspaceId,workspaceId);assert.deepEqual(destination.snapshot,nextLarge);
-  assert.deepEqual(await commitDeltaMigration(exact),{...copied,replayed:true});
+  assert.deepEqual(await commitDeltaMigration(fencedArgs),{...copied,replayed:true});
   await assert.rejects(prepareDeltaMigration(args),/должен быть пустым/);
   await assert.rejects(readDeltaLab({client:target,area:'coach',password:oldPass,current:freshDb()}));
   // Simulate a late source write while the target's initial anchor commits.
