@@ -142,3 +142,16 @@ export function ktpRedistribution(s,classId,topics,today=M.todayIso()){
  const slots=[...free,...existing].sort((a,b)=>a.date.localeCompare(b.date)||(a.slot??0)-(b.slot??0));
  return {rows:missing.slice(0,slots.length).map((topic,i)=>({topicId:topic.id,topic:topic.name,date:slots[i].date,slot:slots[i].slot??null,time:slots[i].time||'',lessonId:slots[i].lessonId})),unplaced:missing.slice(slots.length).map(t=>({id:t.id,name:t.name})),covered:topics.filter(t=>covered.has(t.id)).length};
 }
+
+// Read-only grade scenario; the existing period proposal uses M.rawToMark.
+// Never writes or promises a final grade.
+export function gradeScenario(result,{grade=5,weight=1,attempts=1,target=5,maxAttempts=10}={}){
+ check(Number.isInteger(grade)&&grade>=1&&grade<=5&&[1,2].includes(weight)&&Number.isInteger(attempts)&&attempts>=1&&attempts<=20&&Number.isInteger(target)&&target>=1&&target<=5&&Number.isInteger(maxAttempts)&&maxAttempts>=1&&maxAttempts<=20,'Некорректный сценарий оценок');
+ check(Number.isSafeInteger(result?.weight)&&result.weight>=0&&(result.weight===0?result.mean===null:Number.isFinite(result.mean)&&result.mean>=1&&result.mean<=5),'Некорректные исходные оценки');
+ const current=result.weight?Math.round(result.mean*result.weight):0;
+ const projected=n=>(current+n*weight*grade)/(result.weight+n*weight);
+ const mean=projected(attempts),suggested=M.rawToMark(mean);
+ let needed=result.weight&&M.rawToMark(result.mean)>=target?0:null;
+ if(needed===null)for(let n=1;n<=maxAttempts;n++){if(M.rawToMark(projected(n))>=target){needed=n;break;}}
+ return {mean,suggested,needed,maxAttempts};
+}
