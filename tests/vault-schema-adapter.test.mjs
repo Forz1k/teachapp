@@ -45,15 +45,19 @@ test('LAB query validation and range get match native IndexedDB even when the se
  });
  const range=IDBKeyRange.bound('a','b');
  assert.deepEqual(await tx(['meta'],s=>s.meta.get(range)),await native(['meta'],s=>s.meta.get(range)));
- for(const [name,fn] of [
-  ['students',s=>s.students.getAll(false)],
-  ['students',s=>s.students.index('classId').getAll(NaN)],
-  ['students',s=>s.students.index('classId').count({bad:true})],
-  ['students',s=>s.students.index('classId').getAllKeys(false)],
-  ['students',s=>s.students.index('classId').get(null)],
-  ['students',s=>s.students.get(undefined)]
- ]){
-  await assert.rejects(native([name],fn),e=>e.name==='DataError');await assert.rejects(tx([name],fn),e=>e.name==='DataError');
- }
+ // LAB intentionally supports the existing Promise wrapper signatures, not
+ // newer dictionary overloads and permissive optional-query conversions.
+ const invalid=[
+  ['store getAll boolean',s=>s.students.getAll(false)],
+  ['index getAll NaN',s=>s.students.index('classId').getAll(NaN)],
+  ['index count object',s=>s.students.index('classId').count({bad:true})],
+  ['index getAllKeys boolean',s=>s.students.index('classId').getAllKeys(false)],
+  ['index get null',s=>s.students.index('classId').get(null)],
+  ['store get undefined',s=>s.students.get(undefined)]
+ ];
+ for(const [label,fn] of invalid)await assert.rejects(tx(['students'],fn),e=>e.name==='DataError',label);
+ // Required invalid get keys have no optional/dictionary overload.
+ for(const [label,fn] of invalid.slice(-2))await assert.rejects(native(['students'],fn),e=>e.name==='DataError',label);
+ assert.deepEqual(await tx(['students'],s=>s.students.index('classId').getAll()),await native(['students'],s=>s.students.index('classId').getAll()));
  assert.deepEqual(await tx(['students'],s=>s.students.index('classId').getAll(null)),[]);
 });
