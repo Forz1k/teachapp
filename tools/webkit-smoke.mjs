@@ -369,6 +369,10 @@ try{
  await page.getByLabel('Дизайн',{exact:true}).selectOption('arena');await page.getByLabel('Положение фотографии',{exact:true}).selectOption('top');await page.getByRole('textbox',{name:'Название оформления',exact:true}).fill('Арена');await page.getByRole('button',{name:'Сохранить как пресет',exact:true}).click();assert.equal(await page.getByRole('combobox',{name:'Сохранённое оформление',exact:true}).inputValue(),'Арена');await page.getByLabel('Дизайн',{exact:true}).selectOption('editorial');await page.getByRole('button',{name:'Применить оформление',exact:true}).click();assert.equal(await page.getByLabel('Дизайн',{exact:true}).inputValue(),'arena');assert.equal(await page.getByLabel('Положение фотографии',{exact:true}).inputValue(),'top');
  assert.equal(await page.locator('.studio-editor textarea[aria-label="Текст публикации"]').inputValue(),'Итоговый результат\n\nДемо — Гости\n\n2:1');
  await page.getByRole('textbox',{name:'Дата, время и место встречи',exact:true}).fill('12 декабря · зал');assert.match(await page.locator('.studio-kit-summary').textContent(),/6 PNG \+ 2 TXT/);assert.equal(await page.getByRole('button',{name:'Скачать комплект матча ZIP',exact:true}).isEnabled(),true);
+ await page.getByLabel('Масштаб фотографии',{exact:true}).fill('150');
+ assert.equal(await page.getByLabel('Масштаб фотографии',{exact:true}).inputValue(),'150');
+ await page.getByRole('button',{name:'Сохранить фирменный стиль',exact:true}).click();
+ assert.equal(await page.evaluate(async()=> (await import('./js/media-studio.js')).readStudioStyle('test').photoZoom),150);
  await page.getByRole('button',{name:'+ Текстовый слой',exact:true}).click();
  await page.getByLabel('Текст слоя 1',{exact:true}).fill('Синтетический слой');
  await page.getByLabel('Выравнивание текста слоя 1',{exact:true}).selectOption('center');
