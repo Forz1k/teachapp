@@ -111,7 +111,7 @@ export function openSheet(content, opts = {}) {
   else sheetEl.append(content);
   if(wasOpen&&typeof content!=='string'&&!opts.match)content.classList?.add('sheet-content-enter');
   sheetEl.setAttribute('aria-label',sheetEl.querySelector('h1,h2,h3')?.textContent||'Окно TeachApp');
-  window.dispatchEvent(new Event('teachapp:sheet-content'));
+  window.dispatchEvent(new window.Event('teachapp:sheet-content'));
 
   requestAnimationFrame(() => {
     if (revision !== sheetRevision) return;
@@ -127,7 +127,7 @@ export function closeSheet() {
   const revision = ++sheetRevision;
   sheetEl.classList.remove('show');
   backdropEl.classList.remove('show');
-  window.dispatchEvent(new Event('teachapp:sheet-content'));
+  window.dispatchEvent(new window.Event('teachapp:sheet-content'));
   const cb = onCloseCb;
   onCloseCb = null;
   setTimeout(() => {
@@ -149,7 +149,7 @@ export function replaceSheetContent(build) {
   const content = build(closeSheet);
   if (typeof content === 'string') sheetEl.append(el('div', { html: content }));
   else sheetEl.append(content);
-  window.dispatchEvent(new Event('teachapp:sheet-content'));
+  window.dispatchEvent(new window.Event('teachapp:sheet-content'));
 }
 
 /* ---------- тост ---------- */
