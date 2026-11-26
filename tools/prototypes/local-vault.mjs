@@ -109,14 +109,15 @@ export async function stageVaultLab(db,{scope,data,password}){
  return {scope,records:rows.length-2,verified:true};
 }
 /** Wrong password, altered/missing/extra records, or a foreign scope fail closed. */
-async function decodeSnapshot(rows,{scope,password}){
+async function decodeSnapshot(rows,{scope,password,key:sessionKey,expectedHeader}){
  check(validScope(scope),'Некорректная область');
  const map=new Map(rows.map(r=>[r.id,r])),header=map.get('header');
  try{
   validateHeader(header);check(header.scope===scope,'Другая область');
   check(rows.length<=maxRecords+2&&map.size===rows.length,'Превышен лимит или повторный ключ');
   let sealedBytes=0;const ivs=new Set();for(const row of rows){if(row.id==='header')continue;check(bytes(row.iv,12)&&bytes(row.data),'Повреждён конверт');const iv=hex(row.iv);check(!ivs.has(iv),'Повторный IV');ivs.add(iv);sealedBytes+=row.data.byteLength;check(sealedBytes<=maxSealedBytes,'Превышен лимит шифротекста');}
-  const key=await derive(password,header.salt),manifest=await decryptRow(key,header,map.get('manifest'),'manifest'),used=new Set(['header','manifest']),snapshot=Object.create(null);
+  if(sessionKey)check(expectedHeader&&header.vaultId===expectedHeader.vaultId&&sameBytes(header.salt,expectedHeader.salt),'Ревизия LAB изменена');
+  const key=sessionKey||await derive(password,header.salt),manifest=await decryptRow(key,header,map.get('manifest'),'manifest'),used=new Set(['header','manifest']),snapshot=Object.create(null);
   check(plain(manifest)&&Object.keys(manifest).length<=64,'Некорректный манифест');
   for(const [name,slots] of Object.entries(manifest)){
    check(tableName(name)&&Array.isArray(slots)&&slots.length<=maxRecords,'Некорректный манифест');
@@ -135,6 +136,46 @@ export async function readVaultLab(db,{scope,password}){
 }
 export async function unlockVaultLab(db,options){return (await readVaultLab(db,options)).data;}
 const sameBytes=(a,b)=>bytes(a)&&bytes(b)&&a.length===b.length&&a.every((x,i)=>x===b[i]);
+
+/** Read-only key session for an immutable LAB revision. The passphrase is
+ * not retained by the returned object; only a nonextractable CryptoKey.
+ * Lock invalidates pending reads, but JS cannot guarantee memory zeroization. */
+function createReadSession(db,scope,header,initialKey,idleMs,now){
+ let key=initialKey,closed=false,deadline=now()+idleMs,timer;
+ // Avoid retaining a second strong reference to the key in this closure.
+ initialKey=null;
+ function close(){closed=true;key=null;clearTimeout(timer);}
+ function guard(){
+  if(!closed&&now()>=deadline)close();
+  check(!closed,'Сеанс LAB заблокирован; откройте заново');
+ }
+ function arm(){
+  clearTimeout(timer);timer=setTimeout(close,Math.max(0,deadline-now()));timer?.unref?.();
+ }
+ arm();
+ return Object.freeze({
+  scope,revision:header.vaultId,
+  isLocked(){if(!closed&&now()>=deadline)close();return closed;},
+  close,
+  async read(){
+   guard();
+   try{
+    const rows=await readRows(db);guard();
+    const result=await decodeSnapshot(rows,{scope,key,expectedHeader:header});guard();
+    deadline=now()+idleMs;arm();return result;
+   }catch(e){close();throw e;}
+  }
+ });
+}
+export async function openVaultReadSessionLab(db,{scope,password,idleMs=5*60*1000,now=()=>performance.now()}){
+ assertLab(db);check(validScope(scope)&&Number.isSafeInteger(idleMs)&&idleMs>0&&idleMs<=30*60*1000&&typeof now==='function','Некорректные настройки сеанса LAB');
+ const rows=await readRows(db),header=rows.find(r=>r.id==='header');let key;
+ try{validateHeader(header);check(header.scope===scope,'Другая область');key=await derive(password,header.salt);}
+ catch{throw Error('Не удалось открыть хранилище LAB: неверный пароль, область или повреждение данных');}
+ await decodeSnapshot(rows,{scope,key,expectedHeader:header});
+ return createReadSession(db,scope,structuredClone(header),key,idleMs,now);
+}
+
 function sameRows(a,b){
  if(a.length!==b.length)return false;
  const map=new Map(b.map(r=>[r.id,r]));
