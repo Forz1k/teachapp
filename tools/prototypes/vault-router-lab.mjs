@@ -2,6 +2,8 @@
  * All callers must use this router; raw IndexedDB connections bypass Web Locks.
  * No live database, application switch, persistent password or plaintext fallback. */
 import {SCHEMA} from '../../js/db.js';
+import {BACKUP_VERSION,validateBackup} from '../../js/backup.js';
+import {encryptBackup,decryptBackup} from '../../js/privacy.js';
 import {openVaultLab} from './local-vault.mjs';
 import {schemaVaultAdapter} from './vault-schema-adapter.mjs';
 import {openPlainSchemaLab,readPlainSchemaLab,stageSchemaMigrationLab,verifySchemaMigrationLab,restoreSchemaMigrationLab,plainSchemaTransactionLab} from './vault-migration-rehearsal.mjs';
@@ -45,6 +47,21 @@ function nativePut(db,table,row){
   tx.oncomplete=()=>resolve(req.result);tx.onabort=()=>reject(tx.error||Error('Запись LAB отменена'));
  });
 }
+const exact=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join('|')===keys.slice().sort().join('|');
+const sameSnapshot=(a,b)=>JSON.stringify(Object.keys(SCHEMA).map(k=>[...a[k]].sort((x,y)=>indexedDB.cmp(x.id,y.id))))===JSON.stringify(Object.keys(SCHEMA).map(k=>[...b[k]].sort((x,y)=>indexedDB.cmp(x.id,y.id))));
+function independentPassword(password,backupPassword){
+ check(typeof backupPassword==='string'&&backupPassword.length>=12&&backupPassword.length<=1024&&password!==backupPassword,'Нужен отдельный пароль копии LAB');
+}
+export async function openRouterActivationBackupLab({id,backupPassword,file}){
+ check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id),'Некорректный ID репетиции LAB');
+ independentPassword(undefined,backupPassword);
+ check(typeof file==='string'&&file.length<=96*1024*1024,'Некорректный файл копии LAB');
+ const p=await decryptBackup(JSON.parse(file),backupPassword);
+ check(exact(p,['app','version','backupVersion','id','generation','data'])&&p.app==='teachapp-vault-activation-backup'&&p.version===1&&p.backupVersion===BACKUP_VERSION&&p.id===id&&p.generation===1,'Копия другого маршрута или версии LAB');
+ check(exact(p.data,Object.keys(SCHEMA)),'Требуется полная схема LAB');
+ check(Array.isArray(p.data.meta)&&p.data.meta.every(r=>typeof r?.id==='string'&&!r.id.startsWith('sync-checkpoint-')),'Контрольные точки синхронизации не переносятся в LAB');
+ return validateBackup({app:'teachapp',version:BACKUP_VERSION,data:p.data});
+}
 export function vaultRouterLab(id,{locks=globalThis.navigator?.locks}={}){
  check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id),'Некорректный ID репетиции LAB');
  check(typeof locks?.request==='function','Для LAB необходим Web Locks API; небезопасный fallback запрещён');
@@ -86,6 +103,26 @@ export function vaultRouterLab(id,{locks=globalThis.navigator?.locks}={}){
   stage:({password,resume=false})=>guarded(async db=>{
    expect(await state(db),'source');
    return plain('source',p=>encrypted(async v=>resume===true&&(await countSealed(v))>0?verifySchemaMigrationLab(p,v,{password}):stageSchemaMigrationLab(p,v,{password})));
+  }),
+  // Separate strict rehearsal: caller saves an independently encrypted file
+  // and reads it back before explicitly authorizing activation.
+  prepareActivationBackup:({password,backupPassword})=>guarded(async db=>{
+   const s=await state(db);expect(s,'source');independentPassword(password,backupPassword);
+   await plain('source',p=>encrypted(v=>verifySchemaMigrationLab(p,v,{password})));
+   const data=await encrypted(v=>adapter(v,password,a=>a.snapshot()));
+   const file=JSON.stringify(await encryptBackup({app:'teachapp-vault-activation-backup',version:1,backupVersion:BACKUP_VERSION,id,generation:s.generation,data},backupPassword));
+   const reopened=await openRouterActivationBackupLab({id,backupPassword,file});
+   check(sameSnapshot(data,reopened)&&sameSnapshot(data,await plain('source',readPlainSchemaLab)),'Снимок LAB изменился; повторите подготовку копии');
+   return {file,generation:s.generation,records:Object.values(data).reduce((sum,rows)=>sum+rows.length,0)};
+  }),
+  activateWithBackup:({password,backupPassword,file,expectedGeneration,saved=false})=>guarded(async db=>{
+   const s=await state(db);expect(s,'source');independentPassword(password,backupPassword);
+   check(saved===true&&expectedGeneration===s.generation,'Подтвердите сохранённую копию и поколение LAB');
+   const backup=await openRouterActivationBackupLab({id,backupPassword,file});
+   await plain('source',p=>encrypted(v=>verifySchemaMigrationLab(p,v,{password})));
+   const current=await encrypted(v=>adapter(v,password,a=>a.snapshot()));
+   check(sameSnapshot(backup,current)&&sameSnapshot(backup,await plain('source',readPlainSchemaLab)),'Сохранённая копия LAB устарела; переключение запрещено');
+   const nextState=next(s,'vault');await setState(db,s,nextState);return nextState;
   }),
   activate:({password})=>guarded(async db=>{
    const s=await state(db);expect(s,'source');
