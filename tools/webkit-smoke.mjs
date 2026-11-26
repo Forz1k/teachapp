@@ -38,6 +38,16 @@ try{
   finally{db.close();dest.close();}
  });assert.deepEqual(vault,{changed:true,independent:true,name:'Changed',plaintext:false});
  console.log('WEBKIT VAULT LAB PASS: independent encrypted snapshot update and recovery using real IndexedDB and WebCrypto.');
+ const oldFence=await page.evaluate(async()=>{
+  const F=await import('/tools/prototypes/vault-version-fence-lab.mjs'),D=await import('./js/db.js'),id='webkit-fence',data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));
+  data.meta=[{id:'synthetic-fence',value:42}];const old=await F.openLegacyFenceLab(id);
+  await new Promise((resolve,reject)=>{const tx=old.transaction('meta','readwrite');tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);tx.objectStore('meta').put(data.meta[0]);});
+  const result=await F.fenceLegacyLab(id,data);let rejected=null,closed=null;
+  try{const unexpected=await F.openLegacyFenceLab(id);unexpected.close();}catch(e){rejected=e.name;}
+  try{old.transaction('meta','readwrite');}catch(e){closed=e.name;}
+  return {fenced:result.fenced,rejected,closed};
+ });assert.deepEqual(oldFence,{fenced:true,rejected:'VersionError',closed:'InvalidStateError'});
+ console.log('WEBKIT OLD CLIENT FENCE LAB PASS: native versionchange closes old connection and explicit v10 reopen is refused.');
  const schemaVault=await page.evaluate(async()=>{
   const V=await import('/tools/prototypes/local-vault.mjs'),A=await import('/tools/prototypes/vault-schema-adapter.mjs'),D=await import('./js/db.js'),B=await import('./js/backup.js'),password='synthetic-schema-webkit',data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));
   data.classes=[{id:'c',name:'Synthetic class',gradeLevel:7}];data.students=[{id:'p',classId:'c',fullName:'Synthetic pupil',number:1,normGroup:'girls'}];data.lessons=[{id:'l',classId:'c',date:'2026-11-24',slot:1,time:'09:00'}];data.marks=[{id:'m',studentId:'p',lessonId:'l',value:'4',source:'manual'}];
