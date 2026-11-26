@@ -97,3 +97,31 @@ test('Synthetic notification subscriptions are explicit, CAS-bound to their own 
  assert.equal(c('w','GET','notification-lab',recovered.body.token).body.enabled,false);
  f.clock(8*86400000);assert.equal(c('w','GET','notification-lab',recovered.body.token).status,401);
 });
+
+test('Synthetic athlete notice is scoped, coalesced, expires and is revision-bound before acknowledgement',()=>{
+ const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ c('w','POST','teams',o,{id:'t',name:'Team',players:[{id:'p',name:'P',number:1},{id:'q',name:'Q',number:2}]});
+ c('w','POST','teams',o,{id:'other',name:'Other',players:[{id:'p',name:'P',number:1}]});
+ const member=(teamId,athleteId)=>c('w','POST','redeem',c('w','POST','invite',o,{role:'athlete',teamId,athleteId,matchId:null}).body.invite).body.token;
+ const a=member('t','p'),b=member('t','p'),q=member('t','q'),other=member('other','p');
+ const endpoint='https://push.example.invalid/sub/00000000-0000-4000-8000-000000000001';
+ const sub=(token,expectedRevision=0,enabled=true)=>c('w','PUT','notification-lab',token,{expectedRevision,enabled,endpoint:enabled?endpoint:null});
+ const read=token=>c('w','GET','notification-lab/inbox',token).body;
+ const ack=(token,expectedRevision,sequence)=>c('w','POST','notification-lab/ack',token,{expectedRevision,sequence});
+ const packet=expectedRevision=>({expectedRevision,goals:[],assignments:[{id:'assignment',name:'PRIVATE',due:'2026-12-01',status:'open'}],schedule:[]});
+ for(const token of [a,q,other])assert.equal(sub(token).status,200);
+ assert.equal(c('w','GET','notification-lab/inbox',o).status,403);
+ assert.equal(c('w','PUT','teams/t/athletes/p',o,packet(0)).status,200);
+ const first=read(a);assert.equal(first.pending,true);assert.equal(first.sequence,1);assert.deepEqual(first.notice,{title:'TeachApp',body:'В личном кабинете есть обновления.'});
+ assert.doesNotMatch(JSON.stringify(first),/PRIVATE|assignment|example.invalid/);
+ for(const token of [b,q,other])assert.equal(read(token).pending,false);
+ assert.equal(c('w','PUT','teams/t/athletes/p',o,packet(0)).status,409);assert.deepEqual(read(a),first);
+ assert.equal(sub(b).status,200);assert.equal(read(b).pending,false);
+ assert.equal(c('w','PUT','teams/t/athletes/p',o,packet(1)).status,200);
+ assert.equal(read(a).sequence,2);assert.equal(read(b).sequence,1);assert.equal(ack(a,1,1).status,409);
+ assert.equal(ack(a,1,2).body.pending,false);assert.equal(ack(a,1,2).changed,false);assert.equal(read(b).pending,true);
+ assert.equal(sub(b,1,false).status,200);assert.equal(sub(b,2).status,200);assert.equal(read(b).pending,false);assert.equal(ack(b,1,1).status,409);
+ assert.equal(c('w','PUT','teams/t/athletes/p',o,packet(2)).status,200);assert.equal(read(a).pending,true);
+ f.clock(86400000);assert.equal(read(a).pending,false);assert.equal(ack(a,1,3).status,409);
+ assert.equal(c('w','POST','session/revoke',a).status,200);assert.equal(c('w','GET','notification-lab/inbox',a).status,401);
+});
