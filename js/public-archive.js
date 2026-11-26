@@ -198,3 +198,41 @@ export async function inspectArchiveV3Migration(address,{fetcher=fetch,maxRecord
  if(JSON.stringify(source)!==JSON.stringify(sourceAgain)||JSON.stringify(destination)!==JSON.stringify(destinationAgain))throw Error('Архив изменился во время сверки. Повторите после остановки публикации.');
  return migrationPreview(source,destination);
 }
+
+/** Public phase is only routing metadata, readable while the parent is
+ * published. Old production rules deny this path; that means legacy V2.
+ * Once V3 is observed never silently downgrade on a transient denial. */
+export function archiveRouteTarget(address){return archiveTarget(address).replace('/publicMatchArchive/','/archiveMigration/');}
+export async function resolveArchiveRoute(address,{fetcher=fetch,previous=null}={}){
+ let state;try{state=(await request(archiveRouteTarget(address),{},fetcher)).value;}
+ catch(e){if(e.status!==401&&e.status!==403)throw e;if(previous?.version===3)throw Error('Не удалось подтвердить активную версию архива V3');state=null;}
+ if(state!==null&&(!state||typeof state!=='object'||Array.isArray(state)||Object.keys(state).sort().join('|')!=='generation|phase'||!['legacy','frozen','v3'].includes(state.phase)||!Number.isInteger(state.generation)||state.generation<1||state.generation>1000000))throw Error('Некорректная версия архива');
+ const phase=state?.phase||'legacy',generation=state?.generation||0,version=phase==='v3'?3:2;
+ if(previous&&(generation<previous.generation||previous.version===3&&version!==3))throw Error('Сервер вернул устаревшую версию архива');
+ return {phase,generation,version,target:version===3?archiveV3Target(address):archiveTarget(address),key:version+':'+generation};
+}
+const routedRow=r=>{if(!r)return null;const value=archiveProjection(r);return {...value,archiveKey:archiveKey(value)};};
+export async function routedArchivePage(route,options={}){
+ if(route.version!==3)return fetchArchivePage(route.target,options);
+ const p=await fetchArchiveV3Page(route.target,options);return {rows:p.rows.map(routedRow),cursor:p.cursor};
+}
+export async function routedArchiveRecord(route,{archiveKey:legacyKey,matchId},fetcher=fetch){
+ if(legacyKey!=null&&(typeof legacyKey!=='string'||!key.test(legacyKey)))throw Error('Некорректная ссылка');
+ if(route.version!==3)return legacyKey?fetchArchiveRecord(route.target,legacyKey,fetcher):fetchArchiveById(route.target,matchId,fetcher);
+ const recordId=legacyKey?legacyKey.slice(17):matchId;
+ const r=await request(v3RecordUrl(route.target,recordId),{},fetcher);
+ return r.value?routedRow(checkedV3Row(r.value,recordId)):null;
+}
+export function requireWritableArchive(route){if(route.phase==='frozen')throw Error('Архив временно закрыт для изменений: перенос V3');return route;}
+export async function routedArchiveVersion(route,row,fetcher=fetch){
+ requireWritableArchive(route);
+ return route.version===3?readArchiveV3Version(route.target,row.id,fetcher):readArchiveVersion(route.target,archiveKey(row),fetcher);
+}
+export async function routedArchiveFind(route,row,fetcher=fetch){
+ // V3 is keyed by ID: the version read already covers all dates.
+ return route.version===3?null:fetchArchiveById(route.target,row.id,fetcher);
+}
+export async function routedArchiveWrite(route,row,value,token,etag,fetcher=fetch){
+ requireWritableArchive(route);
+ return route.version===3?writeArchiveV3Record(route.target,row.id,value,token,etag,fetcher):writeArchiveRecord(route.target,archiveKey(row),value,token,etag,fetcher);
+}
