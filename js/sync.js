@@ -328,6 +328,7 @@ export async function buildSyncDelta(base,next,{area,workspaceId,baseRevision}){
 }
 function checkDeltaHeader(packet,{area,workspaceId,baseRevision}){
  const ctx=deltaContext(area,workspaceId,baseRevision);
+ if(packet?.app===deltaApp&&packet.version===1&&Number.isSafeInteger(packet.backupVersion)&&packet.backupVersion>BACKUP_VERSION)throw Object.assign(Error('Несовместимый формат изменений. Обновите TeachApp на всех устройствах: сервер содержит более новый формат данных. Локальные записи сохранены.'),{code:'newer-backup-format'});
  check(exactFields(packet,['app','version','backupVersion','area','workspaceId','baseRevision','revision','baseHash','resultHash','changes'])&&
   packet.app===deltaApp&&packet.version===1&&[21,BACKUP_VERSION].includes(packet.backupVersion)&&
   Object.entries(ctx).every(([k,v])=>packet[k]===v)&&typeof packet.baseHash==='string'&&digestPattern.test(packet.baseHash)&&
@@ -395,32 +396,39 @@ export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sea
  }
  async function writeAnchor(kind,expectedRevision,envelope,secret,rotation){
   const body={expectedRevision,envelope};
-  if(kind!=='rotate'&&new TextEncoder().encode(JSON.stringify(body)).length<=defaultCloudflarePacketLimit)return request(kind,body,secret);
+  if(kind!=='rotate'&&new TextEncoder().encode(JSON.stringify(body)).length<=defaultCloudflarePacketLimit)return writeAck(await request(kind,body,secret),expectedRevision);
   const {uploadId,manifest,chunks}=await splitDeltaAnchor(envelope,{kind,expectedRevision,rotation}),path='multipart/'+kind+'/'+uploadId+'/';
   const begun=await request(path+'begin',{manifest},secret);
-  if(begun?.revision===expectedRevision+1&&begun.replayed===true)return {revision:begun.revision,replayed:true};
-  check(begun?.uploadId===uploadId&&Number.isSafeInteger(begun.expiresAt),'Сервер не подтвердил начало загрузки');
+  if(exactFields(begun,['revision','replayed'])&&begun.replayed===true)return writeAck(begun,expectedRevision);
+  check(exactFields(begun,['uploadId','expiresAt'])&&begun.uploadId===uploadId&&Number.isSafeInteger(begun.expiresAt)&&begun.expiresAt>0,'Сервер не подтвердил начало загрузки');
   for(let index=0;index<chunks.length;index++){
    const ack=await request(path+'part/'+index,{data:chunks[index]},secret);
-   check(ack?.index===index&&typeof ack.replayed==='boolean','Сервер не подтвердил часть снимка');
+   check(exactFields(ack,['index','replayed'])&&ack.index===index&&typeof ack.replayed==='boolean','Сервер не подтвердил часть снимка');
   }
-  const ack=await request(path+'commit',{},secret);
-  check(ack?.revision===expectedRevision+1&&typeof ack.replayed==='boolean','Сервер не подтвердил снимок');
-  return ack;
+  return writeAck(await request(path+'commit',{},secret),expectedRevision);
  }
- return {head:()=>request('head'),rollbackStatus:()=>request('rollback-status'),rollbackReceipt:()=>request('rollback-receipt'),sealRollback:migrationId=>{check(validToken(sealToken)&&typeof migrationId==='string'&&uuid.test(migrationId),'Нужен отдельный ключ закрытия назначения');return request('rollback-seal',{expectedRevision:1,migrationId},sealToken);},getRevision:async rev=>{
+ function writeAck(ack,expectedRevision){
+  check(exactFields(ack,['revision','replayed'])&&revision(ack.revision)&&ack.revision===expectedRevision+1&&typeof ack.replayed==='boolean','Сервер не подтвердил ожидаемую ревизию Delta LAB');return ack;
+ }
+ function rollbackState(state){
+  check(exactFields(state,['revision','seal'])&&Number.isSafeInteger(state.revision)&&state.revision>=0&&(state.seal===null||state.revision===1&&exactFields(state.seal,['migrationId','revision'])&&state.seal.revision===1&&typeof state.seal.migrationId==='string'&&uuid.test(state.seal.migrationId)),'Некорректный ответ барьера назначения Delta LAB');return state;
+ }
+ return {head:async()=>{
+  const head=await request('head');check(validDeltaHead(head)&&exactFields(head,['revision','anchorRevision','count','bytes','maxEntries','maxBytes','keyEpoch'])&&Number.isSafeInteger(head.bytes)&&head.bytes>=0&&head.maxEntries===129&&head.maxBytes===16*1024*1024&&head.bytes<=head.maxBytes&&Number.isSafeInteger(head.keyEpoch)&&head.keyEpoch>=0&&(head.revision!==0||head.bytes===0&&head.keyEpoch===0),'Некорректная цепочка Delta LAB');return head;
+ },rollbackStatus:async()=>rollbackState(await request('rollback-status')),rollbackReceipt:()=>request('rollback-receipt'),sealRollback:async migrationId=>{check(validToken(sealToken)&&typeof migrationId==='string'&&uuid.test(migrationId),'Нужен отдельный ключ закрытия назначения');const state=rollbackState(await request('rollback-seal',{expectedRevision:1,migrationId},sealToken));check(state.seal?.migrationId===migrationId,'Закрытие назначения не подтверждено');return state;},getRevision:async rev=>{
    check(revision(rev),'Некорректная ревизия');const row=await request('revision/'+rev);
-   if(!Object.hasOwn(row,'multipart'))return row;
+   check(plain(row)&&row.revision===rev&&['anchor','delta'].includes(row.kind),'Пропущена или подменена ревизия изменений');
+   if(!Object.hasOwn(row,'multipart')){check(exactFields(row,['revision','kind','envelope'])&&isEncryptedBackup(row.envelope),'Некорректный снимок Delta LAB');return row;}
    const manifest=normalizeAnchorManifest(row.multipart);
-   check(row.revision===rev&&row.kind==='anchor'&&manifest?.expectedRevision===rev-1,'Некорректный multipart снимок');
+   check(exactFields(row,['revision','kind','multipart','uploadId'])&&row.kind==='anchor'&&manifest?.expectedRevision===rev-1,'Некорректный multipart снимок');
    const envelope=await joinDeltaAnchor(manifest,row.uploadId,async index=>{
     const part=await request('revision/'+rev+'/part/'+index);
-    check(part?.revision===rev&&part.index===index,'Подмена части снимка');return part.data;
+    check(exactFields(part,['revision','index','data'])&&part.revision===rev&&part.index===index,'Подмена части снимка');return part.data;
    });
    return {revision:rev,kind:'anchor',envelope};
   },
   anchor:envelope=>writeAnchor('anchor',0,envelope,token),
-  append:(expectedRevision,envelope)=>request('append',{expectedRevision,envelope}),
+  append:async(expectedRevision,envelope)=>writeAck(await request('append',{expectedRevision,envelope}),expectedRevision),
   compact:(expectedRevision,envelope)=>{check(validToken(compactToken),'Нужен отдельный ключ компактизации');return writeAnchor('compact',expectedRevision,envelope,compactToken);},
   rotate:(expectedRevision,envelope,rotation)=>{check(validToken(rotateToken)&&normalizeRotationHashes(rotation),'Нужен отдельный ключ ротации');return writeAnchor('rotate',expectedRevision,envelope,rotateToken,rotation);}
  };
@@ -491,6 +499,77 @@ function labEndpoint(endpoint){
  const value=normalizeEndpoint(endpoint),url=new URL(value);
  check(url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname),'Ротация только в Delta LAB');return value;
 }
+// Standalone encrypted checkpoint LAB. No server credentials or sync passwords
+// are stored. The exported revision is an authenticated historical prefix,
+// not a claim that the live relay is frozen. Import/preview never writes.
+function checkpointLabEndpoint(endpoint,synthetic){
+ check(synthetic===true,'Резервирование только для синтетического Delta LAB');
+ const value=labEndpoint(endpoint),url=new URL(value);
+ check(url.origin===value&&url.port,'Нужен локальный сервер с явным портом');return value;
+}
+function checkpointIdentity({area,expectedWorkspaceId,expectedRevision}){
+ check(validArea(area)&&typeof expectedWorkspaceId==='string'&&uuid.test(expectedWorkspaceId)&&revision(expectedRevision),'Укажите точный контур, пространство и ревизию');
+}
+function checkpointPassword(password){
+ check(typeof password==='string'&&password.length>=12&&password.length<=1024,'Нужен отдельный пароль резервной копии LAB');
+}
+export async function exportDeltaCheckpointLab({endpoint,area,token,password,backupPassword,current,expectedWorkspaceId,expectedRevision,synthetic=false,fetcher}){
+ endpoint=checkpointLabEndpoint(endpoint,synthetic);checkpointIdentity({area,expectedWorkspaceId,expectedRevision});
+ checkpointPassword(backupPassword);check(backupPassword!==password,'Нужен отдельный пароль резервной копии LAB');
+ const client=deltaLabClient(endpoint,area,token,{fetcher});
+ const remote=await readDeltaLab({client,area,password,current});
+ check(remote.revision===expectedRevision&&remote.workspaceId===expectedWorkspaceId,'Ревизия или рабочее пространство изменились; повторите проверку');
+ const digest=await scopeDigest(remote.snapshot,area);
+ const payload={app:'teachapp-delta-checkpoint',version:1,backupVersion:BACKUP_VERSION,endpoint,area,workspaceId:remote.workspaceId,revision:remote.revision,digest,snapshot:remote.snapshot};
+ const file=await encryptBackup(payload,backupPassword);
+ const verified=await openDeltaCheckpointLab({endpoint,area,expectedWorkspaceId,expectedRevision,backupPassword,current,file,synthetic});
+ check(verified.digest===digest&&same(verified.snapshot,remote.snapshot),'Проверка резервной копии LAB не прошла');
+ return {area,workspaceId:remote.workspaceId,revision:remote.revision,digest,records:migrationRecordCount(remote.snapshot),file};
+}
+export async function openDeltaCheckpointLab({endpoint,area,expectedWorkspaceId,expectedRevision,backupPassword,current,file,synthetic=false}){
+ endpoint=checkpointLabEndpoint(endpoint,synthetic);checkpointIdentity({area,expectedWorkspaceId,expectedRevision});checkpointPassword(backupPassword);
+ const p=await decryptBackup(file,backupPassword);
+ check(exactFields(p,['app','version','backupVersion','endpoint','area','workspaceId','revision','digest','snapshot'])&&p.app==='teachapp-delta-checkpoint'&&p.version===1&&p.endpoint===endpoint&&p.area===area&&p.workspaceId===expectedWorkspaceId&&p.revision===expectedRevision&&typeof p.digest==='string'&&digestPattern.test(p.digest),'Резервная копия другого контура или ревизии LAB');
+ if(Number.isSafeInteger(p.backupVersion)&&p.backupVersion>BACKUP_VERSION)throw Object.assign(Error('Обновите TeachApp перед открытием резервной копии LAB'),{code:'newer-backup-format'});
+ check(p.backupVersion===BACKUP_VERSION,'Несовместимый формат резервной копии LAB');
+ check(await scopeDigest(p.snapshot,area)===p.digest,'Содержимое резервной копии LAB не совпадает');
+ combineScope(current,p.snapshot,area);return p;
+}
+// Preparation is offline. Save the exact ciphertext plan alongside the backup
+// before contacting a distinct empty target. A retry never generates new bytes.
+export async function prepareDeltaCheckpointRestoreLab(args){
+ const p=await openDeltaCheckpointLab(args),destination=checkpointLabEndpoint(args.destinationEndpoint,args.synthetic);
+ checkpointPassword(args.destinationPassword);
+ check(destination!==p.endpoint&&args.destinationPassword!==args.backupPassword,'Нужен отдельный сервер и пароль назначения LAB');
+ const workspaceId=crypto.randomUUID();
+ check(syncUploadBytes(p.snapshot,{area:p.area,workspaceId,expectedRevision:0})<=DELTA_MAX_DATA+1024,'Снимок превышает лимит назначения LAB');
+ const envelope=await encryptBackup(packetPayload(p.snapshot,p.area,workspaceId,1),args.destinationPassword);
+ check(envelope.data.length<=DELTA_MAX_DATA,'Снимок превышает лимит назначения LAB');
+ return {app:'teachapp-delta-checkpoint-restore',version:1,source:p.endpoint,destination,area:p.area,sourceWorkspaceId:p.workspaceId,sourceRevision:p.revision,digest:p.digest,workspaceId,envelope};
+}
+export async function restoreDeltaCheckpointLab(args){
+ check(args.synthetic===true&&args.confirmed===true&&args.backupVerified===true,'Подтвердите проверенную резервную копию LAB и план восстановления');
+ const p=await openDeltaCheckpointLab(args),destination=checkpointLabEndpoint(args.destinationEndpoint,args.synthetic),plan=args.plan;
+ checkpointPassword(args.destinationPassword);
+ check(destination!==p.endpoint&&args.destinationPassword!==args.backupPassword,'Нужен отдельный сервер и пароль назначения LAB');
+ check(exactFields(plan,['app','version','source','destination','area','sourceWorkspaceId','sourceRevision','digest','workspaceId','envelope'])&&plan.app==='teachapp-delta-checkpoint-restore'&&plan.version===1&&plan.source===p.endpoint&&plan.destination===destination&&plan.area===p.area&&plan.sourceWorkspaceId===p.workspaceId&&plan.sourceRevision===p.revision&&plan.digest===p.digest&&typeof plan.workspaceId==='string'&&uuid.test(plan.workspaceId)&&plan.workspaceId!==p.workspaceId&&plan.workspaceId===args.expectedDestinationWorkspaceId,'Неверный план восстановления LAB');
+ const anchor=await readPacket(plan.envelope,args.destinationPassword,p.area,1);
+ check(anchor.workspaceId===plan.workspaceId&&same(anchor.snapshot,p.snapshot)&&await scopeDigest(anchor.snapshot,p.area)===p.digest,'Снимок назначения не совпадает с резервной копией LAB');
+ const client=deltaLabClient(destination,p.area,args.destinationToken,{fetcher:args.fetcher});
+ const head=await client.head();check((await client.rollbackStatus()).seal===null,'Назначение закрыто для записи');
+ let replayed=false;
+ if(head.revision===0){
+  const ack=await client.anchor(plan.envelope);replayed=ack.replayed;
+ }else{
+  check(head.revision===1&&head.anchorRevision===1&&head.count===1,'Назначение уже используется; перезапись запрещена');
+  const existing=await client.getRevision(1);
+  check(existing.kind==='anchor'&&same(existing.envelope,plan.envelope),'Назначение содержит другой снимок; перезапись запрещена');replayed=true;
+ }
+ const row=await client.getRevision(1),remote=await readDeltaLab({client,area:p.area,password:args.destinationPassword,current:args.current});
+ check(row.kind==='anchor'&&same(row.envelope,plan.envelope)&&remote.revision===1&&remote.workspaceId===plan.workspaceId&&same(remote.snapshot,p.snapshot)&&await scopeDigest(remote.snapshot,p.area)===p.digest&&(await client.rollbackStatus()).seal===null,'Восстановление не подтверждено; не подключайте устройства');
+ return {area:p.area,sourceRevision:p.revision,workspaceId:plan.workspaceId,revision:1,digest:p.digest,replayed,cutoverAllowed:false};
+}
+
 export async function prepareDeltaRotation({endpoint,client,area,password,current,checkpoint=null,expectedRevision,recoveryPassword,deviceCount=2,synthetic=false}){
  check(synthetic===true&&revision(expectedRevision)&&Number.isInteger(deviceCount)&&deviceCount>=1&&deviceCount<=8,'Ротация только для синтетического контура');
  endpoint=labEndpoint(endpoint);

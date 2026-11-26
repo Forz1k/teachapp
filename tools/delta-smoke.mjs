@@ -21,7 +21,7 @@ import {BACKUP_VERSION} from '../js/backup.js';
 import {encryptBackup,decryptBackup} from '../js/privacy.js';
 import {splitDeltaAnchor} from '../js/delta-anchor.js';
 import {signRollbackReceipt} from '../server/migration-receipt.mjs';
-import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation,createDeltaDeviceRecovery,openDeltaDeviceRecovery,rebindDeltaDevice,relayClient,deltaMigrationFenceClient,deltaMigrationFenceStatus,cutoverDeltaMigrationDevice,sealDeltaMigrationRollback,rollbackDeltaMigrationDevice,prepareDeltaMigration,openDeltaMigration,inspectDeltaMigrationDevice,commitDeltaMigration} from '../js/sync.js';
+import {projectScope,buildSyncDelta,replaySyncDeltas,verifySyncSnapshot,syncDeltaEstimate,deltaLabClient,readDeltaLab,compactDeltaLab,mergeScopes,deltaLabSyncAdapter,prepareSync,executeSync,previewSync,prepareDeltaRotation,openDeltaRecovery,commitDeltaRotation,createDeltaDeviceRecovery,openDeltaDeviceRecovery,rebindDeltaDevice,relayClient,deltaMigrationFenceClient,deltaMigrationFenceStatus,cutoverDeltaMigrationDevice,sealDeltaMigrationRollback,rollbackDeltaMigrationDevice,exportDeltaCheckpointLab,openDeltaCheckpointLab,prepareDeltaCheckpointRestoreLab,restoreDeltaCheckpointLab,prepareDeltaMigration,openDeltaMigration,inspectDeltaMigrationDevice,commitDeltaMigration} from '../js/sync.js';
 
 const a='A'.repeat(43),b='B'.repeat(43),c='C'.repeat(43),admin='D'.repeat(43),coachAdmin='E'.repeat(43),rotator='F'.repeat(43),coachRotator='G'.repeat(43),sealKey='K'.repeat(43),coachSealKey='L'.repeat(43),area='school',password='synthetic-delta-test-password';
 const workspaceId='00000000-0000-4000-8000-000000000001';
@@ -30,11 +30,11 @@ await new Promise(r=>site.listen(0,'127.0.0.1',r));const origin='http://127.0.0.
 const state=await mkdtemp(join(tmpdir(),'teachapp-delta-')),socket=createServer();
 await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address().port;await new Promise(r=>socket.close(r));
 const endpoint='http://127.0.0.1:'+port;let proc,output='',workerState=join(state,'primary'),receiptSignKeys={};
-async function start(){
+async function start(listenPort=port){
  const hashes={school:[await digestToken(a),await digestToken(b)],coach:[await digestToken(c)]};
- proc=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.delta-dev.jsonc','--local','--ip','127.0.0.1','--port',String(port),'--persist-to',workerState,'--var','TEACHAPP_DELTA_SYNTHETIC:true','--var','TEACHAPP_DELTA_ORIGIN:'+origin,'--var','TEACHAPP_DELTA_TOKEN_HASHES:'+JSON.stringify(hashes),'--var','TEACHAPP_DELTA_COMPACT_HASHES:'+JSON.stringify({school:await digestToken(admin),coach:await digestToken(coachAdmin)}),'--var','TEACHAPP_DELTA_ROTATE_HASHES:'+JSON.stringify({school:await digestToken(rotator),coach:await digestToken(coachRotator)}),'--var','TEACHAPP_DELTA_SEAL_HASHES:'+JSON.stringify({school:await digestToken(sealKey),coach:await digestToken(coachSealKey)}),'--var','TEACHAPP_DELTA_ROLLBACK_SIGN_KEYS:'+JSON.stringify(receiptSignKeys)],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
+ proc=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.delta-dev.jsonc','--local','--ip','127.0.0.1','--port',String(listenPort),'--persist-to',workerState,'--var','TEACHAPP_DELTA_SYNTHETIC:true','--var','TEACHAPP_DELTA_ORIGIN:'+origin,'--var','TEACHAPP_DELTA_TOKEN_HASHES:'+JSON.stringify(hashes),'--var','TEACHAPP_DELTA_COMPACT_HASHES:'+JSON.stringify({school:await digestToken(admin),coach:await digestToken(coachAdmin)}),'--var','TEACHAPP_DELTA_ROTATE_HASHES:'+JSON.stringify({school:await digestToken(rotator),coach:await digestToken(coachRotator)}),'--var','TEACHAPP_DELTA_SEAL_HASHES:'+JSON.stringify({school:await digestToken(sealKey),coach:await digestToken(coachSealKey)}),'--var','TEACHAPP_DELTA_ROLLBACK_SIGN_KEYS:'+JSON.stringify(receiptSignKeys)],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});
  proc.stdout.on('data',x=>output=(output+x).slice(-8000));proc.stderr.on('data',x=>output=(output+x).slice(-8000));
- for(let i=0;i<150;i++){if(proc.exitCode!==null)throw Error(output);try{if((await fetch(endpoint+'/healthz',{signal:AbortSignal.timeout(1000)})).ok)return;}catch{}await sleep(500);}
+ for(let i=0;i<150;i++){if(proc.exitCode!==null)throw Error(output);try{if((await fetch('http://127.0.0.1:'+listenPort+'/healthz',{signal:AbortSignal.timeout(1000)})).ok)return;}catch{}await sleep(500);}
  throw Error('Startup timeout '+output);
 }
 async function stop(){
@@ -686,6 +686,29 @@ try{
   assert.equal((await cfCall('/v2/snapshot/school',cfSchoolDevice)).status,401);
   assert.deepEqual(await schoolCf.get(),afterResume);
   console.log('CLOUDFLARE MIGRATION PASS: real independent workerd source/target, v1/v2 shared fence CAS, reserved and revoked keys, immutable copy, v2 device cutover and rollback, signed seal receipt bound to anchor, tamper/wrong signer rejection, persistent exact source resume and sealed target. No production profile change.');
+
+  // Independent checkpoint recovery from the sealed historical Delta anchor.
+  const checkpointPassword='synthetic-delta-checkpoint-password',restoredPassword='synthetic-delta-checkpoint-target-password';
+  const checkpointArgs={endpoint,area:'school',expectedWorkspaceId:cfPlan.migrationId,expectedRevision:1,backupPassword:checkpointPassword,current:freshDb(),synthetic:true};
+  const checkpoint=await exportDeltaCheckpointLab({...checkpointArgs,token:a,password:cfDestPass});
+  assert.deepEqual((await openDeltaCheckpointLab({...checkpointArgs,file:checkpoint.file})).snapshot,base);
+  const recoveryProbe=createServer();await new Promise(r=>recoveryProbe.listen(0,'127.0.0.1',r));
+  const recoveryPort=recoveryProbe.address().port;await new Promise(r=>recoveryProbe.close(r));
+  const recoveryEndpoint='http://127.0.0.1:'+recoveryPort;
+  const recoveryArgs={...checkpointArgs,file:checkpoint.file,destinationEndpoint:recoveryEndpoint,destinationPassword:restoredPassword};
+  await stop(); // Recovery must not read or modify the original Delta worker.
+  const restorePlan=await prepareDeltaCheckpointRestoreLab(recoveryArgs);
+  workerState=join(state,'checkpoint-recovery-target');receiptSignKeys={};await start(recoveryPort);
+  const restoreArgs={...recoveryArgs,plan:restorePlan,destinationToken:b,expectedDestinationWorkspaceId:restorePlan.workspaceId,confirmed:true,backupVerified:true};
+  const recovered=await restoreDeltaCheckpointLab(restoreArgs);assert.equal(recovered.replayed,false);assert.equal(recovered.cutoverAllowed,false);
+  await stop();await start(recoveryPort);
+  assert.equal((await restoreDeltaCheckpointLab(restoreArgs)).replayed,true);
+  const recoveryClient=deltaLabClient(recoveryEndpoint,'school',b);
+  assert.deepEqual((await readDeltaLab({client:recoveryClient,area:'school',password:restoredPassword,current:freshDb()})).snapshot,base);
+  assert.equal((await deltaLabClient(recoveryEndpoint,'coach',c).head()).revision,0);
+  const otherPlan=await prepareDeltaCheckpointRestoreLab(recoveryArgs);
+  await assert.rejects(restoreDeltaCheckpointLab({...restoreArgs,plan:otherPlan,expectedDestinationWorkspaceId:otherPlan.workspaceId}),/другой снимок/);
+  console.log('DELTA CHECKPOINT RECOVERY PASS: verified encrypted historical copy, source offline, independent fresh local workerd, restart and exact retry, scope isolation, overwrite refused.');
  }finally{await stopCf();}
  const sizes=syncDeltaEstimate(base,next,{area,workspaceId,baseRevision:1});assert.ok(sizes.bytes<sizes.fullBytes);
  console.log('DELTA SIZE '+JSON.stringify(sizes));
