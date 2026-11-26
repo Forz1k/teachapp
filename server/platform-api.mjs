@@ -1,7 +1,7 @@
 /* Isolated synthetic workspace service. State and authorization decisions live
  * inside one workspace transaction. No access to the personal relay or Firebase. */
 import {authorizeWorkspace,assistantProjection,athleteProjection} from './workspace-policy.mjs';
-import {notificationLabState,changeNotificationLab} from './platform-notification-lab.mjs';
+import {notificationLabState,changeNotificationLab,queueAthleteNoticeLab,notificationInboxLab,acknowledgeNoticeLab} from './platform-notification-lab.mjs';
 export const BODY_LIMIT=64*1024, STATE_LIMIT=512*1024;
 const DAY=86400000,LEASE_MS=45000,INVITE_MS=600000;
 const id=x=>typeof x==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(x);
@@ -41,7 +41,7 @@ export function workspaceRatePolicy(s,{auth,rootHash,method,path,now}){
  if(method==='POST'&&path==='recover'&&hash(s.recoveryHash)&&auth===s.recoveryHash&&auth!==rootHash)return {key:'recovery',limit:6};
  if(method==='POST'&&path==='redeem'&&s.invites.some(i=>i.hash===auth&&i.usedAt===null&&i.expiresAt>now))return {key:'redeem',limit:64};
  const actor=memberByHash(s,auth,now);if(!actor)return null;
- const kind=method==='GET'?'read':/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/revoke|notification-lab)$/.test(path)?'access':'write';
+ const kind=method==='GET'?'read':/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/revoke|notification-lab|notification-lab\/ack)$/.test(path)?'access':'write';
  return {key:'member:'+actor.id+':'+kind,limit:kind==='read'?240:kind==='access'?24:180};
 }
 /** Rolling fixed-minute windows, bounded retry interval; a clock regression
@@ -90,6 +90,13 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
   const actor=memberByHash(s,auth,now);require(actor,401,'unauthorized');
   const owner=()=>require(allowed(s,actor,'workspace.manage',resource(s,'workspace')),403,'forbidden');
   const result=()=>{
+   if(method==='GET'&&path==='notification-lab/inbox'){
+    const notice=notificationInboxLab(actor,now);return notice?ok(notice):err(403,'forbidden');
+   }
+   if(method==='POST'&&path==='notification-lab/ack'){
+    const result=acknowledgeNoticeLab(actor,body,now);
+    return result.error?err(result.status,result.error):ok(result.body,200,result.changed);
+   }
    if(path==='notification-lab'){
     if(method==='GET'){const state=notificationLabState(actor,now);return state?ok(state):err(403,'forbidden');}
     if(method==='PUT'){
@@ -159,7 +166,7 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
     if(method==='PUT'&&!r[3]){
      require(allowed(s,actor,'team.write',resource(s,'team',{teamId:team.id})),403,'forbidden');validateAthlete(body);
      require(body.expectedRevision===(record?.revision??0),409,'revision');const {expectedRevision,...content}=clone(body);const next={id:athleteId,teamId:team.id,...content,revision:expectedRevision+1,responses:(record?.responses||[]).filter(x=>{const before=record?.assignments.find(a=>a.id===x.assignmentId),after=body.assignments.find(a=>a.id===x.assignmentId);return before&&after&&before.name===after.name&&before.due===after.due;})};
-     if(record)s.athletes[s.athletes.indexOf(record)]=next;else s.athletes.push(next);audit(s,actor,'athlete.update',athleteId,now);return ok({record:athleteProjection(next),revision:next.revision,responses:next.responses},200,true);
+     if(record)s.athletes[s.athletes.indexOf(record)]=next;else s.athletes.push(next);queueAthleteNoticeLab(s.members,team.id,athleteId,now);audit(s,actor,'athlete.update',athleteId,now);return ok({record:athleteProjection(next),revision:next.revision,responses:next.responses},200,true);
     }
     if(method==='GET'&&!r[3]){
      require(allowed(s,actor,'athlete.self.read',ref)||allowed(s,actor,'athlete.read',ref),403,'forbidden');return ok({record:athleteProjection(record||{id:athleteId}),revision:record?.revision??0,responses:clone(record?.responses||[])});
