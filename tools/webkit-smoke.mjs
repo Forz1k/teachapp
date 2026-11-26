@@ -255,6 +255,28 @@ try{
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'season document overflow');
  await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
  console.log('WEBKIT DOCUMENTS PASS: actual school-year and season plan selectors, preview, privacy and mobile layout.');
+ // Browser-level reminder UI and app-wide dispatch; mock only the operating
+ // system notification transport. Real PWA permission UI requires a device.
+ await page.evaluate(async()=>{
+  const W=await import('./js/workbench.js'),M=await import('./js/model.js'),R=await import('./js/reminder-controller.js');
+  const desc=Object.getOwnPropertyDescriptor(window,'Notification'),proto=navigator.serviceWorker,old=Object.getOwnPropertyDescriptor(proto,'getRegistration');
+  window.__reminderTest={sent:[],restore(){if(desc)Object.defineProperty(window,'Notification',desc);else delete window.Notification;if(old)Object.defineProperty(proto,'getRegistration',old);else delete proto.getRegistration;}};
+  class MockNotification{static permission='granted';static async requestPermission(){return 'granted';}}
+  Object.defineProperty(window,'Notification',{configurable:true,value:MockNotification});
+  Object.defineProperty(proto,'getRegistration',{configurable:true,value:async()=>({showNotification:async(title,opts)=>window.__reminderTest.sent.push({title,...opts})})});
+  R.saveReminderPreferences({enabled:false,sources:['custom']});
+  await W.saveWork({kind:'event',name:'PRIVATE TEST EVENT',date:M.todayIso(),time:'00:00',minutes:0,eventType:'task',note:'PRIVATE NOTE',remind:0,done:false});
+  await (await import('./js/screens/work-calendar.js')).openWorkCalendar();
+ });
+ await shown.getByRole('heading',{name:'Рабочий календарь',exact:true}).waitFor();
+ await shown.getByRole('button',{name:'Включить / выключить системные напоминания',exact:true}).click();
+ await page.waitForFunction(()=>window.__reminderTest.sent.length===1);
+ await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();const W=await import('./js/workbench.js'),M=await import('./js/model.js');await W.saveWork({kind:'event',name:'PRIVATE SECOND EVENT',date:M.todayIso(),time:'00:00',minutes:0,eventType:'task',note:'',remind:0,done:false});window.dispatchEvent(new Event('focus'));});
+ await page.waitForFunction(()=>window.__reminderTest.sent.length===2);
+ assert.doesNotMatch(JSON.stringify(await page.evaluate(()=>window.__reminderTest.sent)),/PRIVATE/);
+ await page.evaluate(async()=>{const R=await import('./js/reminder-controller.js');R.saveReminderPreferences({enabled:false,sources:['custom']});window.__reminderTest.restore();delete window.__reminderTest;});
+ console.log('WEBKIT REMINDERS PASS: opt-in, generic notification, app-wide foreground after closing calendar; simulated OS transport.');
+
 
  // Public viewer uses a synthetic stream; no production Firebase access.
  const fan=await context.newPage();fan.on('pageerror',error=>errors.push(error.message));
