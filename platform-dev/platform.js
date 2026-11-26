@@ -10,21 +10,26 @@ const area=(name,value='')=>{const n=e('textarea','',{'aria-label':name});n.valu
 const row=(...children)=>e('div','',{class:'row'},children);
 const button=(title,fn,primary=false)=>{const b=e('button',title,{type:'button',class:primary?'primary':''});b.onclick=fn;return b;};
 const json=v=>JSON.stringify(v,null,2);
-let api=null,member=null,serial=0,busy=false,scoreTimer=null,active=null,pending=null;
+let api=null,connecting=null,member=null,serial=0,busy=false,scoreTimer=null,active=null,pending=null;
 const stopTimer=()=>{if(scoreTimer)clearInterval(scoreTimer);scoreTimer=null;};
-function close(){serial++;stopTimer();api?.close();api=null;member=null;active=null;pending=null;busy=false;login();}
+function close(){serial++;stopTimer();connecting?.close();connecting=null;api?.close();api=null;member=null;active=null;pending=null;busy=false;login();}
 function status(text,error=false){const n=root.querySelector('#status');if(n){n.textContent=text;n.className=error?'status error':'status';}}
 async function run(fn){if(busy)return;busy=true;const epoch=serial;try{await fn(epoch);if(epoch===serial)status('Готово');}catch(err){if(epoch===serial){status(err.message,true);if(err.status===401&&api){close();status('Сессия недействительна или отозвана. Войдите заново.',true);}}}finally{if(epoch===serial)busy=false;}}
 function login(){
  if(!isLocalPlatformPage()){root.replaceChildren(box('Недоступно',p('Кабинеты LAB запускаются только локально. Рабочие данные не принимаются.')));return;}
  const endpoint=input('Адрес тестового Worker','http://127.0.0.1:8788'),workspace=input('ID пространства','demo'),secret=input('Секретный код','','password'),name=input('Название пространства','Синтетическая команда');
- const form=box('Подключение',p('Секрет хранится только до выхода или перезагрузки вкладки. Не вводите реальные ключи и персональные данные.'),e('div','',{class:'fields'},[field('Worker',endpoint),field('Пространство',workspace),field('Секрет / приглашение',secret),field('Название (для первого запуска)',name),button('Войти',()=>connect('login'),true),button('Активировать приглашение',()=>connect('redeem')),button('Восстановить владельца',()=>connect('recover')),button('Создать тестовое пространство',()=>connect('bootstrap'))]));
+ const form=box('Подключение',p('Секрет хранится только до выхода, закрытия или приостановки страницы. Не вводите реальные ключи и персональные данные.'),e('div','',{class:'fields'},[field('Worker',endpoint),field('Пространство',workspace),field('Секрет / приглашение',secret),field('Название (для первого запуска)',name),button('Войти',()=>connect('login'),true),button('Активировать приглашение',()=>connect('redeem')),button('Восстановить владельца',()=>connect('recover')),button('Создать тестовое пространство',()=>connect('bootstrap'))]));
  root.replaceChildren(form,e('p','',{id:'status',role:'status',class:'status'}));
- async function connect(mode){await run(async(epoch)=>{const temp=platformClient(endpoint.value,workspace.value,secret.value);let result,issued=null;try{
-  if(mode==='login'){result=await temp.request('me');if(epoch!==serial){temp.close();return;}api=temp;}
-  else{issued=await temp.request(mode,'POST',mode==='bootstrap'?{name:name.value.trim()}:{});temp.close();if(epoch!==serial)return;api=platformClient(endpoint.value,workspace.value,issued.token);result=await api.request('me');}
-  if(epoch!==serial)return;member=result.member;secret.value='';await render(result.name,issued?.token);
- }catch(err){temp.close();if(mode!=='login')api?.close();throw err;}});}
+ async function connect(mode){await run(async(epoch)=>{
+  const address=endpoint.value,space=workspace.value,workspaceName=name.value.trim();
+  const temp=platformClient(address,space,secret.value);connecting=temp;secret.value='';
+  let result,issued=null;try{
+   if(mode==='login'){result=await temp.request('me');if(epoch!==serial){temp.close();return;}api=temp;}
+   else{issued=await temp.request(mode,'POST',mode==='bootstrap'?{name:workspaceName}:{});temp.close();if(epoch!==serial)return;api=platformClient(address,space,issued.token);result=await api.request('me');}
+   if(epoch!==serial)return;member=result.member;await render(result.name,issued?.token);
+  }catch(err){temp.close();if(epoch===serial){api?.close();api=null;member=null;}throw err;}
+  finally{if(connecting===temp)connecting=null;}
+ });}
 }
 function showSecret(title,value){const n=input(title,value,'password');n.readOnly=true;n.className='secret';return box(title,p('Показывается только сейчас. Храните тестовый код отдельно; не отправляйте его через общие каналы.'),n,row(button('Показать / скрыть',()=>{n.type=n.type==='password'?'text':'password';}),button('Скрыть код',()=>{n.value='';n.closest('.card').remove();}))); }
 async function render(name,issued){
@@ -81,11 +86,15 @@ function liveCard(){
  return box('Серверный LIVE · тест',p('Право вести счёт выдаётся на 45 секунд. Не связано с опубликованной страницей Firebase.'),field('ID матча',selector),button('Доступные матчи',()=>run(async()=>{const res=await api.request('matches');matches.replaceChildren(...res.matches.map(m=>button(m.opponent+' · '+m.id,()=>{selector.value=m.id;void run(load);})));})),matches,button('Открыть LIVE',()=>run(load)),body);
 }
 login();
+// No credentials or stale cabinet survive page suspension/BFCache. Local logout
+// does not revoke a server token or undo an already accepted request.
+window.addEventListener('pagehide',close);
+document.addEventListener('freeze',close);
 
 function ownerRecovery(){
  const state=e('p','Код восстановления не загружен'),key=input('Новый код восстановления','','password');key.readOnly=true;const copy=button('Показать / скрыть',()=>{key.type=key.type==='password'?'text':'password';});let version=null;
  const refresh=async()=>{const res=await api.request('owner/recovery');version=res.version;state.textContent=res.configured?'Восстановление настроено · версия '+version:'Код восстановления не настроен';};
  const generate=button('Создать новый код',()=>run(async()=>{await refresh();key.value=Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');key.type='text';}));
- const save=button('Активировать сохранённый код',()=>run(async()=>{if(!/^[a-f0-9]{64}$/.test(key.value)||version===null)throw Error('Сначала создайте и сохраните новый код');if(!confirm('Вы сохранили новый код отдельно? Старый код перестанет действовать.'))return;const recoveryHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(key.value))),b=>b.toString(16).padStart(2,'0')).join('');const res=await api.request('owner/recovery','POST',{recoveryHash,expectedVersion:version});key.value='';version=res.version;state.textContent='Восстановление настроено · версия '+version;}),true);
+ const save=button('Активировать сохранённый код',()=>run(async(epoch)=>{const session=api;if(!/^[a-f0-9]{64}$/.test(key.value)||version===null)throw Error('Сначала создайте и сохраните новый код');if(!confirm('Вы сохранили новый код отдельно? Старый код перестанет действовать.'))return;const recoveryHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(key.value))),b=>b.toString(16).padStart(2,'0')).join('');if(epoch!==serial||api!==session)return;const res=await session.request('owner/recovery','POST',{recoveryHash,expectedVersion:version});key.value='';version=res.version;state.textContent='Восстановление настроено · версия '+version;}),true);
  return box('Восстановление владельца · LAB',p('Сохраните случайный код отдельно до активации. Не отправляйте его третьим лицам. Восстановление отзывает прежние сессии владельца и неиспользованные приглашения. Не использовать рабочие данные.'),state,button('Проверить статус',()=>run(refresh)),generate,key,copy,save);
 }
