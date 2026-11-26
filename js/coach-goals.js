@@ -20,8 +20,9 @@ export function validateGoal(g){
  check(Array.isArray(g.observations)&&g.observations.length<=200&&g.observations.every(o=>only(o,['date','text'])&&validPeriod(o.date,null)&&o.date<=todayIso()&&text(o.text,1000)),'Проверьте даты и текст наблюдений');
  return g;
 }
-export async function saveGoal(input){
- return db.transaction(['workRecords','coachTeams','coachPlayers'],'readwrite',async s=>{
+export async function saveGoal(input){return writeGoal(db,input);}
+export async function writeGoal(access,input){
+ return access.transaction(['workRecords','coachTeams','coachPlayers'],'readwrite',async s=>{
   const old=input.id?await s.workRecords.get(input.id):null;
   check(!input.id||old?.kind==='coachGoal'&&old.revision===input.revision&&old.playerId===input.playerId&&old.teamId===input.teamId,'Цель изменена. Откройте её заново');
   const [team,player]=await Promise.all([s.coachTeams.get(input.teamId),s.coachPlayers.get(input.playerId)]);

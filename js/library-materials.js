@@ -35,7 +35,8 @@ export function tacticMaterial(board){
 export function documentMaterial(type,preset){
  return validateMaterial({id:uid('documentMaterial'),kind:'documentMaterial',name:documentTypes[type],version:1,type,preset:normalizePreset(preset)});
 }
-export async function saveMaterial(r){validateMaterial(r);await db.transaction(['workRecords'],'readwrite',s=>s.workRecords.add(r));return r;}
+export async function saveMaterial(r){return writeMaterial(db,r);}
+export async function writeMaterial(access,r){validateMaterial(r);await access.transaction(['workRecords'],'readwrite',s=>s.workRecords.add(r));return r;}
 export async function instantiateMaterial(r,{name=r.name,teamId,confirmed=false,storage}={}){
  check(confirmed,'Сначала подтвердите применение материала');validateMaterial(r);check(text(name),'Введите название');
  if(r.kind==='ktpMaterial'){

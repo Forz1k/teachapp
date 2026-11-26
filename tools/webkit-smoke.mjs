@@ -99,6 +99,25 @@ try{
   }finally{lifecycle.dispose();}
  });if(coachSession.supported)assert.deepEqual(coachSession,{supported:true,counts:[1,1,1],blocked:true,cleared:true,reopened:1});
  console.log('WEBKIT COACH SESSION LAB '+(coachSession.supported?'PASS: native commands, encrypted team view, lifecycle revocation and reopen.':'SKIPPED: browser capabilities unavailable.'));
+ const workSession=await writableTab.evaluate(async()=>{
+  const R=await import('/tools/prototypes/vault-router-lab.mjs'),L=await import('/tools/prototypes/vault-routed-lifecycle-lab.mjs'),W=await import('/js/workbench.js');
+  if(!navigator.locks?.request||!globalThis.BroadcastChannel)return {supported:false};
+  const id='webkit-work-session',password='synthetic-work-webkit',router=R.vaultRouterLab(id);
+  await router.initialize();await router.stage({password});await router.activate({password});
+  let session;const lifecycle=L.routedVaultLifecycleLab(router,{id,onLock:()=>session?.close()});
+  try{
+   session=W.createWorkSession(await lifecycle.unlock(password),'workspace');
+   const event=await session.saveWork({kind:'event',name:'Synthetic',date:'2025-09-01',time:'16:00',minutes:30,eventType:'meeting',note:'',remind:15,done:false});
+   const count=(await session.listWork('event')).length;
+   window.dispatchEvent(new Event('pagehide'));let blocked=false;try{await session.listWork('event');}catch{blocked=true;}
+   session=W.createWorkSession(await lifecycle.unlock(password),'school');
+   const hidden=(await session.listWork('event')).length===0;
+   let denied=false;try{await session.deleteWork(event.id,'event');}catch{denied=true;}
+   const still=(await router.snapshot({password})).workRecords.some(r=>r.id===event.id);
+   return {supported:true,count,blocked,hidden,denied,still,closed:session.isClosed()};
+  }finally{lifecycle.dispose();}
+ });if(workSession.supported)assert.deepEqual(workSession,{supported:true,count:1,blocked:true,hidden:true,denied:true,still:true,closed:true});
+ console.log('WEBKIT WORK SESSION LAB '+(workSession.supported?'PASS: encrypted event, cross-scope denial, lifecycle revocation.':'SKIPPED: browser capabilities unavailable.'));
  }finally{await writableContext.close();await page.bringToFront();}
  const schemaVault=await page.evaluate(async()=>{
   const V=await import('/tools/prototypes/local-vault.mjs'),A=await import('/tools/prototypes/vault-schema-adapter.mjs'),D=await import('./js/db.js'),B=await import('./js/backup.js'),password='synthetic-schema-webkit',data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));
