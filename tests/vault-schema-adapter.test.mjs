@@ -29,3 +29,35 @@ test('Vault migration rejects incomplete, partial, device checkpoints and lossy 
  for(const x of [undefined,NaN,new Date(),new Uint8Array([1])])await assert.rejects(stageVaultLab(db,{scope:'workspace',password,data:{meta:[{id:'x',x}]}}),/неподдерживаем/);
  const tx=db.transaction('sealed');const count=await new Promise((resolve,reject)=>{const q=tx.objectStore('sealed').count();q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});assert.equal(count,0);
 });
+
+test('LAB query validation and range get match native IndexedDB even when the selected table is empty',async t=>{
+ const {prepareSchemaSnapshotTransactionLab}=await import('../tools/prototypes/vault-schema-adapter.mjs');
+ const {openPlainSchemaLab,plainSchemaTransactionLab}=await import('../tools/prototypes/vault-migration-rehearsal.mjs');
+ const data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));
+ const db=await openPlainSchemaLab('teachapp-plain-lab-source-query-contract');t.after(()=>db.close());
+ await plainSchemaTransactionLab(db,'meta','readwrite',async s=>{await s.meta.put({id:'a',value:1});await s.meta.put({id:'b',value:2});});
+ data.meta=[{id:'a',value:1},{id:'b',value:2}];
+ const tx=(stores,fn)=>prepareSchemaSnapshotTransactionLab(data,stores,'readonly',fn).then(r=>r.result);
+ const native=(stores,fn)=>new Promise((resolve,reject)=>{
+  const tr=db.transaction(stores,'readonly'),s=Object.fromEntries(stores.map(name=>[name,tr.objectStore(name)]));let result;
+  try{result=fn(s);}catch(e){reject(e);return;}
+  tr.oncomplete=()=>resolve(result?.result);tr.onabort=()=>reject(tr.error);
+ });
+ const range=IDBKeyRange.bound('a','b');
+ assert.deepEqual(await tx(['meta'],s=>s.meta.get(range)),await native(['meta'],s=>s.meta.get(range)));
+ // LAB intentionally supports the existing Promise wrapper signatures, not
+ // newer dictionary overloads and permissive optional-query conversions.
+ const invalid=[
+  ['store getAll boolean',s=>s.students.getAll(false)],
+  ['index getAll NaN',s=>s.students.index('classId').getAll(NaN)],
+  ['index count object',s=>s.students.index('classId').count({bad:true})],
+  ['index getAllKeys boolean',s=>s.students.index('classId').getAllKeys(false)],
+  ['index get null',s=>s.students.index('classId').get(null)],
+  ['store get undefined',s=>s.students.get(undefined)]
+ ];
+ for(const [label,fn] of invalid)await assert.rejects(tx(['students'],fn),e=>e.name==='DataError',label);
+ // Required invalid get keys have no optional/dictionary overload.
+ for(const [label,fn] of invalid.slice(-2))await assert.rejects(native(['students'],fn),e=>e.name==='DataError',label);
+ assert.deepEqual(await tx(['students'],s=>s.students.index('classId').getAll()),await native(['students'],s=>s.students.index('classId').getAll()));
+ assert.deepEqual(await tx(['students'],s=>s.students.index('classId').getAll(null)),[]);
+});
