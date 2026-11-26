@@ -186,21 +186,21 @@ function sameRows(a,b){
  });
 }
 /** Compare every previously authenticated byte, not just an untrusted header. */
-function commitReplace(db,before,after){
+function commitReplace(db,before,after,assertActive=()=>{}){
  return new Promise((resolve,reject)=>{
-  const tx=db.transaction('sealed','readwrite'),store=tx.objectStore('sealed'),read=store.getAll();let conflict=false,failed=null;
-  read.onsuccess=()=>{try{if(!sameRows(read.result,before)){conflict=true;tx.abort();return;}store.clear();for(const row of after)store.add(row);}catch(e){failed=e;tx.abort();}};
+  assertActive();const tx=db.transaction('sealed','readwrite'),store=tx.objectStore('sealed'),read=store.getAll();let conflict=false,failed=null;
+  read.onsuccess=()=>{try{assertActive();if(!sameRows(read.result,before)){conflict=true;tx.abort();return;}store.clear();for(const row of after)store.add(row);}catch(e){failed=e;tx.abort();}};
   tx.oncomplete=()=>resolve();tx.onabort=()=>reject(conflict?Error('Снимок LAB изменился. Откройте заново'):failed||tx.error||Error('Запись отменена'));tx.onerror=()=>{};
  });
 }
 /** Whole-snapshot CAS, using fresh salt, vault ID and IVs on every rewrite.
  * The caller supplies the revision it actually inspected. No production adapter. */
-export async function replaceVaultLab(db,{scope,password,expectedRevision,data,nextPassword=password}){
- assertLab(db);check(typeof expectedRevision==='string'&&idPattern.test(expectedRevision),'Требуется ревизия предпросмотра');
+export async function replaceVaultLab(db,{scope,password,expectedRevision,data,nextPassword=password,assertActive=()=>{}}){
+ assertLab(db);assertActive();check(typeof expectedRevision==='string'&&idPattern.test(expectedRevision),'Требуется ревизия предпросмотра');
  const before=await readRows(db),old=await decodeSnapshot(before,{scope,password});
  check(old.revision===expectedRevision,'Снимок LAB изменился. Откройте заново');
- const after=await sealSnapshot({scope,data,password:nextPassword});
- await commitReplace(db,before,after);
+ assertActive();const after=await sealSnapshot({scope,data,password:nextPassword});
+ assertActive();await commitReplace(db,before,after,assertActive);
  return {scope,revision:after[0].vaultId,records:after.length-2};
 }
 /** Portable ciphertext only. Recovery into an empty LAB DB is explicit and

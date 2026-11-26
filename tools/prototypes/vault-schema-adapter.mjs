@@ -93,14 +93,14 @@ export async function prepareSchemaSnapshotTransactionLab(input,storeNames,mode,
 /** Uses the same store/index names and Promise API as js/db.js. Callback must
  * await its requests; no raw IDB transaction, cursor, arbitrary key type or
  * production adapter is promised. Conflicts never retry user callbacks. */
-export function schemaVaultAdapter(db,{password}){
+export function schemaVaultAdapter(db,{password,assertActive=()=>{}}){
  let closed=false,key=password;
- const guard=()=>check(!closed,'Хранилище LAB закрыто');
+ const guard=()=>{check(!closed,'Хранилище LAB закрыто');assertActive();};
  async function transaction(storeNames,mode,fn){
   guard();const pass=key,opened=await readVaultLab(db,{scope,password:pass});guard();
-  const {result,data}=await prepareSchemaSnapshotTransactionLab(opened.data,storeNames,mode,fn,{guard,isOpen:()=>!closed});
-  if(mode==='readwrite')await replaceVaultLab(db,{scope,password:pass,expectedRevision:opened.revision,data});
-  return result;
+  const {result,data}=await prepareSchemaSnapshotTransactionLab(opened.data,storeNames,mode,fn,{guard,isOpen:()=>{try{guard();return true;}catch{return false;}}});
+  if(mode==='readwrite')await replaceVaultLab(db,{scope,password:pass,expectedRevision:opened.revision,data,assertActive:guard});
+  guard();return result;
  }
  return {transaction,async snapshot(){guard();const result=await readVaultLab(db,{scope,password:key});guard();return checkedData(result.data);},close(){closed=true;key='';}};
 }
