@@ -10,9 +10,10 @@ export function validateLessonAlternative(r){
  check(r&&Object.keys(r).sort().join(',')==='activityId,classId,date,id,kind,lessonId,revision,status,studentId,task,type'&&r.kind==='lessonAlternative'&&[r.id,r.lessonId,r.studentId,r.classId].every(x=>text(x))&&r.id===key(r.lessonId,r.studentId)&&validPeriod(r.date,null)&&Object.hasOwn(alternativeTypes,r.type)&&text(r.task,2000)&&Object.hasOwn(alternativeStatuses,r.status)&&Number.isSafeInteger(r.revision)&&r.revision>=0&&r.revision<=1000000&&(r.type==='theory'?r.activityId===null:text(r.activityId)),'Проверьте альтернативное задание');
  check(r.status!=='completed'||r.date<=todayIso(),'Нельзя подтвердить будущее выполнение');return r;
 }
-export async function saveLessonAlternative(input,confirmed=false){
+export async function saveLessonAlternative(input,confirmed=false){return writeLessonAlternative(db,input,confirmed);}
+export async function writeLessonAlternative(access,input,confirmed=false){
  check(confirmed,'Подтвердите задание и проверку актуальных ограничений');
- return db.transaction(['workRecords','lessons','students','activityCategories','activityRestrictions','exemptions'],'readwrite',async s=>{
+ return access.transaction(['workRecords','lessons','students','activityCategories','activityRestrictions','exemptions'],'readwrite',async s=>{
   const id=key(input.lessonId,input.studentId),old=await s.workRecords.get(id),lesson=await s.lessons.get(input.lessonId),student=await s.students.get(input.studentId);
   check(lesson&&student?.classId===lesson.classId&&lesson.date===input.date,'Урок или ученик изменились. Откройте заново');
   check(old?old.kind==='lessonAlternative'&&old.revision===input.revision:input.revision==null,'Задание изменилось. Откройте заново');
@@ -27,7 +28,8 @@ export async function saveLessonAlternative(input,confirmed=false){
   await s.workRecords.put(row);return row;
  });
 }
-export async function lessonAlternatives(lessonId){
- const rows=await db.transaction(['workRecords'],'readonly',s=>s.workRecords.index('kind').getAll('lessonAlternative'));
+export async function lessonAlternatives(lessonId){return readLessonAlternatives(db,lessonId);}
+export async function readLessonAlternatives(access,lessonId){
+ const rows=await access.transaction(['workRecords'],'readonly',s=>s.workRecords.index('kind').getAll('lessonAlternative'));
  return rows.filter(r=>r.lessonId===lessonId);
 }
