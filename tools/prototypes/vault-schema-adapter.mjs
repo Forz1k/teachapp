@@ -62,6 +62,21 @@ function makeStore(table,def,active,writable){
   }
  };
 }
+/** Prepare a validated snapshot transaction without committing. Callback is
+ * invoked once; its store handles expire before any CAS write. LAB only. */
+export async function prepareSchemaSnapshotTransactionLab(input,storeNames,mode,fn,{guard=()=>{}}={}){
+ const selected=[].concat(storeNames);
+ check(selected.length&&new Set(selected).size===selected.length&&selected.every(n=>Object.hasOwn(SCHEMA,n))&&['readonly','readwrite'].includes(mode)&&typeof fn==='function','Некорректная транзакция LAB');
+ guard();const data=checkedData(copy(input)),tables=new Map(selected.map(n=>[n,new Map(data[n].map(row=>[row.id,row]))]));
+ let active=true;const stores=Object.fromEntries(selected.map(n=>[n,makeStore(tables.get(n),SCHEMA[n],()=>active,mode==='readwrite')]));
+ let result;try{result=await fn(stores);}finally{active=false;}
+ guard();
+ if(mode==='readwrite'){
+  for(const n of selected)data[n]=[...tables.get(n).values()].sort((a,b)=>cmp(a.id,b.id));
+  checkedData(data);
+ }
+ return {result,data,selected};
+}
 /** Uses the same store/index names and Promise API as js/db.js. Callback must
  * await its requests; no raw IDB transaction, cursor, arbitrary key type or
  * production adapter is promised. Conflicts never retry user callbacks. */
@@ -69,19 +84,9 @@ export function schemaVaultAdapter(db,{password}){
  let closed=false,key=password;
  const guard=()=>check(!closed,'Хранилище LAB закрыто');
  async function transaction(storeNames,mode,fn){
-  guard();const selected=[].concat(storeNames);
-  check(selected.length&&new Set(selected).size===selected.length&&selected.every(n=>Object.hasOwn(SCHEMA,n))&&['readonly','readwrite'].includes(mode)&&typeof fn==='function','Некорректная транзакция LAB');
-  const pass=key,opened=await readVaultLab(db,{scope,password:pass});guard();
-  const data=checkedData(opened.data),tables=new Map(selected.map(n=>[n,new Map(data[n].map(row=>[row.id,row]))]));
-  let active=true;const stores=Object.fromEntries(selected.map(n=>[n,makeStore(tables.get(n),SCHEMA[n],()=>active&&!closed,mode==='readwrite')]));
-  let result;try{result=await fn(stores);}finally{active=false;}
-  guard();
-  if(mode==='readwrite'){
-   for(const n of selected)data[n]=[...tables.get(n).values()].sort((a,b)=>cmp(a.id,b.id));
-   checkedData(data);
-   // Commit outside the callback; competing snapshots cause an explicit error.
-   await replaceVaultLab(db,{scope,password:pass,expectedRevision:opened.revision,data});
-  }
+  guard();const pass=key,opened=await readVaultLab(db,{scope,password:pass});guard();
+  const {result,data}=await prepareSchemaSnapshotTransactionLab(opened.data,storeNames,mode,fn,{guard});
+  if(mode==='readwrite')await replaceVaultLab(db,{scope,password:pass,expectedRevision:opened.revision,data});
   return result;
  }
  return {transaction,async snapshot(){guard();const result=await readVaultLab(db,{scope,password:key});guard();return checkedData(result.data);},close(){closed=true;key='';}};

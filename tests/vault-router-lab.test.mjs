@@ -88,3 +88,43 @@ test('Recovery refuses stale completed rollback instead of overwriting it',async
  await assert.rejects(a.rollback({password,resume:true}),/изменилась/);
  assert.equal((await a.status()).phase,'vault');assert.equal((await a.snapshot({password})).meta[0].value,9);
 });
+
+test('Routed multi-store transactions preserve one contract through source, encrypted and rollback phases',async()=>{
+ const locks=lockQueue(),a=vaultRouterLab('multi-tx',{locks}),b=vaultRouterLab('multi-tx',{locks});
+ await a.initialize();
+ const change=(value,opts)=>a.transaction(['classes','meta'],'readwrite',async s=>{
+  await s.classes.put({id:'c',name:'Synthetic',gradeLevel:7});
+  await s.meta.put({id:'fixture',value});
+  return 'done';
+ },opts);
+ assert.equal(await change(1,{expectedGeneration:1}),'done');
+ await a.stage({password});
+ const activation=a.activate({password});
+ let called=0;
+ const stale=b.transaction('meta','readwrite',async()=>{called++;},{password,expectedGeneration:1});
+ await activation;await assert.rejects(stale,/Маршрут LAB изменился/);assert.equal(called,0);
+ await assert.rejects(change(2,{password:'incorrect-password'}),/неверный пароль/);
+ assert.equal(await change(2,{password,expectedGeneration:2}),'done');
+ for(const options of [{password},{password,expectedGeneration:2}]){
+  await assert.rejects(a.transaction(['meta','classes'],'readwrite',async s=>{
+   await s.meta.put({id:'fixture',value:99});await s.classes.clear();throw Error('synthetic abort');
+  },options),/synthetic abort/);
+ }
+ assert.equal((await a.snapshot({password})).meta[0].value,2);
+ await a.rollback({password});
+ assert.equal(await change(3,{expectedGeneration:3}),'done');
+ const read=await b.transaction(['classes','meta'],'readonly',async s=>({cls:await s.classes.get('c'),row:await s.meta.get('fixture')}));
+ assert.equal(read.cls.name,'Synthetic');assert.equal(read.row.value,3);
+ await assert.rejects(b.transaction('meta','readonly',s=>s.meta.clear()),e=>e.name==='ReadOnlyError');
+});
+test('Plain routed CAS refuses raw concurrent changes and never retries callbacks',async t=>{
+ const a=vaultRouterLab('plain-cas',{locks:lockQueue()});await a.initialize();await a.put('meta',{id:'fixture',value:1});
+ const db=await openPlainSchemaLab('teachapp-plain-lab-source-plain-cas');t.after(()=>db.close());let calls=0,entered,finish;
+ const ready=new Promise(resolve=>entered=resolve);
+ const work=a.transaction('meta','readwrite',async s=>{
+  calls++;await s.meta.put({id:'fixture',value:2});entered();await new Promise(resolve=>finish=resolve);
+ });
+ await ready;
+ await new Promise((resolve,reject)=>{const tx=db.transaction('meta','readwrite');tx.objectStore('meta').put({id:'fixture',value:9});tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});
+ finish();await assert.rejects(work,/ревизия LAB изменилась/);assert.equal(calls,1);assert.equal((await a.snapshot()).meta[0].value,9);
+});
