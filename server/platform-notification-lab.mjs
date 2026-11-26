@@ -49,3 +49,48 @@ export function acknowledgeNoticeLab(member,body,now){
  n.pending=false;
  return {status:200,body:notificationInboxLab(member,now),changed:true};
 }
+
+// Internal pure scheduling rehearsal. Caller must persist the returned member
+// state transactionally before sending. No public route, timer or transport.
+const LEASE_MS=30000,MAX_ATTEMPTS=3;
+const validTime=n=>Number.isSafeInteger(n)&&n>=0;
+const ticketId=s=>typeof s==='string'&&/^[0-9a-f]{32}$/.test(s);
+const outcomeSet=new Set(['accepted','subscription-gone','authorization-error','payload-error','retry-later','unknown','rejected','cancelled']);
+const activeNotice=(member,now)=>validTime(now)&&notificationInboxLab(member,now)?.pending?inbox(member):null;
+const delivery=n=>n.delivery??{phase:'ready',attempt:0};
+const result=(status,changed=false,ticket=null)=>({status,changed,ticket});
+export function claimNoticeDeliveryLab(member,{now,id}={}){
+ if(!validTime(now)||!ticketId(id))return result('invalid');
+ const n=activeNotice(member,now);if(!n)return result('inactive');
+ const d=delivery(n);
+ if(d.phase==='sending'){
+  if(now<d.leaseUntil)return result('busy');
+  n.delivery={phase:'unknown',attempt:d.attempt};return result('unknown',true);
+ }
+ if(d.phase==='retry'&&now<d.notBefore)return result('waiting');
+ if(!['ready','retry'].includes(d.phase)||d.attempt>=MAX_ATTEMPTS)return result('settled');
+ const ticket={revision:current(member).revision,sequence:n.sequence,attempt:d.attempt+1,id,leaseUntil:Math.min(now+LEASE_MS,n.expiresAt),expiresAt:n.expiresAt};
+ n.delivery={phase:'sending',attempt:ticket.attempt,id,leaseUntil:ticket.leaseUntil};
+ return result('claimed',true,ticket);
+}
+export function noticeDeliveryCurrentLab(member,ticket,now){
+ const n=activeNotice(member,now);if(!n||!ticket)return false;
+ const d=delivery(n);
+ return d.phase==='sending'&&current(member).revision===ticket.revision&&n.sequence===ticket.sequence&&n.expiresAt===ticket.expiresAt&&d.attempt===ticket.attempt&&d.id===ticket.id&&d.leaseUntil===ticket.leaseUntil&&now<d.leaseUntil;
+}
+export function finishNoticeDeliveryLab(member,{ticket,outcome,retryAfter=null,now}={}){
+ if(!outcomeSet.has(outcome)||!validTime(now)||retryAfter!==null&&(!Number.isSafeInteger(retryAfter)||retryAfter<1||retryAfter>3600)||outcome!=='retry-later'&&retryAfter!==null)return result('invalid');
+ if(!noticeDeliveryCurrentLab(member,ticket,now))return result('stale');
+ const n=inbox(member),attempt=ticket.attempt;
+ if(outcome==='subscription-gone'){
+  const change=changeNotificationLab(member,{expectedRevision:ticket.revision,enabled:false,endpoint:null},now);
+  return change.changed?result('subscription-gone',true):result('stale');
+ }
+ if(outcome==='retry-later'&&retryAfter!==null&&attempt<MAX_ATTEMPTS&&now+retryAfter*1000<n.expiresAt){
+  n.delivery={phase:'retry',attempt,notBefore:now+retryAfter*1000};return result('retry',true);
+ }
+ // A timeout/unknown outcome is terminal for this sequence; no automatic
+ // replay after a process crash or a possibly accepted network request.
+ n.delivery={phase:outcome==='retry-later'?'rejected':outcome,attempt};
+ return result(n.delivery.phase,true);
+}
