@@ -249,6 +249,20 @@ export function readSnapshot(names) {
     names.map(async name => [name, await stores[name].getAll()]))));
 }
 
+/** Count before materializing a full snapshot. Both operations use the same
+ * readonly transaction, so a concurrent writer cannot bypass the row cap.
+ * If above limit, return counts only: no getAll, cursor or data export. */
+export function readBoundedSnapshot(limit){
+ if(!Number.isSafeInteger(limit)||limit<0)throw Error('Некорректный лимит снимка');
+ const names=Object.keys(STORES);
+ return tx(names,'readonly',async stores=>{
+  const records=(await Promise.all(names.map(name=>stores[name].count()))).reduce((a,b)=>a+b,0);
+  if(records>limit)return {records,data:null};
+  const data=Object.fromEntries(await Promise.all(names.map(async name=>[name,await stores[name].getAll()])));
+  return {records,data};
+ });
+}
+
 /** Замена базы одной транзакцией. add отклоняет повторяющиеся ключи. */
 export function replaceAll(data,{guardMigration=false}={}) {
   const names = Object.keys(STORES);

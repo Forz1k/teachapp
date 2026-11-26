@@ -1,5 +1,5 @@
 /* Read-only local migration screening, not activation or a backup. */
-import {SCHEMA,dumpAll} from './db.js';
+import {SCHEMA,readBoundedSnapshot} from './db.js';
 import {BACKUP_VERSION,validateBackup} from './backup.js';
 const names=Object.keys(SCHEMA),encoder=new TextEncoder();
 export const migrationLabLimits=Object.freeze({records:10000,bytes:64*1024*1024});
@@ -38,7 +38,12 @@ export function inspectMigrationSnapshot(raw,{estimate=null,secure=false,webLock
  else if(free<bytes*2)warnings.push('low-estimated-space');
  return {records,bytes,checkpoints:checkpoints.length,blockers,warnings,activationAllowed:false};
 }
-export async function inspectLocalMigration({load=dumpAll,storage=globalThis.navigator?.storage,secure=!!globalThis.crypto?.subtle,webLocks=typeof globalThis.navigator?.locks?.request==='function'}={}){
- const raw=await load();let estimate=null;try{estimate=await storage?.estimate?.();}catch{}
- return inspectMigrationSnapshot(raw,{estimate,secure,webLocks});
+export async function inspectLocalMigration({load,readBounded=readBoundedSnapshot,storage=globalThis.navigator?.storage,secure=!!globalThis.crypto?.subtle,webLocks=typeof globalThis.navigator?.locks?.request==='function'}={}){
+ const snapshot=load?{data:await load()}:await readBounded(migrationLabLimits.records);
+ if(snapshot.data===null){
+  const blockers=['record-limit'];if(!secure)blockers.push('crypto-unavailable');if(!webLocks)blockers.push('locks-unavailable');
+  return {records:snapshot.records,bytes:null,checkpoints:null,blockers,warnings:['snapshot-not-loaded'],activationAllowed:false};
+ }
+ let estimate=null;try{estimate=await storage?.estimate?.();}catch{}
+ return inspectMigrationSnapshot(snapshot.data,{estimate,secure,webLocks});
 }
