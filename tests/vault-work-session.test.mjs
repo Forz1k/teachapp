@@ -139,7 +139,7 @@ test('Encrypted school specialist commands retain olympiad links, retake CAS and
  const setup=S.createSchoolSession(access());t.after(()=>setup.close());await setup.load();await setup.setYear('2025-09-01','2026-08-31');
  const cls=await setup.addClass('7А'),p=await setup.addStudent(cls.id,'Synthetic pupil',1,'girls'),q=await setup.addStudent(cls.id,'Second pupil',2,'girls');
  const lesson=await setup.addLesson(cls.id,'2025-10-01',null,'',{slot:1,time:'09:00'});
- const norm=await setup.saveNorm({name:'Synthetic norm',activityId:'pass',unit:'count',direction:'higher',scale:[1,2,3,4,5]});
+ const norm=await setup.saveNorm({name:'Synthetic norm',activityId:'pass',unit:'раз',direction:'max',scale:[1,2,3,4,5]});
  const sessions=[];const open=scope=>{const s=W.createWorkSession(access(),scope);sessions.push(s);return s;};t.after(()=>sessions.forEach(s=>s.close()));
  const school=open('school'),coach=open('coach'),owner=open('workspace');
  const source=await school.saveSchoolCompetition({name:'Synthetic olympiad',eventType:'olympiad',stage:'school',date:'2025-10-01',time:'',venue:'',status:'completed',note:'',participants:[{studentId:lineageOf(p),status:'participated',result:'Synthetic result',place:1}]});
