@@ -94,3 +94,18 @@ export function combineCaptureSummaries(summaries){
  out.perfectReceive=r.total&&r.qualityKnown===r.total?metric(r.perfect,r.total):{n:null,total:r.total,value:null};
  out.defenseConversion=metric(defenseWon,defenseTotal);return out;
 }
+
+
+/** Comparable match samples: minimum volume is a display rule, not statistical
+ * significance. Preserve raw denominators and never turn unknown into zero. */
+export function captureComparison(summary,minAttempts=10){
+ if(!Number.isSafeInteger(minAttempts)||minAttempts<1||minAttempts>500)throw Error('Проверьте минимальное число попыток');
+ const metrics={};
+ for(const name of ['attackEfficiency','serveEfficiency','positiveReceive','perfectReceive']){
+  const m=summary[name];
+  if(!m||!Number.isSafeInteger(m.total)||m.total<0||m.value!==null&&(!Number.isFinite(m.value)||!Number.isSafeInteger(m.n)))throw Error('Некорректная выборка PRO');
+  const status=m.total===0?'empty':m.value===null?'unknown':m.total<minAttempts?'small':'comparable';
+  metrics[name]={total:m.total,n:m.n,value:status==='comparable'?m.value:null,status};
+ }
+ return {minAttempts,rallies:summary.rallies,complete:summary.complete,conflicting:summary.conflicting,metrics};
+}
