@@ -203,51 +203,49 @@ function wrapStore(store) {
   };
 }
 
-/** Массовая запись одной транзакцией — для импорта и seed-данных. */
-export function bulkPut(storeName, items) {
-  if (!items.length) return Promise.resolve();
-  return tx(storeName, 'readwrite', async s => {
-    await Promise.all(items.map(item=>s[storeName].put(item)));
-  });
+/** Shared Promise data-access contract. A backend is fixed at creation;
+ * callers cannot mutate the native singleton or install a global fallback.
+ * Native readBoundedSnapshot/open stay separate: LAB materializes full data. */
+export function createDataAccess(run){
+  if(typeof run!=='function')throw TypeError('Требуется backend транзакций');
+  const all=Object.keys(STORES);
+  const access={
+    bulkPut(store,items){
+      if(!items.length)return Promise.resolve();
+      return run(store,'readwrite',async s=>{await Promise.all(items.map(item=>s[store].put(item)));});
+    },
+    get:(store,key)=>run(store,'readonly',s=>s[store].get(key)),
+    getAll:store=>run(store,'readonly',s=>s[store].getAll()),
+    put:(store,value)=>run(store,'readwrite',s=>s[store].put(value)),
+    del:(store,key)=>run(store,'readwrite',s=>s[store].delete(key)),
+    clear:store=>run(store,'readwrite',s=>s[store].clear()),
+    count:store=>run(store,'readonly',s=>s[store].count()),
+    byIndex:(store,index,query)=>run(store,'readonly',s=>s[store].index(index).getAll(query)),
+    transaction:(stores,mode,fn)=>run(stores,mode,s=>fn(s)),
+    async clearAll(){
+      return run(all,'readwrite',async s=>{await Promise.all(all.map(n=>s[n].clear()));});
+    },
+    async dumpAll(){return access.readSnapshot(all);},
+    readSnapshot(names){
+      if(!Array.isArray(names)||!names.length||new Set(names).size!==names.length||names.some(n=>!Object.hasOwn(STORES,n)))throw Error('Некорректный набор хранилищ');
+      return run(names,'readonly',async stores=>Object.fromEntries(await Promise.all(names.map(async name=>[name,await stores[name].getAll()]))));
+    },
+    replaceAll(data,{guardMigration=false}={}){
+      return run(all,'readwrite',async stores=>{
+        if(guardMigration&&(await stores.meta.getAll()).some(r=>typeof r.id==='string'&&r.id.startsWith('sync-checkpoint-migration-')))throw Error('Нельзя заменять базу во время незавершённого Delta LAB переноса. Сначала согласуйте возврат контрольной точки.');
+        for(const name of all){
+          await stores[name].clear();
+          for(const row of data[name])await stores[name].add(row);
+        }
+      });
+    }
+  };
+  return Object.freeze(access);
 }
 
-export const get    = (store, key)      => tx(store, 'readonly',  (s) => s[store].get(key));
-export const getAll = (store)           => tx(store, 'readonly',  (s) => s[store].getAll());
-export const put    = (store, value)    => tx(store, 'readwrite', (s) => s[store].put(value));
-export const del    = (store, key)      => tx(store, 'readwrite', (s) => s[store].delete(key));
-export const clear  = (store)           => tx(store, 'readwrite', (s) => s[store].clear());
-export const count  = (store)           => tx(store, 'readonly',  (s) => s[store].count());
-export const byIndex = (store, index, query) =>
-  tx(store, 'readonly', (s) => s[store].index(index).getAll(query));
-
-/**
- * Атомарная операция над несколькими хранилищами.
- * Нужна там, где нельзя допустить частичной записи: снятие освобождения + удаление auto-osv.
- */
-export function transaction(storeNames, mode, fn) {
-  return tx(storeNames, mode, (stores) => fn(stores));
-}
-
-/** Полное стирание базы (для «стереть демо» и восстановления из бэкапа). */
-export async function clearAll() {
-  const names = Object.keys(STORES);
-  return tx(names, 'readwrite', async s => {
-    await Promise.all(names.map(n=>s[n].clear()));
-  });
-}
-
-/** Полная выгрузка базы в один объект — для JSON-бэкапа. */
-export async function dumpAll() {
-  return readSnapshot(Object.keys(STORES));
-}
-
-/** Atomic read of exactly the requested stores, without cloning unrelated archives.
- * Full backup continues to use dumpAll; no schema or transaction changes. */
-export function readSnapshot(names) {
-  if (!Array.isArray(names) || !names.length || new Set(names).size !== names.length || names.some(n => !Object.hasOwn(STORES,n))) throw Error('Некорректный набор хранилищ');
-  return tx(names, 'readonly', async stores => Object.fromEntries(await Promise.all(
-    names.map(async name => [name, await stores[name].getAll()]))));
-}
+// Published application remains permanently bound to the existing native IDB
+// backend. No setter, migration toggle, password or LAB import in this file.
+export const {bulkPut,get,getAll,put,del,clear,count,byIndex,transaction,clearAll,dumpAll,readSnapshot,replaceAll}=createDataAccess(tx);
 
 /** Count before materializing a full snapshot. Both operations use the same
  * readonly transaction, so a concurrent writer cannot bypass the row cap.
@@ -261,18 +259,6 @@ export function readBoundedSnapshot(limit){
   const data=Object.fromEntries(await Promise.all(names.map(async name=>[name,await stores[name].getAll()])));
   return {records,data};
  });
-}
-
-/** Замена базы одной транзакцией. add отклоняет повторяющиеся ключи. */
-export function replaceAll(data,{guardMigration=false}={}) {
-  const names = Object.keys(STORES);
-  return tx(names, 'readwrite', async stores => {
-    if(guardMigration&&(await stores.meta.getAll()).some(r=>typeof r.id==='string'&&r.id.startsWith('sync-checkpoint-migration-')))throw Error('Нельзя заменять базу во время незавершённого Delta LAB переноса. Сначала согласуйте возврат контрольной точки.');
-    for (const name of names) {
-      await stores[name].clear();
-      for (const row of data[name]) await stores[name].add(row);
-    }
-  });
 }
 
 export const SCHEMA = STORES;

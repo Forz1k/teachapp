@@ -1,7 +1,7 @@
 /* LAB only: cooperative cross-tab fence for the migration rehearsal.
  * All callers must use this router; raw IndexedDB connections bypass Web Locks.
  * No live database, application switch, persistent password or plaintext fallback. */
-import {SCHEMA} from '../../js/db.js';
+import {SCHEMA,createDataAccess} from '../../js/db.js';
 import {BACKUP_VERSION,validateBackup} from '../../js/backup.js';
 import {encryptBackup,decryptBackup} from '../../js/privacy.js';
 import {openVaultLab,readVaultLab} from './local-vault.mjs';
@@ -169,4 +169,21 @@ export function vaultRouterLab(id,{locks=globalThis.navigator?.locks}={}){
    const n=next(s,'rollback');await setState(db,s,n);return n;
   })
  };
+}
+
+/** Generation-pinned facade for an explicit LAB route. A stale handle cannot
+ * silently move to another phase; neither native open nor raw IDB is exposed.
+ * Password lives only in the handle closure. Not a production unlock session. */
+export function routedDataAccessLab(router,{expectedGeneration,password}={}){
+ check(typeof router?.transaction==='function'&&Number.isInteger(expectedGeneration)&&expectedGeneration>=1&&expectedGeneration<=3,'Требуется явное поколение LAB');
+ if(expectedGeneration===2)check(typeof password==='string'&&password.length>0,'Требуется пароль vault LAB');
+ else check(password===undefined,'Пароль разрешён только для vault LAB');
+ let closed=false,secret=password;
+ const access=createDataAccess(async(names,mode,fn)=>{
+  check(!closed,'Интерфейс LAB закрыт');
+  // Check again when queued work enters the router callback. Already submitted
+  // write transactions cannot be retroactively revoked by close().
+  return router.transaction(names,mode,stores=>{check(!closed,'Интерфейс LAB закрыт');return fn(stores);},{expectedGeneration,password:secret});
+ });
+ return Object.freeze({...access,close(){closed=true;secret=undefined;}});
 }
