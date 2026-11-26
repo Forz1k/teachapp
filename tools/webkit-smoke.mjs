@@ -220,6 +220,16 @@ try{
  await page.getByLabel('Дизайн',{exact:true}).selectOption('arena');await page.getByLabel('Положение фотографии',{exact:true}).selectOption('top');await page.getByRole('textbox',{name:'Название оформления',exact:true}).fill('Арена');await page.getByRole('button',{name:'Сохранить как пресет',exact:true}).click();assert.equal(await page.getByRole('combobox',{name:'Сохранённое оформление',exact:true}).inputValue(),'Арена');await page.getByLabel('Дизайн',{exact:true}).selectOption('editorial');await page.getByRole('button',{name:'Применить оформление',exact:true}).click();assert.equal(await page.getByLabel('Дизайн',{exact:true}).inputValue(),'arena');assert.equal(await page.getByLabel('Положение фотографии',{exact:true}).inputValue(),'top');
  assert.equal(await page.locator('.studio-editor textarea[aria-label="Текст публикации"]').inputValue(),'Итоговый результат\n\nДемо — Гости\n\n2:1');
  await page.getByRole('textbox',{name:'Дата, время и место встречи',exact:true}).fill('12 декабря · зал');assert.match(await page.locator('.studio-kit-summary').textContent(),/6 PNG \+ 2 TXT/);assert.equal(await page.getByRole('button',{name:'Скачать комплект матча ZIP',exact:true}).isEnabled(),true);
+ await page.getByRole('button',{name:'+ Текстовый слой',exact:true}).click();
+ await page.getByLabel('Текст слоя 1',{exact:true}).fill('Синтетический слой');
+ await page.getByRole('button',{name:'+ Прямоугольник',exact:true}).click();
+ await page.getByLabel('X (%) слоя 2',{exact:true}).fill('20');
+ await page.getByLabel('X (%) слоя 2',{exact:true}).press('Tab');
+ await page.locator('.studio-editor fieldset').getByRole('button',{name:'Переместить ниже',exact:true}).last().click();
+ assert.equal(await page.getByLabel('Текст слоя 2',{exact:true}).inputValue(),'Синтетический слой');
+ assert.doesNotMatch(await page.getByLabel('Текст публикации',{exact:true}).inputValue(),/Синтетический слой/);
+ await page.locator('.studio-editor fieldset').getByRole('button',{name:'Удалить слой',exact:true}).first().click();
+ assert.equal(await page.getByLabel('Текст слоя 1',{exact:true}).inputValue(),'Синтетический слой');
  const kitFiles=await page.evaluate(async()=>{const m=await import('./js/media-studio.js'),b=await m.studioMatchPackage(document.createElement('canvas'),{team:'Демо',opponent:'Гости',score:'2:1'},['square'],{eventDetails:'Зал',includeText:true});const v=new DataView(await b.arrayBuffer());return v.getUint16(v.byteLength-12,true);});assert.equal(kitFiles,4);
  const studioBatch=await page.evaluate(async()=>{const m=await import('./js/media-studio.js'),b=await m.studioBatch(document.createElement('canvas'),{team:'Демо'},['square','story','wide'],{text:'Демо'});const v=new DataView(await b.arrayBuffer());return {signature:v.getUint32(0,true),count:v.getUint16(v.byteLength-12,true)};});assert.deepEqual(studioBatch,{signature:0x04034b50,count:4});
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'studio overflow');await page.locator('.studio-editor').getByRole('button',{name:'Назад',exact:true}).click();

@@ -463,3 +463,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 6.7 follow-up — immutable-ID archive V3 candidate
 - Separate candidate rules and CAS client keyed by public ID; sort-key pagination, migration preview and emulator race test for concurrent date corrections. V2 and production config unchanged; no cutover or live publication.
+
+### Upgrade acceptance follow-up
+- Added pinned published 6.0.0 WebKit PWA upgrade alongside 5.1.1, including exact IndexedDB comparison, encrypted checkpoint preservation and no unnecessary write, old/new backup version fences, offline edit and independent restore. Added mobile Studio layer interactions to WebKit smoke.
