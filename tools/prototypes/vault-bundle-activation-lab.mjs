@@ -69,11 +69,12 @@ export function vaultBundleActivationLab(id,{locks=globalThis.navigator?.locks}=
     async read(){
      check(!session.isLocked(),'Сеанс LAB заблокирован; откройте заново');
      try{
-      return await guarded(async(registry,dbs)=>{
+      const data=await guarded(async(registry,dbs)=>{
        const current=await active(registry),result=validateVaultScopeResultLab(await session.read(dbs[scope]),scope);
        match(pointer,result,scope);match(current,result,scope);
        check(!session.isLocked(),'Сеанс LAB заблокирован; откройте заново');return result.data;
       });
+      check(!session.isLocked(),'Сеанс LAB заблокирован; откройте заново');return data;
      }catch(e){session.close();throw e;}
     }
    });
