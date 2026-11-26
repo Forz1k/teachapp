@@ -1,7 +1,8 @@
 /* Read-only GitHub Actions evidence for the exact integration push SHA.
  * No deploy, release, repository write, logs, or automatic acceptance. */
 import {pathToFileURL} from 'node:url';
-import {releaseEvidenceTemplate,assessReleaseEvidence,releaseGates} from './release-readiness.mjs';
+import {readFileSync} from 'node:fs';
+import {releaseEvidenceTemplate,assessReleaseEvidence} from './release-readiness.mjs';
 const repo='Forz1k/teachapp',branch='roadmap/8.0-integration',api='https://api.github.com';
 export const workflowIds=Object.freeze({'TeachApp':428329073,'TeachApp WebKit':428881876,'TeachApp Cloudflare':428941722,'TeachApp Delta synthetic':430001967,'TeachApp Platform synthetic':429958587,'TeachApp Firebase archive':429637492});
 const check=(ok,msg)=>{if(!ok)throw Error(msg);};
@@ -35,10 +36,41 @@ export async function collectReleaseCI(sha,{fetcher=globalThis.fetch,token}={}){
  assessReleaseEvidence(report,sha);
  return report;
 }
+/** Keep independently declared manual evidence; replace all CI declarations
+ * with a fresh API read, and fence the branch before and after collection. */
+export async function refreshReleaseEvidence(report,sha,{fetcher=globalThis.fetch,token}={}){
+ assessReleaseEvidence(report,sha);
+ check(typeof fetcher==='function','Fetch unavailable');
+ if(token!==undefined)check(typeof token==='string'&&/^[A-Za-z0-9_]{1,512}$/.test(token),'Invalid API token');
+ const headers={Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28',...(token?{Authorization:'Bearer '+token}:{})};
+ async function verifyHead(){
+  const url=api+'/repos/'+repo+'/git/ref/heads/'+branch;
+  let response;try{response=await fetcher(url,{method:'GET',headers,redirect:'error',signal:AbortSignal.timeout(20000)});}catch{throw Error('Integration head unavailable');}
+  check(response.ok&&response.status===200,'Integration head unavailable');
+  let body;try{body=await response.json();}catch{throw Error('Integration head unavailable');}
+  check(body?.ref==='refs/heads/'+branch&&body?.object?.type==='commit'&&body.object.sha===sha,'Integration head changed or does not match candidate');
+ }
+ const acceptance=structuredClone(report.acceptance);
+ await verifyHead();
+ const fresh=await collectReleaseCI(sha,{fetcher,token});
+ await verifyHead();
+ fresh.acceptance=acceptance;
+ assessReleaseEvidence(fresh,sha);
+ return fresh;
+}
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  try{
-  const [sha,...extra]=process.argv.slice(2);check(!extra.length,'Usage: node tools/release-ci-evidence.mjs SHA');
-  const report=await collectReleaseCI(sha,{token:process.env.GH_TOKEN||undefined});
-  console.log(JSON.stringify(report,null,2));
+  const [first,second,file,...extra]=process.argv.slice(2),token=process.env.GH_TOKEN||undefined;
+  if(first==='--refresh'||first==='--verify'){
+   check(second&&file&&!extra.length,'Usage: node tools/release-ci-evidence.mjs --refresh|--verify SHA FILE');
+   const raw=readFileSync(file,'utf8');check(Buffer.byteLength(raw)<=32768,'Evidence too large');
+   const refreshed=await refreshReleaseEvidence(JSON.parse(raw),second,{token});
+   const result=assessReleaseEvidence(refreshed,second);
+   console.log(JSON.stringify(first==='--refresh'?refreshed:result,null,2));
+   process.exitCode=result.readyForManualReleaseReview?0:2;
+  }else{
+   check(first&&!second&&!file&&!extra.length,'Usage: node tools/release-ci-evidence.mjs SHA');
+   console.log(JSON.stringify(await collectReleaseCI(first,{token}),null,2));
+  }
  }catch(e){console.error('CI evidence unavailable: '+e.message);process.exitCode=1;}
 }

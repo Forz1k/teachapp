@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {collectReleaseCI,workflowIds} from '../tools/release-ci-evidence.mjs';
-import {assessReleaseEvidence} from '../tools/release-readiness.mjs';
+import {collectReleaseCI,refreshReleaseEvidence,workflowIds} from '../tools/release-ci-evidence.mjs';
+import {releaseEvidenceTemplate,assessReleaseEvidence} from '../tools/release-readiness.mjs';
 const sha='a'.repeat(40),repo='Forz1k/teachapp',branch='roadmap/8.0-integration';
 const run=(name,overrides={})=>({id:workflowIds[name]+1000,workflow_id:workflowIds[name],name,head_sha:sha,head_branch:branch,event:'push',repository:{full_name:repo},head_repository:{full_name:repo},run_number:10,run_attempt:1,status:'completed',conclusion:'success',...overrides});
 const fake=(build,seen=[])=>async(url,opts)=>{
@@ -21,4 +21,22 @@ test('CI evidence refuses wrong SHA, PR event, fork, workflow substitution, pagi
  await assert.rejects(collectReleaseCI(sha,{fetcher:async()=>({ok:false,status:403})}),/unavailable/);
  await assert.rejects(collectReleaseCI(sha,{fetcher:async()=>{throw Error('SECRET');}}),e=>!e.message.includes('SECRET')&&/request failed/.test(e.message));
  await assert.rejects(collectReleaseCI('short',{fetcher:fake(n=>[run(n)])}),/SHA/);
+});
+
+test('Refresh preserves only exact-SHA manual declarations and rechecks integration head before and after current CI',async()=>{
+ const input=releaseEvidenceTemplate(sha);input.acceptance[0]={id:input.acceptance[0].id,status:'passed',evidence:'local-act-001'};
+ input.workflows[0]={id:'TeachApp',status:'passed',evidence:'999'};
+ const before=structuredClone(input);
+ let headReads=0;
+ const wrap=(head=()=>sha)=>async(url,opts)=>{
+  if(url.includes('/git/ref/heads/')){headReads++;assert.equal(url,'https://api.github.com/repos/Forz1k/teachapp/git/ref/heads/roadmap/8.0-integration');assert.equal(opts.redirect,'error');return {ok:true,status:200,json:async()=>({ref:'refs/heads/'+branch,object:{type:'commit',sha:head(headReads)}})};}
+  return fake(n=>[run(n,{conclusion:n==='TeachApp'?'failure':'success'})])(url,opts);
+ };
+ const result=await refreshReleaseEvidence(input,sha,{fetcher:wrap()});
+ assert.equal(headReads,2);assert.deepEqual(result.acceptance,input.acceptance);assert.deepEqual(input,before);
+ assert.equal(result.workflows[0].status,'failed');assert.notEqual(result.workflows[0].evidence,'999');
+ assert.equal(assessReleaseEvidence(result,sha).readyForManualReleaseReview,false);
+ headReads=0;await assert.rejects(refreshReleaseEvidence(input,sha,{fetcher:wrap(n=>n===1?sha:'b'.repeat(40))}),/head changed/);
+ assert.equal(headReads,2);
+ headReads=0;await assert.rejects(refreshReleaseEvidence(input,'b'.repeat(40),{fetcher:wrap()}),/SHA/);assert.equal(headReads,0);
 });
