@@ -1,9 +1,9 @@
 /* Writable route lifecycle, synthetic LAB only. No live application toggle,
- * no plaintext fallback. Existing v1 snapshot protocol derives per revision. */
+ * no plaintext fallback. Nonextractable PBKDF2 material derives per revision. */
 import {createDataAccess} from '../../js/db.js';
 const check=(ok,message)=>{if(!ok)throw Error(message);};
 export function routedVaultLifecycleLab(router,{id,document:doc=globalThis.document,window:win=globalThis.window,Channel=globalThis.BroadcastChannel,idleMs=5*60*1000,now=()=>performance.now(),onLock=()=>{}}={}){
- check(typeof router?.transaction==='function'&&typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id),'Некорректный маршрут LAB');
+ check(typeof router?.transaction==='function'&&typeof router?.openKeySession==='function'&&typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id),'Некорректный маршрут LAB');
  check(typeof doc?.addEventListener==='function'&&typeof win?.addEventListener==='function'&&typeof Channel==='function','Требуется браузерный lifecycle и BroadcastChannel LAB');
  check(Number.isSafeInteger(idleMs)&&idleMs>0&&idleMs<=30*60*1000&&typeof now==='function'&&typeof onLock==='function','Некорректный тайм-аут LAB');
  const channel=new Channel('teachapp-vault-writable-lock-lab-'+id);
@@ -11,7 +11,7 @@ export function routedVaultLifecycleLab(router,{id,document:doc=globalThis.docum
  const visible=()=>!disposed&&!channelFailed&&doc.visibilityState==='visible';
  function lock(){
   epoch++;const s=current;current=null;
-  if(s){clearTimeout(s.timer);s.password=undefined;try{onLock();}catch{}}
+  if(s){clearTimeout(s.timer);s.keySession?.close();s.keySession=null;try{onLock();}catch{}}
  }
  const fail=()=>{channelFailed=true;lock();};
  const remote=e=>{const m=e.data;if(m&&typeof m==='object'&&Object.keys(m).sort().join('|')==='kind|version'&&m.kind==='lock-all'&&m.version===1)lock();};
@@ -29,16 +29,18 @@ export function routedVaultLifecycleLab(router,{id,document:doc=globalThis.docum
  return Object.freeze({
   async unlock(password){
    check(visible(),'Скрытый или закрытый экран LAB заблокирован');
-   lock();const s={epoch,password,deadline:0,timer:null,ready:false};password=undefined;current=s;arm(s);
+   lock();const s={epoch,keySession:null,deadline:0,timer:null,ready:false};current=s;arm(s);
    const active=()=>guard(s);
    try{
     // Authenticate the entire encrypted snapshot without handing any rows to UI.
-    await router.transaction('meta','readonly',()=>true,{expectedGeneration:2,password:s.password,assertActive:active});
-    active();s.ready=true;arm(s);
+    const opening=router.openKeySession({password,assertActive:active});password=undefined;
+    const session=await opening;
+    try{active();}catch(e){session.close();throw e;}
+    s.keySession=session;s.ready=true;arm(s);
     const access=createDataAccess(async(names,mode,fn)=>{
      active();
      try{
-      const result=await router.transaction(names,mode,fn,{expectedGeneration:2,password:s.password,assertActive:active});
+      const result=await router.transaction(names,mode,fn,{expectedGeneration:2,keySession:s.keySession,assertActive:active});
       active();arm(s);return result;
      }catch(e){if(current===s)lock();throw e;}
     });

@@ -49,3 +49,27 @@ test('Lock during authentication, callback or native CAS prevents pending write 
  await assert.rejects(access.transaction('meta','readonly',async s=>{const row=await s.meta.get('x');a.lock();return row;}),/заблокирован/);
  assert.equal(a.isUnlocked(),false);
 });
+
+import {openVaultLab,stageVaultLab,readVaultLab,openVaultWritableKeySessionLab,exportVaultLab,restoreVaultLab,replaceVaultLab} from '../tools/prototypes/local-vault.mjs';
+test('Writable key material is imported once, nonextractable, with fresh v1 salts and password-compatible recovery',async t=>{
+ const db=await openVaultLab('teachapp-vault-lab-key-write'),dest=await openVaultLab('teachapp-vault-lab-key-write-restore');t.after(()=>{db.close();dest.close();});
+ await stageVaultLab(db,{scope:'workspace',password,data:{meta:[{id:'x',value:1}]}});
+ const header=()=>new Promise((resolve,reject)=>{const tx=db.transaction('sealed'),q=tx.objectStore('sealed').get('header');tx.oncomplete=()=>resolve(q.result);tx.onabort=()=>reject(tx.error);});
+ const before=await header(),originalImport=crypto.subtle.importKey,originalDerive=crypto.subtle.deriveKey;
+ let imports=0,derivations=0,session;
+ crypto.subtle.importKey=async function(...args){const k=await originalImport.apply(this,args);imports++;assert.equal(k.extractable,false);assert.equal(k.algorithm.name,'PBKDF2');await assert.rejects(crypto.subtle.exportKey('raw',k),e=>['InvalidAccessError','InvalidAccessException'].includes(e.name));return k;};
+ crypto.subtle.deriveKey=async function(...args){derivations++;assert.equal(args[1].extractable,false);const k=await originalDerive.apply(this,args);assert.equal(k.extractable,false);return k;};
+ try{
+  session=await openVaultWritableKeySessionLab(db,{scope:'workspace',password});
+  for(const value of [2,3]){const s=await session.read(db);await session.replace(db,{expectedRevision:s.revision,data:{meta:[{id:'x',value}]}});}
+  assert.equal(imports,1);assert.ok(derivations>=3);assert.equal((await session.read(db)).data.meta[0].value,3);
+ }finally{crypto.subtle.importKey=originalImport;crypto.subtle.deriveKey=originalDerive;}
+ t.after(()=>session?.close());const after=await header();assert.notDeepEqual(after.salt,before.salt);assert.notEqual(after.vaultId,before.vaultId);assert.equal(after.version,1);
+ const peer=await readVaultLab(db,{scope:'workspace',password});assert.equal(peer.data.meta[0].value,3);
+ const file=await exportVaultLab(db,{scope:'workspace',password});await restoreVaultLab(dest,{scope:'workspace',password,file});assert.deepEqual((await readVaultLab(dest,{scope:'workspace',password})).data,peer.data);
+ await assert.rejects(session.read(dest),/Другая база/);assert.equal(session.isLocked(),true);
+ const stale=await openVaultWritableKeySessionLab(db,{scope:'workspace',password}),opened=await stale.read(db);
+ await replaceVaultLab(db,{scope:'workspace',password,expectedRevision:opened.revision,data:{meta:[{id:'x',value:4}]}});
+ await assert.rejects(stale.replace(db,{expectedRevision:opened.revision,data:{meta:[{id:'x',value:99}]}}),/изменился/);
+ assert.equal(stale.isLocked(),true);assert.equal((await readVaultLab(db,{scope:'workspace',password})).data.meta[0].value,4);
+});

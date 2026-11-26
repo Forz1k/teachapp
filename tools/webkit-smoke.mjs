@@ -70,12 +70,14 @@ try{
   const router=R.vaultRouterLab(id);await router.initialize();await router.put('meta',{id:'x',value:1});await router.stage({password});await router.activate({password});
   const lifecycle=L.routedVaultLifecycleLab(router,{id});try{
    const a=await lifecycle.unlock(password);await a.put('meta',{id:'x',value:2});
+   const V=await import('/tools/prototypes/local-vault.mjs'),raw=await V.openVaultLab('teachapp-vault-lab-routing-'+id);let compatible;
+   try{compatible=(await V.readVaultLab(raw,{scope:'workspace',password})).data.meta[0].value===2;}finally{raw.close();}
    let blocked=false;try{await a.transaction('meta','readwrite',async s=>{await s.meta.put({id:'x',value:9});lifecycle.lock();});}catch{blocked=true;}
    const b=await lifecycle.unlock(password);const row=await b.get('meta','x');
    window.dispatchEvent(new Event('pagehide'));let hidden=false;try{await b.getAll('meta');}catch{hidden=true;}
-   return {supported:true,blocked,hidden,value:row.value,locked:!lifecycle.isUnlocked()};
+   return {supported:true,blocked,hidden,value:row.value,locked:!lifecycle.isUnlocked(),compatible};
   }finally{lifecycle.dispose();}
- });if(writableLifecycle.supported)assert.deepEqual(writableLifecycle,{supported:true,blocked:true,hidden:true,value:2,locked:true});
+ });if(writableLifecycle.supported)assert.deepEqual(writableLifecycle,{supported:true,blocked:true,hidden:true,value:2,locked:true,compatible:true});
  console.log('WEBKIT WRITABLE LIFECYCLE LAB '+(writableLifecycle.supported?'PASS: guarded write rollback and pagehide lock.':'SKIPPED: browser capabilities unavailable.'));
 
  }finally{await writableContext.close();await page.bringToFront();}

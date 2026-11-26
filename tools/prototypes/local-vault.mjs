@@ -10,11 +10,13 @@ const random=n=>crypto.getRandomValues(new Uint8Array(n));
 const idPattern=/^[0-9a-f]{32}$/;
 const bytes=(v,n)=>v instanceof Uint8Array&&(n===undefined||v.byteLength===n);
 const tableName=n=>/^[A-Za-z][A-Za-z0-9]{0,79}$/.test(n)&&!['constructor','prototype'].includes(n);
-async function derive(password,salt){
+async function importMaterial(password){
  check(typeof password==='string'&&password.length>=12&&password.length<=1024,'Используйте отдельный пароль от 12 символов');
- const material=await crypto.subtle.importKey('raw',encoder.encode(password),'PBKDF2',false,['deriveKey']);
- return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations,hash:'SHA-256'},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+ const encoded=encoder.encode(password);
+ try{return await crypto.subtle.importKey('raw',encoded,'PBKDF2',false,['deriveKey']);}finally{encoded.fill(0);}
 }
+const deriveMaterial=(material,salt)=>crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations,hash:'SHA-256'},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+async function derive(password,salt){return deriveMaterial(await importMaterial(password),salt);}
 const aad=(header,slot)=>encoder.encode(JSON.stringify(['teachapp-vault-lab',1,header.scope,header.vaultId,slot]));
 function validateHeader(h){
  check(plain(h)&&h.id==='header'&&h.version===1&&validScope(h.scope)&&idPattern.test(h.vaultId)&&bytes(h.salt,16)&&h.iterations===iterations,'Повреждён заголовок хранилища');
@@ -85,10 +87,10 @@ function commitNew(db,rows){
 }
 function assertLab(db){check(db&&/^teachapp-vault-lab-[a-z0-9-]{1,80}$/.test(db.name),'Разрешена только база LAB');}
 /** Seal all rows before opening the transaction. No crypto inside an IDB transaction. */
-async function sealSnapshot({scope,data,password}){
+async function sealSnapshot({scope,data,password,material}){
  check(validScope(scope),'Некорректная область');
  const snapshot=normalize(data),header={id:'header',version:1,scope,vaultId:hex(random(16)),iterations,salt:random(16)};
- const key=await derive(password,header.salt),ivs=new Set(),slots=new Set(),manifest=Object.create(null),rows=[header];
+ const key=material?await deriveMaterial(material,header.salt):await derive(password,header.salt),ivs=new Set(),slots=new Set(),manifest=Object.create(null),rows=[header];
  for(const [name,records] of Object.entries(snapshot)){
   manifest[name]=[];
   for(const record of records){
@@ -96,7 +98,7 @@ async function sealSnapshot({scope,data,password}){
   }
  }
  rows.push(await encryptRow(key,header,'manifest',manifest,ivs));
- const reopened=await decodeSnapshot(rows,{scope,password});
+ const reopened=await decodeSnapshot(rows,{scope,key,expectedHeader:header});
  check(JSON.stringify(reopened.data)===JSON.stringify(snapshot),'Проверка полноты снимка не прошла');
  return rows;
 }
@@ -109,7 +111,7 @@ export async function stageVaultLab(db,{scope,data,password}){
  return {scope,records:rows.length-2,verified:true};
 }
 /** Wrong password, altered/missing/extra records, or a foreign scope fail closed. */
-async function decodeSnapshot(rows,{scope,password,key:sessionKey,expectedHeader}){
+async function decodeSnapshot(rows,{scope,password,material,key:sessionKey,expectedHeader}){
  check(validScope(scope),'Некорректная область');
  const map=new Map(rows.map(r=>[r.id,r])),header=map.get('header');
  try{
@@ -117,7 +119,7 @@ async function decodeSnapshot(rows,{scope,password,key:sessionKey,expectedHeader
   check(rows.length<=maxRecords+2&&map.size===rows.length,'Превышен лимит или повторный ключ');
   let sealedBytes=0;const ivs=new Set();for(const row of rows){if(row.id==='header')continue;check(bytes(row.iv,12)&&bytes(row.data),'Повреждён конверт');const iv=hex(row.iv);check(!ivs.has(iv),'Повторный IV');ivs.add(iv);sealedBytes+=row.data.byteLength;check(sealedBytes<=maxSealedBytes,'Превышен лимит шифротекста');}
   if(sessionKey)check(expectedHeader&&header.vaultId===expectedHeader.vaultId&&sameBytes(header.salt,expectedHeader.salt),'Ревизия LAB изменена');
-  const key=sessionKey||await derive(password,header.salt),manifest=await decryptRow(key,header,map.get('manifest'),'manifest'),used=new Set(['header','manifest']),snapshot=Object.create(null);
+  const key=sessionKey||(material?await deriveMaterial(material,header.salt):await derive(password,header.salt)),manifest=await decryptRow(key,header,map.get('manifest'),'manifest'),used=new Set(['header','manifest']),snapshot=Object.create(null);
   check(plain(manifest)&&Object.keys(manifest).length<=64,'Некорректный манифест');
   for(const [name,slots] of Object.entries(manifest)){
    check(tableName(name)&&Array.isArray(slots)&&slots.length<=maxRecords,'Некорректный манифест');
@@ -203,6 +205,45 @@ export async function replaceVaultLab(db,{scope,password,expectedRevision,data,n
  assertActive();await commitReplace(db,before,after,assertActive);
  return {scope,revision:after[0].vaultId,records:after.length-2};
 }
+/** Password-equivalent, nonextractable PBKDF2 material, kept only in this
+ * private closure. Derive a new AES key for every fresh v1 revision salt.
+ * All operations bind to the original DB name and scope. No key is returned.
+ * Close invalidates in-flight reads and guards the native CAS before mutation. */
+function createWritableKeySession(name,scope,initialMaterial){
+ let material=initialMaterial;initialMaterial=null;
+ const close=()=>{material=null;};
+ const guard=(connection,assertActive)=>{
+  check(material,'Сеанс LAB заблокирован; откройте заново');assertActive();
+  assertLab(connection);check(connection.name===name,'Другая база LAB');
+ };
+ async function read(connection,{assertActive=()=>{}}={}){
+  try{guard(connection,assertActive);const rows=await readRows(connection);guard(connection,assertActive);
+   const result=await decodeSnapshot(rows,{scope,material});guard(connection,assertActive);return result;
+  }catch(e){close();throw e;}
+ }
+ async function replace(connection,{expectedRevision,data,assertActive=()=>{}}={}){
+  const active=()=>guard(connection,assertActive);
+  try{
+   active();check(typeof expectedRevision==='string'&&idPattern.test(expectedRevision),'Требуется ревизия предпросмотра');
+   const before=await readRows(connection);active();
+   const old=await decodeSnapshot(before,{scope,material});active();
+   check(old.revision===expectedRevision,'Снимок LAB изменился. Откройте заново');
+   const after=await sealSnapshot({scope,data,material});active();
+   await commitReplace(connection,before,after,active);active();
+   return {scope,revision:after[0].vaultId,records:after.length-2};
+  }catch(e){close();throw e;}
+ }
+ return Object.freeze({scope,read,replace,close,isLocked:()=>material===null});
+}
+export async function openVaultWritableKeySessionLab(db,{scope,password,assertActive=()=>{}}={}){
+ assertLab(db);check(validScope(scope),'Некорректная область');assertActive();
+ let material;
+ try{material=await importMaterial(password);}catch{throw Error('Не удалось открыть хранилище LAB: неверный пароль, область или повреждение данных');}
+ password=undefined;assertActive();
+ const session=createWritableKeySession(db.name,scope,material);material=null;
+ try{await session.read(db,{assertActive});return session;}catch(e){session.close();throw e;}
+}
+
 /** Portable ciphertext only. Recovery into an empty LAB DB is explicit and
  * requires authenticating the entire file with the original password. */
 const b64=arr=>{let s='';for(let i=0;i<arr.length;i+=16384)s+=String.fromCharCode(...arr.subarray(i,i+16384));return btoa(s);};
