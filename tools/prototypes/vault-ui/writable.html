@@ -9,7 +9,7 @@
 <section id="session" hidden><article><h2>Сеанс журнала</h2><p class="hint">Демо-пароль: teachapp-writable-demo</p>
 <form id="unlock"><label>Демо-пароль<input id="password" type="password" autocomplete="off" required maxlength="128"></label><button type="submit">Разблокировать</button></form>
 <button id="lock" type="button" disabled>Заблокировать</button> <button id="lock-tabs" type="button">Заблокировать все вкладки</button>
-<div id="editor" hidden><p id="record" class="result"></p><form id="edit"><label>Демо-оценка<select id="grade"><option value="">Выберите оценку</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label><button type="submit">Сохранить оценку</button></form></div>
+<div id="editor" hidden><p id="record" class="result"></p><form id="edit"><label for="grade">Демо-оценка</label><select id="grade" aria-label="Демо-оценка"><option value="">Выберите оценку</option><option>2</option><option>3</option><option>4</option><option>5</option></select><button type="submit">Сохранить оценку</button></form></div>
 </article></section>
 <p class="note">Закрытие сеанса очищает экран и аннулирует старые операции. Уже зафиксированные записи остаются сохранёнными. Это изолированная репетиция, не рабочий журнал.</p>
 <noscript>Для тестового интерфейса требуется JavaScript.</noscript>
