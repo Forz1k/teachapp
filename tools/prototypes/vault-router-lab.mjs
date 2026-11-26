@@ -67,7 +67,7 @@ export async function openRouterRollbackBackupLab({id,backupPassword,file}){
  independentPassword(undefined,backupPassword);
  check(typeof file==='string'&&file.length<=96*1024*1024,'Некорректный файл копии LAB');
  const p=await decryptBackup(JSON.parse(file),backupPassword);
- check(exact(p,['app','version','backupVersion','id','generation','revision','data'])&&p.app==='teachapp-vault-rollback-backup'&&p.version===1&&p.backupVersion===BACKUP_VERSION&&p.id===id&&p.generation===2&&typeof p.revision==='string'&&/^[a-f0-9-]{36}$/.test(p.revision),'Копия другого маршрута или версии LAB');
+ check(exact(p,['app','version','backupVersion','id','generation','revision','data'])&&p.app==='teachapp-vault-rollback-backup'&&p.version===1&&p.backupVersion===BACKUP_VERSION&&p.id===id&&p.generation===2&&typeof p.revision==='string'&&/^[0-9a-f]{32}$/.test(p.revision),'Копия другого маршрута или версии LAB');
  check(exact(p.data,Object.keys(SCHEMA))&&Array.isArray(p.data.meta)&&p.data.meta.every(r=>typeof r?.id==='string'&&!r.id.startsWith('sync-checkpoint-')),'Требуется полный переносимый снимок LAB');
  return {revision:p.revision,data:validateBackup({app:'teachapp',version:BACKUP_VERSION,data:p.data})};
 }
