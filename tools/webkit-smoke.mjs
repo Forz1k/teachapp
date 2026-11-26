@@ -59,7 +59,12 @@ try{
   const live=await D.get('meta','synthetic-facade');return {supported:true,stale,closed,value:row.value,isolated:live===undefined};
  });if(routedFacade.supported)assert.deepEqual(routedFacade,{supported:true,stale:true,closed:true,value:2,isolated:true});
  console.log('WEBKIT SHARED DATA FACADE LAB '+(routedFacade.supported?'PASS: native app remains isolated; stale handle rejected.':'SKIPPED: Web Locks unavailable.'));
- const writableLifecycle=await page.evaluate(async()=>{
+ const writableContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block'});
+ try{
+  const url=origin+'/vault-writable-smoke.html';
+  await writableContext.route(url,route=>route.fulfill({status:200,contentType:'text/html; charset=utf-8',body:'<!doctype html><title>Writable vault lifecycle LAB</title>'}));
+  const writableTab=await writableContext.newPage();await writableTab.goto(url);await writableTab.bringToFront();
+  const writableLifecycle=await writableTab.evaluate(async()=>{
   const R=await import('/tools/prototypes/vault-router-lab.mjs'),L=await import('/tools/prototypes/vault-routed-lifecycle-lab.mjs'),id='webkit-writable-life',password='synthetic-writable-webkit';
   if(!navigator.locks?.request||!globalThis.BroadcastChannel)return {supported:false};
   const router=R.vaultRouterLab(id);await router.initialize();await router.put('meta',{id:'x',value:1});await router.stage({password});await router.activate({password});
@@ -72,6 +77,8 @@ try{
   }finally{lifecycle.dispose();}
  });if(writableLifecycle.supported)assert.deepEqual(writableLifecycle,{supported:true,blocked:true,hidden:true,value:2,locked:true});
  console.log('WEBKIT WRITABLE LIFECYCLE LAB '+(writableLifecycle.supported?'PASS: guarded write rollback and pagehide lock.':'SKIPPED: browser capabilities unavailable.'));
+
+ }finally{await writableContext.close();await page.bringToFront();}
  const schemaVault=await page.evaluate(async()=>{
   const V=await import('/tools/prototypes/local-vault.mjs'),A=await import('/tools/prototypes/vault-schema-adapter.mjs'),D=await import('./js/db.js'),B=await import('./js/backup.js'),password='synthetic-schema-webkit',data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));
   data.classes=[{id:'c',name:'Synthetic class',gradeLevel:7}];data.students=[{id:'p',classId:'c',fullName:'Synthetic pupil',number:1,normGroup:'girls'}];data.lessons=[{id:'l',classId:'c',date:'2026-11-24',slot:1,time:'09:00'}];data.marks=[{id:'m',studentId:'p',lessonId:'l',value:'4',source:'manual'}];
