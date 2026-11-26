@@ -356,7 +356,7 @@ export function coverPrivacy(){
   const hide=node=>{if(node===cover||saved.has(node)||node.tagName==='SCRIPT')return;saved.set(node,node.inert);node.inert=true;};
   for(const child of document.body.children)hide(child);
   const observer=new MutationObserver(()=>{for(const child of document.body.children)hide(child);});
-  document.body.append(cover);document.body.classList.add('privacy-covered');window.dispatchEvent(new Event(PRIVACY_VISIBILITY_EVENT));
+  document.body.append(cover);document.body.classList.add('privacy-covered');window.dispatchEvent(new window.Event(PRIVACY_VISIBILITY_EVENT));
   observer.observe(document.body,{childList:true});
   const locked=screenLockEnabled(),input=el('input',{type:'password','aria-label':'PIN или пароль разблокировки',autocomplete:'off',maxlength:128,hidden:!locked}),message=el('p',{role:'status',text:''});
   let attempts=0,working=false;
@@ -364,7 +364,7 @@ export function coverPrivacy(){
     if(working)return;working=true;reveal.disabled=true;
     try{if(!await verifyScreenLock(input?.value||'')){attempts++;input.hidden=false;input.value='';reveal.textContent='Разблокировать';message.textContent='Неверный PIN или пароль';await new Promise(r=>setTimeout(r,Math.min(30000,attempts*1000)));input?.focus();return;}
       if(input)input.value='';observer.disconnect();privacyUnderlying=null;for(const [node,inert] of saved)node.inert=inert;
-      document.body.classList.remove('privacy-covered');cover.remove();window.dispatchEvent(new Event(PRIVACY_VISIBILITY_EVENT));before?.focus?.();
+      document.body.classList.remove('privacy-covered');cover.remove();window.dispatchEvent(new window.Event(PRIVACY_VISIBILITY_EVENT));before?.focus?.();
     }catch{message.textContent='Не удалось проверить блокировку';}finally{working=false;reveal.disabled=false;}
   }});
   if(input){cover.append(input);input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();reveal.click();}};}

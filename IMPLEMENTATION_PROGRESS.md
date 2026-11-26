@@ -390,6 +390,10 @@ PR #94 не объединён, новый релиз не опубликова�
 - Owner authorized the final static publication after checks. Production LAB/Worker/Firebase migration and physical acceptance remain separate.
 
 
+## 6.0.2 — scoped personal release candidate
+
+Selected compatible 6.1–6.9 changes from the integration branch and verified video marker index/static review package. New Platform 7.x and notification features remain in the integration branch; no server migrations. See docs/RELEASE-6.0.2-ACCEPTANCE.md.
+
 ## 6.0.1 — стабилизация (кандидат)
 
 База main: f7066c1c57cfe63bdfc98b10d8e8b7f6f52d9b22, 6.0.0. Открытый PR #88 расходится с main (один изменённый фрагмент health.js); актуальная формулировка main учитывает и возможные ограничения, поэтому старый вариант не переносится. Исправлен экспорт календаря: стабильный UID при переносе встречи, экранирование CR/LF, перенос строк по UTF-8, проверка ID и даты. Добавлена регрессия. Локальное клонирование недоступно (DNS GitHub); полная приёмка по GitHub Actions и физическая проверка отдельно. Статус не DONE.
@@ -510,3 +514,7 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### Archive V3 — client routing and old-link compatibility
 - Public phase/generation lookup, explicit frozen write refusal, V3 list/record/CAS, legacy URL ID resolution across date corrections, pagination reset. Public V2 reads closed after V3 to avoid stale deleted records; owner recovery reads retained. Existing production rule denial falls back to V2. No production switch.
+
+## 6.0.3-rc.1 — reconciliation candidate (not released)
+
+Reconciles published main 6.0.2 (d4cb5bb) with combined review candidate (3d3ec44, PR #175). Preserves published release history and Window-realm privacy event constructors, retains notification lifecycle and both browser test suites. Version and cache identity updated consistently; no production deployment. Combined exact-SHA verification pending.
