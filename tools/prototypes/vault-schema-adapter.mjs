@@ -22,6 +22,11 @@ export async function stageSchemaVault(db,{backup,password}){
  const data=checkedData(copy(backup.data));
  return stageVaultLab(db,{scope,data,password});
 }
+function validateQuery(query,{required=false}={}){
+ if(query==null&&!required)return;
+ if(typeof IDBKeyRange!=='undefined'&&query instanceof IDBKeyRange)return;
+ if(!keyOK(query))throw dom('DataError','Некорректный ключ');
+}
 function match(key,query){
  if(query==null)return true;
  if(typeof IDBKeyRange!=='undefined'&&query instanceof IDBKeyRange)return query.includes(key);
@@ -36,8 +41,8 @@ function limited(rows,count){
 function makeStore(table,def,active,writable){
  const ensure=write=>{if(!active())throw dom('TransactionInactiveError','Транзакция завершена');if(write&&!writable)throw dom('ReadOnlyError','Только чтение');};
  const ordered=()=>[...table.values()].sort((a,b)=>cmp(a.id,b.id));
- const lookup=k=>{if(!keyOK(k))throw dom('DataError','Некорректный ключ');return table.get(k);};
- function select(query,count){ensure(false);return limited(ordered().filter(row=>match(row.id,query)),count);}
+ const lookup=k=>{validateQuery(k,{required:true});return typeof IDBKeyRange!=='undefined'&&k instanceof IDBKeyRange?ordered().find(row=>k.includes(row.id)):table.get(k);};
+ function select(query,count){ensure(false);validateQuery(query);return limited(ordered().filter(row=>match(row.id,query)),count);}
  function write(value,add){
   ensure(true);const row=copy(value),k=row?.id;
   if(typeof k!=='string'||!k.length)throw dom('DataError','Отсутствует ключ записи');
@@ -57,8 +62,8 @@ function makeStore(table,def,active,writable){
   clear:asyncOp(()=>{ensure(true);table.clear();}),
   index(name){
    ensure(false);const idx=def.indexes.find(i=>i[0]===name);if(!idx)throw dom('NotFoundError','Нет индекса');
-   const rows=(query,count)=>{ensure(false);const found=ordered().map(row=>({row,key:keyPath(row,idx[1])})).filter(x=>keyOK(x.key)&&match(x.key,query)).sort((a,b)=>cmp(a.key,b.key)||cmp(a.row.id,b.row.id));return limited(found,count).map(x=>x.row);};
-   return {getAll:asyncOp((q,c)=>copy(rows(q,c))),get:asyncOp(q=>copy(rows(q,1)[0])),getAllKeys:asyncOp((q,c)=>rows(q,c).map(row=>row.id)),count:asyncOp(q=>rows(q).length)};
+   const rows=(query,count)=>{ensure(false);validateQuery(query);const found=ordered().map(row=>({row,key:keyPath(row,idx[1])})).filter(x=>keyOK(x.key)&&match(x.key,query)).sort((a,b)=>cmp(a.key,b.key)||cmp(a.row.id,b.row.id));return limited(found,count).map(x=>x.row);};
+   return {getAll:asyncOp((q,c)=>copy(rows(q,c))),get:asyncOp(q=>{ensure(false);validateQuery(q,{required:true});return copy(rows(q,1)[0]);}),getAllKeys:asyncOp((q,c)=>rows(q,c).map(row=>row.id)),count:asyncOp(q=>rows(q).length)};
   }
  };
 }
