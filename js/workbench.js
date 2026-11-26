@@ -184,8 +184,8 @@ export function alternativeExerciseCandidates(lesson,studentId,exercises,{studen
 function buildWorkCommands(db,scope=null){
  const allow=r=>require(!scope||workRecordScope(r)===scope,'Рабочая запись недоступна в этой области');
 async function listWork(kind){
- if(scope&&kind==='archive')throw Error('Архив недоступен в ограниченном сеансе');
- return db.transaction(['workRecords'],'readonly',async s=>{const rows=await s.workRecords.index('kind').getAll(kind);return scope?rows.filter(r=>workRecordScope(r)===scope):rows;});
+ if(scope){require(typeof kind==='string'&&kind.length>0&&kind.length<=100,'Требуется точный тип рабочей записи');if(kind==='archive')throw Error('Архив недоступен в ограниченном сеансе');}
+ return db.transaction(['workRecords'],'readonly',async s=>{const rows=await s.workRecords.index('kind').getAll(kind);return scope?rows.filter(r=>r.kind===kind&&workRecordScope(r)===scope):rows;});
 }
 async function saveWork(input){
  require(['exercise','plan','event','rubric','normAssignment','videoReview','opponentNote','publicNewsDraft'].includes(input.kind),'Для этого вида записи используйте специальную операцию');

@@ -27,7 +27,8 @@ test('Scoped work sessions reuse existing commands; mixed kinds are filtered, sc
  await assert.rejects(coach.saveWork({...p,context:'coach'}),/недоступна/);assert.equal(coach.isClosed(),true);
  await assert.rejects(school.deleteWork(q.id,'plan'),/недоступна/);assert.equal(school.isClosed(),true);
  await assert.rejects(owner.deleteWork('fake','archive'),/Архив недоступен/);assert.equal(owner.isClosed(),true);
- const other=open('school');t.after(()=>other.close());await assert.rejects(other.saveWork(event),/недоступна/);
+ const other=open('school'),wildcard=open('workspace');t.after(()=>{other.close();wildcard.close();});await assert.rejects(other.saveWork(event),/недоступна/);
+ await assert.rejects(wildcard.listWork(),/точный тип/);assert.equal(wildcard.isClosed(),true);
  const data=await router.snapshot({password});const split=splitVaultScopesLab(data);
  assert.equal(split.school.workRecords.length,2);assert.equal(split.coach.workRecords.length,2);assert.equal(split.workspace.workRecords.length,2);
  assert.equal(data.workRecords.find(x=>x.id===p.id).context,'school');assert.equal(data.workRecords.find(x=>x.id===q.id).context,'coach');assert.equal(data.workRecords.find(x=>x.id===ev.id).name,event.name);
