@@ -36,7 +36,7 @@ async function render(name,issued){
  stopTimer();root.replaceChildren(box(name,p(roles[member.role]||member.role),button('Выйти',close),button('Отозвать эту сессию',()=>run(async()=>{if(!confirm('Отозвать код этой сессии на сервере? Для нового входа понадобится приглашение или код восстановления владельца.'))return;await api.request('session/revoke','POST',{});close();status('Сессия отозвана на сервере.');}))),e('p','',{id:'status',role:'status',class:'status'}));
  if(issued)root.append(showSecret('Код новой сессии',issued));
  if(['owner','coach','athlete'].includes(member.role))root.append(notificationCard());
- if(member.role==='athlete'){const section=box('Мой кабинет',p('Доступ только к собственным заданиям и расписанию.'));root.append(section);await athlete(section);return;}
+ if(member.role==='athlete'){const section=box('Мой кабинет',p('Доступ только к собственным заданиям и расписанию.'));root.append(inboxCard(),section);await athlete(section);return;}
  const grid=e('div','',{class:'grid'});root.append(grid);
  if(member.role==='owner'){grid.append(ownerTeams(),ownerInvites(),ownerRecovery());}
  if(['owner','coach'].includes(member.role))grid.append(coachProfile(),newMatch());
@@ -113,4 +113,28 @@ function notificationCard(){
  }
  draw();
  return box('Уведомления · LAB',p('Только синтетическая подписка этой сессии. Не запрашивает разрешение браузера, не регистрирует PushManager и не доставляет сообщения. Выход из кабинета не отзывает серверную сессию.'),info,button('Проверить подписку',()=>run(load)),row(enable,disable));
+}
+
+function inboxCard(){
+ const info=e('p','Проверьте новые сигналы.',{role:'status'});
+ let state=null;
+ const clear=()=>{state=null;ack.disabled=true;info.textContent='Проверьте новые сигналы.';};
+ const show=result=>{
+  if(!result||typeof result.pending!=='boolean'||!Number.isSafeInteger(result.revision)||result.revision<0||!Number.isSafeInteger(result.sequence)||result.sequence<0||result.pending&&(result.sequence===0||!Number.isFinite(result.expiresAt)))throw Error('Неверный ответ очереди LAB');
+  state=result;ack.disabled=!result.pending;
+  // Never render server-provided notification text, endpoint or profile data.
+  info.textContent=result.pending?'В личном кабинете есть обновления.':'Новых сигналов нет.';
+ };
+ const refresh=button('Проверить новые сигналы',()=>run(async(epoch)=>{
+  const session=api;clear();const res=await session.request('notification-lab/inbox');
+  if(epoch===serial&&api===session&&info.isConnected)show(res);
+ }));
+ const ack=button('Подтвердить просмотр сигнала',()=>run(async(epoch)=>{
+  if(!state?.pending)return;
+  const session=api,{revision,sequence}=state;clear();
+  try{const res=await session.request('notification-lab/ack','POST',{expectedRevision:revision,sequence});if(epoch===serial&&api===session&&info.isConnected)show(res);}
+  catch(err){if(epoch===serial&&api===session&&info.isConnected&&err.status===409)info.textContent='Сигнал изменился или истёк. Проверьте снова.';throw err;}
+ }));
+ ack.disabled=true;
+ return box('Входящие сигналы · LAB',p('Ручная проверка и подтверждение общего сигнала. Не означает, что задания выполнены или прочитаны. Нет фоновой доставки.'),info,row(refresh,ack));
 }
