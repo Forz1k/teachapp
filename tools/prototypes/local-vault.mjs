@@ -274,3 +274,27 @@ export async function restoreVaultLab(db,{scope,password,file}){
  const after=await sealSnapshot({scope,data:opened.data,password});
  await commitNew(db,after);return {scope,revision:after[0].vaultId,records:after.length-2};
 }
+
+/** Internal ciphertext codec for the partitioned, synthetic LAB. No DB
+ * access and no exported key. The authenticated bundle ID and scope are
+ * fixed for the lifetime of the password-equivalent material. */
+function partitionIdentity(data,scope,bundleId){
+ const rows=data?.bundleMeta,r=rows?.[0];
+ check(['school','coach','workspace'].includes(scope)&&typeof bundleId==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(bundleId)&&Array.isArray(rows)&&rows.length===1&&r&&Object.keys(r).sort().join('|')==='bundleId|id|scope'&&r.id==='bundle'&&r.scope===scope&&r.bundleId===bundleId,'Другая область или набор LAB');
+}
+export async function sealPartitionScopeLab({scope,bundleId,password,data}){
+ partitionIdentity(data,scope,bundleId);return sealSnapshot({scope,data,password});
+}
+export function samePartitionCiphertextLab(a,b){return sameRows(a,b);}
+export async function openPartitionKeySessionLab({scope,bundleId,password,rows,assertActive=()=>{}}){
+ assertActive();let material=await importMaterial(password);password=undefined;
+ const close=()=>{material=null;};
+ const guard=()=>{check(material,'Сеанс LAB заблокирован');assertActive();};
+ async function read(input){
+  try{guard();const value=await decodeSnapshot(input,{scope,material});guard();partitionIdentity(value.data,scope,bundleId);return value;}catch(e){close();throw e;}
+ }
+ async function seal(data){
+  try{guard();partitionIdentity(data,scope,bundleId);const value=await sealSnapshot({scope,data,material});guard();return value;}catch(e){close();throw e;}
+ }
+ try{await read(rows);return Object.freeze({read,seal,close,isLocked:()=>material===null});}catch(e){close();throw e;}
+}
