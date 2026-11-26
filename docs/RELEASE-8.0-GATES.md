@@ -41,3 +41,7 @@ node tools/release-readiness.mjs --check "$SHA" release-evidence.json
 ## Независимая сверка GitHub Actions
 
 `node tools/release-ci-evidence.mjs SHA > release-evidence.json` создаёт новый отчёт по фиксированным ID шести workflow в Forz1k/teachapp. Использует только GET официального API, точный head_sha, push в roadmap/8.0-integration и тот же head repository. Проверяет последний run_number/attempt, не принимает старый success вместо незавершённого или failed запуска, не принимает PR merge-ref и неполный ответ. При API-ошибке не выдаёт отчёт; при необходимости можно задать GH_TOKEN с минимальными правами чтения, токен не выводится. Все 18 ручных условий остаются pending. Это сверка метаданных CI, не проверка качества тестов, физических актов или production; никакого deploy. Не перезаписывайте ранее заполненный отчёт без отдельной копии.
+
+## Статический пакет для review
+
+Основной CI собирает `teachapp-static-review`: только явно перечисленные production-файлы из precache, sw.js и .nojekyll. Проверяет относительные зависимости модулей, HTML и манифеста, отказывается от symlink, пути за пределами allowlist или перезаписи существующего каталога. LAB, server, tools, тесты, конфиги и документация не входят. Это CI-артефакт, не Pages deployment: фактический способ публикации, настройки GitHub Pages и проверка сайта после deploy требуют отдельной приёмки. Для локальной сборки `node tools/build-static-release.mjs NEW_OUTPUT_DIRECTORY`.
