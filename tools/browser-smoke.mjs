@@ -12,7 +12,7 @@ const profile=await mkdtemp(join(tmpdir(),'teachapp-browser-'));
 const binaries=[process.env.CHROME_BIN,'google-chrome','google-chrome-stable','chromium','chromium-browser','C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe','C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'].filter(Boolean);
 const binary=binaries.find(p=>existsSync(p)||spawnSync(p,['--version'],{stdio:'ignore'}).status===0);
 if(!binary)throw Error('Chromium / Chrome not found; set CHROME_BIN');
-const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.png':'image/png','.svg':'image/svg+xml'};
+const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.png':'image/png','.svg':'image/svg+xml'};
 const server=createServer(async(req,res)=>{
  try{const u=new URL(req.url,'http://localhost'),path=resolve(root,'.'+decodeURIComponent(u.pathname.endsWith('/')?u.pathname+'index.html':u.pathname));
   if(path!==root&&!path.startsWith(root+sep))throw Error('path');
@@ -22,14 +22,14 @@ const server=createServer(async(req,res)=>{
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const origin='http://127.0.0.1:'+server.address().port;
 const proc=spawn(binary,['--headless=new','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--no-first-run','--no-default-browser-check','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:'ignore'});
-let ws,closed=false;const pending=new Map(),exceptions=[],report=[];
+let ws,closed=false;const pending=new Map(),exceptions=[],report=[],registrations=new Map();
 const wait=async(fn,label,timeout=20000)=>{const end=Date.now()+timeout;let last;while(Date.now()<end){try{const v=await fn();if(v)return v;}catch(e){last=e.message;}await sleep(100);}throw Error(label+' timed out'+(last?': '+last:''));};
 try{
  const port=await wait(async()=>Number((await readFile(join(profile,'DevToolsActivePort'),'utf8')).split('\n')[0]),'Chrome port');
  const page=await wait(async()=>{const a=await fetch('http://127.0.0.1:'+port+'/json/list').then(r=>r.json());return a.find(x=>x.type==='page');},'CDP target');
  ws=new WebSocket(page.webSocketDebuggerUrl);await new Promise((res,rej)=>{ws.onopen=res;ws.onerror=rej;});
  let id=0;
- ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id&&pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);clearTimeout(p.timer);if(m.error)p.reject(Error(JSON.stringify(m.error)));else p.resolve(m.result);}if(m.method==='Runtime.exceptionThrown')exceptions.push(m.params.exceptionDetails.text+' '+(m.params.exceptionDetails.exception?.description||''));};
+ ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id&&pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);clearTimeout(p.timer);if(m.error)p.reject(Error(JSON.stringify(m.error)));else p.resolve(m.result);}if(m.method==='ServiceWorker.workerRegistrationUpdated')for(const registration of m.params.registrations)registrations.set(registration.scopeURL,registration);if(m.method==='Runtime.exceptionThrown')exceptions.push(m.params.exceptionDetails.text+' '+(m.params.exceptionDetails.exception?.description||''));};
  function send(method,params={}){return new Promise((resolve,reject)=>{const key=++id,timer=setTimeout(()=>{pending.delete(key);reject(Error('CDP timeout '+method));},30000);pending.set(key,{resolve,reject,timer});ws.send(JSON.stringify({id:key,method,params}));});}
  async function evalJs(expression){const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value;}
  const exists=selector=>evalJs('Boolean(document.querySelector('+JSON.stringify(selector)+'))');
@@ -48,6 +48,30 @@ try{
   const s=await send('Page.captureScreenshot',{format:'png',fromSurface:true});await writeFile(join(dir,name+'.png'),Buffer.from(s.data,'base64'));report.push({name,...g});console.log('UI PASS '+name+' '+g.w+'px '+g.theme);
  }
  await send('Page.enable');await send('Runtime.enable');await send('Network.enable');
+ // A separate registration before the application worker exists. Real CDP
+ // synthetic push dispatch (no external push provider or subscription).
+ const pushScope=origin+'/tools/prototypes/push-receiver/',pushPage=pushScope+'index.html';
+ await send('ServiceWorker.enable');
+ await send('Browser.grantPermissions',{origin,permissions:['notifications']});
+ await send('Page.navigate',{url:pushPage});await wait(()=>evalJs('location.href==='+JSON.stringify(pushPage)+'&&document.readyState==="complete"'),'push fixture page');
+ await evalJs("(async()=>{await navigator.serviceWorker.register('./worker.mjs',{type:'module'});await navigator.serviceWorker.ready;return true})()");
+ await wait(()=>evalJs('Boolean(navigator.serviceWorker.controller)'),'push fixture controller');
+ const reg=await wait(()=>{const r=registrations.get(pushScope);return r&&!r.isDeleted?r:null;},'isolated push registration');
+ const request=command=>evalJs(`(async()=>{const c=new MessageChannel();return new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(Error('LAB message timeout')),5000);c.port1.onmessage=e=>{clearTimeout(timeout);c.port1.close();resolve(e.data);};navigator.serviceWorker.controller.postMessage(${JSON.stringify(command)},[c.port2]);});})()`);
+ const notice=()=>evalJs("(async()=>{const r=await navigator.serviceWorker.getRegistration();return (await r.getNotifications()).map(n=>({title:n.title,body:n.body,tag:n.tag}));})()");
+ const signal='{"version":1,"kind":"workspace-update"}';
+ assert.deepEqual(await request('status'),{enabled:false});
+ assert.deepEqual(await request({kind:'rehearse',text:signal}),{shown:false});assert.deepEqual(await notice(),[]);
+ assert.deepEqual(await request('enable'),{enabled:true});
+ assert.deepEqual(await request({kind:'rehearse',text:'{"version":1,"kind":"workspace-update","url":"https://example.invalid"}'}),{shown:false});assert.deepEqual(await notice(),[]);
+ await send('ServiceWorker.deliverPushMessage',{origin,registrationId:reg.registrationId,data:signal});
+ const shown=await wait(async()=>{const n=await notice();return n.length?n:null;},'actual synthetic push notification');
+ assert.deepEqual(shown,[{title:'TeachApp',body:'В личном кабинете есть обновления.',tag:'teachapp-workspace-update-lab'}]);
+ await request('disable');
+ await evalJs("(async()=>{const r=await navigator.serviceWorker.getRegistration();for(const n of await r.getNotifications())n.close();await r.unregister();return true})()");
+ assert.deepEqual(await request({kind:'rehearse',text:signal}),{shown:false});
+ await send('ServiceWorker.disable');await send('Browser.resetPermissions');
+ console.log('CHROMIUM PUSH RECEIVER LAB PASS: real isolated service worker and synthetic CDP push, opt-in and generic notification; no subscription.');
  await viewport(390,844);await send('Page.navigate',{url:origin+'/index.html'});await ready('.workspace-nav');
  await evalJs("(async()=>{const S=await import('./js/store.js'),M=await import('./js/model.js'),C=await import('./js/coach.js'),W=await import('./js/workbench.js'),T=await import('./js/tournaments.js');\n const today=M.todayIso(),y=today.slice(0,4),year={from:y+'-01-01',to:y+'-12-31'};\n await S.saveSettings({year,trimesters:[{id:'t1',kind:'custom',name:'Тестовый период',from:year.from,to:year.to}],theme:'light'});\n const cls=await S.addClass('7А'),other=await S.addClass('8Б');\n const pupils=[];for(let i=1;i<=8;i++)pupils.push(await S.addStudent(cls.id,'Демо Ученик '+i,i,i%2?'girls':'boys'));\n await S.addStudent(other.id,'Демо Ученик 9',1,'girls');\n const lesson=await S.addLesson(cls.id,today);await S.setMark(pupils[0].id,lesson.id,{value:'5'});await S.setScheduleEntry({weekday:M.weekdayOf(today),slot:1,classId:cls.id,time:'10:00'});\n S.state.currentClassId=cls.id;S.notify();\n const team=await C.saveTeam({name:'Демо-команда'}),players=[];for(let i=1;i<=7;i++)players.push(await C.savePlayer({teamId:team.id,name:'Игрок '+i,number:i,position:'setter'}));\n await C.saveTraining({teamId:team.id,date:today,time:'16:00',title:'Демо-тренировка',minutes:60,roster:players.map(p=>p.id),exercises:[],attendance:{},held:false});\n await C.saveMatch({teamId:team.id,date:today,opponent:'Демо-соперник',competition:'Демо',sets:[{ours:25,theirs:19},{ours:25,theirs:21}],roster:players.map(p=>p.id),stats:{[players[0].id]:{points:5,aces:2,serves:10,serveErrors:1}}});\n const away=Array.from({length:6},(_,i)=>({id:'away'+i,name:'Гость '+(i+1),number:i+1}));\n const draft=await C.startDetailedMatch({teamId:team.id,date:today,teamName:team.name,opponent:'Гости',competition:'Демо',venue:'Зал',roster:players.map(p=>p.id),ourPlayers:players,awayPlayers:away,lineup:players.slice(0,6).map(p=>p.id),awayLineup:away.map(p=>p.id),libero:null,scheme:'5-1',bestOf:3,target:25,decider:15,firstServe:'ours'});\n await W.saveWork({kind:'event',name:'Демо-задача',date:today,time:'12:00',minutes:30,eventType:'task',note:'',remind:30,done:false});\n await T.createTournament({name:'Демо-кубок',system:'league',format:'score',bestOf:3,target:25,decider:15,names:['7А','8Б','9В']});\n window.__smoke={draftId:draft.id};return true;})()");
  await evalJs("(async()=>{const W=await import('./js/workbench.js'),C=await import('./js/coach.js'),R=await import('./js/resources.js'),T=await import('./js/tactics.js');const team=(await C.loadCoach()).coachTeams[0];await W.saveWork({kind:'plan',name:'Демо-конспект',context:'school',minutes:45,goal:'Учебная цель',equipment:'Мячи',audience:'7А',items:[{phase:'intro',exercise:W.builtinExercises[0],minutes:5,notes:'Разминка'}]});await R.saveInventory({name:'Демо-мячи',category:'Волейбол',unit:'шт.',location:'Зал',minimum:5,initial:{good:8,repair:1,unusable:0},archived:false});await T.saveBoard({kind:'tacticBoard',teamId:team.id,name:'Демо-схема',note:'Приём',markers:T.initialMarkers(),arrows:[],revision:0});return true;})()");
