@@ -17,7 +17,7 @@ test('Same application data facade covers school/coach reads and mutations acros
  await source.put('students',{id:'p',classId:'c',fullName:'Synthetic pupil',number:1,normGroup:'girls'});
  await source.put('lessons',{id:'l',classId:'c',date:'2026-11-24',slot:1,time:'09:00'});
  await source.put('marks',{id:'m',studentId:'p',lessonId:'l',value:'4',source:'manual'});
- await source.put('coachTeams',{id:'t',name:'Synthetic team'});
+ await source.put('coachTeams',{id:'t',name:'Synthetic team',archived:false});
  const before=await source.dumpAll(),school=await source.readSnapshot(schoolViewStores);
  assert.deepEqual(await source.byIndex('students','classId','c'),school.students);
  assert.equal(await source.count('marks'),1);
