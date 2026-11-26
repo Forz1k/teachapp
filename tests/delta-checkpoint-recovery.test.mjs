@@ -69,3 +69,29 @@ test('Delta checkpoint restore is offline-prepared, exact-replay safe and never 
  await assert.rejects(restoreDeltaCheckpointLab({...commit,plan:different,expectedDestinationWorkspaceId:different.workspaceId}),/другой снимок/);assert.equal(writes,1);
  used=true;await assert.rejects(restoreDeltaCheckpointLab(commit),/уже используется/);assert.equal(writes,1);
 });
+
+test('Delta checkpoint restore refuses torn destination status, old key epoch and changes during final verification',async()=>{
+ const current=fixture(),snapshot=projectScope(current,area);
+ const original=await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area,workspaceId,revision:1,snapshot},password);
+ const args={endpoint:source,area,expectedWorkspaceId:workspaceId,expectedRevision:1,backupPassword,current,synthetic:true};
+ const backup=await exportDeltaCheckpointLab({...args,token,password,fetcher:async url=>Response.json(url.endsWith('/head')?head(1):{revision:1,kind:'anchor',envelope:original})});
+ const offline={...args,file:backup.file,destinationEndpoint:destination,destinationPassword},plan=await prepareDeltaCheckpointRestoreLab(offline);
+ const commit={...offline,plan,destinationToken,expectedDestinationWorkspaceId:plan.workspaceId,confirmed:true,backupVerified:true};
+ let mode='torn',writes=0,heads=0,checks=0,row=null;
+ const fetcher=async(url,init)=>{
+  if(url.endsWith('/head')){
+   heads++;return Response.json({...head(mode==='advance'&&heads>=4?2:row?1:0),keyEpoch:mode==='epoch'?1:0});
+  }
+  if(url.endsWith('/rollback-status')){
+   checks++;return Response.json({revision:mode==='torn'?1:mode==='status-advance'&&checks>=2?2:row?1:0,seal:null});
+  }
+  if(url.endsWith('/anchor')){writes++;row={revision:1,kind:'anchor',envelope:JSON.parse(init.body).envelope};return Response.json({revision:1,replayed:false});}
+  if(url.endsWith('/revision/1'))return Response.json(row);
+  throw Error('Unexpected request');
+ };
+ await assert.rejects(restoreDeltaCheckpointLab({...commit,fetcher}),/изменилось при проверке/);assert.equal(writes,0);
+ mode='epoch';heads=checks=0;await assert.rejects(restoreDeltaCheckpointLab({...commit,fetcher}),/ротации/);assert.equal(writes,0);
+ mode='advance';heads=checks=0;await assert.rejects(restoreDeltaCheckpointLab({...commit,fetcher}),/изменилось во время подтверждения/);assert.equal(writes,1);
+ mode='status-advance';heads=checks=0;await assert.rejects(restoreDeltaCheckpointLab({...commit,fetcher}),/изменилось во время подтверждения/);assert.equal(writes,1);
+ mode='stable';heads=checks=0;const restored=await restoreDeltaCheckpointLab({...commit,fetcher});assert.equal(restored.replayed,true);assert.equal(restored.cutoverAllowed,false);assert.equal(writes,1);
+});
