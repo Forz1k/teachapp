@@ -32,7 +32,7 @@ function inviteScope(s,b){require(exact(b,['role','teamId','athleteId','matchId'
  require(b.athleteId===null,400,'scope');
  if(b.role==='assistant'){const m=exists(s.matches,b.matchId);require(m&&m.teamId===team.id&&m.status==='live',400,'match');return {role:'assistant',teamId:team.id,athleteId:null,teamIds:[team.id],matchIds:[m.id]};}
  require(b.matchId===null,400,'scope');return {role:'coach',teamId:team.id,athleteId:null,teamIds:[team.id],matchIds:[]};}
-function makeMember(s,scope,newId,tokenHash,now){require(id(newId)&&hash(tokenHash)&&!exists(s.members,newId)&&!s.members.some(m=>m.tokenHash===tokenHash)&&s.members.length<128,409,'member-limit');const m={id:newId,...scope,tokenHash,expiresAt:now+7*DAY,revokedAt:null};s.members.push(m);return m;}
+function makeMember(s,scope,newId,tokenHash,now){require(id(newId)&&hash(tokenHash)&&!exists(s.members,newId)&&!s.members.some(m=>m.tokenHash===tokenHash)&&tokenHash!==s.recoveryHash&&!s.invites.some(i=>i.hash===tokenHash)&&s.members.length<128,409,'member-limit');const m={id:newId,...scope,tokenHash,expiresAt:now+7*DAY,revokedAt:null};s.members.push(m);return m;}
 function leaseFor(m,actor,body,now){require(m.status==='live',409,'finished');require(m.lease&&m.lease.until>now&&m.lease.holderId===actor.id&&body.generation===m.generation,409,'lease');}
 function exactRevision(m,revision){require(int(revision)&&revision===m.revision,409,'revision');}
 function validateSetScore(m){const target=m.set===m.bestOf?m.decider:m.target;return Math.max(m.score.ours,m.score.theirs)>=target&&Math.abs(m.score.ours-m.score.theirs)>=2;}
@@ -50,6 +50,16 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
   }
   // Unknown workspaces do not disclose their existence to unauthenticated callers.
   require(s&&s.id===workspaceId,401,'unauthorized');
+  if(method==='POST'&&path==='recover'){
+   require(exact(body,[])&&hash(s.recoveryHash)&&auth===s.recoveryHash&&auth!==rootHash,401,'unauthorized');
+   const oldOwners=new Set(s.members.filter(m=>m.role==='owner').map(m=>m.id));
+   s.members=s.members.filter(m=>m.role!=='owner');
+   s.invites=s.invites.filter(i=>!oldOwners.has(i.issuerId));
+   for(const m of s.matches)if(oldOwners.has(m.lease?.holderId)){m.lease=null;m.generation++;}
+   const owner=makeMember(s,{role:'owner',teamId:null,athleteId:null,teamIds:[],matchIds:[]},issued.id,issued.hash,now);audit(s,owner,'workspace.recover',s.id,now);
+   require(new TextEncoder().encode(JSON.stringify(s)).length<=STATE_LIMIT,409,'workspace-limit');
+   return {...ok({workspaceId:s.id,member:publicMember(owner),token:issued.secret},201,true),state:s};
+  }
   if(method==='POST'&&path==='redeem'){
    require(exact(body,[]),400,'packet');const invite=s.invites.find(i=>i.hash===auth&&i.usedAt===null&&i.expiresAt>now);
    require(invite,401,'unauthorized');const issuer=exists(s.members,invite.issuerId);require(issuer&&issuer.role==='owner'&&issuer.revokedAt===null&&issuer.expiresAt>now,401,'unauthorized');
@@ -61,6 +71,14 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
   const owner=()=>require(allowed(s,actor,'workspace.manage',resource(s,'workspace')),403,'forbidden');
   const result=()=>{
    if(method==='GET'&&path==='me')return ok({workspaceId:s.id,name:s.name,member:publicMember(actor)});
+   if(method==='GET'&&path==='owner/recovery'){owner();return ok({configured:hash(s.recoveryHash),version:s.recoveryVersion??0});}
+   if(method==='POST'&&path==='owner/recovery'){
+    owner();require(exact(body,['recoveryHash','expectedVersion'])&&hash(body.recoveryHash)&&int(body.expectedVersion),400,'recovery');
+    require(body.expectedVersion===(s.recoveryVersion??0),409,'revision');
+    require(body.recoveryHash!==rootHash&&!s.members.some(m=>m.tokenHash===body.recoveryHash)&&!s.invites.some(i=>i.hash===body.recoveryHash)&&body.recoveryHash!==s.recoveryHash,400,'recovery');
+    s.recoveryHash=body.recoveryHash;s.recoveryVersion=body.expectedVersion+1;audit(s,actor,'workspace.recovery.configure',s.id,now);
+    return ok({configured:true,version:s.recoveryVersion},200,true);
+   }
    if(method==='GET'&&path==='members'){owner();return ok({members:s.members.map(publicMember)});}
    if(method==='GET'&&path==='audit'){owner();return ok({events:s.audit.slice().reverse()});}
    if(method==='GET'&&path==='invites'){owner();return ok({invites:s.invites.filter(i=>i.usedAt===null&&i.expiresAt>now).map(i=>({id:i.id,role:i.scope.role,teamId:i.scope.teamId,athleteId:i.scope.athleteId,matchId:i.scope.matchIds[0]??null,expiresAt:i.expiresAt}))});}
@@ -68,7 +86,7 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
     owner();require(exact(body,['inviteId'])&&id(body.inviteId),400,'packet');const i=s.invites.find(x=>x.id===body.inviteId&&x.usedAt===null&&x.expiresAt>now);require(i,404,'invite');s.invites=s.invites.filter(x=>x!==i);audit(s,actor,'member.invite.cancel',i.id,now);return ok({cancelled:true},200,true);
    }
    if(method==='POST'&&path==='invite'){
-    owner();const scope=inviteScope(s,body);s.invites=s.invites.filter(i=>i.usedAt===null&&i.expiresAt>now);require(s.invites.length<64,409,'invite-limit');require(!s.invites.some(i=>i.hash===issued.hash),409,'collision');s.invites.push({id:issued.id,hash:issued.hash,scope,issuerId:actor.id,expiresAt:now+INVITE_MS,usedAt:null});audit(s,actor,'member.invite',issued.id,now);return ok({invite:issued.secret,expiresAt:now+INVITE_MS},201,true);
+    owner();const scope=inviteScope(s,body);s.invites=s.invites.filter(i=>i.usedAt===null&&i.expiresAt>now);require(s.invites.length<64,409,'invite-limit');require(!s.invites.some(i=>i.hash===issued.hash)&&!s.members.some(m=>m.tokenHash===issued.hash)&&issued.hash!==s.recoveryHash,409,'collision');s.invites.push({id:issued.id,hash:issued.hash,scope,issuerId:actor.id,expiresAt:now+INVITE_MS,usedAt:null});audit(s,actor,'member.invite',issued.id,now);return ok({invite:issued.secret,expiresAt:now+INVITE_MS},201,true);
    }
    if(method==='POST'&&path==='revoke'){
     owner();require(exact(body,['memberId'])&&id(body.memberId),400,'packet');const m=exists(s.members,body.memberId);require(m&&m.role!=='owner',404,'member');if(m.revokedAt!==null)return ok({member:publicMember(m)});

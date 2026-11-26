@@ -445,3 +445,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 6.3 follow-up in integration branch
 - Added explicit-anchor multi-cell TSV journal paste with preview, empty-cell-only writes, grade/absence values and atomic rejection of conflicts, future or changed lessons, invalid class membership and restrictions. Added pure parser and IndexedDB regressions. No clipboard permission or bulk overwrite.
+
+### 7.0 follow-up in integration branch
+- Workspace-specific owner recovery in synthetic LAB: separately saved 256-bit recovery code, hashed server storage, CAS rotation, owner session/invite revocation and release of prior owner's match leases. Added pure and real workerd restart tests. Not production account recovery.

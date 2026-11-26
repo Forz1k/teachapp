@@ -18,7 +18,7 @@ async function run(fn){if(busy)return;busy=true;const epoch=serial;try{await fn(
 function login(){
  if(!isLocalPlatformPage()){root.replaceChildren(box('Недоступно',p('Кабинеты LAB запускаются только локально. Рабочие данные не принимаются.')));return;}
  const endpoint=input('Адрес тестового Worker','http://127.0.0.1:8788'),workspace=input('ID пространства','demo'),secret=input('Секретный код','','password'),name=input('Название пространства','Синтетическая команда');
- const form=box('Подключение',p('Секрет хранится только до выхода или перезагрузки вкладки. Не вводите реальные ключи и персональные данные.'),e('div','',{class:'fields'},[field('Worker',endpoint),field('Пространство',workspace),field('Секрет / приглашение',secret),field('Название (для первого запуска)',name),button('Войти',()=>connect('login'),true),button('Активировать приглашение',()=>connect('redeem')),button('Создать тестовое пространство',()=>connect('bootstrap'))]));
+ const form=box('Подключение',p('Секрет хранится только до выхода или перезагрузки вкладки. Не вводите реальные ключи и персональные данные.'),e('div','',{class:'fields'},[field('Worker',endpoint),field('Пространство',workspace),field('Секрет / приглашение',secret),field('Название (для первого запуска)',name),button('Войти',()=>connect('login'),true),button('Активировать приглашение',()=>connect('redeem')),button('Восстановить владельца',()=>connect('recover')),button('Создать тестовое пространство',()=>connect('bootstrap'))]));
  root.replaceChildren(form,e('p','',{id:'status',role:'status',class:'status'}));
  async function connect(mode){await run(async(epoch)=>{const temp=platformClient(endpoint.value,workspace.value,secret.value);let result,issued=null;try{
   if(mode==='login'){result=await temp.request('me');if(epoch!==serial){temp.close();return;}api=temp;}
@@ -32,7 +32,7 @@ async function render(name,issued){
  if(issued)root.append(showSecret('Код новой сессии',issued));
  if(member.role==='athlete'){const section=box('Мой кабинет',p('Доступ только к собственным заданиям и расписанию.'));root.append(section);await athlete(section);return;}
  const grid=e('div','',{class:'grid'});root.append(grid);
- if(member.role==='owner'){grid.append(ownerTeams(),ownerInvites());}
+ if(member.role==='owner'){grid.append(ownerTeams(),ownerInvites(),ownerRecovery());}
  if(['owner','coach'].includes(member.role))grid.append(coachProfile(),newMatch());
  if(['owner','coach','assistant'].includes(member.role))grid.append(rosterCard(),liveCard());
 }
@@ -81,3 +81,11 @@ function liveCard(){
  return box('Серверный LIVE · тест',p('Право вести счёт выдаётся на 45 секунд. Не связано с опубликованной страницей Firebase.'),field('ID матча',selector),button('Доступные матчи',()=>run(async()=>{const res=await api.request('matches');matches.replaceChildren(...res.matches.map(m=>button(m.opponent+' · '+m.id,()=>{selector.value=m.id;void run(load);})));})),matches,button('Открыть LIVE',()=>run(load)),body);
 }
 login();
+
+function ownerRecovery(){
+ const state=e('p','Код восстановления не загружен'),key=input('Новый код восстановления','','password');key.readOnly=true;const copy=button('Показать / скрыть',()=>{key.type=key.type==='password'?'text':'password';});let version=null;
+ const refresh=async()=>{const res=await api.request('owner/recovery');version=res.version;state.textContent=res.configured?'Восстановление настроено · версия '+version:'Код восстановления не настроен';};
+ const generate=button('Создать новый код',()=>run(async()=>{await refresh();key.value=Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');key.type='text';}));
+ const save=button('Активировать сохранённый код',()=>run(async()=>{if(!/^[a-f0-9]{64}$/.test(key.value)||version===null)throw Error('Сначала создайте и сохраните новый код');if(!confirm('Вы сохранили новый код отдельно? Старый код перестанет действовать.'))return;const recoveryHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(key.value))),b=>b.toString(16).padStart(2,'0')).join('');const res=await api.request('owner/recovery','POST',{recoveryHash,expectedVersion:version});key.value='';version=res.version;state.textContent='Восстановление настроено · версия '+version;}),true);
+ return box('Восстановление владельца · LAB',p('Сохраните случайный код отдельно до активации. Не отправляйте его третьим лицам. Восстановление отзывает прежние сессии владельца и неиспользованные приглашения. Не использовать рабочие данные.'),state,button('Проверить статус',()=>run(refresh)),generate,key,copy,save);
+}
