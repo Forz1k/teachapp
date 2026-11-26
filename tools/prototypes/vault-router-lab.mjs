@@ -7,7 +7,7 @@ import {schemaVaultAdapter} from './vault-schema-adapter.mjs';
 import {openPlainSchemaLab,readPlainSchemaLab,stageSchemaMigrationLab,verifySchemaMigrationLab,restoreSchemaMigrationLab} from './vault-migration-rehearsal.mjs';
 const check=(ok,msg)=>{if(!ok)throw Error(msg);};
 const phases=['source','vault','rollback'];
-const validState=s=>s&&Object.keys(s).sort().join('|')==='generation|id|phase'&&s.id==='active'&&phases[s.generation-1]===s.phase&&Number.isInteger(s.generation);
+const validState=s=>s&&Object.keys(s).sort().join('|')==='generation|id|phase'&&s.id==='active'&&Number.isInteger(s.generation)&&s.generation>=1&&s.generation<=phases.length&&phases[s.generation-1]===s.phase;
 function control(name){
  return new Promise((resolve,reject)=>{
   const req=indexedDB.open(name,1);let blocked=false;
