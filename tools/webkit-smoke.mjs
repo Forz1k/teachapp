@@ -45,6 +45,43 @@ try{
  });assert.deepEqual(schemaVault,{before:'4',after:'5',private:false});
  console.log('WEBKIT FULL SCHEMA VAULT PASS: validated synthetic school snapshot, compound index, atomic encrypted update.');
 
+ // A separate same-origin context with two actual tabs, no application boot
+ // or service worker; all records and keys below are synthetic.
+ const routingContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block'});
+ try{
+  const fixtureUrl=origin+'/vault-routing-smoke.html';
+  await routingContext.route(fixtureUrl,route=>route.fulfill({status:200,contentType:'text/html; charset=utf-8',body:'<!doctype html><title>Vault routing LAB smoke</title>'}));
+  const a=await routingContext.newPage(),b=await routingContext.newPage();
+  await Promise.all([a.goto(fixtureUrl),b.goto(fixtureUrl)]);
+  const supported=await a.evaluate(()=>typeof navigator.locks?.request==='function');
+  if(!supported){
+   assert.equal(await a.evaluate(async()=>{const {vaultRouterLab}=await import('/tools/prototypes/vault-router-lab.mjs');try{vaultRouterLab('webkit-tabs');return false;}catch(e){return /Web Locks/.test(e.message);}}),true);
+   console.log('WEBKIT VAULT ROUTER: Web Locks unavailable; verified fail-closed, cross-tab test not supported.');
+  }else{
+   const init=async()=>{const {vaultRouterLab}=await import('/tools/prototypes/vault-router-lab.mjs');window.labRouter=vaultRouterLab('webkit-tabs');};
+   await Promise.all([a.evaluate(init),b.evaluate(init)]);
+   const password='synthetic-webkit-router-password',lock='teachapp-vault-routing-lab-webkit-tabs';
+   await a.evaluate(async password=>{await labRouter.initialize();await labRouter.put('meta',{id:'fixture',value:1});await labRouter.stage({password});},password);
+   await a.evaluate(lock=>{window.holding=navigator.locks.request(lock,{mode:'exclusive'},()=>new Promise(resolve=>{window.releaseRoutingLock=resolve;}));},lock);
+   await a.waitForFunction(()=>typeof window.releaseRoutingLock==='function');
+   await a.evaluate(password=>{window.activation=labRouter.activate({password}).then(s=>({generation:s.generation}),e=>({error:e.message}));},password);
+   await a.waitForFunction(async lock=>(await navigator.locks.query()).pending.filter(x=>x.name===lock).length===1,lock);
+   await b.evaluate(password=>{window.queuedWrite=labRouter.put('meta',{id:'fixture',value:2},{password}).then(()=>({ok:true}),e=>({error:e.message}));},password);
+   await a.waitForFunction(async lock=>(await navigator.locks.query()).pending.filter(x=>x.name===lock).length===2,lock);
+   await a.evaluate(()=>window.releaseRoutingLock());
+   assert.deepEqual(await a.evaluate(()=>window.activation),{generation:2});
+   assert.deepEqual(await b.evaluate(()=>window.queuedWrite),{ok:true});
+   assert.equal(await b.evaluate(async password=>(await labRouter.snapshot({password})).meta[0].value,password),2);
+   const original=await a.evaluate(async()=>{const {openPlainSchemaLab,readPlainSchemaLab}=await import('/tools/prototypes/vault-migration-rehearsal.mjs');const db=await openPlainSchemaLab('teachapp-plain-lab-source-webkit-tabs');try{return (await readPlainSchemaLab(db)).meta[0].value;}finally{db.close();}});
+   assert.equal(original,1);
+   assert.equal(await b.evaluate(async()=>{try{await labRouter.snapshot({password:'incorrect-webkit-key'});return false;}catch(e){return /неверный пароль/.test(e.message);}}),true);
+   await b.evaluate(password=>labRouter.rollback({password}),password);
+   assert.equal(await a.evaluate(async()=>(await labRouter.snapshot()).meta[0].value),2);
+   console.log('WEBKIT VAULT ROUTER PASS: real two-tab Web Locks, queued encrypted write, no plaintext fallback, explicit rollback.');
+  }
+ }finally{await routingContext.close();}
+
+
  const fixture=await page.evaluate(async()=>{
   const S=await import('./js/store.js'),M=await import('./js/model.js');
   const cls=await S.addClass('7А'),p=await S.addStudent(cls.id,'Тестовый ученик',1,'girls');
