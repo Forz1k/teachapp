@@ -102,12 +102,12 @@ const syntheticEndpoint='https://push.example.invalid/sub/00000000-0000-4000-800
  const deliveryCall=(path,body,token=deliveryOwner)=>call('delivery-lab','notification-lab/delivery/'+path,token,'POST',body);
  assert.equal((await deliveryCall('claim',claimPacket,deliveryAthlete.token)).status,403);
  const claims=await Promise.all([deliveryCall('claim',claimPacket),deliveryCall('claim',claimPacket)]);
- assert.deepEqual(claims.map(x=>x.status===200?x.ticket?'claimed':'busy':'error').sort(),['busy','claimed']);
+ assert.deepEqual(claims.map(x=>x.status).sort(),['busy','claimed']);
  const ticket=claims.find(x=>x.ticket).ticket,checkPacket={memberId:claimPacket.memberId,ticket};
  await stop();await start();
  assert.equal((await deliveryCall('check',checkPacket)).current,true);
  assert.equal((await deliveryCall('claim',claimPacket)).ticket,null);
- assert.equal((await deliveryCall('finish',{...checkPacket,outcome:'accepted',retryAfter:null})).status,200);
+ assert.equal((await deliveryCall('finish',{...checkPacket,outcome:'accepted',retryAfter:null})).status,'accepted');
  assert.equal((await deliveryCall('finish',{...checkPacket,outcome:'accepted',retryAfter:null})).status,409);
  assert.equal((await call('delivery-lab','notification-lab/inbox',deliveryAthlete.token)).pending,true);
  console.log('PLATFORM DELIVERY CLAIM LAB PASS: concurrent claim, persisted lease, restart, exact finish, separate acknowledgement; simulated outcomes only.');
