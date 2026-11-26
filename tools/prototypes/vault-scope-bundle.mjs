@@ -66,13 +66,13 @@ export async function readVaultScopeLab(db,{scope,password}){
  const result=await readVaultLab(db,{scope,password}),{bundleMeta,...part}=result.data;
  const row=bundleMeta?.[0];
  check(Array.isArray(bundleMeta)&&bundleMeta.length===1&&row&&Object.keys(row).sort().join('|')==='bundleId|id|scope'&&row.id==='bundle'&&row.scope===scope&&typeof row.bundleId==='string'&&bundleIdPattern.test(row.bundleId),'Повреждена связь областей LAB');
- return {bundleId:row.bundleId,scope,data:checkPart(part,scope)};
+ return {bundleId:row.bundleId,scope,revision:result.revision,data:checkPart(part,scope)};
 }
 export async function readVaultScopeBundleLab(dbs,{passwords}){
  databases(dbs);passwordsOf(passwords);
  const entries=await Promise.all(scopes.map(s=>readVaultScopeLab(dbs[s],{scope:s,password:passwords[s]})));
  check(entries.every(x=>x.bundleId===entries[0].bundleId),'Области из разных наборов LAB');
- return {bundleId:entries[0].bundleId,data:joinVaultScopesLab(Object.fromEntries(entries.map(x=>[x.scope,x.data])))};
+ return {bundleId:entries[0].bundleId,revisions:Object.fromEntries(entries.map(x=>[x.scope,x.revision])),data:joinVaultScopesLab(Object.fromEntries(entries.map(x=>[x.scope,x.data])))};
 }
 const ordered=data=>Object.fromEntries(names.map(n=>[n,[...data[n]].sort((a,b)=>indexedDB.cmp(a.id,b.id))]));
 export async function stageVaultScopeBundleLab(dbs,{passwords,data}){
