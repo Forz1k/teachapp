@@ -132,10 +132,18 @@ try{
    proto.put=function(...args){if(this.transaction.db.name==='teachapp-vault-mutable-lab-webkit-scope-write'&&this.name==='state')throw new DOMException('Synthetic pointer quota','QuotaExceededError');return put.apply(this,args);};
    try{await failing.put('classes',{id:'bad',name:'Uncommitted'});}catch(e){rolled=e.name==='QuotaExceededError';}finally{proto.put=put;failing.close();}
    const restored=await lab.snapshot({passwords}),latest=await lab.status();
-   return {changed,denied,rolled,school:restored.classes.length,coach:restored.coachTeams.length,records:restored.workRecords.length,stable:JSON.stringify(latest)===JSON.stringify(next)};
+   const backupPasswords={school:'synthetic-backup-school',coach:'synthetic-backup-coach',workspace:'synthetic-backup-owner'},newPasswords={school:'synthetic-new-school',coach:'synthetic-new-coach',workspace:'synthetic-new-owner'},restorePasswords={school:'synthetic-restore-school',coach:'synthetic-restore-coach',workspace:'synthetic-restore-owner'};
+   const copy=await lab.prepareRecoveryCopy({passwords,backupPasswords});
+   const rotation=await lab.rotatePasswords({passwords,newPasswords,backupPasswords,backupFile:copy.file,saved:true});
+   const rotated=Object.keys(passwords).every(s=>rotation.revisions[s]!==latest.revisions[s]);
+   let oldDenied=false;try{await lab.snapshot({passwords});}catch(e){oldDenied=String(e.message).includes('неверный пароль');}
+   const target=P.partitionedVaultLab('webkit-scope-recovery');await target.restoreRecoveryCopy({file:copy.file,backupPasswords,newPasswords:restorePasswords,confirmed:true});
+   const recovered=await target.snapshot({passwords:restorePasswords}),after=await lab.snapshot({passwords:newPasswords});
+   const recovery=JSON.stringify(recovered)===JSON.stringify(after)&&JSON.stringify(after)===JSON.stringify(restored);
+   return {changed,denied,rolled,school:restored.classes.length,coach:restored.coachTeams.length,records:restored.workRecords.length,stable:JSON.stringify(latest)===JSON.stringify(next),rotated,oldDenied,recovery,private:!copy.file.includes('Synthetic pupil')};
   }finally{school.close();coach.close();stale.close();}
- });assert.deepEqual(partitioned,{changed:true,denied:true,rolled:true,school:1,coach:1,records:1,stable:true});
- console.log('WEBKIT PARTITIONED VAULT PASS: independent writable keys, atomic native pointer/ciphertext commit, stale revision and rollback.');
+ });assert.deepEqual(partitioned,{changed:true,denied:true,rolled:true,school:1,coach:1,records:1,stable:true,rotated:true,oldDenied:true,recovery:true,private:true});
+ console.log('WEBKIT PARTITIONED VAULT PASS: independent writable keys, native pointer/ciphertext CAS, rollback, full-key rotation and independent recovery.');
  }finally{await writableContext.close();await page.bringToFront();}
  const schemaVault=await page.evaluate(async()=>{
   const V=await import('/tools/prototypes/local-vault.mjs'),A=await import('/tools/prototypes/vault-schema-adapter.mjs'),D=await import('./js/db.js'),B=await import('./js/backup.js'),password='synthetic-schema-webkit',data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));
