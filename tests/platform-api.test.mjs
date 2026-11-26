@@ -32,3 +32,35 @@ test('Session revocation and explicit prune do not remove active members or matc
  assert.equal(c('w','POST','members/prune',o,{memberIds:[a.member.id,b.member.id]}).status,409);assert.equal(c('w','POST','members/prune',b.token,{memberIds:[a.member.id]}).status,403);
  assert.equal(c('w','POST','members/prune',o,{memberIds:[a.member.id]}).body.removed,1);assert.equal(c('w','GET','me',b.token).status,200);assert.equal(c('w','GET','members',o).body.members.length,2);assert.ok(c('w','GET','audit',o).body.events.some(e=>e.action==='session.revoke'));
 });
+
+test('Unauthorized match creation does not disclose existence of a foreign team',()=>{
+ const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ for(const id of ['mine','foreign'])assert.equal(c('w','POST','teams',o,{id,name:id,players:[{id:'p',name:'P',number:1}]}).status,201);
+ const redeem=(role,teamId,athleteId=null,matchId=null)=>c('w','POST','redeem',c('w','POST','invite',o,{role,teamId,athleteId,matchId}).body.invite).body.token;
+ const packet={id:'m',teamId:'mine',opponent:'Guest',bestOf:3,target:15,decider:15};
+ const coach=redeem('coach','mine'),athlete=redeem('athlete','mine','p');
+ assert.equal(c('w','POST','matches',coach,packet).status,201);
+ const assistant=redeem('assistant','mine',null,'m');
+ for(const actor of [coach,athlete,assistant]){
+  const foreign=c('w','POST','matches',actor,{...packet,id:'new',teamId:'foreign'}),missing=c('w','POST','matches',actor,{...packet,id:'new',teamId:'missing'});
+  assert.deepEqual(foreign,missing);assert.deepEqual(foreign,{status:403,body:{error:'forbidden'}});
+ }
+ assert.equal(c('w','POST','matches',o,{...packet,id:'new',teamId:'missing'}).status,404);
+ assert.equal(c('w','GET','matches',o).body.matches.length,1);
+});
+test('Finishing a match atomically invalidates only its outstanding assistant invitations',()=>{
+ const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ c('w','POST','teams',o,{id:'t',name:'T',players:[]});
+ for(const id of ['m','other'])assert.equal(c('w','POST','matches',o,{id,teamId:'t',opponent:'Other',bestOf:3,target:15,decider:15}).status,201);
+ const invite=matchId=>c('w','POST','invite',o,{role:'assistant',teamId:'t',athleteId:null,matchId}).body.invite;
+ const stale=invite('m'),unrelated=invite('other'),active= c('w','POST','redeem',invite('m')).body.token;
+ const path='matches/m/',lease=c('w','POST',path+'acquire',o,{expectedRevision:0}).body.match;
+ let rev=0;const op=(action,side)=>c('w','POST',path+action,o,{generation:lease.generation,expectedRevision:rev,opId:'finish-test-'+rev++,...(side?{side}:{})});
+ assert.equal(c('w','POST',path+'finish',o,{generation:lease.generation,expectedRevision:0,opId:'premature'}).status,409);
+ assert.equal(c('w','GET','invites',o).body.invites.length,2);
+ for(let i=0;i<15;i++)assert.equal(op('score','ours').status,200);assert.equal(op('next').status,200);
+ for(let i=0;i<15;i++)assert.equal(op('score','ours').status,200);assert.equal(op('finish').status,200);
+ assert.deepEqual(c('w','GET','invites',o).body.invites.map(i=>i.matchId),['other']);
+ assert.equal(c('w','POST','redeem',stale).status,401);assert.equal(c('w','GET','teams/t/roster',active).status,403);
+ assert.equal(c('w','POST','redeem',unrelated).status,201);assert.equal(c('w','GET','matches/m',o).body.match.status,'finished');
+});
