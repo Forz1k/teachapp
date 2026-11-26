@@ -327,6 +327,23 @@ try{
  await shown.getByRole('button',{name:'Закрыть',exact:true}).click();
  console.log('WEBKIT HISTORICAL VIDEO PASS: imported journal, manually saved anchors, unlinked seek disabled, favorite and linked filters, local-only UI.');
 
+ await page.evaluate(async()=>{
+  const {openTeamSkillMap}=await import('./js/screens/coach-tests.js'),{testPresets}=await import('./js/coach-tests.js'),{todayIso}=await import('./js/model.js');
+  const team={id:'synthetic-skill-team',name:'Синтетическая команда'},players=[{id:'p',teamId:team.id,name:'Демо Полное',number:1},{id:'q',teamId:team.id,name:'Демо Малое',number:2},{id:'r',teamId:team.id,name:'Демо Без записи',number:3}];
+  const result=(attempts,success)=>({status:'done',attempts,success,errors:attempts-success,target:null,value:null,adapted:false,note:''});
+  openTeamSkillMap(team,{players,tests:[{id:'synthetic-skill-test',teamId:team.id,date:todayIso(),definition:testPresets.serve,results:{p:result(15,10),q:result(2,1)}}]});
+ });
+ await shown.getByRole('heading',{name:'Покрытие наблюдений',exact:true}).waitFor();
+ assert.match(await shown.textContent(),/Показано спортсменок: 3 из 3/);
+ await shown.getByLabel('Только неполные наблюдения',{exact:true}).check();
+ assert.match(await shown.textContent(),/Показано спортсменок: 2 из 3/);
+ assert.doesNotMatch(await shown.textContent(),/Демо Полное/);
+ assert.match(await shown.textContent(),/Демо Малое/);assert.match(await shown.textContent(),/Демо Без записи/);
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'skill coverage overflow');
+ await shown.getByRole('button',{name:'Закрыть',exact:true}).click();
+ console.log('WEBKIT SKILL COVERAGE PASS: synthetic coverage counts, incomplete filter and mobile layout.');
+
+
 
  await page.evaluate(async()=>{(await import('./js/screens/studio.js')).openStudio({scope:'test',template:'result',team:'Демо',opponent:'Гости',score:'2:1'});});
  await page.locator('.studio-editor canvas').waitFor();assert.equal(await page.locator('.studio-editor textarea[aria-label="Текст публикации"]').inputValue(),'Итоговый результат\n\nДемо — Гости\n\n2:1');
