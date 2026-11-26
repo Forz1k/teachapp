@@ -64,11 +64,11 @@ function makeStore(table,def,active,writable){
 }
 /** Prepare a validated snapshot transaction without committing. Callback is
  * invoked once; its store handles expire before any CAS write. LAB only. */
-export async function prepareSchemaSnapshotTransactionLab(input,storeNames,mode,fn,{guard=()=>{}}={}){
+export async function prepareSchemaSnapshotTransactionLab(input,storeNames,mode,fn,{guard=()=>{},isOpen=()=>true}={}){
  const selected=[].concat(storeNames);
  check(selected.length&&new Set(selected).size===selected.length&&selected.every(n=>Object.hasOwn(SCHEMA,n))&&['readonly','readwrite'].includes(mode)&&typeof fn==='function','Некорректная транзакция LAB');
  guard();const data=checkedData(copy(input)),tables=new Map(selected.map(n=>[n,new Map(data[n].map(row=>[row.id,row]))]));
- let active=true;const stores=Object.fromEntries(selected.map(n=>[n,makeStore(tables.get(n),SCHEMA[n],()=>active,mode==='readwrite')]));
+ let active=true;const stores=Object.fromEntries(selected.map(n=>[n,makeStore(tables.get(n),SCHEMA[n],()=>active&&isOpen(),mode==='readwrite')]));
  let result;try{result=await fn(stores);}finally{active=false;}
  guard();
  if(mode==='readwrite'){
@@ -85,7 +85,7 @@ export function schemaVaultAdapter(db,{password}){
  const guard=()=>check(!closed,'Хранилище LAB закрыто');
  async function transaction(storeNames,mode,fn){
   guard();const pass=key,opened=await readVaultLab(db,{scope,password:pass});guard();
-  const {result,data}=await prepareSchemaSnapshotTransactionLab(opened.data,storeNames,mode,fn,{guard});
+  const {result,data}=await prepareSchemaSnapshotTransactionLab(opened.data,storeNames,mode,fn,{guard,isOpen:()=>!closed});
   if(mode==='readwrite')await replaceVaultLab(db,{scope,password:pass,expectedRevision:opened.revision,data});
   return result;
  }
