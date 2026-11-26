@@ -2,7 +2,7 @@
  * Source and rollback databases are distinct; no active-storage pointer is changed. */
 import {SCHEMA} from '../../js/db.js';
 import {BACKUP_VERSION,validateBackup} from '../../js/backup.js';
-import {stageSchemaVault,schemaVaultAdapter} from './vault-schema-adapter.mjs';
+import {stageSchemaVault,schemaVaultAdapter,prepareSchemaSnapshotTransactionLab} from './vault-schema-adapter.mjs';
 const names=Object.keys(SCHEMA),pattern=/^teachapp-plain-lab-(source|rollback)-[a-z0-9-]{1,64}$/;
 const check=(ok,message)=>{if(!ok)throw Error(message);};
 function assertPlain(db,role){
@@ -38,6 +38,30 @@ export function readPlainSchemaLab(db){
 const ordered=data=>Object.fromEntries(names.map(n=>[n,[...data[n]].sort((a,b)=>indexedDB.cmp(a.id,b.id))]));
 const same=(a,b)=>JSON.stringify(ordered(a))===JSON.stringify(ordered(b));
 const report=data=>({tables:names.length,records:names.reduce((sum,n)=>sum+data[n].length,0)});
+/** Same Promise store contract on a plaintext LAB phase. Use a separate
+ * readwrite CAS so a callback failure or raw concurrent edit cannot partially
+ * replace the source. No callback is retried. */
+export async function plainSchemaTransactionLab(db,storeNames,mode,fn){
+ assertPlain(db);
+ const before=await readPlainSchemaLab(db);
+ const {result,data,selected}=await prepareSchemaSnapshotTransactionLab(before,storeNames,mode,fn);
+ if(mode==='readonly')return result;
+ await new Promise((resolve,reject)=>{
+  const tx=db.transaction(names,'readwrite');let remaining=names.length,failure=null;const current={};
+  tx.oncomplete=()=>resolve();tx.onabort=()=>reject(failure||tx.error||Error('Транзакция LAB отменена'));
+  for(const n of names){
+   const req=tx.objectStore(n).getAll();
+   req.onsuccess=()=>{
+    current[n]=req.result;if(--remaining)return;
+    try{
+     check(same(before,current),'Исходная ревизия LAB изменилась; повторите действие');
+     for(const name of selected){const store=tx.objectStore(name);store.clear();for(const row of data[name])store.add(row);}
+    }catch(e){failure=e;tx.abort();}
+   };
+  }
+ });
+ return result;
+}
 async function readEncrypted(vault,password){
  const adapter=schemaVaultAdapter(vault,{password});
  try{return await adapter.snapshot();}finally{adapter.close();}
