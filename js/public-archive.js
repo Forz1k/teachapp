@@ -121,3 +121,28 @@ export function opponentHistory(rows){
  }
  return [...groups.values()].sort((a,b)=>b.played-a.played||a.opponent.localeCompare(b.opponent,'ru'));
 }
+
+// V3 candidate: immutable public ID primary key; composite sort key for bounded pagination.
+export function archiveV3Target(address){return archiveTarget(address).replace('/publicMatchArchive/','/publicMatchArchiveV3/');}
+function checkedV3Target(target){
+ const u=new URL(target);if(!u.pathname.startsWith('/publicMatchArchiveV3/'))throw Error('Некорректный адрес архива V3');
+ if(archiveV3Target(u.href.replace('/publicMatchArchiveV3/','/publicTeams/'))!==u.href)throw Error('Некорректный адрес архива V3');return u.href;
+}
+export function archiveV3Projection(row){const value=archiveProjection(row);return {...value,sortKey:archiveKey(value)};}
+function checkedV3Row(raw,recordId){const row=archiveV3Projection(raw);if(row.id!==recordId||raw.sortKey!==row.sortKey)throw Error('Некорректная запись архива V3');return row;}
+export function archiveV3Page(raw,options={}){
+ const index=Object.create(null);
+ for(const [recordId,value] of Object.entries(raw||{})){const row=checkedV3Row(value,recordId);if(Object.hasOwn(index,row.sortKey))throw Error('Дубликат результата V3');index[row.sortKey]=row;}
+ const page=archivePage(index,options);return {rows:page.rows.map(({archiveKey:sortKey,...row})=>({...row,sortKey})),cursor:page.cursor};
+}
+export async function fetchArchiveV3Page(target,{cursor=null,limit=20,season='all',fetcher=fetch}={}){
+ archivePage(null,{cursor,limit,season});const bounds=archiveSeasonBounds(season),u=new URL(checkedV3Target(target));u.searchParams.set('orderBy','"sortKey"');u.searchParams.set('limitToLast',String(limit+(cursor?2:1)));if(bounds)u.searchParams.set('startAt',JSON.stringify(bounds.start));if(cursor||bounds)u.searchParams.set('endAt',JSON.stringify(cursor||bounds.end));
+ return archiveV3Page((await request(u.href,{},fetcher)).value,{cursor,limit,season});
+}
+function v3RecordUrl(target,recordId){if(typeof recordId!=='string'||!id.test(recordId))throw Error('Некорректный ID матча');return checkedV3Target(target).replace(/\.json$/,'/'+recordId+'.json');}
+export async function readArchiveV3Version(target,recordId,fetcher=fetch){const result=await request(v3RecordUrl(target,recordId),{headers:{'X-Firebase-ETag':'true'}},fetcher);if(!result.etag)throw Error('Сервер не вернул версию записи');return {etag:result.etag,value:result.value?checkedV3Row(result.value,recordId):null};}
+export async function writeArchiveV3Record(target,recordId,value,token,etag,fetcher=fetch){
+ if(!token||!etag)throw Error('Требуется подтверждённая версия и авторизация');const row=value===null?null:archiveV3Projection(value);if(row&&row.id!==recordId)throw Error('ID результата нельзя менять');const u=new URL(v3RecordUrl(target,recordId));u.searchParams.set('auth',token);
+ return request(u.href,{method:row?'PUT':'DELETE',headers:{'If-Match':etag,'Content-Type':'application/json'},...(row?{body:JSON.stringify(row)}:{})},fetcher);
+}
+export function planArchiveV3Migration(rows){const {rows:merged,conflicts}=mergeLoadedArchive([],rows);return {ready:merged.map(archiveV3Projection),conflicts};}

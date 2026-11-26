@@ -460,3 +460,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 6.3 follow-up — selected-cell grade editing
 - Arbitrary grid selection (click/keyboard), preview, explicit confirmation, compare-and-swap against observed mark, single transaction; preserves weights and IDs of ordinary manual grades. Existing absence, exemption, norm-derived marks and restricted lessons are protected. Added IndexedDB and UI tests.
+
+### 6.7 follow-up — immutable-ID archive V3 candidate
+- Separate candidate rules and CAS client keyed by public ID; sort-key pagination, migration preview and emulator race test for concurrent date corrections. V2 and production config unchanged; no cutover or live publication.

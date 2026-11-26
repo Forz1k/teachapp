@@ -29,3 +29,7 @@ Legacy match links can resolve through a bounded exact-ID index; ambiguous IDs a
 The exact-ID lookup protects normal sequential operations; independent clients can race when correcting the same ID to different timestamps. The viewer fails closed if an ID lookup returns two rows, while direct timestamp links stay valid. Resolve duplicates explicitly. Outbox consent and storage are device-local; simultaneous tabs should not operate the same publisher.
 
 5.8: все операции изменения расширенного архива теперь сериализуются в одной вкладке, включая диалоги подтверждения. Это не глобальный серверный индекс уникальности и не гарантия для разных устройств/вкладок.
+
+## 6.7 — V3 archive candidate
+
+Separate path `publicMatchArchiveV3/{uid}/{slug}/{id}` uses immutable public ID as primary key and validated `sortKey=timestamp_id` for chronological pagination. Date corrections target the same ETag-protected record; independent writers cannot create two different keys for one ID. Candidate rules retain V2/live paths, owner-only writes and score-only validation. Client helpers and read-only migration planning exclude ambiguous IDs pending explicit resolution. V3 is not enabled in the production publisher or viewer. Before switching verify complete source pagination, copy under maintenance, reconcile links, validate counts and backups, retain V2 for rollback. Production config unchanged.
