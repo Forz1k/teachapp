@@ -1,6 +1,7 @@
 /* Isolated synthetic workspace service. State and authorization decisions live
  * inside one workspace transaction. No access to the personal relay or Firebase. */
 import {authorizeWorkspace,assistantProjection,athleteProjection} from './workspace-policy.mjs';
+import {notificationLabState,changeNotificationLab} from './platform-notification-lab.mjs';
 export const BODY_LIMIT=64*1024, STATE_LIMIT=512*1024;
 const DAY=86400000,LEASE_MS=45000,INVITE_MS=600000;
 const id=x=>typeof x==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(x);
@@ -40,7 +41,7 @@ export function workspaceRatePolicy(s,{auth,rootHash,method,path,now}){
  if(method==='POST'&&path==='recover'&&hash(s.recoveryHash)&&auth===s.recoveryHash&&auth!==rootHash)return {key:'recovery',limit:6};
  if(method==='POST'&&path==='redeem'&&s.invites.some(i=>i.hash===auth&&i.usedAt===null&&i.expiresAt>now))return {key:'redeem',limit:64};
  const actor=memberByHash(s,auth,now);if(!actor)return null;
- const kind=method==='GET'?'read':/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/revoke)$/.test(path)?'access':'write';
+ const kind=method==='GET'?'read':/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/revoke|notification-lab)$/.test(path)?'access':'write';
  return {key:'member:'+actor.id+':'+kind,limit:kind==='read'?240:kind==='access'?24:180};
 }
 /** Rolling fixed-minute windows, bounded retry interval; a clock regression
@@ -89,6 +90,15 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
   const actor=memberByHash(s,auth,now);require(actor,401,'unauthorized');
   const owner=()=>require(allowed(s,actor,'workspace.manage',resource(s,'workspace')),403,'forbidden');
   const result=()=>{
+   if(path==='notification-lab'){
+    if(method==='GET'){const state=notificationLabState(actor,now);return state?ok(state):err(403,'forbidden');}
+    if(method==='PUT'){
+     const result=changeNotificationLab(actor,body,now);
+     if(result.error)return err(result.status,result.error);
+     if(result.changed)audit(s,actor,'notification.lab.'+(result.body.enabled?'enable':'disable'),actor.id,now);
+     return ok(result.body,200,result.changed);
+    }
+   }
    if(method==='GET'&&path==='me')return ok({workspaceId:s.id,name:s.name,member:publicMember(actor)});
    if(method==='GET'&&path==='owner/recovery'){owner();return ok({configured:hash(s.recoveryHash),version:s.recoveryVersion??0});}
    if(method==='POST'&&path==='owner/recovery'){
@@ -103,7 +113,7 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
     require(exact(body,[]),400,'packet');
     // An owner may end the server session only with an independent recovery code configured.
     require(actor.role!=='owner'||hash(s.recoveryHash),409,'recovery-required');
-    actor.revokedAt=now;s.invites=s.invites.filter(i=>i.issuerId!==actor.id);releaseMemberLeases(s,new Set([actor.id]));audit(s,actor,'session.revoke',actor.id,now);return ok({revoked:true},200,true);
+    actor.revokedAt=now;delete actor.notificationLab;s.invites=s.invites.filter(i=>i.issuerId!==actor.id);releaseMemberLeases(s,new Set([actor.id]));audit(s,actor,'session.revoke',actor.id,now);return ok({revoked:true},200,true);
    }
    if(method==='GET'&&path==='members/prunable'){
     owner();return ok({members:s.members.filter(m=>m.role!=='owner'&&(m.revokedAt!==null||m.expiresAt<=now)).map(publicMember)});
@@ -125,7 +135,7 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
    }
    if(method==='POST'&&path==='revoke'){
     owner();require(exact(body,['memberId'])&&id(body.memberId),400,'packet');const m=exists(s.members,body.memberId);require(m&&m.role!=='owner',404,'member');if(m.revokedAt!==null)return ok({member:publicMember(m)});
-    m.revokedAt=now;for(const match of s.matches)if(match.lease?.holderId===m.id){match.lease=null;match.generation++;}
+    m.revokedAt=now;delete m.notificationLab;for(const match of s.matches)if(match.lease?.holderId===m.id){match.lease=null;match.generation++;}
     audit(s,actor,'member.revoke',m.id,now);return ok({member:publicMember(m)},200,true);
    }
    if(method==='GET'&&path==='teams'){
