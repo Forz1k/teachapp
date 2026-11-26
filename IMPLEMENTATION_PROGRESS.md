@@ -504,3 +504,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### Security — full-schema encrypted transaction baseline (LAB)
 - Validate portable current-format backup, schema-aware table/index operations and uniqueness, atomic snapshot CAS, abort/conflict and independent encrypted recovery. Reject lossy JSON values and sync checkpoints. A single workspace key for this synthetic baseline, no live DB switch; separate scope keys and efficient storage remain gates.
+
+### Archive V3 — candidate server migration barrier
+- Owner-only monotonic migration phase. Freeze V2; permit only exact missing V3 copies while frozen; explicit pre-cutover thaw and irreversible activation; preserve old links read-only. Emulator migrates 45 records and checks permissions, stale generations, altered results and verified counts. Production not deployed.
