@@ -35,6 +35,7 @@ function showSecret(title,value){const n=input(title,value,'password');n.readOnl
 async function render(name,issued){
  stopTimer();root.replaceChildren(box(name,p(roles[member.role]||member.role),button('Выйти',close),button('Отозвать эту сессию',()=>run(async()=>{if(!confirm('Отозвать код этой сессии на сервере? Для нового входа понадобится приглашение или код восстановления владельца.'))return;await api.request('session/revoke','POST',{});close();status('Сессия отозвана на сервере.');}))),e('p','',{id:'status',role:'status',class:'status'}));
  if(issued)root.append(showSecret('Код новой сессии',issued));
+ if(['owner','coach','athlete'].includes(member.role))root.append(notificationCard());
  if(member.role==='athlete'){const section=box('Мой кабинет',p('Доступ только к собственным заданиям и расписанию.'));root.append(section);await athlete(section);return;}
  const grid=e('div','',{class:'grid'});root.append(grid);
  if(member.role==='owner'){grid.append(ownerTeams(),ownerInvites(),ownerRecovery());}
@@ -97,4 +98,19 @@ function ownerRecovery(){
  const generate=button('Создать новый код',()=>run(async()=>{await refresh();key.value=Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');key.type='text';}));
  const save=button('Активировать сохранённый код',()=>run(async(epoch)=>{const session=api;if(!/^[a-f0-9]{64}$/.test(key.value)||version===null)throw Error('Сначала создайте и сохраните новый код');if(!confirm('Вы сохранили новый код отдельно? Старый код перестанет действовать.'))return;const recoveryHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(key.value))),b=>b.toString(16).padStart(2,'0')).join('');if(epoch!==serial||api!==session)return;const res=await session.request('owner/recovery','POST',{recoveryHash,expectedVersion:version});key.value='';version=res.version;state.textContent='Восстановление настроено · версия '+version;}),true);
  return box('Восстановление владельца · LAB',p('Сохраните случайный код отдельно до активации. Не отправляйте его третьим лицам. Восстановление отзывает прежние сессии владельца и неиспользованные приглашения. Не использовать рабочие данные.'),state,button('Проверить статус',()=>run(refresh)),generate,key,copy,save);
+}
+
+function notificationCard(){
+ const info=p('Загрузите состояние подписки. Реальные уведомления не отправляются.');
+ let state=null;const enable=button('Включить тестовую подписку',()=>run(()=>change(true))),disable=button('Отключить тестовую подписку',()=>run(()=>change(false)));
+ const draw=()=>{enable.disabled=!state||state.enabled;disable.disabled=!state||!state.enabled;info.textContent=state?(state.enabled?'Тестовая подписка включена':'Тестовая подписка выключена')+' · ревизия '+state.revision:'Загрузите состояние подписки заново.';};
+ const load=async()=>{state=await api.request('notification-lab');draw();};
+ async function change(enabled){
+  if(!state||state.enabled===enabled)return;
+  const previous=state;state=null;draw();
+  try{state=await api.request('notification-lab','PUT',{expectedRevision:previous.revision,enabled,endpoint:enabled?'https://push.example.invalid/sub/'+crypto.randomUUID():null});}
+  finally{draw();}
+ }
+ draw();
+ return box('Уведомления · LAB',p('Только синтетическая подписка этой сессии. Не запрашивает разрешение браузера, не регистрирует PushManager и не доставляет сообщения. Выход из кабинета не отзывает серверную сессию.'),info,button('Проверить подписку',()=>run(load)),row(enable,disable));
 }
