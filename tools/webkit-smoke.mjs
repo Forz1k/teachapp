@@ -71,6 +71,44 @@ try{
   console.log('WEBKIT VAULT KEY SESSION PASS: native WebCrypto key, pagehide event, pending read blocked, explicit reopen.');
  }finally{await keyContext.close();}
 
+ const vaultUiContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block'});
+ try{
+  const tab=await vaultUiContext.newPage(),errors=[];tab.on('pageerror',e=>errors.push(e.message));
+  await tab.goto(origin+'/tools/prototypes/vault-ui/index.html?id=webkit-ui');await tab.bringToFront();
+  if(await tab.evaluate(()=>typeof navigator.locks?.request==='function')){
+   await tab.getByRole('button',{name:'Создать демо-набор'}).click();
+   await tab.getByText('Демо-набор активен. Откройте нужную область.').waitFor();
+   const school=tab.locator('[data-scope=school]'),coach=tab.locator('[data-scope=coach]');
+   await school.getByLabel('Пароль').fill('incorrect-demo');
+   await school.getByRole('button',{name:'Открыть',exact:true}).click();
+   await school.getByText('Введите указанный демо-пароль.').waitFor();
+   assert.equal(await school.locator('.result').textContent(),'');
+   await school.getByLabel('Пароль').fill('teachapp-school-demo');
+   await school.getByRole('button',{name:'Открыть',exact:true}).click();
+   await school.locator('.result').filter({hasText:'Записей: 1'}).waitFor();
+   assert.equal(await school.getByLabel('Пароль').inputValue(),'');
+   assert.equal(await coach.locator('.state').textContent(),'Заблокировано');
+   await tab.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
+   assert.equal(await school.locator('.result').textContent(),'');
+   assert.equal(await school.locator('.state').textContent(),'Заблокировано');
+   await tab.reload();await tab.getByText('Демо-набор активен. Откройте нужную область.').waitFor();
+   assert.equal(await school.locator('.result').textContent(),'');
+   await school.getByLabel('Пароль').fill('teachapp-school-demo');
+   await school.getByRole('button',{name:'Открыть',exact:true}).click();
+   await school.locator('.result').filter({hasText:'Записей: 1'}).waitFor();
+   await school.getByRole('button',{name:'Заблокировать',exact:true}).click();
+   assert.equal(await school.locator('.result').textContent(),'');
+   assert.ok(await tab.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+   console.log('WEBKIT VAULT UI LAB PASS: synthetic setup, scoped unlock, wrong demo password, pagehide, reload, manual lock and mobile layout.');
+  }else{
+   await tab.getByText('Неверный ID набора или Web Locks недоступен.').waitFor();
+   assert.equal(await tab.locator('#scopes').isVisible(),false);
+   console.log('WEBKIT VAULT UI LAB: Web Locks unavailable, fail-closed confirmed.');
+  }
+  assert.deepEqual(errors,[]);
+ }finally{await vaultUiContext.close();}
+
+
 
  // A separate same-origin context with two actual tabs, no application boot
  // or service worker; all records and keys below are synthetic.
