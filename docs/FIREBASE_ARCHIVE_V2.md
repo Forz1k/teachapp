@@ -33,3 +33,7 @@ The exact-ID lookup protects normal sequential operations; independent clients c
 ## 6.7 — V3 archive candidate
 
 Separate path `publicMatchArchiveV3/{uid}/{slug}/{id}` uses immutable public ID as primary key and validated `sortKey=timestamp_id` for chronological pagination. Date corrections target the same ETag-protected record; independent writers cannot create two different keys for one ID. Candidate rules retain V2/live paths, owner-only writes and score-only validation. Client helpers and read-only migration planning exclude ambiguous IDs pending explicit resolution. V3 is not enabled in the production publisher or viewer. Before switching verify complete source pagination, copy under maintenance, reconcile links, validate counts and backups, retain V2 for rollback. Production config unchanged.
+
+### Предпросмотр миграции V3
+
+`inspectArchiveV3Migration` — только чтение, без авторизации/записи, до 5000 записей на путь, страницы до 41 записи. Строго проверяет ключи, состав и границу страницы, повторно сканирует оба пути и отказывается при изменении. Выдаёт список готовых к копированию записей, совпадающих ID, конфликтов дат в источнике, различающихся результатов и записей только в V3. Это не гарантия согласованности при параллельной публикации: рабочую миграцию выполнять только после отдельного серверного барьера и проверки резервной копии. Никакой автоматической записи или переключения клиента.

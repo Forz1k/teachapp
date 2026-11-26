@@ -479,3 +479,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### Documents — year comparison and season plan reports
 - Two new local document templates: aggregated school-year comparison (optional class breakdown, export confirmation), and season plan attainment including weeks and uncovered dates. Uses existing calculations, excludes individual names, health data and private phase notes; preserves unknown denominators and duplicate-year conflict rows. Word/Excel/print reuse the existing export pipeline.
+
+### Archive V3 — read-only migration inventory
+- Strict bounded pagination across both paths with repeated scans, boundary and corruption checks; reports copy-ready, identical, conflicting and destination-only IDs. Does not write or guarantee snapshot isolation: a publication freeze remains required.

@@ -73,7 +73,7 @@ export async function openDocuments(defaultType='lesson'){
     const t=S.state.settings.trimesters.find(t=>t.id===period.value),c=S.state.classes.find(c=>c.id===cls.value);if(!t||!c)throw Error('Выберите класс и период');
     base.className=c.name;base.period=M.fmtFull(t.from)+' — '+M.fmtFull(t.to);base.matrix=A.reportMatrix(k==='classReport'?'class':k,A.schoolAnalytics(c.id,t.from,t.to));
    }else if(k==='schoolYearReport'){
-    const history=await readSchoolHistory();base.years=schoolYearComparison(history.current,history.archives,{gradeLevel:level.value?Number(level.value):null});base.gradeLabel=level.value?level.value+' класс':'Все параллели';base.includeClasses=includeClasses.checked;
+    const gradeLevel=level.value?Number(level.value):null;const withClasses=includeClasses.checked;const history=await readSchoolHistory();base.years=schoolYearComparison(history.current,history.archives,{gradeLevel});base.gradeLabel=gradeLevel?gradeLevel+' класс':'Все параллели';base.includeClasses=withClasses;
    }else if(k==='seasonPlanReport'){
     const t=coach.coachTeams.find(t=>t.id===team.value),plan=seasonPlans.find(p=>p.id===season.value&&p.teamId===t?.id);if(!t||!plan)throw Error('Выберите команду и план сезона');
     const view=C.teamView(coach,t.id);base.teamName=t.name;base.planName=plan.name;base.period=plan.from+' — '+plan.to;base.cutoff=M.todayIso();base.progress=seasonPlanProgress(plan,view.trainings,view.matches,base.cutoff);

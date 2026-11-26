@@ -146,3 +146,55 @@ export async function writeArchiveV3Record(target,recordId,value,token,etag,fetc
  return request(u.href,{method:row?'PUT':'DELETE',headers:{'If-Match':etag,'Content-Type':'application/json'},...(row?{body:JSON.stringify(row)}:{})},fetcher);
 }
 export function planArchiveV3Migration(rows){const {rows:merged,conflicts}=mergeLoadedArchive([],rows);return {ready:merged.map(archiveV3Projection),conflicts};}
+
+/** Migration preview is intentionally read-only. The source must be frozen
+ * during a real migration; two scans detect many, not all, concurrent edits. */
+function migrationRows(raw,version,limit){
+ if(raw===null)return [];
+ if(!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).length>limit)throw Error('Некорректная страница миграции');
+ return Object.entries(raw).map(([k,value])=>{
+  const r=version===2?archiveProjection(value):checkedV3Row(value,k);
+  const allowed=version===2?['id','opponent','sets','setsWon','startedAt']:['id','opponent','sets','setsWon','sortKey','startedAt'];
+  if(Object.keys(value).some(x=>!allowed.includes(x))||version===2&&archiveKey(r)!==k)throw Error('Некорректная запись при миграции');
+  return {...archiveV3Projection(r)};
+ }).sort((a,b)=>a.sortKey<b.sortKey?1:a.sortKey>b.sortKey?-1:0);
+}
+async function scanMigration(target,version,fetcher,maxRecords){
+ const rows=[];let previous=null;
+ for(;;){
+  const limit=previous?41:40,u=new URL(target);u.searchParams.set('orderBy',version===2?'"$key"':'"sortKey"');u.searchParams.set('limitToLast',String(limit));
+  if(previous)u.searchParams.set('endAt',JSON.stringify(previous.sortKey));
+  const page=migrationRows((await request(u.href,{},fetcher)).value,version,limit);
+  if(previous){
+   if(!page.length||page[0].sortKey!==previous.sortKey||!equalArchiveResult(page[0],previous))throw Error('Архив изменился во время сверки');
+   page.shift();
+  }
+  if(!page.length)break;
+  if(previous&&page.some(x=>x.sortKey>=previous.sortKey))throw Error('Некорректный курсор миграции');
+  rows.push(...page);if(rows.length>maxRecords)throw Error('Превышен лимит сверки архива');
+  previous=page.at(-1);
+  if(page.length<40)break;
+ }
+ return rows;
+}
+function migrationPreview(source,destination){
+ const p=planArchiveV3Migration(source),dest=new Map(destination.map(r=>[r.id,r])),seen=new Set(source.map(r=>r.id));
+ const ready=[],identical=[],mismatches=[];
+ for(const r of p.ready){
+  const current=dest.get(r.id);
+  if(!current)ready.push(r);
+  else if(equalArchiveResult(r,current))identical.push(r.id);
+  else mismatches.push(r.id);
+ }
+ const destinationOnly=destination.filter(r=>!seen.has(r.id)).map(r=>r.id).sort();
+ return {sourceCount:source.length,destinationCount:destination.length,ready,identical:identical.sort(),sourceConflicts:p.conflicts,mismatches:mismatches.sort(),destinationOnly,requiresReview:!!(p.conflicts.length||mismatches.length||destinationOnly.length)};
+}
+export async function inspectArchiveV3Migration(address,{fetcher=fetch,maxRecords=5000}={}){
+ if(!Number.isInteger(maxRecords)||maxRecords<1||maxRecords>5000)throw Error('Некорректный лимит сверки');
+ const u=new URL(address);if(u.username||u.password)throw Error('Не передавайте секреты в адресе');
+ const v2=archiveTarget(address),v3=archiveV3Target(address);
+ const source=await scanMigration(v2,2,fetcher,maxRecords),destination=await scanMigration(v3,3,fetcher,maxRecords);
+ const sourceAgain=await scanMigration(v2,2,fetcher,maxRecords),destinationAgain=await scanMigration(v3,3,fetcher,maxRecords);
+ if(JSON.stringify(source)!==JSON.stringify(sourceAgain)||JSON.stringify(destination)!==JSON.stringify(destinationAgain))throw Error('Архив изменился во время сверки. Повторите после остановки публикации.');
+ return migrationPreview(source,destination);
+}

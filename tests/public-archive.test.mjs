@@ -82,3 +82,26 @@ test('Conflicting archive IDs are not silently chosen; current publication wins 
 
 import {archiveV3Target,archiveV3Projection,archiveV3Page,fetchArchiveV3Page,readArchiveV3Version,writeArchiveV3Record,planArchiveV3Migration} from '../js/public-archive.js';
 test('V3 uses immutable ID and unique sort key with bounded pagination',async()=>{const target=archiveV3Target(viewerTarget('https://example.com/live/').address),a=row(1),b={...row(2),startedAt:a.startedAt},raw=Object.fromEntries([a,b].map(r=>[r.id,archiveV3Projection(r)]));const one=archiveV3Page(raw,{limit:1});assert.equal(one.rows[0].id,b.id);assert.equal(archiveV3Page(raw,{limit:1,cursor:one.cursor}).rows[0].id,a.id);assert.throws(()=>archiveV3Page({wrong:raw[a.id]}));assert.throws(()=>archiveV3Page({[a.id]:{...raw[a.id],sortKey:'bad'}}));const out=await fetchArchiveV3Page(target,{limit:1,fetcher:async url=>{const q=new URL(url).searchParams;assert.equal(q.get('orderBy'),'"sortKey"');assert.equal(q.get('limitToLast'),'2');return new Response(JSON.stringify(raw));}});assert.deepEqual(out,one);const old=await readArchiveV3Version(target,a.id,async url=>{assert.ok(url.endsWith('/'+a.id+'.json'));return new Response(JSON.stringify(raw[a.id]),{headers:{ETag:'v1'}});});assert.equal(old.etag,'v1');await assert.rejects(writeArchiveV3Record(target,a.id,{...a,startedAt:a.startedAt+100},'synthetic',old.etag,async(url,opt)=>{assert.equal(new URL(url).pathname.split('/').at(-1),a.id+'.json');assert.equal(opt.headers['If-Match'],'v1');assert.equal(JSON.parse(opt.body).sortKey,archiveKey({...a,startedAt:a.startedAt+100}));return new Response('{}',{status:412});}),e=>e.status===412);await assert.rejects(writeArchiveV3Record(target,a.id,b,'synthetic','v1'),/ID/);const migration=planArchiveV3Migration([a,{...a,startedAt:a.startedAt+1},b]);assert.deepEqual(migration.conflicts,[a.id]);assert.equal(migration.ready[0].id,b.id);});
+
+import {inspectArchiveV3Migration} from '../js/public-archive.js';
+function migrationFetcher(source,dest){
+ return async(url,opt)=>{
+  assert.ok(!opt.method||opt.method==='GET');const u=new URL(url),isV3=u.pathname.includes('publicMatchArchiveV3'),rows=isV3?dest:source,q=u.searchParams,limit=Number(q.get('limitToLast')),end=q.has('endAt')?JSON.parse(q.get('endAt')):null;
+  assert.ok(limit<=41);assert.equal(q.get('orderBy'),isV3?'"sortKey"':'"$key"');
+  const selected=rows.map(archiveV3Projection).filter(r=>!end||r.sortKey<=end).sort((a,b)=>a.sortKey<b.sortKey?-1:a.sortKey>b.sortKey?1:0).slice(-limit);
+  return new Response(JSON.stringify(selected.length?Object.fromEntries(selected.map(r=>{const {sortKey,...v}=r;return [isV3?r.id:sortKey,isV3?r:v];})):null));
+ };
+}
+test('V3 migration preview scans all pages twice, reports conflicts and never writes',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,source=Array.from({length:45},(_,i)=>row(i)),duplicate={...row(1),startedAt:row(1).startedAt+5000},dest=[row(2),{...row(3),opponent:'Changed'},row(100)];
+ const p=await inspectArchiveV3Migration(address,{fetcher:migrationFetcher([...source,duplicate],dest)});
+ assert.equal(p.sourceCount,46);assert.equal(p.destinationCount,3);assert.deepEqual(p.sourceConflicts,['r1']);assert.deepEqual(p.identical,['r2']);assert.deepEqual(p.mismatches,['r3']);assert.deepEqual(p.destinationOnly,['r100']);assert.equal(p.ready.length,42);assert.equal(p.requiresReview,true);
+ assert.ok(p.ready.every(r=>!Object.hasOwn(r,'private')));await assert.rejects(inspectArchiveV3Migration(address,{fetcher:migrationFetcher(source,dest),maxRecords:40}),/лимит/);
+ const clean=await inspectArchiveV3Migration(address,{fetcher:migrationFetcher([],[])});assert.equal(clean.requiresReview,false);assert.equal(clean.sourceCount,0);
+});
+test('Migration refuses unstable data and corrupt key rather than silently skipping records',async()=>{
+ const address=viewerTarget('https://example.com/live/').address;let visits=0;
+ const fetcher=async(url,opt)=>{const v3=new URL(url).pathname.includes('publicMatchArchiveV3');if(!v3)visits++;return migrationFetcher([row(visits)],[])(url,opt);};
+ await assert.rejects(inspectArchiveV3Migration(address,{fetcher}),/изменился/);
+ const broken=async()=>new Response(JSON.stringify({bad:archiveProjection(row(1))}));await assert.rejects(inspectArchiveV3Migration(address,{fetcher:broken}),/Некорректная запись/);
+});
