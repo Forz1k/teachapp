@@ -35,3 +35,6 @@ body{background:var(--bg)}.app-shell{padding-block:14px 8px;gap:9px}.app-brand{l
 @media(prefers-reduced-motion:no-preference){:root:not([data-motion=off]) .month-day,:root:not([data-motion=off]) .attention-row{transition:background 160ms,transform 110ms,border-color 160ms}:root:not([data-motion=off]):not([data-motion=subtle]) .month-day:active,:root:not([data-motion=off]):not([data-motion=subtle]) .attention-row:active{transform:scale(.97)}}
 
 .public-result-score{font-size:clamp(38px,10vw,62px);line-height:1.1;letter-spacing:-.065em;font-weight:850;font-variant-numeric:tabular-nums;text-align:center;background:var(--accent-soft);color:var(--accent-ink);padding:16px;border-radius:18px}.vp-portal-fixture>strong{overflow-wrap:anywhere}
+
+/* Private measured-time strip, on-demand, with an accessible interval list. */
+.court-time-strip{display:flex;min-height:16px;border-radius:5px;overflow:hidden;background:var(--card-2);margin:6px 0}.court-time-strip span{min-width:0;flex-shrink:0}.court-time-strip .on{background:var(--accent)}.court-time-strip .off{background:var(--sep-strong)}.court-time-timeline{display:grid;gap:4px}.court-time-timeline p{margin:4px 0}

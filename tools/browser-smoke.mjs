@@ -12,7 +12,7 @@ const profile=await mkdtemp(join(tmpdir(),'teachapp-browser-'));
 const binaries=[process.env.CHROME_BIN,'google-chrome','google-chrome-stable','chromium','chromium-browser','C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe','C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'].filter(Boolean);
 const binary=binaries.find(p=>existsSync(p)||spawnSync(p,['--version'],{stdio:'ignore'}).status===0);
 if(!binary)throw Error('Chromium / Chrome not found; set CHROME_BIN');
-const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.png':'image/png','.svg':'image/svg+xml'};
+const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.png':'image/png','.svg':'image/svg+xml'};
 const server=createServer(async(req,res)=>{
  try{const u=new URL(req.url,'http://localhost'),path=resolve(root,'.'+decodeURIComponent(u.pathname.endsWith('/')?u.pathname+'index.html':u.pathname));
   if(path!==root&&!path.startsWith(root+sep))throw Error('path');
@@ -137,6 +137,11 @@ try{
  await theme('light');await viewport(375,812);await capture('375-large-journal-light');
  // Keyboard navigation between cells in the actual table.
  await evalJs('document.querySelector("table.journal .cell").focus()');await send('Input.dispatchKeyEvent',{type:'rawKeyDown',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});await send('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});assert.equal(await evalJs('document.activeElement.cellIndex'),3);
+
+ const keyboardState=await evalJs(`(()=>{const t=document.querySelector('table.journal'),cell=t.querySelector('td[data-student=perf-p0][data-lesson=perf-l0]'),key=(name,opts={})=>document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:name,bubbles:true,cancelable:true,...opts}));cell.focus();key('End');const end=document.activeElement.cellIndex;key('Home');const home=document.activeElement.cellIndex;key('End',{ctrlKey:true});const last=document.activeElement.dataset.student;key('Home',{ctrlKey:true});const first=document.activeElement.dataset.student;[...document.querySelectorAll('button')].find(b=>b.textContent==='Выбрать ячейки').click();cell.focus();key('ArrowRight',{shiftKey:true});key('ArrowDown',{shiftKey:true});const chosen=[...t.querySelectorAll('.journal-selected')].map(c=>c.dataset.student+'|'+c.dataset.lesson);key('Escape');const cleared=t.querySelectorAll('.journal-selected').length;const search=document.querySelector('[aria-label="Найти ученика в журнале"]');search.value='Ученик 2';search.dispatchEvent(new Event('input',{bubbles:true}));const focusable=[...t.querySelectorAll('td.cell[tabindex="0"]')];const visible=focusable.length===1&&!focusable[0].parentElement.hidden;search.value='';search.dispatchEvent(new Event('input',{bubbles:true}));return {end,home,last,first,chosen,cleared,visible}})()`);
+ assert.deepEqual(keyboardState,{end:37,home:2,last:'perf-p29',first:'perf-p0',chosen:['perf-p0|perf-l0','perf-p0|perf-l1','perf-p1|perf-l0','perf-p1|perf-l1'],cleared:0,visible:true});
+ console.log('JOURNAL KEYBOARD RANGE PASS: roving focus, Home/End, filtered rows, Shift rectangle and Escape cancellation.');
+
  // The delegated Enter handler opens the correct cell and the incremental
  // mark patch keeps the table and all unchanged badge nodes alive.
  await evalJs('document.querySelector("table.journal td[data-student=perf-p0][data-lesson=perf-l0]").focus()');

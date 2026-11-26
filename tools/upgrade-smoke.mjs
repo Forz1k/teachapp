@@ -7,7 +7,7 @@ import {webkit,devices} from 'playwright';
 
 const candidate=process.cwd(),baseline=resolve(process.argv[2]||'');
 const readVersion=async root=>JSON.parse(await readFile(resolve(root,'package.json'),'utf8')).version;
-const baselineVersion=await readVersion(baseline);assert.ok(['5.1.0','5.1.1'].includes(baselineVersion));
+const baselineVersion=await readVersion(baseline);assert.ok(['5.1.0','5.1.1','6.0.0'].includes(baselineVersion));
 const expected=await readVersion(candidate);assert.notEqual(expected,baselineVersion);
 let root=baseline;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png'};
@@ -60,12 +60,12 @@ try{
   // An older published client must reject a newer authenticated format even
   // when the contents would otherwise be valid; no local write is allowed.
   const oldPacket=await (await import('./js/privacy.js')).decryptBackup(remote.envelope,password);
-  const futureEnvelope=await encryptBackup({...oldPacket,backupVersion:22},password);
+  const futureVersion=backup.version+1,futureEnvelope=await encryptBackup({...oldPacket,backupVersion:futureVersion},password);
   let oldRejected=false;try{await sync.verifySyncSnapshot({revision:1,envelope:futureEnvelope},password,area);}catch{oldRejected=true;}
-  let oldBackupRejected=false;try{(await import('./js/backup.js')).validateBackup({...backup,version:22});}catch{oldBackupRejected=true;}
-  return {profile,data:await db.dumpAll(),backupData:backup.data,protectedBackup:await encryptBackup(backup,password),remote,matchId:d.id,password,endpoint,futureEnvelope,oldRejected,oldBackupRejected};
+  let oldBackupRejected=false;try{(await import('./js/backup.js')).validateBackup({...backup,version:futureVersion});}catch{oldBackupRejected=true;}
+  return {profile,data:await db.dumpAll(),backupData:backup.data,protectedBackup:await encryptBackup(backup,password),remote,matchId:d.id,password,endpoint,futureEnvelope,futureVersion,oldRejected,oldBackupRejected};
  });
- assert.equal(fixture.oldRejected,true,'old published client must reject v22 sync packet');assert.equal(fixture.oldBackupRejected,true,'old client must reject v22 backup');
+ assert.equal(fixture.oldRejected,true,'old published client must reject a newer sync format');assert.equal(fixture.oldBackupRejected,true,'old client must reject a newer backup format');
  assert.equal(fixture.remote.revision,1);assert.equal(fixture.data.lessons.length,2);assert.equal(fixture.data.coachLive.length,1);
  assert.equal(fixture.backupData.meta.some(x=>x.id.startsWith('sync-checkpoint-')),false);
  root=candidate; // Same origin and browser context; only static server content changes.
@@ -92,9 +92,11 @@ try{
   return {revision:result.revision,writes,status:(await sync.localSyncState({area:'school',endpoint,password})).status};
  },fixture);
  assert.deepEqual(reconcile,{revision:1,writes:0,status:'clean'});
- const compat=await page.evaluate(async({futureEnvelope,password})=>{const sync=await import('./js/sync.js'),S=await import('./js/store.js');return {remote:await sync.verifySyncSnapshot({revision:1,envelope:futureEnvelope},password,'school'),backup:(await S.makeBackup()).version};},fixture);
- assert.deepEqual(compat,{remote:{revision:1,empty:false},backup:22});
- console.log('FORMAT FENCE PASS: published v21 refuses v22, new client reads both, preserved old checkpoint without PUT.');
+ const compat=await page.evaluate(async({futureEnvelope,password})=>{const sync=await import('./js/sync.js'),S=await import('./js/store.js');let remote=null,rejected=null;try{remote=await sync.verifySyncSnapshot({revision:1,envelope:futureEnvelope},password,'school');}catch(e){rejected=e.code||e.message;}return {remote,rejected,backup:(await S.makeBackup()).version};},fixture);
+ assert.equal(compat.backup,22);
+ if(fixture.futureVersion<=compat.backup){assert.deepEqual(compat.remote,{revision:1,empty:false});assert.equal(compat.rejected,null);}
+ else{assert.equal(compat.remote,null);assert.equal(compat.rejected,'newer-backup-format');}
+ console.log('FORMAT FENCE PASS: published '+baselineVersion+' refuses newer v'+fixture.futureVersion+'; candidate handles supported formats and rejects unsupported versions, preserving checkpoint without PUT.');
  await context.setOffline(true);await page.reload();await page.locator('.workspace-nav').waitFor();
  const offline=await page.evaluate(async id=>{
   const db=await import('./js/db.js'),C=await import('./js/coach.js'),{replayDetailed}=await import('./js/match-protocol.js'),draft=await db.get('coachLive',id);

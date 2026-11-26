@@ -1,0 +1,38 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';import assert from 'node:assert/strict';
+import {SCHEMA} from '../js/db.js';
+import {openVaultLab,stageVaultLab,replaceVaultLab,readVaultLab,openVaultReadSessionLab} from '../tools/prototypes/local-vault.mjs';
+import {vaultBundleActivationLab} from '../tools/prototypes/vault-bundle-activation-lab.mjs';
+const password='synthetic-read-session-password';
+const passwords={school:'synthetic-school-password',coach:'synthetic-coach-password',workspace:'synthetic-owner-password'};
+test('Key session authenticates once, enforces idle deadline and never resumes a stale revision',async t=>{
+ const db=await openVaultLab('teachapp-vault-lab-read-session'),other=await openVaultLab('teachapp-vault-lab-other-session');t.after(()=>{db.close();other.close();});
+ const data={students:[{id:'p',name:'Synthetic'}]};
+ await stageVaultLab(db,{scope:'school',password,data});
+ await assert.rejects(openVaultReadSessionLab(db,{scope:'school',password:'incorrect-password'}),/неверный пароль/);
+ let clock=0;const session=await openVaultReadSessionLab(db,{scope:'school',password,idleMs:1000,now:()=>clock});t.after(()=>session.close());
+ assert.deepEqual((await session.read()).data.students,data.students);
+ clock=700;await session.read();clock=1699;assert.equal(session.isLocked(),false);
+ clock=1700;assert.equal(session.isLocked(),true);await assert.rejects(session.read(),/заблокирован/);
+ const fresh=await openVaultReadSessionLab(db,{scope:'school',password});t.after(()=>fresh.close());
+ const pending=fresh.read();fresh.close();await assert.rejects(pending,/заблокирован/);
+ const wrongDb=await openVaultReadSessionLab(db,{scope:'school',password});t.after(()=>wrongDb.close());
+ await assert.rejects(wrongDb.read(other),/Другая база/);assert.equal(wrongDb.isLocked(),true);
+ const stale=await openVaultReadSessionLab(db,{scope:'school',password});t.after(()=>stale.close());
+ const old=await readVaultLab(db,{scope:'school',password});
+ await replaceVaultLab(db,{scope:'school',password,expectedRevision:old.revision,data});
+ await assert.rejects(stale.read(),/повреждение данных/);assert.equal(stale.isLocked(),true);
+});
+test('Activated scope sessions reopen after restart and lock independently without retaining a password',async t=>{
+ const locks={request:(_name,_opts,fn)=>Promise.resolve().then(fn)},id='session-restart',a=vaultBundleActivationLab(id,{locks});
+ const data=Object.fromEntries(Object.keys(SCHEMA).map(n=>[n,[]]));data.meta.push({id:'owner',value:'private'});data.classes.push({id:'c',name:'Synthetic class',gradeLevel:7});
+ const staged=await a.stage({data,passwords});await a.activate({expectedData:data,passwords,expectedBundleId:staged.bundleId});
+ const school=await a.openScopeSession({scope:'school',password:passwords.school}),owner=await a.openScopeSession({scope:'workspace',password:passwords.workspace});t.after(()=>{school.close();owner.close();});
+ assert.equal((await school.read()).classes[0].id,'c');assert.equal((await owner.read()).meta[0].value,'private');
+ assert.ok(!Object.hasOwn(await school.read(),'meta'));school.close();await assert.rejects(school.read(),/заблокирован/);assert.equal(owner.isLocked(),false);
+ const restarted=vaultBundleActivationLab(id,{locks});assert.equal((await restarted.status()).active,true);
+ await assert.rejects(restarted.openScopeSession({scope:'school',password:passwords.coach}),/неверный пароль/);
+ const reopened=await restarted.openScopeSession({scope:'school',password:passwords.school});t.after(()=>reopened.close());
+ const pending=reopened.read();reopened.close();await assert.rejects(pending,/заблокирован/);
+ assert.equal((await owner.read()).meta[0].value,'private');
+});

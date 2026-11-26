@@ -1,4 +1,4 @@
-import {filterJournalLessons,lessonFilterLabels,periodMarks} from '../journal-filters.js';
+import {filterJournalLessons,lessonFilterLabels,periodMarks,journalDensityLabels,readJournalDensity,saveJournalDensity,planJournalPaste,journalNavigation,journalRectangle} from '../journal-filters.js';
 import {animateOnce} from '../motion.js';
 import { openHealth, warning, checkGrade } from './health.js';
 /* screens/journal.js — сетка журнала класса: ученики × даты уроков.
@@ -104,6 +104,7 @@ export function renderJournal(root, ctx) {
   const viewMode=(()=>{try{return localStorage.getItem('teachapp.journal.view')==='cards'?'cards':'table';}catch{return 'table';}})();
   const viewToggle=el('button',{type:'button',class:'btn small',text:viewMode==='cards'?'Таблица':'Карточки',onclick:()=>{try{localStorage.setItem('teachapp.journal.view',viewMode==='cards'?'table':'cards');}catch{}store.notify();}});
   const tools=el('div',{class:'journal-tools'},[viewToggle]);topbar.append(tools);
+  if(students.length&&lessons.length)tools.append(el('button',{type:'button',class:'btn small',text:'Вставить оценки',onclick:()=>{const q=search.value.trim().toLocaleLowerCase('ru');openJournalPaste(classId,students.filter(s=>s.fullName.toLocaleLowerCase('ru').includes(q)),lessons);}}));
   const statusFilter=el('select',{'aria-label':'Статус уроков'},Object.entries(lessonFilterLabels).map(([value,text])=>el('option',{value,text})));statusFilter.value=filters.status;
   const fromFilter=el('input',{type:'date',min:tr.from,max:tr.to,value:filters.from,'aria-label':'Уроки с даты'}),toFilter=el('input',{type:'date',min:tr.from,max:tr.to,value:filters.to,'aria-label':'Уроки по дату'}),topicFilter=el('input',{type:'search',value:filters.query,placeholder:'Поиск по теме','aria-label':'Поиск по теме урока'});
   const saveFilters=next=>{try{sessionStorage.setItem(filterKey,JSON.stringify(next));}catch{}store.notify();};
@@ -123,7 +124,7 @@ export function renderJournal(root, ctx) {
   }
 
   /* ---- сетка ---- */
-  const wrap = el('div', { class: 'grid-wrap journal-grid',tabindex:'0','aria-label':'Таблица журнала. Прокрутите для просмотра дат.' });
+  const wrap = el('div', { class: 'grid-wrap journal-grid',tabindex:'0','data-density':readJournalDensity(),'aria-label':'Таблица журнала. Прокрутите для просмотра дат.' });
 
   if (!lessons.length) {
     wrap.append(el('div', { class: 'empty' }, [
@@ -196,7 +197,7 @@ export function renderJournal(root, ctx) {
         class: `cell ${mark ? 'filled' : ''}${lesson.date===today?' journal-today':''}`,
         'data-student': st.id,
         'data-lesson': lesson.id,
-        tabindex:'0','aria-label':st.fullName+' · '+M.lessonLabel(lesson)+' · '+(mark?.value||mark?.flag||'нет отметки'),
+        tabindex:'-1','aria-label':st.fullName+' · '+M.lessonLabel(lesson)+' · '+(mark?.value||mark?.flag||'нет отметки'),
       }, [el('div', { class: 'cell-inner' }, [badgeFor(mark)])]);
 
       cellBadges.set(cell,badgeKey(mark));
@@ -220,13 +221,42 @@ export function renderJournal(root, ctx) {
   table.append(tbody);
   // Delegate cell actions instead of allocating two listeners for every cell.
   // Keep native keyboard focus and identical click/keyboard behavior.
-  tbody.addEventListener('click',e=>{const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell))return;ui.haptic(6);openMarkSheet(cell.dataset.student,cell.dataset.lesson,classId);});
-  tbody.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell))return;e.preventDefault();openMarkSheet(cell.dataset.student,cell.dataset.lesson,classId);});
+  let selecting=false,focusedCell=null,rangeAnchor=null;const chosenCells=new Set();
+  const visibleRows=()=>[...tbody.rows].filter(row=>!row.hidden);
+  const coordinates=(cell,rows)=>({row:rows.indexOf(cell.parentElement),col:cell.cellIndex-2});
+  function roving(cell,focus=false){if(focusedCell)focusedCell.tabIndex=-1;focusedCell=cell||null;if(focusedCell){focusedCell.tabIndex=0;if(focus)focusedCell.focus();}}
+  roving(tbody.querySelector('td.cell'));
+  tbody.addEventListener('focusin',e=>{const cell=e.target.closest?.('td.cell');if(cell&&tbody.contains(cell)&&!cell.parentElement.hidden)roving(cell);});
+  const selectionToggle=el('button',{type:'button',class:'btn small',text:'Выбрать ячейки','aria-pressed':'false'}),selectionApply=el('button',{type:'button',class:'btn small primary',text:'Изменить выбранные',disabled:true,hidden:true}),selectionStatus=el('span',{role:'status',class:'journal-count',hidden:true});
+  function selectionDraw(){selectionToggle.setAttribute('aria-pressed',String(selecting));selectionToggle.textContent=selecting?'Отменить выбор':'Выбрать ячейки';selectionApply.hidden=selectionStatus.hidden=!selecting;selectionApply.disabled=!chosenCells.size;selectionStatus.textContent='Выбрано: '+chosenCells.size+' · Shift + стрелки / клик — прямоугольник';}
+  function clearSelection(){for(const cell of chosenCells)cell.classList.remove('journal-selected');chosenCells.clear();rangeAnchor=null;selectionDraw();}
+  function toggleCell(cell){if(chosenCells.has(cell)){chosenCells.delete(cell);cell.classList.remove('journal-selected');rangeAnchor=null;}else{if(chosenCells.size>=500)return ui.toast('Не более 500 ячеек');chosenCells.add(cell);cell.classList.add('journal-selected');rangeAnchor=cell;}selectionDraw();}
+  function selectRange(anchor,target){
+   const rows=visibleRows();let cells;
+   try{cells=journalRectangle(coordinates(anchor,rows),coordinates(target,rows),rows.length,lessons.length).map(p=>rows[p.row].cells[p.col+2]);}catch(e){ui.toast(e.message);return false;}
+   for(const cell of chosenCells)cell.classList.remove('journal-selected');chosenCells.clear();
+   for(const cell of cells){chosenCells.add(cell);cell.classList.add('journal-selected');}
+   rangeAnchor=anchor;selectionDraw();return true;
+  }
+  selectionToggle.onclick=()=>{selecting=!selecting;clearSelection();};selectionApply.onclick=()=>{if(!chosenCells.size)return;const cells=[...chosenCells].map(cell=>({student:studentById.get(cell.dataset.student),lesson:lessons.find(l=>l.id===cell.dataset.lesson)}));openJournalSelection(classId,cells,()=>{selecting=false;clearSelection();});};
+  tools.append(selectionToggle,selectionApply,selectionStatus);
+  tbody.addEventListener('click',e=>{const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell))return;roving(cell,true);ui.haptic(6);if(selecting){if(e.shiftKey&&rangeAnchor)selectRange(rangeAnchor,cell);else toggleCell(cell);return;}openMarkSheet(cell.dataset.student,cell.dataset.lesson,classId);});
+  tbody.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell))return;e.preventDefault();if(e.repeat)return;if(selecting){toggleCell(cell);return;}openMarkSheet(cell.dataset.student,cell.dataset.lesson,classId);});
   const filterStatus=el('p',{class:'empty',text:'Ученики не найдены',hidden:true});
-  search.oninput=()=>{const q=search.value.trim().toLocaleLowerCase('ru');let count=0;for(const row of tbody.rows){row.hidden=!row.dataset.name.includes(q);if(!row.hidden)count++;}filterStatus.hidden=count!==0;};
+  search.oninput=()=>{clearSelection();const q=search.value.trim().toLocaleLowerCase('ru');let count=0;for(const row of tbody.rows){row.hidden=!row.dataset.name.includes(q);if(!row.hidden)count++;}filterStatus.hidden=count!==0;if(!focusedCell||focusedCell.parentElement.hidden)roving(visibleRows()[0]?.querySelector('td.cell'));};
   wrap.append(table,filterStatus);
-  wrap.addEventListener('keydown',e=>{if(e.key==='Escape'&&wrap.classList.contains('journal-expanded')){wrap.querySelector('.journal-close-expanded')?.click();return;}const cell=e.target.closest?.('.cell');if(!cell||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;const row=cell.parentElement,col=cell.cellIndex;let target=null;if(e.key==='ArrowLeft'||e.key==='ArrowRight')target=row.cells[col+(e.key==='ArrowLeft'?-1:1)];else{let r=e.key==='ArrowUp'?row.previousElementSibling:row.nextElementSibling;while(r?.hidden)r=e.key==='ArrowUp'?r.previousElementSibling:r.nextElementSibling;target=r?.cells[col];}if(target?.classList.contains('cell')){e.preventDefault();target.focus();}});
+  wrap.addEventListener('keydown',e=>{
+   if(e.key==='Escape'&&selecting){e.preventDefault();selecting=false;clearSelection();return;}
+   if(e.key==='Escape'&&wrap.classList.contains('journal-expanded')){e.preventDefault();wrap.querySelector('.journal-close-expanded')?.click();return;}
+   const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell)||e.altKey||((e.ctrlKey||e.metaKey)&&!['Home','End'].includes(e.key)))return;
+   const rows=visibleRows(),p=coordinates(cell,rows),next=journalNavigation(p.row,p.col,rows.length,lessons.length,e.key,e.ctrlKey||e.metaKey);
+   if(!next)return;e.preventDefault();const target=rows[next.row].cells[next.col+2];
+   if(selecting&&e.shiftKey){if(!selectRange(rangeAnchor||cell,target))return;}
+   else if(selecting)rangeAnchor=null;
+   roving(target,true);
+  });
   tools.append(el('button',{type:'button',class:'btn small',text:'Сегодня',onclick:()=>{const th=table.querySelector('th.journal-today');if(!th)return ui.toast('Сегодня нет урока в выбранном периоде');const left=th.getBoundingClientRect().left-wrap.getBoundingClientRect().left;wrap.scrollLeft+=left-(table.querySelector('.col-num').offsetWidth+table.querySelector('.col-name').offsetWidth);syncScroll();}}));
+  const density=el('select',{'aria-label':'Масштаб журнала',class:'journal-density'},Object.entries(journalDensityLabels).map(([value,text])=>el('option',{value,text})));density.value=readJournalDensity();density.onchange=()=>{try{const value=saveJournalDensity(density.value);const left=wrap.scrollLeft;wrap.dataset.density=value;wrap.scrollLeft=left;syncScroll();}catch(e){density.value=readJournalDensity();ui.toast(e.message);}};tools.append(density);
   const full=el('button',{type:'button',class:'btn small',text:'Развернуть',onclick:()=>{wrap.classList.toggle('journal-expanded');if(wrap.classList.contains('journal-expanded')){const close=el('button',{type:'button',class:'btn wide journal-close-expanded',text:'Свернуть журнал',onclick:()=>{wrap.classList.remove('journal-expanded');close.remove();full.textContent='Развернуть';syncScroll();}});wrap.prepend(close);close.focus();}else wrap.querySelector('.journal-close-expanded')?.remove();full.textContent=wrap.classList.contains('journal-expanded')?'Свернуть':'Развернуть';syncScroll();}});tools.append(full);
   // Horizontal navigation is visible even when native scrollbars are hidden by the OS.
   const range=el('input',{type:'range',min:'0',max:'1000',step:'1',value:'0','aria-label':'Горизонтальная прокрутка журнала'});
@@ -832,4 +862,27 @@ export function openQuickEntrySheet(classId, initialDate) {
       ui.openSheet(sheet);
     } catch { ui.toast('Не удалось открыть урок'); }
   })();
+}
+
+function journalPreviewLabel(lesson){return M.lessonLabel(lesson)+' · '+(store.state.topics.find(t=>t.id===lesson.topicId)?.name||'Без темы');}
+/** Explicit start cell, local TSV preview, then transactional write. */
+export function openJournalPaste(classId,students,lessons){
+ if(!students.length||!lessons.length)return ui.toast('Нет видимых учеников или уроков');
+ const select=(label,rows)=>el('select',{'aria-label':label},rows.map(([value,text])=>el('option',{value,text}))),field=(title,node)=>el('label',{class:'field'},[title,node]);
+ const pupil=select('Начальный ученик',students.map(s=>[s.id,s.fullName])),lesson=select('Начальный урок',lessons.map(l=>[l.id,M.lessonLabel(l)])),source=el('textarea',{rows:6,maxlength:20000,placeholder:'5\t4\tН\n3\t5\t4','aria-label':'Блок оценок TSV'}),preview=el('div',{role:'status','aria-live':'polite'});let planned=null,busy=false;
+ const apply=el('button',{type:'button',class:'btn primary wide',text:'Записать блок',disabled:true,onclick:async()=>{if(!planned||busy)return;const snapshot=planned;busy=true;apply.disabled=true;try{if(!await ui.confirmDialog({title:'Записать оценки?',text:'Отметок: '+snapshot.entries.length+'. Существующие ячейки не перезаписываются. Подтвердите участие и ограничения нагрузки для всех выбранных уроков.',ok:'Записать'}))return;if(!preview.isConnected||planned!==snapshot)return;const n=await store.applyJournalPaste(classId,snapshot.entries,true,{requireLessonSnapshot:true});ui.closeSheet();ui.toast('Записано отметок: '+n);}catch(e){preview.replaceChildren(el('p',{text:e.message}));planned=null;}finally{busy=false;apply.disabled=!planned;}}});
+ const invalidate=()=>{planned=null;preview.replaceChildren();apply.disabled=true;};pupil.onchange=lesson.onchange=source.oninput=invalidate;
+ const inspect=el('button',{type:'button',class:'btn wide',text:'Предпросмотр',onclick:()=>{invalidate();try{const plan=planJournalPaste(source.value,students,lessons,{studentId:pupil.value,lessonId:lesson.value}),marks=store.markMap(classId),byLesson=new Map(),parts=new Map(store.state.participation.map(p=>[p.lessonId+'|'+p.studentId,p])),blocked=[];for(const e of plan.entries){const l=lessons.find(x=>x.id===e.lessonId);e.expectedLesson=store.journalLessonSnapshot(l);if(!byLesson.has(l.id)){const check=store.lessonCheck(l);byLesson.set(l.id,new Set([...check.matches,...check.potentialMatches].map(m=>m.studentId)));}const reason=l.date>M.todayIso()?'Будущий урок':store.lessonBatchReason(e.value==='Н'?'absent':'grade',marks.get(e.lessonId+'|'+e.studentId),parts.get(e.lessonId+'|'+e.studentId),!!store.activeExemption(e.studentId,l.date),byLesson.get(l.id).has(e.studentId));if(reason)blocked.push(e.studentName+' · '+M.lessonLabel(l)+' · '+reason);}
+  preview.append(el('p',{text:plan.rows+' строк × '+plan.columns+' столбцов · '+plan.entries.length+' отметок'}),...plan.entries.map(e=>el('p',{text:e.studentName+' · '+journalPreviewLabel(lessons.find(l=>l.id===e.lessonId))+' → '+e.value})));if(blocked.length){preview.prepend(el('p',{class:'profile-note',text:'Весь блок заблокирован: '+blocked.join('; ')}));return;}planned=plan;apply.disabled=false;}catch(e){preview.replaceChildren(el('p',{text:e.message}));}}});
+ ui.openSheet(el('div',{class:'coach-stack'},[el('h2',{text:'Вставка блока оценок'}),el('p',{text:'Скопируйте прямоугольный блок без заголовков из электронной таблицы. Порядок — видимые ученики и уроки. Пустые ячейки пропускаются. Допустимы 1–5 и Н. Существующие отметки не заменяются.'}),field('Начальная строка',pupil),field('Начальный столбец',lesson),source,inspect,preview,apply]));
+}
+
+/** Explicit selected-cell replacement: only ordinary grades, never attendance or norm marks. */
+export function openJournalSelection(classId,cells,onSaved=()=>{}){
+ const grade=el('select',{'aria-label':'Новая оценка'},['5','4','3','2','1'].map(v=>el('option',{value:v,text:v}))),preview=el('div',{role:'status','aria-live':'polite'});let plan=null,busy=false;
+ const save=el('button',{type:'button',class:'btn primary wide',text:'Подтвердить замену',disabled:true,onclick:async()=>{if(!plan||busy)return;const snapshot=plan;busy=true;save.disabled=true;try{if(!await ui.confirmDialog({title:'Изменить выбранные оценки?',text:'Ячеек: '+snapshot.length+'. Обычные существующие оценки будут заменены, веса сохранены. Подтвердите участие и ограничения нагрузки.',ok:'Изменить'}))return;if(!preview.isConnected||snapshot!==plan)return;await store.applyJournalPaste(classId,snapshot,true,{replace:true,requireLessonSnapshot:true});onSaved();ui.closeSheet();ui.toast('Обновлено ячеек: '+snapshot.length);}catch(e){plan=null;preview.replaceChildren(el('p',{text:e.message}));}finally{busy=false;save.disabled=!plan;}}});
+ function draw(){plan=null;save.disabled=true;preview.replaceChildren();try{const marks=store.markMap(classId),parts=new Map(store.state.participation.map(p=>[p.lessonId+'|'+p.studentId,p])),checks=new Map(),rows=[],blocked=[];for(const {student,lesson} of cells){const old=marks.get(lesson.id+'|'+student.id)||null;if(!checks.has(lesson.id)){const v=store.lessonCheck(lesson);checks.set(lesson.id,new Set([...v.matches,...v.potentialMatches].map(x=>x.studentId)));}const reason=lesson.date>M.todayIso()?'Будущий урок':store.journalReplacementReason(old)||store.lessonBatchReason('grade',null,parts.get(lesson.id+'|'+student.id),!!store.activeExemption(student.id,lesson.date),checks.get(lesson.id).has(student.id));if(reason)blocked.push(student.fullName+' · '+M.lessonLabel(lesson)+' · '+reason);rows.push({studentId:student.id,studentName:student.fullName,lessonId:lesson.id,date:lesson.date,slot:lesson.slot??null,time:lesson.time||'',value:grade.value,expectedMark:store.journalMarkSnapshot(old),expectedLesson:store.journalLessonSnapshot(lesson)});preview.append(el('p',{text:student.fullName+' · '+journalPreviewLabel(lesson)+' · '+(old?.value||old?.flag||'—')+' → '+grade.value}));}
+  if(blocked.length){preview.prepend(el('p',{text:'Замена заблокирована: '+blocked.join('; ')}));return;}if(rows.length){plan=rows;save.disabled=false;}
+ }catch(e){preview.replaceChildren(el('p',{text:e.message}));}}
+ grade.onchange=draw;draw();ui.openSheet(el('div',{class:'coach-stack'},[el('h2',{text:'Массовое изменение оценок'}),el('p',{text:'Только выбранные ячейки. Н, ОСВ, нормативы и ограничения не изменяются; при конфликте весь блок отменяется.'}),el('label',{class:'field'},['Оценка',grade]),preview,save]));
 }

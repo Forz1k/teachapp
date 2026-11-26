@@ -1,5 +1,5 @@
 import {mediaTarget,readMediaVersion,writePublicMedia,mediaProjection} from './public-media.js';
-import {archiveTarget,archiveKey,readArchiveVersion,writeArchiveRecord,fetchArchivePage,equalArchiveResult,fetchArchiveById,queueArchiveResult,archiveProjection} from './public-archive.js';
+import {archiveTarget,archiveKey,equalArchiveResult,queueArchiveResult,archiveProjection,resolveArchiveRoute,routedArchivePage,routedArchiveVersion,routedArchiveFind,routedArchiveWrite,requireWritableArchive} from './public-archive.js';
 /* Team portal state is separate from school/coach records. Opt-in publishing only. */
 import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures,checkHandoffMatch} from './public-portal.js';
 import {firebaseSignIn,firebasePublisher,samePortalContent} from './firebase-portal.js';
@@ -218,8 +218,12 @@ function archiveSession(id){
  const stillAllowed=()=>{if(e.session!==session||e.epoch!==epoch||isPaused(e)||!d.enabled||d.pendingDelete||e.conflict||e.dirty||e.running)throw Error('Состояние публикации изменилось. Обновите список.');};
  return {session,target,portal:portalAddress(d.origin,d.owner,d.slug),stillAllowed};
 }
-export async function listExtendedArchive(id,{cursor=null,fetcher=fetch}={}){
- const access=archiveSession(id),page=await fetchArchivePage(access.target,{cursor,fetcher});access.stillAllowed();return page;
+async function resolvePublisherArchive(access,fetcher,write=false){
+ const route=await resolveArchiveRoute(access.portal,{fetcher});access.stillAllowed();
+ return write?requireWritableArchive(route):route;
+}
+export async function listExtendedArchive(id,{cursor=null,expectedRoute=null,fetcher=fetch}={}){
+ const access=archiveSession(id),route=await resolvePublisherArchive(access,fetcher),reset=expectedRoute!==null&&expectedRoute!==route.key,page=await routedArchivePage(route,{cursor:reset?null:cursor,fetcher});access.stillAllowed();return {...page,routeKey:route.key,reset};
 }
 // Serialize every archive mutation in this tab, including the confirmation
 // dialog and all awaits. ETag CAS remains the cross-device record guard.
@@ -232,19 +236,19 @@ export async function publishExtendedResult(id,result,options={}){
  return withArchiveMutation(id,()=>publishExtendedResultCore(id,result,options));
 }
 async function publishExtendedResultCore(id,result,{confirm,fetcher=fetch}={}){
- const access=archiveSession(id),k=archiveKey(result),version=await readArchiveVersion(access.target,k,fetcher);
- access.stillAllowed();const existing=await fetchArchiveById(access.target,result.id,fetcher);access.stillAllowed();if(existing&&existing.archiveKey!==k)throw Error('Этот результат уже сохранён под другой датой. Проверьте архив.');if(!await confirm?.(version.value))return false;access.stillAllowed();
- const token=await access.session.getToken();access.stillAllowed();await writeArchiveRecord(access.target,k,result,token,version.etag,fetcher);return true;
+ const access=archiveSession(id),route=await resolvePublisherArchive(access,fetcher,true),k=archiveKey(result),version=await routedArchiveVersion(route,result,fetcher);
+ access.stillAllowed();const existing=await routedArchiveFind(route,result,fetcher);access.stillAllowed();if(existing&&existing.archiveKey!==k)throw Error('Этот результат уже сохранён под другой датой. Проверьте архив.');if(!await confirm?.(version.value))return false;access.stillAllowed();
+ const token=await access.session.getToken();access.stillAllowed();await routedArchiveWrite(route,result,result,token,version.etag,fetcher);return true;
 }
 export async function removeExtendedResult(id,result,options={}){
  return withArchiveMutation(id,()=>removeExtendedResultCore(id,result,options));
 }
 async function removeExtendedResultCore(id,result,{confirm,fetcher=fetch}={}){
- const access=archiveSession(id),k=archiveKey(result),version=await readArchiveVersion(access.target,k,fetcher);
+ const access=archiveSession(id),route=await resolvePublisherArchive(access,fetcher,true),version=await routedArchiveVersion(route,result,fetcher);
  access.stillAllowed();if(!version.value)return false;
  if(!equalArchiveResult(version.value,result))throw Error('Запись изменилась. Обновите список перед удалением.');
  if(!await confirm?.(version.value))return false;access.stillAllowed();
- const token=await access.session.getToken();access.stillAllowed();await writeArchiveRecord(access.target,k,null,token,version.etag,fetcher);access.stillAllowed();const e=entry(id);e.data.archivePending=e.data.archivePending.filter(x=>x.id!==result.id);save(e);notify(e);return true;
+ const token=await access.session.getToken();access.stillAllowed();await routedArchiveWrite(route,result,null,token,version.etag,fetcher);access.stillAllowed();const e=entry(id);e.data.archivePending=e.data.archivePending.filter(x=>x.id!==result.id);save(e);notify(e);return true;
 }
 /** Copy only already-confirmed public score projections; never replace existing records. */
 export async function migrateExtendedArchive(id,options={}){
@@ -253,13 +257,14 @@ export async function migrateExtendedArchive(id,options={}){
 async function migrateExtendedArchiveCore(id,{confirm,fetcher=fetch}={}){
  const access=archiveSession(id),rows=clone(entry(id).data.archive);
  if(!await confirm?.(rows.length))return {cancelled:true,copied:0,existing:0,conflicts:0,failed:0};
+ const route=await resolvePublisherArchive(access,fetcher,true);
  const report={cancelled:false,copied:0,existing:0,conflicts:0,failed:0};
  for(const row of rows){access.stillAllowed();try{
-  const k=archiveKey(row),version=await readArchiveVersion(access.target,k,fetcher);access.stillAllowed();
+  const version=await routedArchiveVersion(route,row,fetcher);access.stillAllowed();
   if(version.value){if(equalArchiveResult(version.value,row))report.existing++;else report.conflicts++;continue;}
-   const existing=await fetchArchiveById(access.target,row.id,fetcher);access.stillAllowed();if(existing){report.conflicts++;continue;}
+   const existing=await routedArchiveFind(route,row,fetcher);access.stillAllowed();if(existing){report.conflicts++;continue;}
   const token=await access.session.getToken();access.stillAllowed();
-  await writeArchiveRecord(access.target,k,row,token,version.etag,fetcher);report.copied++;
+  await routedArchiveWrite(route,row,row,token,version.etag,fetcher);report.copied++;
  }catch(e){access.stillAllowed();if(e.status===412)report.conflicts++;else report.failed++;}}
  return report;
 }
@@ -283,18 +288,18 @@ async function sendPendingArchiveCore(id,{confirm,fetcher=fetch}={}){
  const report={copied:0,existing:0,conflicts:0,failed:0};
  {
   if(!await confirm?.(rows.length))return {...report,cancelled:true};
-  access.stillAllowed();
+  access.stillAllowed();const route=await resolvePublisherArchive(access,fetcher,true);
   for(const row of rows){
    try{
     access.stillAllowed();
     if(!e.data.archivePending.some(x=>equalArchiveResult(x,row)))continue;
-    const k=archiveKey(row),version=await readArchiveVersion(access.target,k,fetcher);access.stillAllowed();
+    const version=await routedArchiveVersion(route,row,fetcher);access.stillAllowed();
     if(version.value&&!equalArchiveResult(version.value,row)){report.conflicts++;continue;}
     if(!version.value){
-     const existing=await fetchArchiveById(access.target,row.id,fetcher);access.stillAllowed();if(existing){report.conflicts++;continue;}
+     const existing=await routedArchiveFind(route,row,fetcher);access.stillAllowed();if(existing){report.conflicts++;continue;}
      const token=await access.session.getToken();access.stillAllowed();
      if(!e.data.archivePending.some(x=>equalArchiveResult(x,row)))continue;
-     await writeArchiveRecord(access.target,k,row,token,version.etag,fetcher);report.copied++;
+     await routedArchiveWrite(route,row,row,token,version.etag,fetcher);report.copied++;
     }else report.existing++;
     access.stillAllowed();
     const before=e.data.archivePending;e.data.archivePending=before.filter(x=>!equalArchiveResult(x,row));

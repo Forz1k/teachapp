@@ -81,9 +81,9 @@ async function openSavedResults(team,back){
 }
 
 async function openExtendedArchive(team,back){
- const id=team.id,body=el('div',{class:'vb-stack'}),list=el('div',{class:'vb-stack'}),notice=p(''),link=P.portalLink(id);let rows=[],cursor=null,busy=false,loaded=false;
+ const id=team.id,body=el('div',{class:'vb-stack'}),list=el('div',{class:'vb-stack'}),notice=p(''),link=P.portalLink(id);let rows=[],cursor=null,busy=false,loaded=false,routeKey=null;
  const run=async fn=>{if(busy)return;busy=true;draw();try{await fn();}catch(e){notice.textContent=e.message;}finally{busy=false;draw();}};
- const load=async(next=false)=>{const page=await P.listExtendedArchive(id,{cursor:next?cursor:null});rows=[...new Map([...(next?rows:[]),...page.rows].map(r=>[r.archiveKey,r])).values()];cursor=page.cursor;loaded=true;notice.textContent='Получено '+rows.length+' записей'+(cursor?' · есть следующие страницы':'');};
+ const load=async(next=false)=>{const page=await P.listExtendedArchive(id,{cursor:next?cursor:null,expectedRoute:routeKey});routeKey=page.routeKey;rows=[...new Map([...(next&&!page.reset?rows:[]),...page.rows].map(r=>[r.archiveKey,r])).values()];cursor=page.cursor;loaded=true;notice.textContent='Получено '+rows.length+' записей'+(cursor?' · есть следующие страницы':'');};
  const pending=el('div',{class:'vb-stack'});
  const send=btn('Отправить очередь в постоянный архив',()=>run(async()=>{const result=await P.sendPendingArchive(id,{confirm:n=>confirmDialog({title:'Опубликовать '+n+' результатов постоянно?',text:'Передаются только ранее разрешённые к публикации счета. Отличающиеся архивные записи не заменяются.',ok:'Отправить'})});if(!result.cancelled){await load();notice.textContent='Добавлено: '+result.copied+' · уже есть: '+result.existing+' · конфликты: '+result.conflicts+' · ошибки: '+result.failed;}}),'primary wide');
  const refresh=btn('Обновить список',()=>run(()=>load()),'wide');

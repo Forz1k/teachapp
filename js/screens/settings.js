@@ -1,8 +1,10 @@
-import {privacyIdleOptions,readShieldPreferences,saveShieldPreferences,screenLockEnabled,changeScreenLock} from '../privacy-shield.js';
+import {privacyIdleOptions,readShieldPreferences,saveShieldPreferences,screenLockEnabled,changeScreenLock,PRIVACY_VISIBILITY_EVENT} from '../privacy-shield.js';
 import {openBriefings,openGymBoards} from './methodical.js';
 import {isEncryptedBackup,decryptBackup} from '../privacy.js';
 import {retentionPreview,purgeExpired} from '../retention.js';
 import { validateBackup } from '../backup.js';
+import {verifyProtectedBackup} from '../backup-verify.js';
+import {inspectLocalMigration} from '../migration-preflight.js';
 /* screens/settings.js — настройки, импорт, экспорт, резервные копии, управление классами. */
 
 import { APP_VERSION } from '../version.js';
@@ -233,7 +235,7 @@ export function renderSettings(root, ctx = {}) {
     if(password!==repeat){ui.toast('Пароли не совпадают');return;}
     try{await exporter.exportBackup(password);}catch(e){ui.toast(e.message);}finally{password=repeat=null;}
   }})]));
-  const restoreInput = el('input', { type: 'file', accept: '.json', style: 'display:none' });
+  const restoreInput = el('input', { type: 'file', accept: '.json', 'aria-label':'Файл для восстановления', style: 'display:none' });
   restoreInput.addEventListener('change', async () => {
     const file = restoreInput.files?.[0];
     if (!file) return;
@@ -270,6 +272,28 @@ export function renderSettings(root, ctx = {}) {
     el('div', { class: 'label', text: 'Восстановить из копии' }),
     el('button', { class: 'btn small', type: 'button', text: 'Выбрать файл', onclick: () => restoreInput.click() }),
   ]));
+  const verifyInput=el('input',{type:'file',accept:'.json,application/json','aria-label':'Файл для проверки копии',style:'display:none'});
+  const verifyStatus=el('p',{role:'status',text:'Проверка защищённой копии без восстановления.'});
+  const verifyButton=el('button',{class:'btn wide',type:'button',text:'Проверить сохранённую защищённую копию',onclick:()=>verifyInput.click()});
+  verifyInput.onchange=async()=>{
+   const file=verifyInput.files?.[0];verifyInput.value='';if(!file||verifyButton.disabled)return;
+   verifyButton.disabled=true;let invalid=false,password=null;
+   const invalidate=()=>{invalid=true;verifyStatus.textContent='Проверка прервана. Повторите при необходимости.';};
+   const active=()=>!invalid&&verifyStatus.isConnected&&document.visibilityState==='visible'&&!document.body.classList.contains('privacy-covered');
+   window.addEventListener(PRIVACY_VISIBILITY_EVENT,invalidate);window.addEventListener('pagehide',invalidate);
+   try{
+    if(file.size>96*1024*1024)throw Error('Файл слишком велик');
+    const envelope=await exporter.readBackupFile(file);if(!active())return;
+    if(!isEncryptedBackup(envelope))throw Error('Требуется защищённая копия');
+    password=await ui.promptDialog({title:'Пароль сохранённой копии',text:'Только проверка. Действующая база не будет заменена.',password:true,ok:'Проверить'});
+    if(password===null||!active())return;
+    const result=await verifyProtectedBackup(envelope,password,{load:store.makeBackup,active});
+    if(!active())return;
+    verifyStatus.textContent='Пароль и структура подтверждены. Записей: '+result.records+'. '+(result.comparison==='matches'?'Переносимые записи совпадают с текущим снимком (кроме даты и напоминания о копии).':result.comparison==='older-format'?'Копия старого формата; совпадение с текущей базой не подтверждено.':'Отличаются разделы: '+result.differentTables+'. Копия может быть более ранней.')+' Восстановление не выполнялось.';
+   }catch{if(active())verifyStatus.textContent='Не удалось подтвердить копию. Проверьте пароль, формат и размер файла. Данные не изменены.';}
+   finally{password=null;window.removeEventListener(PRIVACY_VISIBILITY_EVENT,invalidate);window.removeEventListener('pagehide',invalidate);verifyButton.disabled=false;}
+  };
+  backupBlock.append(verifyInput,verifyButton,verifyStatus);
   backupBlock.append(el('button',{class:'btn wide',type:'button',text:'Выборочная копия / восстановление',onclick:openSelectiveBackup}));
   backupBlock.append(el('button',{class:'btn wide',type:'button',text:'Синхронизация устройств · бета',onclick:openSync}));
   body.append(backupBlock);
@@ -281,6 +305,15 @@ export function renderSettings(root, ctx = {}) {
       diagnostics.textContent='Структура и связи корректны · записей '+Object.values(payload.data).reduce((n,a)=>n+a.length,0)+storage;
     }catch{diagnostics.textContent='Проверка не пройдена. Не удаляйте приложение и не очищайте хранилище. Сохраните защищённую копию для диагностики.';}finally{button.disabled=false;}
   }}),el('button',{class:'btn wide',type:'button',text:'Проверить и исправить КТП',onclick:openKtpDiagnostics})]));
+  const migrationStatus=el('p',{role:'status',text:'Предварительная локальная проверка. Не запускает шифрование, перенос или восстановление.'});
+  const migrationLabels={schema:'неполная схема',integrity:'нарушение связей','active-delta-migration':'незавершённый Delta-перенос','non-json':'неподдерживаемые значения','record-limit':'выше лимита записей LAB','byte-limit':'выше лимита размера LAB','crypto-unavailable':'Web Crypto недоступен','locks-unavailable':'Web Locks недоступен','device-checkpoints':'контрольные точки синхронизации требуют отдельного переноса','quota-unknown':'квота неизвестна','low-estimated-space':'мало оценочного свободного места','snapshot-not-loaded':'снимок не загружен из-за лимита; связи и контрольные точки не проверены'};
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Диагностика базы · подготовка миграции'}),migrationStatus,el('button',{class:'btn wide',type:'button',text:'Проверить условия переноса',onclick:async e=>{
+   const button=e.currentTarget;button.disabled=true;try{
+    const result=await inspectLocalMigration();if(!migrationStatus.isConnected||document.body.classList.contains('privacy-covered'))return;
+    const notes=[...result.blockers,...result.warnings].map(x=>migrationLabels[x]).filter(Boolean);
+    migrationStatus.textContent=(result.records===null?'Снимок не проверен.':'Записей: '+result.records+(result.bytes===null?' · объём не измерен. ':' · объём JSON строк: '+(result.bytes/1048576).toFixed(2)+' МБ. '))+(notes.length?'Замечания: '+notes.join('; ')+'. ':'Предварительных замечаний не найдено. ')+'Переключение недоступно; нужна независимая копия и приёмка.';
+   }catch{if(migrationStatus.isConnected)migrationStatus.textContent='Проверка недоступна. Данные не изменены.';}finally{button.disabled=false;}
+  }})]));
   const retention=el('input',{type:'number',min:0,max:3650,step:1,value:settings.retentionDays??0});
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Конфиденциальность и сроки хранения'}),
     el('p',{text:'Экранная ширма не заменяет пароль устройства. Данные IndexedDB не шифруются. Срок действует только для истёкших сведений об ограничениях и группах; 0 — срок не задан. Автоматического удаления нет.'}),

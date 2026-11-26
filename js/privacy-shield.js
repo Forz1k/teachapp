@@ -1,5 +1,6 @@
 /* Device-only opt-in privacy screen. Does not encrypt data or authenticate users. */
 const KEY='teachapp.privacy-shield.v1',EVENT='teachapp:privacy-shield-preferences';
+export const PRIVACY_VISIBILITY_EVENT='teachapp:privacy-visibility';
 export const privacyIdleOptions=[0,1,3,5,10,15,30];
 const defaults=()=>({idleMinutes:0,hideOnBackground:false});
 export function validateShieldPreferences(value){
@@ -54,15 +55,25 @@ const b64=b=>btoa(String.fromCharCode(...b));
 const decode=(s,length)=>{if(typeof s!=='string'||s.length!==Math.ceil(length/3)*4||!/^[A-Za-z0-9+/]*={0,2}$/.test(s))throw Error('Повреждены настройки блокировки');const b=Uint8Array.from(atob(s),c=>c.charCodeAt(0));if(b.length!==length)throw Error('Повреждены настройки блокировки');return b;};
 const validCode=s=>typeof s==='string'&&s.length<=128&&(/^[0-9]{6,12}$/.test(s)||s.length>=8&&!/^\d+$/.test(s));
 async function deriveLock(code,salt){if(typeof code!=='string'||!code.length||code.length>128||!globalThis.crypto?.subtle)throw Error('Для блокировки требуется защищённый контекст HTTPS или localhost');const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(code),'PBKDF2',false,['deriveBits']);return new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',salt,iterations:ITERATIONS,hash:'SHA-256'},key,256));}
-export function screenLockEnabled(storage=globalThis.localStorage){try{return storage.getItem(LOCK)!==null;}catch{return false;}}
-export async function verifyScreenLock(code,storage=globalThis.localStorage){
- const raw=storage.getItem(LOCK);if(raw===null)return true;
- let r;try{r=JSON.parse(raw);if(r.version!==1||r.iterations!==ITERATIONS)throw Error();const expected=decode(r.verifier,32),actual=await deriveLock(code,decode(r.salt,16));let diff=0;for(let i=0;i<32;i++)diff|=expected[i]^actual[i];return diff===0;}catch{return false;}
+// A storage read failure is not proof that a lock is absent. Fail closed.
+// This protects the UI, not the local database or a malicious browser user.
+export function screenLockEnabled(storage){try{return (storage??globalThis.localStorage).getItem(LOCK)!==null;}catch{return true;}}
+async function verifyRecord(code,raw){
+ if(raw===null)return true;
+ try{const r=JSON.parse(raw);if(r.version!==1||r.iterations!==ITERATIONS)throw Error();const expected=decode(r.verifier,32),actual=await deriveLock(code,decode(r.salt,16));let diff=0;for(let i=0;i<32;i++)diff|=expected[i]^actual[i];return diff===0;}catch{return false;}
+}
+export async function verifyScreenLock(code,storage){
+ try{const target=storage??globalThis.localStorage,raw=target.getItem(LOCK);return await verifyRecord(code,raw)&&target.getItem(LOCK)===raw;}catch{return false;}
 }
 export async function changeScreenLock({current='',next=null}={},storage=globalThis.localStorage){
- if(screenLockEnabled(storage)&&!await verifyScreenLock(current,storage))throw Error('Неверный действующий PIN или пароль');
- if(next===null){storage.removeItem(LOCK);return false;}
+ const raw=storage.getItem(LOCK);
+ if(!await verifyRecord(current,raw))throw Error('Неверный действующий PIN или пароль');
+ const check=()=>{if(storage.getItem(LOCK)!==raw)throw Error('Блокировка изменена в другой вкладке. Повторите действие.');};
+ if(next===null){check();storage.removeItem(LOCK);if(storage.getItem(LOCK)!==null)throw Error('Не удалось отключить блокировку');return false;}
  if(!validCode(next))throw Error('Укажите PIN из 6–12 цифр или пароль длиной от 8 до 128 символов');
  const salt=crypto.getRandomValues(new Uint8Array(16)),verifier=await deriveLock(next,salt);
- storage.setItem(LOCK,JSON.stringify({version:1,iterations:ITERATIONS,salt:b64(salt),verifier:b64(verifier)}));return true;
+ const value=JSON.stringify({version:1,iterations:ITERATIONS,salt:b64(salt),verifier:b64(verifier)});
+ check();storage.setItem(LOCK,value);
+ if(storage.getItem(LOCK)!==value)throw Error('Не удалось сохранить блокировку');
+ return true;
 }

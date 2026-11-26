@@ -1,5 +1,5 @@
 /* Document descriptions and local Office Open XML writer. No external service. */
-export const documentTypes={lesson:'Технологическая карта урока',training:'План-конспект тренировки',classReport:'Отчёт о работе за период',ktp:'Отчёт о выполнении КТП',norms:'Ведомость нормативов',registration:'Заявка на соревнования',tournament:'Протокол соревнований',teamReport:'Отчёт команды',playerReport:'Индивидуальный отчёт спортсменки',event:'Сценарий спортивного мероприятия',assignmentReport:'Отчёт по назначениям нормативов',matchDebrief:'Послематчевый отчёт тренера'};
+export const documentTypes={lesson:'Технологическая карта урока',training:'План-конспект тренировки',classReport:'Отчёт о работе за период',ktp:'Отчёт о выполнении КТП',norms:'Ведомость нормативов',registration:'Заявка на соревнования',tournament:'Протокол соревнований',teamReport:'Отчёт команды',playerReport:'Индивидуальный отчёт спортсменки',event:'Сценарий спортивного мероприятия',assignmentReport:'Отчёт по назначениям нормативов',matchDebrief:'Послематчевый отчёт тренера',schoolYearReport:'Сравнительный отчёт по учебным годам',seasonPlanReport:'Отчёт о выполнении плана сезона'};
 const phase={intro:'Подготовительная',main:'Основная',end:'Заключительная'};
 const check=(ok,m)=>{if(!ok)throw Error(m);};
 const val=v=>v==null?'—':String(v);
@@ -20,6 +20,28 @@ export function buildDocument(type,input={}){
  }else if(['classReport','ktp','norms'].includes(type)){
   check(Array.isArray(input.matrix)&&input.matrix.length,'Выберите класс и период');personal=type!=='ktp';
   sections.push(section('Результаты за выбранный период',[input.period||'',input.className?'Класс: '+input.className:'',type==='classReport'?'Посещаемость и оценки рассчитаны по внесённым данным; пустые отметки не заменяются нулём.':''],input.matrix));
+ }else if(type==='schoolYearReport'){
+  check(Array.isArray(input.years)&&input.years.length,'Нет учебных лет');
+  const rows=input.years,range=r=>r.year.from+' — '+r.year.to,num=(v,digits=2)=>v==null?null:Number(v.toFixed(digits));
+  const elapsed=input.comparisonMode==='elapsed';check(!elapsed||rows.every(r=>r.conflict||r.mode==='elapsed'&&Number.isSafeInteger(r.windowDays)&&r.windowDays>=0),'Некорректные сопоставимые периоды');
+  const extraHead=elapsed?['Дней в срезе']:[],extra=r=>elapsed?[r.conflict?null:r.windowDays]:[];
+  sections.push(section('Сравнение учебных лет',[input.gradeLabel||'Все параллели',elapsed?'Режим: одинаковый календарный срок с начала учебного года; укороченные периоды отмечены отдельно.':'Режим: учебные годы целиком; оценки и посещаемость не позднее даты среза.','Показатели разных составов и шкал. Текущий год может быть неполным. Средняя учитывает веса оценок; посещаемость — только известную явку. Неизвестные данные не заменяются нулём.'],[['Учебный год','Состояние','Срез','Классов','Учеников','Уроков','Проведено','Отметок','Сумма весов','Средняя','Явка','Пропуски','Неизвестно','Посещаемость, %',...extraHead],...rows.map(r=>r.conflict?[range(r),'Дубликат: исключён',...Array(12).fill(null),...extra(r)]:[range(r),(r.archived?'Архив':'Текущий')+(r.truncated?' · короткий срез':''),r.cutoff,r.classes,r.students,r.lessons,r.held,r.gradeCount,r.gradeWeight,num(r.mean),r.present,r.absent,r.unknown,num(r.pct,1),...extra(r)])]));
+  if(input.includeClasses)sections.push(section('По классам',['Только агрегаты. Имена, индивидуальные оценки и сведения об ограничениях не включены.'],[['Год','Класс','Учеников','Уроков','Проведено','Отметок','Сумма весов','Средняя','Явка','Пропуски','Неизвестно','Посещаемость, %',...(elapsed?['Срез',...extraHead]:[])],...rows.filter(r=>!r.conflict).flatMap(r=>r.rows.map(c=>[range(r),c.className,c.students,c.lessons,c.held,c.gradeCount,c.gradeWeight,num(c.mean),c.present,c.absent,c.unknown,num(c.pct,1),...(elapsed?[r.cutoff,...extra(r)]:[])]))]));
+  // Small classes may still be identifying in context; require export confirmation.
+  personal=!!input.includeClasses;
+ }else if(type==='seasonPlanReport'){
+  const a=input.progress;
+  check(input.teamName&&input.planName&&a&&Array.isArray(a.phases)&&Array.isArray(a.weeks)&&Array.isArray(a.gaps),'Выберите план сезона');
+  const range=r=>r.from+' — '+r.to,labels={future:'Впереди',active:'Текущий',completed:'Завершён по календарю'};
+  const actual=r=>[r.scheduled,r.held,r.unconfirmed,r.future,r.recordedMinutes,r.matches];
+  sections.push(section('План и факт',[input.teamName,input.planName,input.period||'','По состоянию на '+(input.cutoff||'—'),'Факт: только подтверждённые тренировки; минуты по карточкам, не фактическая индивидуальная нагрузка. Каждая цель включает только этапы, где она задана. Ноль означает, что цель не задана.'],[['Показатель','Цель','Факт в целевых этапах','Осталось суммарно','Сверх цели','Выполнение, %'],['Тренировки',a.sessionProgress.target,a.sessionProgress.actual,a.sessionProgress.remaining,a.sessionProgress.over,a.sessionProgress.percent],['Минуты',a.minuteProgress.target,a.minuteProgress.actual,a.minuteProgress.remaining,a.minuteProgress.over,a.minuteProgress.percent]]));
+  if(a.targetBalance)sections.push(section('Баланс целей по этапам',['Избыток на одном этапе не уменьшает недобор другого. Факт этапов без соответствующей цели показан отдельно.'],[['Показатель','Этапов с целью','Недобор по этапам','Сверх целей по этапам','Факт без цели'],...[["Тренировки",a.targetBalance.sessions],["Минуты",a.targetBalance.minutes]].map(([label,b])=>[label,b.phases,b.remainingByPhase,b.overByPhase,b.untargetedActual])]));
+  sections.push(section('Этапы',[],[['Этап','Период','Статус','Цель тренировок','Проведено','Цель минут','Факт минут','Матчей'],...a.phases.map(r=>[r.name,range(r),labels[r.status],r.sessions,r.held,r.minutes,r.recordedMinutes,r.matches])]));
+  const head=['Период','В расписании','Проведено','Не подтверждено','Впереди','Минуты','Матчи'];
+  sections.push(section('Недельные циклы',[],[head,...a.weeks.map(r=>[range(r),...actual(r)])]));
+  if(a.gaps.length)sections.push(section('Вне этапов',['Не включаются в выполнение целей.'],[head,...a.gaps.map(r=>[range(r),...actual(r)])]));
+  // Free-text phase/plan names may contain private information.
+  personal=true;
  }else if(type==='assignmentReport'){
   check(input.className&&Array.isArray(input.matrix)&&input.matrix.length,'Выберите класс с назначениями');personal=!!input.includeNames;
   sections.push(section('Выполнение назначений',[input.className,input.period||'','Сведения отражают выбранные критерии и сроки; не выставляют оценку и не подтверждают допуск.',...(input.summary||[])],input.matrix));

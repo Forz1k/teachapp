@@ -4,6 +4,7 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import {resolve,dirname,relative} from 'node:path';
 import { spawnSync } from 'node:child_process';
+import {validateLabConfigs} from './lab-config-check.mjs';
 
 let errors = 0;
 const ok = (msg) => console.log('  ✓ ' + msg);
@@ -85,6 +86,9 @@ for (const f of ['vendor/xlsx.full.min.js', 'css/app.css', 'js/app.js', 'js/stor
     ok(`${f} — ${kb} КБ`);
   }
 }
+
+console.log('\nИзоляция тестовых конфигураций:');
+try{for(const file of validateLabConfigs())ok(file);}catch(e){bad(e.message);}
 
 console.log(`\n${errors ? '❌ Ошибок: ' + errors : '✅ Всё чисто'}`);
 process.exitCode = errors ? 1 : 0;

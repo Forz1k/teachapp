@@ -577,7 +577,7 @@ test('Настройки: поиск сохраняет исходные пол�
  await seed();const screen=doc.createElement('div');const {renderSettings}=await import('../js/screens/settings.js');renderSettings(screen,{});
  const search=screen.querySelector('input[aria-label="Найти настройку"]'),backup=[...screen.querySelectorAll('.settings-group>.card-block')].find(c=>c.querySelector('.head')?.textContent==='Резервная копия');
  assert.ok(backup);search.value='Резервная копия';search.dispatchEvent(new window.Event('input'));assert.equal(backup.hidden,false);assert.ok(screen.querySelector('.settings-group[data-group=school]').hidden);
- search.value='';search.dispatchEvent(new window.Event('input'));assert.ok(!screen.querySelector('.settings-group[data-group=school]').hidden);assert.equal(backup.querySelectorAll('input[type=file]').length,1);
+ search.value='';search.dispatchEvent(new window.Event('input'));assert.ok(!screen.querySelector('.settings-group[data-group=school]').hidden);assert.equal(backup.querySelectorAll('input[type=file]').length,2);assert.ok(backup.querySelector('input[type=file][aria-label="Файл для восстановления"]'));assert.ok(backup.querySelector('input[type=file][aria-label="Файл для проверки копии"]'));
 });
 
 test('expiry warning opens a fresh record list instead of analytics',async()=>{
@@ -782,3 +782,20 @@ test('Предматчевое досье и черновик тренировк
  [...sheet.querySelectorAll('button')].find(b=>b.textContent==='Открыть редактируемый конспект').click();await tick(100);
  assert.match(doc.querySelector('.sheet').textContent,/Конспект занятия/);assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();
 });
+
+test('Journal density switches without replacing the table or changing marks',async()=>{
+ const descriptor=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+ Object.defineProperty(globalThis,'localStorage',{value:window.localStorage,configurable:true,writable:true});
+ try{
+  await seed();store.state.currentTrimesterId='t1';const screen=doc.createElement('div');
+  renderJournal(screen,{onOpenClassPicker(){},onOpenExemptions(){},onOpenLessonPlanner(){}});
+  const select=screen.querySelector('.journal-density'),grid=screen.querySelector('.journal-grid'),table=grid.querySelector('table'),cells=table.querySelectorAll('td.cell');
+  const first=cells[0];assert.ok(select);const old=table.textContent;
+  select.value='comfortable';select.dispatchEvent(new window.Event('change'));assert.equal(grid.dataset.density,'comfortable');assert.equal(grid.querySelector('table'),table);assert.equal(table.querySelector('td.cell'),first);assert.equal(table.textContent,old);
+ }finally{window.localStorage.removeItem('teachapp.journal.density');if(descriptor)Object.defineProperty(globalThis,'localStorage',descriptor);else delete globalThis.localStorage;}
+});
+
+test('Journal paste preview does not write, rejects a filled cell and permits valid input',async()=>{const {cls}=await seed(),J=await import('../js/screens/journal.js'),M=await import('../js/model.js'),pupils=store.studentsOfClass(cls.id),date=M.addDays(M.todayIso(),-1),a=await store.addLesson(cls.id,date,null,'',{slot:5}),b=await store.addLesson(cls.id,date,null,'',{slot:6});await store.setMark(pupils[0].id,b.id,{value:'3'});const before=await db.dumpAll();J.openJournalPaste(cls.id,pupils,[a,b]);const sheet=doc.querySelector('.sheet'),source=sheet.querySelector('textarea'),preview=[...sheet.querySelectorAll('button')].find(b=>b.textContent==='Предпросмотр'),apply=[...sheet.querySelectorAll('button')].find(b=>b.textContent==='Записать блок');source.value='5\t4';preview.click();assert.match(sheet.textContent,/Весь блок заблокирован/);assert.equal(apply.disabled,true);source.value='5\t';source.dispatchEvent(new window.Event('input'));preview.click();assert.match(sheet.textContent,/1 отметок/);assert.equal(apply.disabled,false);assert.deepEqual(await db.dumpAll(),before);ui.closeSheet();});
+
+test('Journal selection mode selects explicit cells without opening individual sheet, clears on search',async()=>{await seed();store.state.currentTrimesterId='t1';const screen=doc.createElement('div');renderJournal(screen,{onOpenClassPicker(){},onOpenExemptions(){},onOpenLessonPlanner(){}});const toggle=[...screen.querySelectorAll('button')].find(b=>b.textContent==='Выбрать ячейки'),apply=[...screen.querySelectorAll('button')].find(b=>b.textContent==='Изменить выбранные');toggle.click();const cell=screen.querySelector('td.cell');cell.click();assert.ok(cell.classList.contains('journal-selected'));assert.equal(apply.disabled,false);cell.dispatchEvent(new window.KeyboardEvent('keydown',{key:' ',bubbles:true}));assert.equal(apply.disabled,true);cell.click();const search=screen.querySelector('input[aria-label="Найти ученика в журнале"]');search.value='нет';search.dispatchEvent(new window.Event('input'));assert.equal(apply.disabled,true);assert.ok(!cell.classList.contains('journal-selected'));});
+

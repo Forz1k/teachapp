@@ -58,3 +58,17 @@ test('Clock persists with final match, backup, school isolation and coach CSV',a
  const backup=await S.makeBackup();assert.equal(projectScope(backup.data,'school').coachMatches,undefined);assert.equal(projectScope(backup.data,'coach').coachMatches.length,1);await S.restoreBackup(backup);
  const view=C.teamView(await C.loadCoach(),team.id);assert.equal(C.playerSeasonStats(view.matches,ids[1]).playingTime.totalMs,30000);assert.match(C.coachCsv(view),/Время на площадке/);assert.match(C.coachCsv(view),/0:30/);
 });
+
+test('On-demand player timeline compresses pauses, separates sets and matches measured totals',async()=>{
+ const {courtPlayerTimeline}=await import('../js/match-protocol.js');
+ let d=ev(base,run,10);d=ev(d,{type:'sub',side:'ours',out:'a0',in:'a6'},20);d=ev(d,pause,30);
+ d=ev(d,point,40);d=ev(d,run,50);d=ev(d,pause,60);
+ const before=structuredClone(d),r=courtPlayerTimeline(d,'a0')[0];
+ assert.equal(r.measured,true);assert.equal(r.partial,true);assert.equal(r.elapsedMs,30000);assert.equal(r.playerMs,10000);
+ assert.deepEqual(r.intervals,[{set:1,from:0,to:10000,on:true},{set:1,from:10000,to:30000,on:false}]);
+ assert.equal(courtPlayerTimeline(d,'a6')[0].playerMs,20000);
+ assert.equal(courtPlayerTimeline(base,'a0')[0].playerMs,null);
+ assert.equal(Object.hasOwn(courtTime(replayDetailed(d)),'intervals'),false);
+ assert.throws(()=>courtPlayerTimeline(d,'unknown'));
+ assert.deepEqual(d,before);
+});

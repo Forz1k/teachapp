@@ -91,3 +91,15 @@ test('Indexed period review matches single-class summaries and isolates finals b
  assert.equal(summary.rows.find(r=>r.classId==='b').status,'ready');assert.equal(summary.rows.find(r=>r.classId==='c').stats.withoutFinal,1);
  assert.deepEqual(state,before);
 });
+
+test('Grade scenario is weighted, respects rounding and does not change the result',async()=>{
+ const {gradeScenario}=await import('../js/school-review.js');
+ const result=periodReview(s,{classId:'c',period:{from:date,to:date},today:date}).results[0],before=structuredClone(result);
+ assert.deepEqual(gradeScenario(result,{grade:5,weight:1,target:5}),{mean:4.25,suggested:4,needed:3,maxAttempts:10});
+ assert.equal(gradeScenario(result,{grade:5,weight:2,target:5}).needed,2);
+ assert.equal(gradeScenario(result,{grade:2,target:5}).needed,null);
+ assert.equal(gradeScenario(result,{grade:4,target:4}).needed,0);
+ assert.equal(gradeScenario({weight:0,mean:null},{grade:5}).needed,1);
+ assert.throws(()=>gradeScenario(result,{weight:0}));
+ assert.deepEqual(result,before);
+});

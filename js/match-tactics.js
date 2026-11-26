@@ -1,4 +1,5 @@
 import {replayDetailed,scoutSummary,reasons,isError} from './match-protocol.js';
+import {captureIssue} from './match-capture.js';
 const pct=(won,n)=>n?100*won/n:null;
 const blank=()=>({rallies:0,won:0,lost:0,serve:0,serveWon:0,receive:0,receiveWon:0});
 const record=(r,e)=>{r.rallies++;r.won+=Number(e.side==='ours');r.lost+=Number(e.side==='theirs');const k=e.before.serve==='ours'?'serve':'receive';r[k]++;r[k+'Won']+=Number(e.side==='ours');};
@@ -54,7 +55,7 @@ export function recordedConnections(timelines,{side='ours',set=0,min=5}={}){
  const pairs=new Map();let rallies=0,complete=0,linkedRallies=0;
  for(const timeline of timelines)for(const e of timeline){
   if(e.type!=='rally'||set&&e.set!==set)continue;rallies++;
-  if(!e.captureComplete)continue;complete++;
+  if(!e.captureComplete||captureIssue(e))continue;complete++;
   let linked=false;
   for(let i=1;i<(e.touches||[]).length;i++){
    const a=e.touches[i-1],b=e.touches[i];
