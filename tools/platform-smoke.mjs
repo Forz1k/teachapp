@@ -31,6 +31,22 @@ const binary=['google-chrome','google-chrome-stable','chromium','chromium-browse
  await notifications.getByText('Тестовая подписка включена · ревизия 1',{exact:true}).waitFor();
  assert.equal((await call('alpha','notification-lab',athlete.token)).enabled,true);
  assert.equal((await call('alpha','notification-lab',owner)).enabled,false);
+ const inbox=athletePage.locator('section').filter({has:athletePage.getByRole('heading',{name:'Входящие сигналы · LAB',exact:true})});
+ const checkNotice=inbox.getByRole('button',{name:'Проверить новые сигналы',exact:true}),ackNotice=inbox.getByRole('button',{name:'Подтвердить просмотр сигнала',exact:true});
+ assert.equal(await ackNotice.isEnabled(),false);
+ await checkNotice.click();await inbox.getByText('Новых сигналов нет.',{exact:true}).waitFor();
+ const updateProfile=async()=>{const old=await call('alpha','teams/t/athletes/p',owner);assert.equal((await call('alpha','teams/t/athletes/p',owner,'PUT',{...profile,expectedRevision:old.revision})).status,200);};
+ await updateProfile();await checkNotice.click();await inbox.getByText('В личном кабинете есть обновления.',{exact:true}).waitFor();
+ await updateProfile();await ackNotice.click();await inbox.getByText('Сигнал изменился или истёк. Проверьте снова.',{exact:true}).waitFor();
+ assert.equal(await ackNotice.isEnabled(),false);assert.equal((await call('alpha','notification-lab/inbox',athlete.token)).pending,true);
+ await checkNotice.click();await inbox.getByText('В личном кабинете есть обновления.',{exact:true}).waitFor();
+ await ackNotice.click();await inbox.getByText('Новых сигналов нет.',{exact:true}).waitFor();
+ assert.equal((await call('alpha','notification-lab/inbox',athlete.token)).pending,false);
+ // Reload the athlete profile after the two server revisions, before responding.
+ await athletePage.getByRole('button',{name:'Выйти',exact:true}).click();
+ await athletePage.getByLabel('Адрес тестового Worker',{exact:true}).fill(base);await athletePage.getByLabel('ID пространства',{exact:true}).fill('alpha');await athletePage.getByLabel('Секретный код',{exact:true}).fill(athlete.token);
+ await athletePage.getByRole('button',{name:'Войти',exact:true}).click();await athletePage.getByText('Test assignment',{exact:true}).waitFor();
+ await notifications.getByRole('button',{name:'Проверить подписку',exact:true}).click();await notifications.getByText('Тестовая подписка включена · ревизия 1',{exact:true}).waitFor();
  await notifications.getByRole('button',{name:'Отключить тестовую подписку',exact:true}).click();
  await notifications.getByText('Тестовая подписка выключена · ревизия 2',{exact:true}).waitFor();
  assert.equal((await call('alpha','notification-lab',athlete.token)).enabled,false);
