@@ -4,7 +4,7 @@
 import {SCHEMA} from '../../js/db.js';
 import {openVaultLab} from './local-vault.mjs';
 import {schemaVaultAdapter} from './vault-schema-adapter.mjs';
-import {openPlainSchemaLab,readPlainSchemaLab,stageSchemaMigrationLab,verifySchemaMigrationLab,restoreSchemaMigrationLab} from './vault-migration-rehearsal.mjs';
+import {openPlainSchemaLab,readPlainSchemaLab,stageSchemaMigrationLab,verifySchemaMigrationLab,restoreSchemaMigrationLab,plainSchemaTransactionLab} from './vault-migration-rehearsal.mjs';
 const check=(ok,msg)=>{if(!ok)throw Error(msg);};
 const phases=['source','vault','rollback'];
 const validState=s=>s&&Object.keys(s).sort().join('|')==='generation|id|phase'&&s.id==='active'&&Number.isInteger(s.generation)&&s.generation>=1&&s.generation<=phases.length&&phases[s.generation-1]===s.phase;
@@ -69,6 +69,11 @@ export function vaultRouterLab(id,{locks=globalThis.navigator?.locks}={}){
   snapshot:({password}={})=>guarded(async db=>{
    const s=await state(db);
    return s.phase==='vault'?encrypted(v=>adapter(v,password,a=>a.snapshot())):plain(s.phase,readPlainSchemaLab);
+  }),
+  transaction:(storeNames,mode,fn,{password,expectedGeneration}={})=>guarded(async db=>{
+   const s=await state(db);
+   check(expectedGeneration===undefined||expectedGeneration===s.generation,'Маршрут LAB изменился; откройте данные заново');
+   return s.phase==='vault'?encrypted(v=>adapter(v,password,a=>a.transaction(storeNames,mode,fn))):plain(s.phase,p=>plainSchemaTransactionLab(p,storeNames,mode,fn));
   }),
   put:(table,row,{password}={})=>{
    check(Object.hasOwn(SCHEMA,table)&&typeof row?.id==='string'&&row.id.length>0,'Некорректная запись LAB');
