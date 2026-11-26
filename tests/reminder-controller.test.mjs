@@ -37,8 +37,22 @@ test('Reminder install fences pagehide, freeze and quick privacy cover/reveal wh
  tick();win.dispatchEvent(new Event('focus'));assert.equal(pending.length,0);
  win.dispatchEvent(new Event('pageshow'));assert.equal(pending.length,1);
  doc.dispatchEvent(new Event('freeze'));doc.dispatchEvent(new Event('resume'));pending.shift()([event]);await drain();assert.equal(sent.length,0);
- tick();assert.equal(pending.length,1);covered=true;win.dispatchEvent(new Event(PRIVACY_VISIBILITY_EVENT));covered=false;win.dispatchEvent(new Event(PRIVACY_VISIBILITY_EVENT));
+ assert.equal(pending.length,1);covered=true;win.dispatchEvent(new Event(PRIVACY_VISIBILITY_EVENT));covered=false;win.dispatchEvent(new Event(PRIVACY_VISIBILITY_EVENT));
  pending.shift()([event]);await drain();assert.equal(sent.length,0);
- tick();pending.shift()([event]);await drain();assert.equal(sent.length,1);assert.doesNotMatch(JSON.stringify(sent),/PRIVATE|private-id/);
+ assert.equal(pending.length,1);pending.shift()([event]);await drain();assert.equal(sent.length,1);assert.doesNotMatch(JSON.stringify(sent),/PRIVATE|private-id/);
  stop();assert.equal(cleared,true);win.dispatchEvent(new Event('pageshow'));doc.dispatchEvent(new Event('resume'));tick();assert.equal(pending.length,0);
+});
+
+test('Preference refresh coalesces concurrent changes, rechecks consent immediately and never dispatches a stale batch',async()=>{
+ let settings={enabled:true,sources:['custom']};const pending=[],sent=[],drain=()=>new Promise(resolve=>setImmediate(resolve));
+ const c=reminderController({read:()=>settings,allowed:()=>true,now,load:()=>new Promise(resolve=>pending.push(resolve)),prepare:async()=>(title,opts)=>sent.push({title,...opts})});
+ const first=c.poll();assert.equal(pending.length,1);
+ settings={enabled:false,sources:['custom']};c.refresh();c.refresh();
+ settings={enabled:true,sources:['school']};c.refresh();c.refresh();
+ assert.equal(pending.length,1);pending.shift()([event]);assert.equal(await first,0);await drain();
+ assert.equal(pending.length,1);pending.shift()([event,{...event,source:'school',id:'synthetic-lesson'}]);await drain();
+ assert.equal(sent.length,1);assert.equal(sent[0].body,'Есть актуальные напоминания: 1');
+ assert.doesNotMatch(JSON.stringify(sent),/PRIVATE|synthetic-lesson/);
+ const final=c.poll();c.refresh();settings={enabled:false,sources:['school']};c.refresh();pending.shift()([event]);await final;await drain();assert.equal(pending.length,0);
+ settings={enabled:true,sources:['custom']};const stopped=c.poll();c.refresh();c.stop();pending.shift()([event]);await stopped;await drain();assert.equal(pending.length,0);assert.equal(sent.length,1);
 });
