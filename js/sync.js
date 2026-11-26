@@ -499,6 +499,77 @@ function labEndpoint(endpoint){
  const value=normalizeEndpoint(endpoint),url=new URL(value);
  check(url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname),'Ротация только в Delta LAB');return value;
 }
+// Standalone encrypted checkpoint LAB. No server credentials or sync passwords
+// are stored. The exported revision is an authenticated historical prefix,
+// not a claim that the live relay is frozen. Import/preview never writes.
+function checkpointLabEndpoint(endpoint,synthetic){
+ check(synthetic===true,'Резервирование только для синтетического Delta LAB');
+ const value=labEndpoint(endpoint),url=new URL(value);
+ check(url.origin===value&&url.port,'Нужен локальный сервер с явным портом');return value;
+}
+function checkpointIdentity({area,expectedWorkspaceId,expectedRevision}){
+ check(validArea(area)&&typeof expectedWorkspaceId==='string'&&uuid.test(expectedWorkspaceId)&&revision(expectedRevision),'Укажите точный контур, пространство и ревизию');
+}
+function checkpointPassword(password){
+ check(typeof password==='string'&&password.length>=12&&password.length<=1024,'Нужен отдельный пароль резервной копии LAB');
+}
+export async function exportDeltaCheckpointLab({endpoint,area,token,password,backupPassword,current,expectedWorkspaceId,expectedRevision,synthetic=false,fetcher}){
+ endpoint=checkpointLabEndpoint(endpoint,synthetic);checkpointIdentity({area,expectedWorkspaceId,expectedRevision});
+ checkpointPassword(backupPassword);check(backupPassword!==password,'Нужен отдельный пароль резервной копии LAB');
+ const client=deltaLabClient(endpoint,area,token,{fetcher});
+ const remote=await readDeltaLab({client,area,password,current});
+ check(remote.revision===expectedRevision&&remote.workspaceId===expectedWorkspaceId,'Ревизия или рабочее пространство изменились; повторите проверку');
+ const digest=await scopeDigest(remote.snapshot,area);
+ const payload={app:'teachapp-delta-checkpoint',version:1,backupVersion:BACKUP_VERSION,endpoint,area,workspaceId:remote.workspaceId,revision:remote.revision,digest,snapshot:remote.snapshot};
+ const file=await encryptBackup(payload,backupPassword);
+ const verified=await openDeltaCheckpointLab({endpoint,area,expectedWorkspaceId,expectedRevision,backupPassword,current,file,synthetic});
+ check(verified.digest===digest&&same(verified.snapshot,remote.snapshot),'Проверка резервной копии LAB не прошла');
+ return {area,workspaceId:remote.workspaceId,revision:remote.revision,digest,records:migrationRecordCount(remote.snapshot),file};
+}
+export async function openDeltaCheckpointLab({endpoint,area,expectedWorkspaceId,expectedRevision,backupPassword,current,file,synthetic=false}){
+ endpoint=checkpointLabEndpoint(endpoint,synthetic);checkpointIdentity({area,expectedWorkspaceId,expectedRevision});checkpointPassword(backupPassword);
+ const p=await decryptBackup(file,backupPassword);
+ check(exactFields(p,['app','version','backupVersion','endpoint','area','workspaceId','revision','digest','snapshot'])&&p.app==='teachapp-delta-checkpoint'&&p.version===1&&p.endpoint===endpoint&&p.area===area&&p.workspaceId===expectedWorkspaceId&&p.revision===expectedRevision&&typeof p.digest==='string'&&digestPattern.test(p.digest),'Резервная копия другого контура или ревизии LAB');
+ if(Number.isSafeInteger(p.backupVersion)&&p.backupVersion>BACKUP_VERSION)throw Object.assign(Error('Обновите TeachApp перед открытием резервной копии LAB'),{code:'newer-backup-format'});
+ check(p.backupVersion===BACKUP_VERSION,'Несовместимый формат резервной копии LAB');
+ check(await scopeDigest(p.snapshot,area)===p.digest,'Содержимое резервной копии LAB не совпадает');
+ combineScope(current,p.snapshot,area);return p;
+}
+// Preparation is offline. Save the exact ciphertext plan alongside the backup
+// before contacting a distinct empty target. A retry never generates new bytes.
+export async function prepareDeltaCheckpointRestoreLab(args){
+ const p=await openDeltaCheckpointLab(args),destination=checkpointLabEndpoint(args.destinationEndpoint,args.synthetic);
+ checkpointPassword(args.destinationPassword);
+ check(destination!==p.endpoint&&args.destinationPassword!==args.backupPassword,'Нужен отдельный сервер и пароль назначения LAB');
+ const workspaceId=crypto.randomUUID();
+ check(syncUploadBytes(p.snapshot,{area:p.area,workspaceId,expectedRevision:0})<=DELTA_MAX_DATA+1024,'Снимок превышает лимит назначения LAB');
+ const envelope=await encryptBackup(packetPayload(p.snapshot,p.area,workspaceId,1),args.destinationPassword);
+ check(envelope.data.length<=DELTA_MAX_DATA,'Снимок превышает лимит назначения LAB');
+ return {app:'teachapp-delta-checkpoint-restore',version:1,source:p.endpoint,destination,area:p.area,sourceWorkspaceId:p.workspaceId,sourceRevision:p.revision,digest:p.digest,workspaceId,envelope};
+}
+export async function restoreDeltaCheckpointLab(args){
+ check(args.synthetic===true&&args.confirmed===true&&args.backupVerified===true,'Подтвердите проверенную резервную копию LAB и план восстановления');
+ const p=await openDeltaCheckpointLab(args),destination=checkpointLabEndpoint(args.destinationEndpoint,args.synthetic),plan=args.plan;
+ checkpointPassword(args.destinationPassword);
+ check(destination!==p.endpoint&&args.destinationPassword!==args.backupPassword,'Нужен отдельный сервер и пароль назначения LAB');
+ check(exactFields(plan,['app','version','source','destination','area','sourceWorkspaceId','sourceRevision','digest','workspaceId','envelope'])&&plan.app==='teachapp-delta-checkpoint-restore'&&plan.version===1&&plan.source===p.endpoint&&plan.destination===destination&&plan.area===p.area&&plan.sourceWorkspaceId===p.workspaceId&&plan.sourceRevision===p.revision&&plan.digest===p.digest&&typeof plan.workspaceId==='string'&&uuid.test(plan.workspaceId)&&plan.workspaceId!==p.workspaceId&&plan.workspaceId===args.expectedDestinationWorkspaceId,'Неверный план восстановления LAB');
+ const anchor=await readPacket(plan.envelope,args.destinationPassword,p.area,1);
+ check(anchor.workspaceId===plan.workspaceId&&same(anchor.snapshot,p.snapshot)&&await scopeDigest(anchor.snapshot,p.area)===p.digest,'Снимок назначения не совпадает с резервной копией LAB');
+ const client=deltaLabClient(destination,p.area,args.destinationToken,{fetcher:args.fetcher});
+ const head=await client.head();check((await client.rollbackStatus()).seal===null,'Назначение закрыто для записи');
+ let replayed=false;
+ if(head.revision===0){
+  const ack=await client.anchor(plan.envelope);replayed=ack.replayed;
+ }else{
+  check(head.revision===1&&head.anchorRevision===1&&head.count===1,'Назначение уже используется; перезапись запрещена');
+  const existing=await client.getRevision(1);
+  check(existing.kind==='anchor'&&same(existing.envelope,plan.envelope),'Назначение содержит другой снимок; перезапись запрещена');replayed=true;
+ }
+ const row=await client.getRevision(1),remote=await readDeltaLab({client,area:p.area,password:args.destinationPassword,current:args.current});
+ check(row.kind==='anchor'&&same(row.envelope,plan.envelope)&&remote.revision===1&&remote.workspaceId===plan.workspaceId&&same(remote.snapshot,p.snapshot)&&await scopeDigest(remote.snapshot,p.area)===p.digest&&(await client.rollbackStatus()).seal===null,'Восстановление не подтверждено; не подключайте устройства');
+ return {area:p.area,sourceRevision:p.revision,workspaceId:plan.workspaceId,revision:1,digest:p.digest,replayed,cutoverAllowed:false};
+}
+
 export async function prepareDeltaRotation({endpoint,client,area,password,current,checkpoint=null,expectedRevision,recoveryPassword,deviceCount=2,synthetic=false}){
  check(synthetic===true&&revision(expectedRevision)&&Number.isInteger(deviceCount)&&deviceCount>=1&&deviceCount<=8,'Ротация только для синтетического контура');
  endpoint=labEndpoint(endpoint);
