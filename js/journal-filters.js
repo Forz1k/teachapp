@@ -23,3 +23,26 @@ export function planJournalPaste(text,students,lessons,{studentId,lessonId}={}){
  const entries=[];for(let i=0;i<rows.length;i++)for(let j=0;j<width;j++){const value=rows[i][j].trim();if(!value)continue;if(!['1','2','3','4','5','Н'].includes(value))throw Error('Строка '+(i+1)+', столбец '+(j+1)+': допустимы 1–5, Н или пусто');const s=students[startRow+i],l=lessons[startCol+j];entries.push({studentId:s.id,studentName:s.fullName,lessonId:l.id,date:l.date,slot:l.slot??null,time:l.time||'',value});}
  if(!entries.length)throw Error('В блоке нет отметок');return {entries,rows:rows.length,columns:width};
 }
+
+
+/** Coordinates refer to visible rows and lesson columns only (never totals). */
+export function journalNavigation(row,col,rows,cols,key,whole=false){
+ if(![row,col,rows,cols].every(Number.isSafeInteger)||rows<1||cols<1||row<0||row>=rows||col<0||col>=cols)return null;
+ let r=row,c=col;
+ switch(key){
+  case 'ArrowLeft':c=Math.max(0,c-1);break;
+  case 'ArrowRight':c=Math.min(cols-1,c+1);break;
+  case 'ArrowUp':r=Math.max(0,r-1);break;
+  case 'ArrowDown':r=Math.min(rows-1,r+1);break;
+  case 'Home':c=0;if(whole)r=0;break;
+  case 'End':c=cols-1;if(whole)r=rows-1;break;
+  default:return null;
+ }
+ return {row:r,col:c};
+}
+export function journalRectangle(a,b,rows,cols){
+ if(![a,b].every(p=>p&&[p.row,p.col].every(Number.isSafeInteger)&&p.row>=0&&p.row<rows&&p.col>=0&&p.col<cols)||!Number.isSafeInteger(rows)||!Number.isSafeInteger(cols))throw Error('Выберите видимые ячейки');
+ const top=Math.min(a.row,b.row),bottom=Math.max(a.row,b.row),left=Math.min(a.col,b.col),right=Math.max(a.col,b.col);
+ if((bottom-top+1)*(right-left+1)>500)throw Error('Не более 500 ячеек');
+ const result=[];for(let row=top;row<=bottom;row++)for(let col=left;col<=right;col++)result.push({row,col});return result;
+}
