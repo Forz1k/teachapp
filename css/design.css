@@ -524,3 +524,6 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 .journal-grid[data-density="comfortable"] .journal thead th .topic{font-size:12px;max-height:42px}
 @media(min-width:1000px){.screen>.journal-grid[data-density="compact"]{--journal-name-width:180px}.screen>.journal-grid[data-density="comfortable"]{--journal-name-width:255px}}
 @media(max-width:360px){.screen>.journal-grid[data-density="comfortable"]{--journal-name-width:138px;--journal-date-width:76px}}
+
+/* Selection never changes column geometry or sticky positioning. */
+.journal td.cell.journal-selected{outline:2px solid var(--accent);outline-offset:-3px;background:var(--card-2)}.journal td.cell.journal-selected .cell-inner{box-shadow:inset 0 0 0 2px var(--accent);border-radius:5px}

@@ -457,3 +457,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 6.4 follow-up — multi-year school analytics
 - Added a consistent read-only snapshot of current school year and archives, with cohort/grade-level comparison, actual grade weight denominators and attendance opportunities. Future records excluded, duplicate years flagged rather than silently combined. No individual or teacher performance ranking, no changes to historical records.
+
+### 6.3 follow-up — selected-cell grade editing
+- Arbitrary grid selection (click/keyboard), preview, explicit confirmation, compare-and-swap against observed mark, single transaction; preserves weights and IDs of ordinary manual grades. Existing absence, exemption, norm-derived marks and restricted lessons are protected. Added IndexedDB and UI tests.
