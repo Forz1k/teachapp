@@ -1,0 +1,30 @@
+import 'fake-indexeddb/auto';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as db from '../js/db.js';
+import * as C from '../js/coach.js';
+import {saveSeasonPlan,deleteSeasonPlan,seasonPlanProgress} from '../js/season-plan.js';
+import {buildDocument} from '../js/documents.js';
+const phase=(name,from,to,sessions,minutes)=>({name,kind:'technical',from,to,sessions,minutes,goal:''});
+const plan={id:'p',kind:'seasonPlan',teamId:'t',name:'Synthetic',from:'2026-11-01',to:'2026-11-30',revision:0,phases:[phase('First','2026-11-01','2026-11-07',1,60),phase('Second','2026-11-08','2026-11-14',2,120),phase('Recovery','2026-11-15','2026-11-21',0,0)]};
+const session=(date,held=true,minutes=60)=>({teamId:'t',date,held,minutes});
+test('Season targets exclude untargeted phases, retain individual deficits and partition all sessions',()=>{
+ const a=seasonPlanProgress(plan,[session('2026-11-01'),session('2026-11-02'),session('2026-11-03'),session('2026-11-15'),session('2026-11-22'),session('2026-11-25'),session('2026-11-24',false),session('2026-11-10',false)],[],'2026-11-24');
+ assert.equal(a.total.held,5);assert.equal(a.total.future,2);assert.equal(a.total.unconfirmed,1);assert.equal(a.total.scheduled,a.total.held+a.total.future+a.total.unconfirmed);
+ assert.equal(a.covered.held,4);assert.deepEqual(a.sessionProgress,{target:3,actual:3,remaining:0,over:0,percent:100});
+ assert.deepEqual(a.targetBalance.sessions,{phases:2,actual:3,untargetedActual:1,remainingByPhase:2,overByPhase:2});
+ assert.deepEqual(a.targetBalance.minutes,{phases:2,actual:180,untargetedActual:60,remainingByPhase:120,overByPhase:120});
+ const report=buildDocument('seasonPlanReport',{teamName:'A',planName:'S',progress:a,cutoff:'2026-11-24'});
+ assert.deepEqual(report.sections.find(s=>s.heading==='Баланс целей по этапам').matrix[1],['Тренировки',2,2,2,1]);
+ assert.equal(seasonPlanProgress({...plan,phases:[plan.phases[2]]},[session('2026-11-15')],[],'2026-11-24').sessionProgress.percent,null);
+});
+test('Season deletion checks revision and save captures the submitted snapshot before asynchronous reads',async()=>{
+ await db.clearAll();const team=await C.saveTeam({name:'Synthetic team'});
+ const input={teamId:team.id,name:'Original',from:plan.from,to:plan.to,phases:structuredClone(plan.phases),revision:0};
+ const promise=saveSeasonPlan(input);input.name='Changed outside';input.phases[0].sessions=999;
+ const saved=await promise;assert.equal(saved.name,'Original');assert.equal(saved.phases[0].sessions,1);
+ const updated=await saveSeasonPlan({...saved,name:'Updated'});
+ await assert.rejects(deleteSeasonPlan(saved.id,saved.revision),/План изменился/);
+ assert.equal((await db.get('workRecords',saved.id)).name,'Updated');
+ await deleteSeasonPlan(updated.id,updated.revision);assert.equal(await db.get('workRecords',saved.id),undefined);
+});

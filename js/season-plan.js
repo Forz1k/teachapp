@@ -17,6 +17,7 @@ export function validateSeasonPlan(r){
  return r;
 }
 export async function saveSeasonPlan(input){
+ input=structuredClone(input);
  return db.transaction(['workRecords','coachTeams'],'readwrite',async s=>{
   const old=input.id?await s.workRecords.get(input.id):null,team=await s.coachTeams.get(input.teamId);
   check(team&&(!team.archived||old),'Команда недоступна');
@@ -25,13 +26,21 @@ export async function saveSeasonPlan(input){
   validateSeasonPlan(record);await s.workRecords.put(record);return record;
  });
 }
+export async function deleteSeasonPlan(id,expectedRevision){
+ check(text(id)&&bounded(expectedRevision,1000000),'Требуется исходная версия плана');
+ return db.transaction(['workRecords'],'readwrite',async s=>{
+  const old=await s.workRecords.get(id);
+  check(old?.kind==='seasonPlan'&&old.revision===expectedRevision,'План изменился или удалён. Откройте его заново');
+  await s.workRecords.delete(id);
+ });
+}
 export function seasonPlanProgress(plan,trainings,matches,today=todayIso()){
  validateSeasonPlan(plan);
  const sessions=trainings.filter(t=>t.teamId===plan.teamId&&inRange(t.date,plan.from,plan.to));
  const games=matches.filter(m=>m.teamId===plan.teamId&&m.date<=today&&inRange(m.date,plan.from,plan.to));
  const range=(from,to)=>{
   const rows=sessions.filter(t=>inRange(t.date,from,to)),held=rows.filter(t=>t.held&&t.date<=today);
-  return {scheduled:rows.length,held:held.length,unconfirmed:rows.filter(t=>!t.held&&t.date<today).length,future:rows.filter(t=>!t.held&&t.date>=today).length,recordedMinutes:held.reduce((n,t)=>n+t.minutes,0),matches:games.filter(m=>inRange(m.date,from,to)).length};
+  return {scheduled:rows.length,held:held.length,unconfirmed:rows.filter(t=>!t.held&&t.date<today).length,future:rows.filter(t=>t.date>today||t.date===today&&!t.held).length,recordedMinutes:held.reduce((n,t)=>n+t.minutes,0),matches:games.filter(m=>inRange(m.date,from,to)).length};
  };
  const targetProgress=(actual,target)=>({target,actual,remaining:Math.max(0,target-actual),over:Math.max(0,actual-target),percent:target?Math.round(100*actual/target):null});
  const phases=plan.phases.map(p=>{
@@ -40,6 +49,13 @@ export function seasonPlanProgress(plan,trainings,matches,today=todayIso()){
  });
  const covered=phases.reduce((a,p)=>({held:a.held+p.held,recordedMinutes:a.recordedMinutes+p.recordedMinutes,scheduled:a.scheduled+p.scheduled,matches:a.matches+p.matches}),{held:0,recordedMinutes:0,scheduled:0,matches:0});
  const total=range(plan.from,plan.to);
+ // Each target is independent. A recovery phase without a goal cannot
+ // make up a deficit in a phase with an explicitly assigned goal.
+ const balance=(goal,actual,progress)=>{
+  const targeted=phases.filter(p=>p[goal]>0),untargeted=phases.filter(p=>p[goal]===0);
+  return {phases:targeted.length,actual:targeted.reduce((n,p)=>n+p[actual],0),untargetedActual:untargeted.reduce((n,p)=>n+p[actual],0),remainingByPhase:targeted.reduce((n,p)=>n+p[progress].remaining,0),overByPhase:targeted.reduce((n,p)=>n+p[progress].over,0)};
+ };
+ const targetBalance={sessions:balance('sessions','held','sessionProgress'),minutes:balance('minutes','recordedMinutes','minuteProgress')};
  const targets={sessions:phases.reduce((n,p)=>n+p.sessions,0),minutes:phases.reduce((n,p)=>n+p.minutes,0)};
  const gaps=[];let cursor=plan.from;
  for(const phase of phases){if(cursor<phase.from){const to=addDays(phase.from,-1);gaps.push({from:cursor,to,...range(cursor,to)});}cursor=addDays(phase.to,1);}
@@ -48,5 +64,5 @@ export function seasonPlanProgress(plan,trainings,matches,today=todayIso()){
   const to=addDays(from,6)>plan.to?plan.to:addDays(from,6);
   weeks.push({from,to,...range(from,to)});
  }
- return {total,phases,weeks,gaps,targets,covered,sessionProgress:targetProgress(covered.held,targets.sessions),minuteProgress:targetProgress(covered.recordedMinutes,targets.minutes)};
+ return {total,phases,weeks,gaps,targets,covered,targetBalance,sessionProgress:targetProgress(targetBalance.sessions.actual,targets.sessions),minuteProgress:targetProgress(targetBalance.minutes.actual,targets.minutes)};
 }
