@@ -46,7 +46,7 @@ console.log('PERIOD REVIEW BENCHMARK '+JSON.stringify({classes,pupils:allPupils.
 import 'fake-indexeddb/auto';
 import * as DB from '../js/db.js';
 import {schoolViewStores} from '../js/store.js';
-import {loadCoach,loadCoachForView,teamView,indexPlayerRecords} from '../js/coach.js';
+import {loadCoach,loadCoachForView,teamView,indexPlayerRecords,coachStores} from '../js/coach.js';
 const teamCount=12,matchCount=100,eventsPerMatch=180,roster=Array.from({length:14},(_,i)=>'p'+i);
 const teams=Array.from({length:teamCount},(_,i)=>({id:'team'+i,name:'Synthetic '+i,archived:false}));
 const logs=Array.from({length:eventsPerMatch},(_,i)=>({type:'rally',side:i%2?'ours':'theirs',kind:'point',at:'2026-11-01T12:00:00Z'}));
@@ -58,9 +58,38 @@ const schoolNew=()=>DB.readSnapshot(schoolViewStores);
 const teamOld=async()=>teamView(await loadCoach(),teams.at(-1).id);
 const teamNew=async()=>teamView((await loadCoachForView(teams.at(-1).id)).data,teams.at(-1).id);
 assert.deepEqual(await schoolNew(),await schoolOld());assert.deepEqual(await teamNew(),await teamOld());
+ // Count actual IndexedDB request results, not just the final filtered view or
+ // nominal fixture dimensions. This instrumentation runs outside timing samples.
+ async function readFootprint(fn){
+  const calls=[],storeGetAll=IDBObjectStore.prototype.getAll,indexGetAll=IDBIndex.prototype.getAll;
+  const observe=(req,store,index,query)=>{
+   const call={store,index,query:query??null,rows:null};calls.push(call);
+   req.addEventListener('success',()=>{call.rows=Array.isArray(req.result)?req.result.length:null;},{once:true});return req;
+  };
+  IDBObjectStore.prototype.getAll=function(...args){return observe(storeGetAll.apply(this,args),this.name,null,args[0]);};
+  IDBIndex.prototype.getAll=function(...args){return observe(indexGetAll.apply(this,args),this.objectStore.name,this.name,args[0]);};
+  try{await fn();assert.ok(calls.every(c=>Number.isSafeInteger(c.rows)&&c.rows>=0),'Unobserved IndexedDB result');return calls;}
+  finally{IDBObjectStore.prototype.getAll=storeGetAll;IDBIndex.prototype.getAll=indexGetAll;}
+ }
+ const schoolBaseline=await readFootprint(schoolOld),schoolScoped=await readFootprint(schoolNew);
+ const teamBaseline=await readFootprint(teamOld),teamScoped=await readFootprint(teamNew);
+ const rowsFor=(calls,store)=>calls.filter(c=>c.store===store).reduce((sum,c)=>sum+c.rows,0);
+ const requestedStores=calls=>calls.map(c=>c.store).sort();
+ // Deterministic budgets fail on widened snapshots, duplicate reads, or a full
+ // scan followed by filtering, even if the UI result and machine timing match.
+ assert.deepEqual(requestedStores(schoolScoped),[...schoolViewStores].sort(),'School read-scope budget');
+ assert.ok(schoolScoped.every(c=>c.index===null&&c.query===null),'School snapshot must be unfiltered within its scope');
+ assert.equal(rowsFor(schoolScoped,'coachMatches'),0,'School must not deserialize match history');
+ assert.deepEqual(requestedStores(teamScoped),[...coachStores].sort(),'Team read-scope budget');
+ assert.ok(teamScoped.every(c=>c.store==='coachTeams'?c.index===null&&c.query===null:c.index==='teamId'&&c.query===teams.at(-1).id),'Team view must use only selected-team indexes');
+ assert.equal(rowsFor(teamScoped,'coachMatches'),matchCount,'Team match history budget');
+ assert.equal(rowsFor(teamBaseline,'coachMatches'),teamCount*matchCount,'Full coach benchmark baseline');
+ assert.equal(rowsFor(schoolBaseline,'coachMatches'),teamCount*matchCount,'Full backup benchmark baseline');
+ console.log('IDB READ BUDGET PASS '+JSON.stringify({schoolRequests:schoolScoped.length,teamRequests:teamScoped.length,schoolMatches:rowsFor(schoolScoped,'coachMatches'),teamMatches:rowsFor(teamScoped,'coachMatches'),baselineMatches:rowsFor(teamBaseline,'coachMatches')}));
+
 async function medianAsync(fn){const times=[];await fn();for(let i=0;i<5;i++){const start=performance.now();await fn();times.push(performance.now()-start);}return times.sort((a,b)=>a-b)[2];}
 const schoolBefore=await medianAsync(schoolOld),schoolAfter=await medianAsync(schoolNew),teamBefore=await medianAsync(teamOld),teamAfter=await medianAsync(teamNew);
-console.log('SCOPED IDB BENCHMARK '+JSON.stringify({engine:'fake-indexeddb (synthetic, not device latency)',teams:teamCount,matches:teamCount*matchCount,events:teamCount*matchCount*eventsPerMatch,schoolBeforeMs:+schoolBefore.toFixed(2),schoolAfterMs:+schoolAfter.toFixed(2),teamBeforeMs:+teamBefore.toFixed(2),teamAfterMs:+teamAfter.toFixed(2),teamMatchesReadBefore:teamCount*matchCount,teamMatchesReadAfter:matchCount,schoolCoachMatchesReadBefore:teamCount*matchCount,schoolCoachMatchesReadAfter:0,identical:true}));
+console.log('SCOPED IDB BENCHMARK '+JSON.stringify({engine:'fake-indexeddb (synthetic, not device latency)',teams:teamCount,matches:teamCount*matchCount,events:teamCount*matchCount*eventsPerMatch,schoolBeforeMs:+schoolBefore.toFixed(2),schoolAfterMs:+schoolAfter.toFixed(2),teamBeforeMs:+teamBefore.toFixed(2),teamAfterMs:+teamAfter.toFixed(2),teamMatchesReadBefore:rowsFor(teamBaseline,'coachMatches'),teamMatchesReadAfter:rowsFor(teamScoped,'coachMatches'),schoolCoachMatchesReadBefore:rowsFor(schoolBaseline,'coachMatches'),schoolCoachMatchesReadAfter:rowsFor(schoolScoped,'coachMatches'),identical:true}));
 const archive=Array.from({length:8000},(_,i)=>({id:'r'+i,roster:roster.map((_,j)=>'p'+((i+j)%80))})),ids=Array.from({length:80},(_,i)=>'p'+i);
 const rosterOld=()=>ids.map(id=>archive.filter(m=>m.roster.includes(id)));
 const rosterNew=()=>{const index=indexPlayerRecords(archive);return ids.map(id=>index.get(id)||[]);};
