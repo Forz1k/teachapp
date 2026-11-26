@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {sealPushRecordVectorLab,sealGenericPushLab} from '../tools/prototypes/web-push-crypto-lab.mjs';
+const b64=s=>new Uint8Array(Buffer.from(s,'base64url')),enc=new TextEncoder();
+const receiverPublic=b64('BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4');
+const auth=b64('BTBZMqHH6r4Tts7J_aSIgg'),salt=b64('DGv6ra1nlYgDCS1FRnbzlw');
+const ecdh={name:'ECDH',namedCurve:'P-256'};
+test('RFC 8291 section 5 known answer: exact full encrypted record',async()=>{
+ const pub=b64('BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8');
+ const publicKey=await crypto.subtle.importKey('raw',pub,ecdh,true,[]);
+ const jwk=await crypto.subtle.exportKey('jwk',publicKey);
+ const privateKey=await crypto.subtle.importKey('jwk',{...jwk,d:'yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw',key_ops:['deriveBits']},ecdh,false,['deriveBits']);
+ const payload=b64('V2hlbiBJIGdyb3cgdXAsIEkgd2FudCB0byBiZSBhIHdhdGVybWVsb24');
+ const result=await sealPushRecordVectorLab({payload,receiverPublic,auth,salt,sender:{publicKey,privateKey}});
+ assert.equal(Buffer.from(result).toString('base64url'),'DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN');
+ // The published base64url body decodes to 144 bytes (86 + 41 + 1 + 16),
+ // despite the illustrative Content-Length: 145 in section 5.
+ assert.equal(result.length,144);assert.equal(result.length,86+payload.length+17);
+});
+test('Generic record uses fresh salt and ephemeral key; receiver independently decrypts it',async()=>{
+ const ua=await crypto.subtle.generateKey(ecdh,false,['deriveBits']);
+ const receiverPublic=new Uint8Array(await crypto.subtle.exportKey('raw',ua.publicKey));
+ const one=await sealGenericPushLab({receiverPublic,auth}),two=await sealGenericPushLab({receiverPublic,auth});
+ assert.notDeepEqual(one.slice(0,16),two.slice(0,16));assert.notDeepEqual(one.slice(21,86),two.slice(21,86));assert.equal(new DataView(one.buffer).getUint32(16),4096);assert.equal(one[20],65);
+ const sender=await crypto.subtle.importKey('raw',one.slice(21,86),ecdh,false,[]);
+ const secret=await crypto.subtle.deriveBits({name:'ECDH',public:sender},ua.privateKey,256);
+ const hkdf=async(key,salt,info,n)=>crypto.subtle.deriveBits({name:'HKDF',hash:'SHA-256',salt,info},await crypto.subtle.importKey('raw',key,'HKDF',false,['deriveBits']),n);
+ const ikm=await hkdf(secret,auth,Buffer.concat([enc.encode('WebPush: info\0'),receiverPublic,one.slice(21,86)]),256);
+ const key=await crypto.subtle.importKey('raw',await hkdf(ikm,one.slice(0,16),enc.encode('Content-Encoding: aes128gcm\0'),128),'AES-GCM',false,['decrypt']);
+ const iv=await hkdf(ikm,one.slice(0,16),enc.encode('Content-Encoding: nonce\0'),96);
+ const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv},key,one.slice(86)));
+ assert.equal(plain.at(-1),2);assert.deepEqual(JSON.parse(new TextDecoder().decode(plain.slice(0,-1))),{version:1,kind:'workspace-update'});
+ const damaged=one.slice(86);damaged[0]^=1;await assert.rejects(crypto.subtle.decrypt({name:'AES-GCM',iv},key,damaged));
+ await assert.rejects(sealGenericPushLab({receiverPublic,auth:new Uint8Array(15)}),/Invalid/);
+ const invalid=new Uint8Array(65);invalid[0]=4;await assert.rejects(sealGenericPushLab({receiverPublic:invalid,auth}));
+});
