@@ -556,7 +556,10 @@ export async function restoreDeltaCheckpointLab(args){
  const anchor=await readPacket(plan.envelope,args.destinationPassword,p.area,1);
  check(anchor.workspaceId===plan.workspaceId&&same(anchor.snapshot,p.snapshot)&&await scopeDigest(anchor.snapshot,p.area)===p.digest,'Снимок назначения не совпадает с резервной копией LAB');
  const client=deltaLabClient(destination,p.area,args.destinationToken,{fetcher:args.fetcher});
- const head=await client.head();check((await client.rollbackStatus()).seal===null,'Назначение закрыто для записи');
+ const head=await client.head(),initialStatus=await client.rollbackStatus();
+ check(initialStatus.seal===null,'Назначение закрыто для записи');
+ check(initialStatus.revision===head.revision,'Назначение изменилось при проверке; повторите с тем же планом LAB');
+ check(head.keyEpoch===0,'Назначение уже использовалось для ротации; нужен новый контур LAB');
  let replayed=false;
  if(head.revision===0){
   const ack=await client.anchor(plan.envelope);replayed=ack.replayed;
@@ -566,7 +569,13 @@ export async function restoreDeltaCheckpointLab(args){
   check(existing.kind==='anchor'&&same(existing.envelope,plan.envelope),'Назначение содержит другой снимок; перезапись запрещена');replayed=true;
  }
  const row=await client.getRevision(1),remote=await readDeltaLab({client,area:p.area,password:args.destinationPassword,current:args.current});
- check(row.kind==='anchor'&&same(row.envelope,plan.envelope)&&remote.revision===1&&remote.workspaceId===plan.workspaceId&&same(remote.snapshot,p.snapshot)&&await scopeDigest(remote.snapshot,p.area)===p.digest&&(await client.rollbackStatus()).seal===null,'Восстановление не подтверждено; не подключайте устройства');
+ check(row.kind==='anchor'&&same(row.envelope,plan.envelope)&&remote.revision===1&&remote.workspaceId===plan.workspaceId&&same(remote.snapshot,p.snapshot)&&await scopeDigest(remote.snapshot,p.area)===p.digest,'Восстановление не подтверждено; не подключайте устройства');
+ // The authenticated prefix can remain valid even if the target advances
+ // during verification. Re-read head around the rollback-state observation.
+ // This is a point-in-time consistency fence, not a future write lock.
+ const verifiedHead=await client.head(),verifiedStatus=await client.rollbackStatus(),finalHead=await client.head();
+ check(verifiedHead.revision===1&&verifiedHead.anchorRevision===1&&verifiedHead.count===1&&verifiedHead.keyEpoch===0&&
+  verifiedStatus.revision===1&&verifiedStatus.seal===null&&same(verifiedHead,finalHead),'Назначение изменилось во время подтверждения; не подключайте устройства');
  return {area:p.area,sourceRevision:p.revision,workspaceId:plan.workspaceId,revision:1,digest:p.digest,replayed,cutoverAllowed:false};
 }
 
