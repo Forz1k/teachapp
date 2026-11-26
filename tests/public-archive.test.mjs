@@ -55,3 +55,99 @@ test('Legacy opaque link resolution requests exactly one ID and refuses ambiguit
  assert.equal(got.archiveKey,k);assert.equal(await fetchArchiveById(target,r.id,async()=>new Response('null')),null);
  await assert.rejects(fetchArchiveById(target,r.id,async()=>new Response(JSON.stringify({[k]:r,other:r}))),/Несколько/);
 });
+
+test('Calendar exports stable UID, escapes CR and LF, and folds Unicode at 75 octets',()=>{
+ const fixture={id:'fixture_1',opponent:'Гости',startAt:1700000000000};
+ const text=fixtureCalendar('Команда\rX-FAKE:1\n'+ '🏐'.repeat(60),fixture);
+ const next=fixtureCalendar('Команда',{...fixture,startAt:fixture.startAt+3600000});
+ const unfold=s=>s.replace(/\r\n /g,'');
+ assert.equal(unfold(text).match(/^UID:(.*)$/m)[1],next.match(/^UID:(.*)$/m)[1]);
+ assert.match(unfold(text),/Команда\\nX-FAKE:1\\n/);
+ assert.ok(!text.includes('\rX-FAKE:1'));
+ assert.ok(text.split('\r\n').every(line=>new TextEncoder().encode(line).length<=75));
+ assert.ok(unfold(text).includes('🏐'.repeat(60)));
+ assert.notEqual(text.match(/^DTSTART:(.*)$/m)[1],next.match(/^DTSTART:(.*)$/m)[1]);
+ for(const f of [{...fixture,id:'bad\r\nUID:fake'},{...fixture,startAt:null},{...fixture,startAt:Infinity}])assert.throws(()=>fixtureCalendar('Команда',f));
+});
+
+test('Conflicting archive IDs are not silently chosen; current publication wins without an ambiguous link',async()=>{
+ const {mergeLoadedArchive}=await import('../js/public-archive.js');
+ const a=row(1),b={...a,startedAt:a.startedAt+1000};
+ const old={...a,archiveKey:archiveKey(a)},changed={...b,archiveKey:archiveKey(b)};
+ assert.deepEqual(mergeLoadedArchive([], [old,changed]),{rows:[],conflicts:[a.id]});
+ assert.deepEqual(mergeLoadedArchive([], [old,old]),{rows:[old],conflicts:[]});
+ assert.deepEqual(mergeLoadedArchive([a],[old,changed]),{rows:[a],conflicts:[a.id]});
+ assert.equal(mergeLoadedArchive([],[changed,old,row(2)]).rows.length,1);
+});
+
+import {archiveV3Target,archiveV3Projection,archiveV3Page,fetchArchiveV3Page,readArchiveV3Version,writeArchiveV3Record,planArchiveV3Migration} from '../js/public-archive.js';
+test('V3 uses immutable ID and unique sort key with bounded pagination',async()=>{const target=archiveV3Target(viewerTarget('https://example.com/live/').address),a=row(1),b={...row(2),startedAt:a.startedAt},raw=Object.fromEntries([a,b].map(r=>[r.id,archiveV3Projection(r)]));const one=archiveV3Page(raw,{limit:1});assert.equal(one.rows[0].id,b.id);assert.equal(archiveV3Page(raw,{limit:1,cursor:one.cursor}).rows[0].id,a.id);assert.throws(()=>archiveV3Page({wrong:raw[a.id]}));assert.throws(()=>archiveV3Page({[a.id]:{...raw[a.id],sortKey:'bad'}}));const out=await fetchArchiveV3Page(target,{limit:1,fetcher:async url=>{const q=new URL(url).searchParams;assert.equal(q.get('orderBy'),'"sortKey"');assert.equal(q.get('limitToLast'),'2');return new Response(JSON.stringify(raw));}});assert.deepEqual(out,one);const old=await readArchiveV3Version(target,a.id,async url=>{assert.ok(url.endsWith('/'+a.id+'.json'));return new Response(JSON.stringify(raw[a.id]),{headers:{ETag:'v1'}});});assert.equal(old.etag,'v1');await assert.rejects(writeArchiveV3Record(target,a.id,{...a,startedAt:a.startedAt+100},'synthetic',old.etag,async(url,opt)=>{assert.equal(new URL(url).pathname.split('/').at(-1),a.id+'.json');assert.equal(opt.headers['If-Match'],'v1');assert.equal(JSON.parse(opt.body).sortKey,archiveKey({...a,startedAt:a.startedAt+100}));return new Response('{}',{status:412});}),e=>e.status===412);await assert.rejects(writeArchiveV3Record(target,a.id,b,'synthetic','v1'),/ID/);const migration=planArchiveV3Migration([a,{...a,startedAt:a.startedAt+1},b]);assert.deepEqual(migration.conflicts,[a.id]);assert.equal(migration.ready[0].id,b.id);});
+
+import {inspectArchiveV3Migration} from '../js/public-archive.js';
+function migrationFetcher(source,dest){
+ return async(url,opt)=>{
+  assert.ok(!opt.method||opt.method==='GET');const u=new URL(url),isV3=u.pathname.includes('publicMatchArchiveV3'),rows=isV3?dest:source,q=u.searchParams,limit=Number(q.get('limitToLast')),end=q.has('endAt')?JSON.parse(q.get('endAt')):null;
+  assert.ok(limit<=41);assert.equal(q.get('orderBy'),isV3?'"sortKey"':'"$key"');
+  const selected=rows.map(archiveV3Projection).filter(r=>!end||r.sortKey<=end).sort((a,b)=>a.sortKey<b.sortKey?-1:a.sortKey>b.sortKey?1:0).slice(-limit);
+  return new Response(JSON.stringify(selected.length?Object.fromEntries(selected.map(r=>{const {sortKey,...v}=r;return [isV3?r.id:sortKey,isV3?r:v];})):null));
+ };
+}
+test('V3 migration preview scans all pages twice, reports conflicts and never writes',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,source=Array.from({length:45},(_,i)=>row(i)),duplicate={...row(1),startedAt:row(1).startedAt+5000},dest=[row(2),{...row(3),opponent:'Changed'},row(100)];
+ const p=await inspectArchiveV3Migration(address,{fetcher:migrationFetcher([...source,duplicate],dest)});
+ assert.equal(p.sourceCount,46);assert.equal(p.destinationCount,3);assert.deepEqual(p.sourceConflicts,['r1']);assert.deepEqual(p.identical,['r2']);assert.deepEqual(p.mismatches,['r3']);assert.deepEqual(p.destinationOnly,['r100']);assert.equal(p.ready.length,42);assert.equal(p.requiresReview,true);
+ assert.ok(p.ready.every(r=>!Object.hasOwn(r,'private')));await assert.rejects(inspectArchiveV3Migration(address,{fetcher:migrationFetcher(source,dest),maxRecords:40}),/лимит/);
+ const clean=await inspectArchiveV3Migration(address,{fetcher:migrationFetcher([],[])});assert.equal(clean.requiresReview,false);assert.equal(clean.sourceCount,0);
+});
+test('Migration refuses unstable data and corrupt key rather than silently skipping records',async()=>{
+ const address=viewerTarget('https://example.com/live/').address;let visits=0;
+ const fetcher=async(url,opt)=>{const v3=new URL(url).pathname.includes('publicMatchArchiveV3');if(!v3)visits++;return migrationFetcher([row(visits)],[])(url,opt);};
+ await assert.rejects(inspectArchiveV3Migration(address,{fetcher}),/изменился/);
+ const broken=async()=>new Response(JSON.stringify({bad:archiveProjection(row(1))}));await assert.rejects(inspectArchiveV3Migration(address,{fetcher:broken}),/Некорректная запись/);
+});
+
+import {resolveArchiveRoute,routedArchivePage,routedArchiveRecord,routedArchiveVersion,routedArchiveWrite,requireWritableArchive} from '../js/public-archive.js';
+test('Route mode preserves old URLs across date corrections, never leaks stale V2 after V3 deletion',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,a=row(1),corrected={...a,startedAt:a.startedAt+5000,opponent:'Corrected'},v3=archiveV3Projection(corrected),calls=[];
+ const fetcher=async(url,opt)=>{calls.push({url,opt});const u=new URL(url);if(u.pathname.includes('/archiveMigration/'))return new Response(JSON.stringify({phase:'v3',generation:2}));if(u.pathname.includes('/publicMatchArchiveV3/'))return new Response(JSON.stringify(u.pathname.endsWith('/r1.json')?v3:{r1:v3}),{headers:{ETag:'v3'}});throw Error('V2 must not be read');};
+ const route=await resolveArchiveRoute(address,{fetcher});assert.equal(route.version,3);assert.equal(route.key,'3:2');
+ const page=await routedArchivePage(route,{fetcher});assert.equal(page.rows[0].archiveKey,archiveKey(corrected));
+ const old=await routedArchiveRecord(route,{archiveKey:archiveKey(a)},fetcher);assert.equal(old.opponent,'Corrected');assert.equal(old.startedAt,corrected.startedAt);
+ assert.equal((await routedArchiveVersion(route,a,fetcher)).value.startedAt,corrected.startedAt);
+ await routedArchiveWrite(route,a,corrected,'token','v3',async(url,opt)=>{assert.match(new URL(url).pathname,/publicMatchArchiveV3\/.*\/r1\.json$/);assert.equal(opt.headers['If-Match'],'v3');return new Response('{}');});
+ assert.equal(await routedArchiveRecord(route,{archiveKey:archiveKey(a)},async()=>new Response('null')),null);
+ await assert.rejects(resolveArchiveRoute(address,{previous:route,fetcher:async()=>new Response('{}',{status:401})}),/подтвердить/);
+ const legacy=await resolveArchiveRoute(address,{fetcher:async()=>new Response('{}',{status:401})});assert.equal(legacy.version,2);
+ const frozen=await resolveArchiveRoute(address,{fetcher:async()=>new Response(JSON.stringify({phase:'frozen',generation:1}))});assert.throws(()=>requireWritableArchive(frozen),/перенос/);await assert.rejects(routedArchiveVersion(frozen,a,async()=>{throw Error('must not call');}),/перенос/);
+ assert.ok(calls.every(x=>!x.url.includes('/publicMatchArchive/')));
+});
+
+import {captureFrozenArchiveV3Backup,verifyFrozenArchiveV3Backup} from '../js/public-archive.js';
+test('Frozen V3 backup covers both complete paths, verifies offline and rejects altered scores',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,source=Array.from({length:45},(_,i)=>row(i)),destination=source.slice(0,40);
+ const fetcher=async(url,opt)=>{
+  assert.ok(!opt.method||opt.method==='GET');
+  if(new URL(url).pathname.includes('/archiveMigration/'))return new Response(JSON.stringify({phase:'frozen',generation:3}));
+  return migrationFetcher(source,destination)(url,opt);
+ };
+ const backup=await captureFrozenArchiveV3Backup(address,{fetcher});
+ assert.equal(backup.source.length,45);assert.equal(backup.destination.length,40);assert.match(backup.sha256,/^[a-f0-9]{64}$/);
+ const report=await verifyFrozenArchiveV3Backup(JSON.parse(JSON.stringify(backup)));
+ assert.equal(report.generation,3);assert.equal(report.ready.length,5);assert.equal(report.identical.length,40);assert.equal(report.requiresReview,false);
+ const altered=structuredClone(backup);altered.source[0].opponent='Changed';
+ await assert.rejects(verifyFrozenArchiveV3Backup(altered),/сумма/);
+ const nested=structuredClone(backup);nested.source[0].sets[0].private='not-public';
+ await assert.rejects(verifyFrozenArchiveV3Backup(nested),/Некорректная запись/);
+ const reordered=structuredClone(backup);reordered.source.reverse();
+ await assert.rejects(verifyFrozenArchiveV3Backup(reordered),/порядок/);
+});
+test('Frozen archive backup refuses non-frozen state, changed generation and unknown nested remote fields',async()=>{
+ const address=viewerTarget('https://example.com/live/').address;
+ await assert.rejects(captureFrozenArchiveV3Backup(address,{fetcher:async()=>new Response(JSON.stringify({phase:'legacy',generation:1}))}),/замороженный/);
+ let controls=0;
+ const changed=async(url,opt)=>new URL(url).pathname.includes('/archiveMigration/')?new Response(JSON.stringify({phase:'frozen',generation:++controls})):migrationFetcher([row(1)],[])(url,opt);
+ await assert.rejects(captureFrozenArchiveV3Backup(address,{fetcher:changed}),/Поколение/);
+ const a=archiveProjection(row(1));a.sets[0].private='not-public';
+ const bad=async()=>new Response(JSON.stringify({[archiveKey(a)]:a}));
+ await assert.rejects(inspectArchiveV3Migration(address,{fetcher:bad}),/Некорректная запись/);
+});

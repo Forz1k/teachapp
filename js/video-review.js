@@ -3,7 +3,7 @@ export function videoMarkers(detail,firstAt=0,{kind='',side='',playerId='',durat
  if(!Number.isFinite(firstAt)||firstAt<0)throw Error('Введите время первого записанного события в видео, в секундах');
  const all=replayDetailed(detail).timeline.filter(e=>e.type==='rally'),anchor=Date.parse(all[0]?.at);
  const names=new Map([...detail.ourPlayers,...detail.awayPlayers].map(p=>[p.id,p.name]));
- return all.map((e,i)=>({index:i+1,set:e.set,score:e.score,seconds:firstAt+(Date.parse(e.at)-anchor)/1000,kind:e.kind,side:e.side,playerId:e.player,label:reasons[e.kind],player:names.get(e.player)||'—'})) .filter(e=>(!set||e.set===set)&&(!kind||e.kind===kind)&&(!side||e.side===side)&&(!playerId||e.playerId===playerId)&&e.seconds>=0&&e.seconds<=duration);
+ return all.map((e,i)=>({index:i+1,set:e.set,score:e.score,seconds:firstAt+(Date.parse(e.at)-anchor)/1000,alignment:'recorded',kind:e.kind,side:e.side,playerId:e.player,label:reasons[e.kind],player:names.get(e.player)||'—'})) .filter(e=>(!set||e.set===set)&&(!kind||e.kind===kind)&&(!side||e.side===side)&&(!playerId||e.playerId===playerId)&&e.seconds>=0&&e.seconds<=duration);
 }
 
 // Video calibration is private metadata only. A local file is never serialized.
@@ -17,7 +17,8 @@ export function calibratedMarkers(detail,anchors=[],filters={}){
  if(anchors.some(a=>a.index>all.length))throw Error('Контрольная точка отсутствует в протоколе');
  const points=anchors.map(a=>({...a,recorded:all[a.index-1].seconds}));for(let i=1;i<points.length;i++)if(points[i].recorded<=points[i-1].recorded)throw Error('Контрольные точки должны иметь различное время записи');
  const time=t=>{let a=points[0],b=points.at(-1);if(t<=a.recorded)return a.seconds+t-a.recorded;if(t>=b.recorded)return b.seconds+t-b.recorded;for(let i=1;i<points.length;i++){if(points[i].recorded>=t){a=points[i-1];b=points[i];break;}}return a.seconds+(t-a.recorded)*(b.seconds-a.seconds)/(b.recorded-a.recorded);};
- const {kind='',side='',playerId='',duration=Infinity,set=0}=filters;return all.map(m=>({...m,seconds:time(m.seconds)})).filter(m=>(!set||m.set===set)&&(!kind||m.kind===kind)&&(!side||m.side===side)&&(!playerId||m.playerId===playerId)&&m.seconds>=0&&m.seconds<=duration);
+ const exact=new Map(anchors.map(a=>[a.index,a.seconds]));
+ const {kind='',side='',playerId='',duration=Infinity,set=0}=filters;return all.map(m=>({...m,seconds:exact.get(m.index)??time(m.seconds),alignment:exact.has(m.index)?'manual':m.index>anchors[0].index&&m.index<anchors.at(-1).index?'interpolated':'extrapolated'})).filter(m=>(!set||m.set===set)&&(!kind||m.kind===kind)&&(!side||m.side===side)&&(!playerId||m.playerId===playerId)&&m.seconds>=0&&m.seconds<=duration);
 }
 
 // Imported PDF contains a sequential score journal, but no timestamps per rally.
@@ -28,7 +29,7 @@ export function importedVideoMarkers(match,anchors=[],{kind='',side='',playerId=
  validateVideoReview({id:'x',kind:'videoReview',matchId:'x',anchors,notes:[]});
  const all=match.imported.rallies;if(anchors.some(a=>a.index>all.length))throw Error('Контрольная точка отсутствует в протоколе');
  const byIndex=new Map(anchors.map(a=>[a.index,a.seconds])),names=new Map(players.map(p=>[p.id,p.name]));
- return all.map((r,i)=>{const index=i+1,seconds=byIndex.get(index)??null,k=importedKinds[r.kind];return {index,set:r.set,score:r.ours+':'+r.theirs,seconds,kind:k,side:r.winner,playerId:r.playerId,label:reasons[k]||'Другое',player:names.get(r.playerId)||'Автор не сохранён',outsideVideo:seconds!==null&&seconds>duration};}).filter(e=>(!set||e.set===set)&&(!kind||e.kind===kind)&&(!side||e.side===side)&&(!playerId||e.playerId===playerId));
+ return all.map((r,i)=>{const index=i+1,seconds=byIndex.get(index)??null,k=importedKinds[r.kind];return {index,set:r.set,score:r.ours+':'+r.theirs,seconds,alignment:seconds===null?'unlinked':'manual',kind:k,side:r.winner,playerId:r.playerId,label:reasons[k]||'Другое',player:names.get(r.playerId)||'Автор не сохранён',outsideVideo:seconds!==null&&seconds>duration};}).filter(e=>(!set||e.set===set)&&(!kind||e.kind===kind)&&(!side||e.side===side)&&(!playerId||e.playerId===playerId));
 }
 
 // Local clip range only; never stores or uploads the underlying recording.
@@ -39,4 +40,51 @@ export function clipRange(start,end,duration){
 export function clipAround(seconds,duration,before=5,after=5){
  if(!Number.isFinite(seconds)||!Number.isFinite(duration)||seconds<0||seconds>duration)throw Error('Некорректное положение видео');
  return clipRange(Math.max(0,seconds-before),Math.min(duration,seconds+after),duration);
+}
+
+/** Time-based stepping, not a frame-number guarantee (video FPS may vary). */
+export const videoReviewRates=[0.25,0.5,0.75,1,1.25,1.5,2];
+export function videoSeekStep(current,duration,delta){
+ if(![current,duration,delta].every(Number.isFinite)||duration<=0||current<0||current>duration||Math.abs(delta)>30)throw Error('Некорректное положение видео');
+ return Math.min(duration,Math.max(0,current+delta));
+}
+
+/** A/B rehearsal is independent of export and never persisted or uploaded. */
+export function videoLoopRange(start,end,duration){
+ if(![start,end,duration].every(Number.isFinite)||duration<=0||start<0||end>duration||end-start<.5||end-start>120)throw Error('Выберите отрезок от 0,5 до 120 секунд в пределах видео');
+ return {start,end};
+}
+export function videoLoopSeek(range,current,duration,{playing=false,ended=false}={}){
+ if(!range||!Number.isFinite(current)||!Number.isFinite(duration)||duration<=0||range.end>duration||(!playing&&!ended))return null;
+ return current>=range.end||current<range.start?range.start:null;
+}
+
+/** Time navigation over the current filtered markers, never estimates an
+ * unlinked imported rally or wraps at the ends. Skip the current time
+ * within 50 ms to avoid reselecting it after browser seek rounding. */
+export function adjacentVideoMarker(markers,current,duration,direction){
+ if(!Array.isArray(markers)||!Number.isFinite(current)||!Number.isFinite(duration)||duration<=0||current<0||current>duration||![-1,1].includes(direction))return null;
+ let best=null;
+ for(const m of markers){
+  if(!m||m.outsideVideo||m.alignment==='unlinked'||!Number.isFinite(m.seconds)||m.seconds<0||m.seconds>duration||!Number.isSafeInteger(m.index)||m.index<1)continue;
+  if(direction*(m.seconds-current)<=.05)continue;
+  if(!best||direction*(m.seconds-best.seconds)<0||m.seconds===best.seconds&&m.index<best.index)best=m;
+ }
+ return best;
+}
+
+/** Precompute a time-ordered index on filter/anchor changes, not on each
+ * playback event. Equal timestamps select the lowest rally index, as before. */
+export function createVideoMarkerIndex(markers){
+ const rows=markers.filter(m=>m&&!m.outsideVideo&&m.alignment!=='unlinked'&&Number.isFinite(m.seconds)&&m.seconds>=0&&Number.isSafeInteger(m.index)&&m.index>=1).map(m=>({...m})).sort((a,b)=>a.seconds-b.seconds||a.index-b.index);
+ const unique=rows.filter((m,i)=>i===0||rows[i-1].seconds!==m.seconds);
+ function lower(array,predicate){let lo=0,hi=array.length;while(lo<hi){const mid=(lo+hi)>>>1;if(predicate(array[mid]))hi=mid;else lo=mid+1;}return lo;}
+ return {
+  count(duration){return Number.isFinite(duration)&&duration>=0?lower(rows,m=>m.seconds>duration):0;},
+  adjacent(current,duration,direction){
+   if(!Number.isFinite(current)||!Number.isFinite(duration)||duration<=0||current<0||current>duration||![-1,1].includes(direction))return null;
+   const i=direction===1?lower(unique,m=>m.seconds-current>.05):lower(unique,m=>current-m.seconds<=.05)-1;
+   const found=unique[i];return found&&found.seconds<=duration?{...found}:null;
+  }
+ };
 }

@@ -18,3 +18,12 @@ test('Season plan checks non-overlap, actual session status and weekly boundarie
  const scoped=makeScopedBackup(copy,{kind:'team',id:team.id});assert.ok(scoped.payload.data.workRecords.some(x=>x.id===r.id));
  await S.restoreBackup(copy);const broken=structuredClone(copy);broken.data.workRecords.find(x=>x.id===r.id).teamId='missing';await assert.rejects(S.restoreBackup(broken),/связь плана сезона/);
 });
+
+test('Season target attainment counts only covered held sessions and reports gaps, excess and zero targets',()=>{
+ const plan={id:'p',kind:'seasonPlan',teamId:'t',name:'S',from:'2026-11-01',to:'2026-11-30',revision:0,phases:[{...phase,from:'2026-11-03',to:'2026-11-07',sessions:1,minutes:45},{...phase,from:'2026-11-12',to:'2026-11-15',sessions:0,minutes:0}]};
+ const session=(date,held=true)=>({teamId:'t',date,held,minutes:60});
+ const a=seasonPlanProgress(plan,[session('2026-11-02'),session('2026-11-03'),session('2026-11-04'),session('2026-11-05',false),session('2026-11-13')],[],'2026-11-10');
+ assert.equal(a.total.held,3);assert.equal(a.covered.held,2);assert.deepEqual(a.sessionProgress,{target:1,actual:2,remaining:0,over:1,percent:200});
+ assert.deepEqual(a.minuteProgress,{target:45,actual:120,remaining:0,over:75,percent:267});assert.equal(a.phases[0].status,'completed');assert.equal(a.phases[1].status,'future');assert.equal(a.phases[1].sessionProgress.percent,null);assert.equal(a.phases[1].held,0);
+ assert.deepEqual(a.gaps.map(x=>[x.from,x.to,x.held]),[['2026-11-01','2026-11-02',1],['2026-11-08','2026-11-11',0],['2026-11-16','2026-11-30',0]]);
+});

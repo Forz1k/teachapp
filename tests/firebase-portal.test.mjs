@@ -118,6 +118,7 @@ test('Opt-in archive queue survives disconnection, never overwrites conflicts, a
  server=null;const map=new Map();globalThis.localStorage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};
  const id='archive-queue-test',credentials={origin,apiKey,email:'trainer@example.org',password:'password',slug:'queue',team:'Команда'},records=new Map();let archiveWrites=0;
  const fetcher=async(url,opt={})=>{
+  if(url.includes('/archiveMigration/'))return json(null,401);
   if(!url.includes('/publicMatchArchive/'))return fake(url,opt);
   const u=new URL(url),k=u.pathname.split('/').at(-1).replace(/\.json$/,'');
   if(u.searchParams.has('equalTo'))return json(Object.fromEntries([...records].filter(([,r])=>r.id===JSON.parse(u.searchParams.get('equalTo')))));

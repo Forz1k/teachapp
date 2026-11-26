@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {SCHEMA} from '../js/db.js';
+import {BACKUP_VERSION} from '../js/backup.js';
+import {encryptBackup} from '../js/privacy.js';
+import {verifyProtectedBackup} from '../js/backup-verify.js';
+const password='synthetic-independent-password';
+const fixture=()=>({app:'teachapp',version:BACKUP_VERSION,createdAt:'2026-11-26T00:00:00Z',data:{...Object.fromEntries(Object.keys(SCHEMA).map(n=>[n,[]])),classes:[{id:'c',name:'Synthetic'}],students:[{id:'s',classId:'c',fullName:'PRIVATE'}],meta:[{id:'settings',lastBackupAt:null},{id:'fixture',value:{x:1,y:2}}]}});
+test('Encrypted backup verification compares portable content without writing or exposing records',async()=>{
+ const old=fixture(),envelope=await encryptBackup(old,password),live=fixture();
+ live.createdAt='2026-11-27T00:00:00Z';live.data.meta.reverse();live.data.meta.find(r=>r.id==='settings').lastBackupAt='2026-11-26';live.data.meta.find(r=>r.id==='settings').backupReminderAfter=null;
+ live.data.meta.find(r=>r.id==='fixture').value={y:2,x:1};
+ const before=structuredClone(live),verify=()=>verifyProtectedBackup(envelope,password,{load:async()=>live});
+ assert.deepEqual(await verify(),{verified:true,version:BACKUP_VERSION,records:4,comparison:'matches',differentTables:0,restorePerformed:false});
+ assert.deepEqual(live,before);
+ live.data.students[0].fullName='CHANGED';const result=await verify();assert.equal(result.comparison,'different');assert.equal(result.differentTables,1);assert.doesNotMatch(JSON.stringify(result),/PRIVATE|CHANGED|fixture/);
+ live.data.students[0].fullName='PRIVATE';live.data.meta.find(r=>r.id==='fixture').value=new Date();assert.equal((await verify()).differentTables,1);
+});
+test('Backup verification refuses plaintext, corrupt password, scoped and local checkpoint copies; legacy is not current equivalence',async()=>{
+ let calls=0;const load=async()=>{calls++;return fixture();};
+ await assert.rejects(verifyProtectedBackup(fixture(),password,{load}),/зашифрованную/);
+ const envelope=await encryptBackup(fixture(),password);await assert.rejects(verifyProtectedBackup(envelope,'wrong-password',{load}),/неверный пароль/);
+ const scoped={...fixture(),scope:{kind:'class',id:'c',omitted:0}};
+ await assert.rejects(verifyProtectedBackup(await encryptBackup(scoped,password),password,{load}),/выборочная/);
+ const checkpoint=fixture();checkpoint.data.meta.push({id:'sync-checkpoint-school',value:'SECRET'});
+ await assert.rejects(verifyProtectedBackup(await encryptBackup(checkpoint,password),password,{load}),/контрольные точки/);
+ const old={...fixture(),version:BACKUP_VERSION-1};const r=await verifyProtectedBackup(await encryptBackup(old,password),password,{load});
+ assert.equal(r.comparison,'older-format');assert.equal(r.differentTables,null);assert.equal(calls,0);
+ await assert.rejects(verifyProtectedBackup(envelope,password,{load,active:()=>false}),/отменена/);assert.equal(calls,0);
+ let active=true;await assert.rejects(verifyProtectedBackup(envelope,password,{load:async()=>{active=false;return fixture();},active:()=>active}),/отменена/);
+});

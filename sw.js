@@ -1,4 +1,4 @@
-const VERSION = 'v6.0.0';
+const VERSION = 'v6.0.2';
 const PREFIX = `teachapp:${self.registration.scope}:`;
 const CACHE = PREFIX + VERSION;
 
@@ -69,7 +69,7 @@ const PRECACHE = [
   './js/screens/match-protocol.js',
   './js/screens/lineup-picker.js',
   './js/screens/volleyball.js',
-  './js/privacy.js',
+  './js/privacy.js','./js/backup-verify.js','./js/migration-preflight.js',
   './js/retention.js',
   './js/analytics.js','./js/school-review.js',
   './js/screens/analytics.js','./js/screens/school-review.js',
@@ -136,3 +136,4 @@ self.addEventListener('fetch', event => {
 self.addEventListener('message', event => {
   if (event.data === 'skipWaiting') event.waitUntil(self.skipWaiting());
 });
+

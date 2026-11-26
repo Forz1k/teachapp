@@ -78,3 +78,45 @@ test('Match package separates event and result, preserves explicit score, and pr
  assert.ok(!texts[0].includes('3:1'));assert.ok(texts[1].includes('3:1'));assert.ok(!texts[1].includes('Зал'));
  await assert.rejects(studioMatchPackage(canvas,raw,['square'],{eventDetails:'Зал',cancelled:()=>true}));
 });
+
+test('Studio photo opacity and logo placement are bounded, portable and backward-compatible',()=>{const raw={photoOpacity:35,logoPosition:'left'};assert.deepEqual(parseStudioStyleFile(studioStyleFile(raw)),studioStyle(raw));const old=JSON.parse(studioStyleFile({}));delete old.style.photoOpacity;delete old.style.logoPosition;assert.equal(parseStudioStyleFile(JSON.stringify(old)).photoOpacity,70);assert.equal(studioStyle({photoOpacity:200}).photoOpacity,100);old.style.photoOpacity=-1;assert.throws(()=>parseStudioStyleFile(JSON.stringify(old)));const pictures=[],lines=[],ctx={globalAlpha:1,measureText:s=>({width:s.length*10}),fillRect(){},fillText(t,x){lines.push({t,x});},drawImage(img,x,y){pictures.push({img,x,y,alpha:this.globalAlpha});}},canvas={getContext:()=>ctx};const logo={width:100,height:100},photo={width:300,height:200};paintStudio(canvas,{...raw,title:'Title'},{logo,backgroundImage:photo});assert.equal(pictures[0].alpha,.35);assert.ok(lines[0].x>pictures[1].x);pictures.length=0;paintStudio(canvas,{logoPosition:'none'},{logo});assert.equal(pictures.length,0);});
+
+import {studioLayers,paintStudioLayers} from '../js/media-studio.js';
+test('Transient Studio layers are bounded and ordered; style and match kit never store private layer text',()=>{const raw={team:'A',opponent:'B',score:'2:0',layers:[{kind:'rect',x:95,y:95,width:90,height:50,color:'#123456',opacity:70},{kind:'text',x:5,y:5,width:40,height:20,size:4,text:'PRIVATE'}]};const ls=studioLayers(raw.layers);assert.equal(ls[0].width,5);assert.equal(ls[0].height,5);assert.equal(ls[1].text,'PRIVATE');assert.equal(studioLayers(Array(10).fill(raw.layers[0])).length,6);assert.doesNotMatch(studioStyleFile(raw),/PRIVATE|layers/);assert.ok(studioMatchKit(raw,'Hall').every(x=>x.layers.length===0));const seen=[],ctx={save(){},restore(){},beginPath(){},rect(...x){seen.push(['clip',...x]);},clip(){},fillRect(...x){seen.push(['rect',...x,this.globalAlpha]);},fillText(t,x,y){seen.push(['text',t,x,y]);},measureText(s){return {width:s.length*10};}};paintStudioLayers(ctx,ls,1080,1920);assert.deepEqual(seen[0],['clip',1026,1824,54,96]);assert.equal(seen[1][5],.7);assert.equal(seen[3][1],'PRIVATE');});
+
+import {duplicateStudioLayer} from '../js/media-studio.js';
+test('Studio text alignment is backward-compatible, clipped and relative to each layer',()=>{
+ const old=studioLayers([{kind:'text',text:'Old'}])[0];assert.equal(old.align,'left');assert.equal(old.vertical,'top');
+ const malformed=studioLayers([{kind:'text',align:'start',vertical:'baseline'}])[0];assert.equal(malformed.align,'left');assert.equal(malformed.vertical,'top');
+ const seen=[],ctx={save(){},restore(){},beginPath(){},rect(){},clip(){},measureText(s){return {width:s.length*10};},fillText(t,x,y){seen.push({t,x,y,align:this.textAlign});}};
+ const layer={kind:'text',text:'Line',x:10,y:20,width:40,height:20,size:5};
+ paintStudioLayers(ctx,[{...layer,align:'center',vertical:'middle'},{...layer,align:'right',vertical:'bottom'}],1000,1000);
+ assert.equal(seen[0].align,'center');assert.equal(seen[0].x,300);assert.ok(Math.abs(seen[0].y-271)<.001);
+ assert.equal(seen[1].align,'right');assert.equal(seen[1].x,500);assert.ok(Math.abs(seen[1].y-342)<.001);
+ assert.doesNotMatch(studioStyleFile({layers:[{...layer,align:'center'}]}),/layers|Line/);
+});
+test('Duplicate Studio layer preserves dimensions and styles without sharing object or exceeding limits',()=>{
+ const a={kind:'text',x:60,y:80,width:40,height:20,text:'A',align:'right',vertical:'bottom'},b={kind:'rect',x:10,y:10,width:20,height:20};
+ const rows=duplicateStudioLayer([a,b],0);
+ assert.equal(rows.length,3);assert.deepEqual(rows[1],rows[0]);assert.notEqual(rows[1],rows[0]);assert.equal(rows[2].kind,'rect');
+ const moved=duplicateStudioLayer([{...a,x:10,y:10}],0)[1];assert.equal(moved.x,13);assert.equal(moved.y,13);assert.equal(moved.width,40);assert.equal(moved.align,'right');
+ assert.throws(()=>duplicateStudioLayer([a],1),/Слой/);assert.throws(()=>duplicateStudioLayer(Array(6).fill(a),0),/Максимум/);
+});
+
+test('Studio photo zoom is portable, bounded and keeps cover alignment in every format',()=>{
+ const style=studioStyle({photoZoom:175});assert.equal(style.photoZoom,175);
+ assert.equal(studioStyle({photoZoom:5}).photoZoom,100);assert.equal(studioStyle({photoZoom:300}).photoZoom,200);
+ const file=JSON.parse(studioStyleFile(style));assert.equal(parseStudioStyleFile(JSON.stringify(file)).photoZoom,175);
+ delete file.style.photoZoom;assert.equal(parseStudioStyleFile(JSON.stringify(file)).photoZoom,100);
+ file.style.photoZoom=201;assert.throws(()=>parseStudioStyleFile(JSON.stringify(file)));
+ assert.deepEqual(studioCrop(200,100,100,100,'right',150),{x:-200,y:-25,width:300,height:150});
+ assert.deepEqual(studioCrop(100,200,100,100,'top',200),{x:-50,y:0,width:200,height:400});
+ for(const [w,h] of Object.values(formats))for(const focus of ['left','right','top','bottom','center']){
+  const r=studioCrop(320,240,w,h,focus,150);assert.ok(r.x<=0&&r.y<=0&&r.x+r.width>=w-1e-8&&r.y+r.height>=h-1e-8);
+ }
+ assert.throws(()=>studioCrop(100,100,100,100,'center',99));
+ const draws=[],ctx={measureText:s=>({width:s.length*10}),fillRect(){},fillText(){},drawImage(...args){draws.push(args);}},canvas={getContext:()=>ctx},img={width:100,height:100};
+ paintStudio(canvas,{photoZoom:150,focus:'right'},{backgroundImage:img});
+ assert.deepEqual(draws[0],[img,-540,-270,1620,1620]);
+ assert.ok(studioMatchKit({team:'A',opponent:'B',score:'2:0',photoZoom:150},'Hall').every(c=>c.photoZoom===150));
+});

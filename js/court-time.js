@@ -4,13 +4,18 @@ const check=(ok,msg)=>{if(!ok)throw Error(msg);};
 const sideKeys=['ours','theirs'];
 const empty=()=>({elapsedMs:0,started:false,untrackedRallies:0,players:{ours:Object.create(null),theirs:Object.create(null)},six:Object.create(null)});
 const time=x=>typeof x==='number'?x:Date.parse(x);
-export function createCourtClock(startedAt){
- return {running:false,lastAt:time(startedAt),set:1,sets:[empty()]};
+export function createCourtClock(startedAt,{capturePlayer=null}={}){
+ return {running:false,lastAt:time(startedAt),set:1,sets:[empty()],...(capturePlayer!==null?{capturePlayer,intervals:[]}: {})};
 }
 export function clockAdvance(c,at,lineups){
  const now=time(at);check(Number.isFinite(now)&&now>=c.lastAt,'Некорректное время события');
  const delta=now-c.lastAt;const set=c.sets[c.set-1];
  if(c.running&&delta){
+  if(c.intervals){
+   const on=lineups.ours.includes(c.capturePlayer),from=set.elapsedMs,to=from+delta,last=c.intervals.at(-1);
+   if(last?.set===c.set&&last.on===on&&last.to===from)last.to=to;
+   else c.intervals.push({set:c.set,from,to,on});
+  }
   set.elapsedMs+=delta;
   const ids=[...new Set(lineups.ours)].filter(id=>id!=null).sort();
   if(ids.length===6){const key=JSON.stringify(ids);set.six[key]=(set.six[key]||0)+delta;}
@@ -26,12 +31,12 @@ export function clockRally(c){if(!c.running)c.sets[c.set-1].untrackedRallies++;}
 export function clockPause(c){c.running=false;}
 export function clockNext(c){c.running=false;c.set++;c.sets.push(empty());}
 export function clockSummary(c,{lineups,asOf=c.lastAt}={}){
- const copy={...c,sets:c.sets.map(s=>({...s,six:Object.assign(Object.create(null),s.six),players:{ours:Object.assign(Object.create(null),s.players.ours),theirs:Object.assign(Object.create(null),s.players.theirs)}}))},now=time(asOf);
+ const copy={...c,...(c.intervals?{intervals:c.intervals.map(x=>({...x}))}:{}),sets:c.sets.map(s=>({...s,six:Object.assign(Object.create(null),s.six),players:{ours:Object.assign(Object.create(null),s.players.ours),theirs:Object.assign(Object.create(null),s.players.theirs)}}))},now=time(asOf);
  if(copy.running&&lineups&&Number.isFinite(now)&&now>copy.lastAt)clockAdvance(copy,now,lineups);
  const players={ours:Object.create(null),theirs:Object.create(null)};
  for(const set of copy.sets)for(const side of sideKeys)for(const [id,ms] of Object.entries(set.players[side]))players[side][id]=(players[side][id]||0)+ms;
  const measured=copy.sets.some(s=>s.started),untrackedRallies=copy.sets.reduce((n,s)=>n+s.untrackedRallies,0);
- return {running:copy.running,measured,untrackedRallies,partial:measured&&untrackedRallies>0,elapsedMs:copy.sets.reduce((n,s)=>n+s.elapsedMs,0),players,sets:copy.sets};
+ return {running:copy.running,measured,untrackedRallies,partial:measured&&untrackedRallies>0,elapsedMs:copy.sets.reduce((n,s)=>n+s.elapsedMs,0),players,sets:copy.sets,...(copy.intervals?{intervals:copy.intervals}: {})};
 }
 export function courtTimeLabel(ms){
  if(ms===null||ms===undefined)return '—';

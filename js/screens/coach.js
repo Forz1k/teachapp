@@ -2,6 +2,7 @@ import {openTrainingDynamics} from './training-dynamics.js';
 import {openLineupAnalysis} from './lineup-analysis.js';
 import {volleyTimeLabel} from '../volleypoint-time.js';
 import {courtTimeLabel} from '../court-time.js';
+import {courtPlayerTimeline} from '../match-protocol.js';
 import {openOpponents,openTrainingOverview,openPreMatchDossier} from './coach-opponents.js';
 import {openAssistant} from './assistant.js';
 import {openStudio} from './studio.js';
@@ -86,6 +87,23 @@ function playerForm(team,player,refresh){
     btn('+ Ограничение',()=>{limits.push({activityId:'volley',type:'avoid',dateFrom:todayIso(),dateTo:null});draw();})],
     ()=>C.savePlayer({...player,teamId:team.id,name:name.value,number:number(num),position:position.value,restrictions:limits}),refresh);
 }
+function playerTimeline(match,playerId){
+ const body=el('div',{class:'court-time-timeline'}),details=el('details',{},[el('summary',{text:'Шкала нахождения на площадке'}),body]);let loaded=false;
+ details.addEventListener('toggle',()=>{
+  if(!details.open||loaded)return;loaded=true;
+  try{
+   body.append(p('Только измеренное время партии; паузы и неизвестные интервалы не входят в шкалу.'));
+   for(const row of courtPlayerTimeline(match.detail,playerId)){
+    body.append(p('Партия '+row.set+' · '+(row.measured?courtTimeLabel(row.playerMs)+' / '+courtTimeLabel(row.elapsedMs)+(row.partial?' · частично':''):'нет замера')));
+    if(!row.elapsedMs)continue;
+    const bar=el('div',{class:'court-time-strip',role:'img','aria-label':'На площадке '+courtTimeLabel(row.playerMs)+' из '+courtTimeLabel(row.elapsedMs)});
+    for(const interval of row.intervals)bar.append(el('span',{class:interval.on?'on':'off',style:'flex-basis:'+((interval.to-interval.from)/row.elapsedMs*100)+'%',title:(interval.on?'На площадке ':'Вне площадки ')+courtTimeLabel(interval.from)+' – '+courtTimeLabel(interval.to)}));
+    body.append(bar,el('details',{},[el('summary',{text:'Интервалы · '+row.intervals.length}),...row.intervals.map(x=>p(courtTimeLabel(x.from)+' – '+courtTimeLabel(x.to)+' · '+(x.on?'На площадке':'Вне площадки')))]));
+   }
+  }catch(e){body.replaceChildren(p(e.message));}
+ });
+ return details;
+}
 function playerCard(team,player,view,refresh){
   const now=todayIso(),year=Number(now.slice(0,4))-(Number(now.slice(5,7))<9?1:0);
   const from=input(year+'-09-01','date'),to=input((year+1)+'-08-31','date');
@@ -97,15 +115,22 @@ function playerCard(team,player,view,refresh){
     const a=C.playerAttendance(player.id,view.trainings.filter(t=>(!range.from||t.date>=range.from)&&(!range.to||t.date<=range.to)));
     const load=C.playerTrainingLoad(player.id,view.trainings,range);
     const s=C.playerSeasonStats(view.matches,player.id,range);
-    const n=s.errors,t=s.playingTime;
+    const n=s.errors,t=s.playingTime,c=s.capture;
+    const percent=m=>m.value==null?'—':m.value.toFixed(1)+'% · '+m.n+'/'+m.total;
     content.replaceChildren(
       el('div',{class:'dashboard-metrics'},[metric('Личные очки',format(s.summary.sums.points),'trophy','Зафиксировано'),metric('Эйсы',format(s.summary.sums.aces),'quick','Зафиксировано'),metric('Атаки',format(s.summary.sums.attackKills),'chart','Результативные'),metric('Блоки',format(s.summary.sums.blocks),'shield','Зафиксировано')]),
       card('Матчи · выбранный период',[p('В заявке: '+s.rosterMatches+' · подробных протоколов: '+s.detailedMatches),p('Розыгрышей на площадке по подробным протоколам: '+s.rallies),trendChart(s.chosen.filter(m=>Number.isFinite(m.stats[player.id]?.points)).map(m=>({date:m.date,value:m.stats[player.id].points})).sort((a,b)=>a.date.localeCompare(b.date)).slice(-20),{unit:'очки',label:'Личные очки в матчах'}),p('График: последние 20 матчей с известным показателем.')]),
       card('Игровое время',[el('div',{class:'dashboard-metrics'},[metric('Измерено LIVE',t.measuredMatches?courtTimeLabel(t.totalMs):'—','quick','Фактические замеры'),metric('Среднее LIVE',t.measuredMatches?courtTimeLabel(t.totalMs/t.measuredMatches):'—','chart','По замерам')]),p('LIVE-замеры: '+t.measuredMatches+' · частичные: '+t.partialMatches+' · доля измеренного времени команды: '+ratio(t.totalMs,t.teamMs)),card('Результативность за 10 минут LIVE',[p(t.pointsPer10==null?'Недостаточно данных: минимум 10 минут и 10 розыгрышей с включённым учётом.':'Отмеченные личные очки за 10 минут: '+Math.round(t.pointsPer10*100)/100),p('Выборка: '+courtTimeLabel(t.rateMs)+' · '+t.rateRallies+' розыгрышей · '+t.ratePoints+' личных очков · '+t.rateMatches+' матчей с розыгрышами'),p('При включённом учёте: выиграно командой '+t.timedWon+'/'+t.timedRallies+' · разница '+(t.timedWon-t.timedLost)+' · выигранных без полной атрибуции '+t.unattributedTimedWins),p('Только зафиксированные личные эйсы, атаки и блоки в измеренных интервалах. Не показатель качества всех попыток и не сравнение с PDF.')]),
-      t.rows.length?el('details',{},[el('summary',{text:'LIVE · по матчам и партиям · '+t.rows.length}),...t.rows.map(r=>el('div',{class:'profile-result'},[p(fmtFull(r.date)+' · '+r.opponent+' · '+courtTimeLabel(r.ms)+(r.partial?' · частично':'')),p(r.sets.map((v,i)=>'П'+(i+1)+' '+courtTimeLabel(v.ms)+(v.partial?'*':'')).join(' · '))]))]):p('Включите измерение в подробном LIVE-матче.'),
+      t.rows.length?el('details',{},[el('summary',{text:'LIVE · по матчам и партиям · '+t.rows.length}),...t.rows.map(r=>el('div',{class:'profile-result'},[p(fmtFull(r.date)+' · '+r.opponent+' · '+courtTimeLabel(r.ms)+(r.partial?' · частично':'')),p(r.sets.map((v,i)=>'П'+(i+1)+' '+courtTimeLabel(v.ms)+(v.partial?'*':'')).join(' · ')),playerTimeline(view.matches.find(m=>m.id===r.matchId),player.id)]))]):p('Включите измерение в подробном LIVE-матче.'),
       el('h3',{text:'VolleyPoint · восстановлено по PDF'}),p('По длительности партий: '+(t.historicalMatches?volleyTimeLabel({minMs:t.historicalMinMs,maxMs:t.historicalMaxMs}):'—')+' · матчей: '+t.historicalMatches+' · диапазон или неполные партии: '+t.historicalPartialMatches),p('Матчей без данных времени: '+t.unknownMatches+' из '+s.rosterMatches+'.'),t.historicalRows.length?el('details',{},[el('summary',{text:'VolleyPoint · по матчам и партиям · '+t.historicalRows.length}),...t.historicalRows.map(r=>el('div',{class:'profile-result'},[p(fmtFull(r.date)+' · '+r.opponent+' · '+volleyTimeLabel(r)+' · '+r.knownSets+'/'+r.sets.length+' партий'),p(r.sets.map(v=>'П'+v.set+' '+volleyTimeLabel(v)+(v.kind==='changed'?' (замена)':'')).join(' · '))]))]):p('Для старых матчей повторно выберите исходный PDF в протоколе.'),p('LIVE и PDF не суммируются как точный замер: в длительности партий PDF могут учитываться тайм-ауты и паузы. При заменах без меток времени — диапазон, при неполном составе — нет данных.')]),
       card('Подача · подробные матчи',[p('Розыгрышей на своей подаче: '+(s.detailedMatches?s.serviceRallies:'—')),p('Выиграно командой на подаче: '+ratio(s.serviceWins,s.serviceRallies)),p('Эйсы: '+(s.detailedMatches?s.serviceAces:'—')+' · отмеченные ошибки подачи: '+(s.detailedMatches?s.serviceErrors:'—')),p('Проигрыши на подаче без указанной причины: '+s.unclassifiedServiceLosses),p('Выигрыш розыгрыша на подаче — командный показатель, не личная точность подачи.')]),
       card('Ошибки · подробные матчи',[p(s.detailedMatches?'Подача '+n.serve+' · атака '+n.attack+' · приём '+n.receive+' · прочие '+n.other:'Нет подробных протоколов'),p('Розыгрыши без полной атрибуции на площадке: '+s.unknownOnCourt),p('Ноль отмеченных ошибок не доказывает отсутствие ошибок.')]),
+      card('Качество игровых действий · PRO',[p('Проверенных полных розыгрышей: '+c.complete+' из '+c.rallies+' · конфликтных: '+c.conflicting),p('Эффективность атаки (очки − ошибки): '+percent(c.attackEfficiency)),p('Эффективность подачи: '+percent(c.serveEfficiency)),p('Положительный приём: '+percent(c.positiveReceive)),p('Идеальный приём: '+percent(c.perfectReceive)),...Object.entries({serve:'Подача',receive:'Приём',attack:'Атака',block:'Блок',set:'Передача',defense:'Защита'}).map(([k,label])=>{const v=c.counts[k];return p(label+': '+v.total+' попыток · '+v.point+' очков · '+v.error+' ошибок · качество отмечено '+v.qualityKnown+'/'+v.total);}),p('Только полные непротиворечивые записи; частичные, ручные и PDF не включены в эти проценты. Пустая выборка не означает нулевое качество.')]),
+      card('Сравнение матчей · PRO',[p('Минимум 10 проверенных попыток на показатель в каждом матче. Это порог отображения, а не статистическая значимость; разные соперники и составы не дают объективного рейтинга.'),s.captureMatches.length?el('details',{},[el('summary',{text:'Последние подробные матчи · '+Math.min(20,s.captureMatches.length)+' из '+s.captureMatches.length}),...s.captureMatches.slice().sort((a,b)=>b.date.localeCompare(a.date)||String(a.matchId).localeCompare(String(b.matchId))).slice(0,20).map(r=>{
+        const labels={attackEfficiency:'Эффективность атаки',serveEfficiency:'Эффективность подачи',positiveReceive:'Положительный приём',perfectReceive:'Идеальный приём'};
+        const description=m=>m.status==='comparable'?percent(m):m.status==='small'?'Малая выборка · '+m.total+'/'+r.minAttempts:m.status==='unknown'?'Не хватает оценок качества · '+m.total+' попыток':'Нет попыток';
+        return el('div',{class:'profile-result'},[p(fmtFull(r.date)+' · '+r.opponent),p('Полных: '+r.complete+'/'+r.rallies+' · конфликтных: '+r.conflicting),...Object.entries(labels).map(([k,label])=>p(label+': '+description(r.metrics[k])))]);
+      })]):p('Нет подробных матчей за период.')]),
       card('Данные прежних и ручных матчей',[p('Доля успешных среди записанных действий (не гарантирует полноту):'),p('Подача '+ratio(s.rates.serve.success,s.rates.serve.total)),p('Приём '+ratio(s.rates.receive.success,s.rates.receive.total)),p('Атака '+ratio(s.rates.attack.success,s.rates.attack.total)),p('Событийные протоколы не содержат все попытки атаки и приёма; их проценты здесь не вычисляются.')]),
       ...(s.importedMatches?[card('VolleyPoint · импортированные матчи',[p('Протоколов: '+s.importedMatches+' · ошибок по итогам: '+s.importedErrors),p('Зафиксированные ошибки: подача '+s.importedBreakdown.serve+' · атака '+s.importedBreakdown.attack+' · приём '+s.importedBreakdown.receive+' · прочие '+s.importedBreakdown.other),p('Очки в записанных сериях подачи: '+s.importedServiceWins+' · максимальная записанная серия: '+s.importedLongestSeries),p('Полное число попыток и выходы на площадку неизвестны; проценты не вычисляются.')])]:[]),
       card('Тренировки · посещаемость',[p(format(a.pct)+(a.pct==null?'':'%')+' · посещено '+(a.present+a.limited)+' · пропущено '+a.absent+' · не отмечено '+a.unknown)]),

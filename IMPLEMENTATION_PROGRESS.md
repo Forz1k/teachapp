@@ -388,3 +388,8 @@ PR #94 не объединён, новый релиз не опубликова�
 ## 5.9 compatibility checkpoint
 - `fff158f`: backup 22, old formats, all synthetic workflows on version changes. 451/451 and all seven workflows passed, including actual published 5.1.1 WebKit upgrade and v21 rejecting v22. [Checks](https://github.com/Forz1k/teachapp/commit/fff158f5a52d2f2241f55b2a215920043cdb4e2a/checks).
 - Owner authorized the final static publication after checks. Production LAB/Worker/Firebase migration and physical acceptance remain separate.
+
+
+## 6.0.2 — scoped personal release candidate
+
+Selected compatible 6.1–6.9 changes from the integration branch and verified video marker index/static review package. New Platform 7.x and notification features remain in the integration branch; no server migrations. See docs/RELEASE-6.0.2-ACCEPTANCE.md.

@@ -109,3 +109,33 @@ test('Guard is rechecked after asynchronous encryption and before sending any PU
  await assert.rejects(executeSync({plan,choices:{},password,client,confirmed:true,stillAllowed:()=>++calls<=2}),e=>e.code==='sync-paused'&&!e.remoteMayHaveCommitted);
  assert.equal(writes,0);assert.deepEqual(await db.dumpAll(),before);
 });
+
+test('Relay response enforces UTF-8 bytes and rejects invalid UTF-8 before parsing',async()=>{
+ const {readSyncResponse}=await import('../js/sync.js');
+ const value={name:'Я🏐'};
+ const json=JSON.stringify(value),bytes=new TextEncoder().encode(json);
+ assert.deepEqual(await readSyncResponse(new Response(bytes),bytes.length),value);
+ await assert.rejects(readSyncResponse(new Response(bytes),bytes.length-1),/Слишком большой/);
+ const legacy={headers:new Headers(),text:async()=>json};
+ await assert.rejects(readSyncResponse(legacy,bytes.length-1),/Слишком большой/);
+ const invalid=new Uint8Array([123,34,97,34,58,34,255,34,125]);
+ await assert.rejects(readSyncResponse(new Response(invalid),100),TypeError);
+ await assert.rejects(readSyncResponse(new Response('{}',{headers:{'content-length':'bad'}}),100),/некорректный/);
+});
+test('An unconfirmed PUT result is explicitly marked without advancing local checkpoint',async()=>{
+ const endpoint='https://synthetic.example.test',area='school',password='synthetic-ack-guard';
+ await db.replaceAll(Object.fromEntries(Object.keys(db.SCHEMA).map(n=>[n,[]])));await db.put('meta',defaultSettings());
+ const client={get:async()=>({revision:0,envelope:null}),put:async()=>({revision:3,envelope:null})};
+ const plan=await prepareSync({endpoint,area,password,client}),before=await db.dumpAll();
+ await assert.rejects(executeSync({plan,choices:{},password,client,confirmed:true}),e=>e.remoteMayHaveCommitted===true);
+ assert.deepEqual(await db.dumpAll(),before);
+});
+
+test('Invalid successful PUT response leaves the checkpoint intact and marks remote state uncertain; explicit rejection is not uncertain',async()=>{
+ const endpoint='https://synthetic.example.test',area='school',password='ack-response-test';
+ await db.replaceAll(Object.fromEntries(Object.keys(db.SCHEMA).map(n=>[n,[]])));await db.put('meta',defaultSettings());
+ let response=new Response('{}');const client=relayClient(endpoint,area,token,{fetcher:async(_url,opts)=>opts.method==='GET'?new Response(JSON.stringify({revision:0,envelope:null})):response});
+ const plan=await prepareSync({endpoint,area,password,client}),before=await db.dumpAll();
+ for(const res of [new Response('{}'),new Response('{}',{headers:{'content-length':'999999999'}}),new Response('{}',{status:500})]){response=res;await assert.rejects(executeSync({plan,choices:{},password,client,confirmed:true}),e=>e.remoteMayHaveCommitted===true);assert.deepEqual(await db.dumpAll(),before);}
+ response=new Response('{}',{status:409});await assert.rejects(executeSync({plan,choices:{},password,client,confirmed:true}),e=>e.remoteMayHaveCommitted===false);assert.deepEqual(await db.dumpAll(),before);
+});

@@ -1,6 +1,6 @@
 import * as C from '../coach.js';
-import {testPresets,testRestrictions,testHistory,summarizeTests} from '../coach-tests.js';
-import {todayIso,fmtFull} from '../model.js';
+import {testPresets,testRestrictions,testHistory,summarizeTests,teamSkillMap,skillMapCoverage} from '../coach-tests.js';
+import {todayIso,fmtFull,addDays} from '../model.js';
 import {catalog} from '../health.js';
 import {el,openSheet,closeSheet,toast,confirmDialog} from '../ui.js';
 import {trendChart} from '../dashboard.js';
@@ -56,11 +56,31 @@ export function openTestForm(team,view,existing,refresh,playerId=null){
  openSheet(el('div',{class:'coach-form'},[el('h2',{text:existing?'Редактировать тестирование':'Новое тестирование'}),p('Результаты тренировок не меняют матчевую статистику или школьные оценки. Выберите одинаковую методику для сравнения.'),field('Шаблон',preset),field('Название',name),field('Методика / критерий успеха',protocol),field('Нагрузка',activity),field('Тип',kind),measureFields,field('Дата',date),fill,list,status,save,btn('Закрыть',closeSheet)]));
 }
 export function testList(team,view,refresh){
- const nodes=[team.archived?null:btn('+ Тестирование команды',()=>openTestForm(team,view,null,refresh),'primary')];
+ const nodes=[team.archived?null:btn('+ Тестирование команды',()=>openTestForm(team,view,null,refresh),'primary'),btn('Карта навыков команды',()=>openTeamSkillMap(team,view))];
  for(const s of view.tests){const rows=Object.entries(s.results);nodes.push(card(s.definition.name,[p(fmtFull(s.date)+' · '+s.definition.protocol),p('Записей: '+rows.length+' · выполнено '+rows.filter(([,r])=>r.status==='done').length),btn('Результаты / редактирование',()=>openTestForm(team,view,s,refresh)),btn('Удалить тестирование',async()=>{if(!await confirmDialog({title:'Удалить тестирование?',text:'Все результаты этой записи будут удалены.',ok:'Удалить',danger:true}))return;try{await C.deleteCoachTest(s.id);await refresh();}catch(e){toast(e.message);}})]));}
  if(!view.tests.length)nodes.push(p('Тестирований пока нет.'));
  return el('div',{class:'coach-stack'},nodes);
 }
 export function playerTestCards(view,id,range){
  return summarizeTests(testHistory(view.tests,id,range)).map(g=>card(g.definition.name,[p(g.definition.protocol),g.definition.kind==='skill'?p('Успешность: '+percent(g.pct)+' · '+g.success+'/'+g.attempts+' · ошибки '+g.errors+' · цель '+percent(g.targetPct)):p('Первый: '+(g.first??'—')+' · последний: '+(g.last??'—')+' · лучший: '+(g.best??'—')+' '+g.definition.unit),g.definition.kind==='skill'?trendChart(g.history.filter(h=>h.result.status==='done'&&!h.result.adapted).map(h=>({date:h.date,value:100*h.result.success/h.result.attempts})).slice(-20),{min:0,max:100,unit:'%',label:g.definition.name}):trendChart(g.measurements.slice(-20),{unit:g.definition.unit,label:g.definition.name}),p('Адаптированных: '+g.adapted+' · пропущено: '+g.skipped+' · ограничение: '+g.restricted),...g.history.map(h=>{const r=h.result;return p(fmtFull(h.date)+' · '+(r.status==='done'?(h.definition.kind==='skill'?r.success+'/'+r.attempts+' · ошибки '+r.errors+(r.target===null?'':' · цель '+r.target):r.value+' '+h.definition.unit)+(r.adapted?' (адаптировано)':''):r.status==='restricted'?'Ограничение':'Не выполнено'));})]));
+}
+
+export function openTeamSkillMap(team,view,back=closeSheet){
+ const from=inp(addDays(todayIso(),-89),'date'),to=inp(todayIso(),'date'),min=inp('10','number',{min:1,max:1000,step:1}),archived=el('input',{type:'checkbox'}),onlyIncomplete=el('input',{type:'checkbox'}),method=sel([['','Все методики']],'');
+ const result=el('div',{class:'coach-stack'}),format=v=>v==null?'—':Number(v.toFixed(2)).toString().replace('.',','),states={missing:'Нет записи',excluded:'Нет сопоставимого результата',sample:'Малая выборка',recorded:'Есть данные'};
+ function draw(){try{
+  const map=teamSkillMap(view.tests,view.players,team.id,{from:from.value,to:to.value,minAttempts:Number(min.value),includeArchived:archived.checked}),old=method.value;
+  method.replaceChildren(el('option',{value:'',text:'Все методики'}),...map.methods.map(m=>el('option',{value:m.key,text:m.definition.name+' · '+m.definition.protocol})));
+  method.value=map.methods.some(m=>m.key===old)?old:'';
+  const names=new Map(map.players.map(p=>[p.id,p])),chosen=map.methods.filter(m=>!method.value||m.key===method.value);
+  const coverage=skillMapCoverage(map,{methodKey:method.value,onlyIncomplete:onlyIncomplete.checked}),counts=x=>'с данными '+x.recorded+' · малая выборка '+x.sample+' · исключено '+x.excluded+' · без записи '+x.missing;
+  const overview=card('Покрытие наблюдений',[p('Ячейки спортсменка × методика: '+counts(coverage.totals)+'. Это полнота данных, а не оценка уровня.'),p('Показано спортсменок: '+coverage.rows.length+' из '+coverage.players),...coverage.rows.map(r=>el('details',{},[el('summary',{text:label(r.player)+' · '+counts(r.counts)}),...r.cells.map(c=>p(c.name+' · '+c.protocol+' · '+states[c.state]+(c.lastDate?' · '+fmtFull(c.lastDate):'')))])),!coverage.methods?p('Нет методик в периоде.'):null,coverage.methods&&!coverage.rows.length?p('Нет спортсменок с неполным покрытием по выбранным методикам.'):null]);
+  result.replaceChildren(p('Срез по '+fmtFull(map.cutoff)+' · игроков '+map.players.length+' · методик '+map.methods.length),overview,...chosen.map(m=>card(m.definition.name,[p(m.definition.protocol),p('Тестирований '+m.sessions+' · с данными '+m.coverage.recorded+' · малая выборка '+m.coverage.sample+' · исключено '+m.coverage.excluded+' · без записи '+m.coverage.missing),
+   m.definition.kind==='skill'?p('Взвешенная успешность команды: '+percent(m.pct)+' · '+m.success+'/'+m.attempts+' · попадание в цель: '+percent(m.targetPct)+' ('+m.target+'/'+m.targetAttempts+')'):p('Замеры показаны отдельно по каждой спортсменке. Средняя по разным спортсменкам не используется.'),
+   ...m.rows.filter(x=>!onlyIncomplete.checked||x.state!=='recorded').map(x=>{const player=names.get(x.playerId);return el('div',{class:'card-block coach-stack'},[el('strong',{text:label(player)}),p(states[x.state]+(x.lastDate?' · '+fmtFull(x.lastDate):'')),m.definition.kind==='skill'?p('Успех: '+percent(x.pct)+' · '+x.success+'/'+x.attempts+' · ошибки '+x.errors+' · цель '+percent(x.targetPct)+' ('+x.target+'/'+x.targetAttempts+')'):p('Первый: '+format(x.first)+' · последний: '+format(x.last)+' · лучший: '+format(x.best)+' '+m.definition.unit+' · изменение '+format(x.delta)+' · замеров '+x.measurements),p('Исключённые записи: '+(x.adapted+x.restricted+x.skipped))]);})
+  ])));
+  if(!chosen.length)result.append(p('За выбранный период нет сопоставимых методик.'));
+ }catch(e){result.replaceChildren(p(e.message));}}
+ for(const n of [from,to,min,archived,method,onlyIncomplete])n.onchange=draw;
+ draw();openSheet(el('div',{class:'coach-form'},[el('h2',{text:'Карта навыков · '+team.name}),p('Сравниваются только одинаковые методики. Адаптированные и пропущенные результаты не влияют на проценты; малая выборка — не оценка уровня спортсменки. Данные предназначены для тренера, без рейтинга.'),el('div',{class:'coach-columns'},[field('С',from),field('По',to)]),field('Минимум попыток для выборки',min),field('Включить архивных спортсменок',archived),field('Методика',method),field('Только неполные наблюдения',onlyIncomplete),result,btn('Закрыть',back)]));
 }

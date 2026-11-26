@@ -1,7 +1,7 @@
 import * as S from '../store.js';
 import * as M from '../model.js';
 import {periodName} from '../assessment.js';
-import {workloadReview,periodReview,ktpForecast,ktpRedistribution,schoolPeriodOverview,periodMissingLessons,periodIssueLabels} from '../school-review.js';
+import {workloadReview,periodReview,ktpForecast,ktpRedistribution,schoolPeriodOverview,periodMissingLessons,periodIssueLabels,gradeScenario} from '../school-review.js';
 import {listWork} from '../workbench.js';
 import {openDocumentPreview} from './documents.js';
 import {openLessonPlanner} from './lesson.js';
@@ -78,7 +78,12 @@ export async function openPeriodReview(initialClass=S.state.currentClassId,initi
    card('Назначенные нормативы',p('Ограничения и отсутствие шкалы требуют отдельной проверки, а не автоматически считаются задолженностью.'),matrixTable(tasks),btn('Открыть центр задолженностей',()=>openDebtCenter(returnToClass))),card('Прогноз КТП',p('Тем проведено '+forecast.completed+' / '+forecast.total+' · осталось '+forecast.remaining),p('Оставшиеся уроки по расписанию и журналу: '+forecast.available+' · возможный дефицит '+forecast.shortfall),p('Расчёт предполагает одну тему на занятие; проведённые темы не меняются.'),btn('Предложения распределения тем',()=>openKtpRedistribution(cls.value,returnToClass)),btn('Открыть планировщик',()=>openLessonPlanner(cls.value))),card('Итоговые оценки',p('Средневзвешенный балл: сумма оценки × вес / сумма весов (обычная отметка 1, повышенный вес 2). Предложение — не итог. Каждую оценку подтверждает учитель.'),...a.results.map(r=>{
     const chosen=select([['','Не выставлена'],...['1','2','3','4','5'].map(v=>[v,v])],r.final||'');
     const apply=btn('Подтвердить итог',async()=>{if(busy||!a.ended)return;if(!await confirmDialog({title:'Подтвердить итог?',text:r.student.fullName+' · '+(chosen.value||'убрать итоговую оценку'),ok:'Подтвердить'}))return;busy=true;try{await S.saveFinalGrade(r.student.id,t.id,chosen.value||null,true);redraw();}catch(e){toast(e.message);}finally{busy=false;}});
-    apply.disabled=!a.ended;return card(r.student.fullName,p('Оценок: '+r.count+' · средневзвешенный: '+(r.mean==null?'нет данных':r.mean.toFixed(2))+' · предложение: '+(r.suggested||'нет')),p('Не отмечена явка: '+r.unknown+' · итог: '+(r.final||'нет')),field('Решение учителя',chosen),apply);
+    apply.disabled=!a.ended;
+    const scenarioGrade=select(['1','2','3','4','5'].map(v=>[v,v]),'5'),scenarioWeight=select([['1','Обычный'],['2','Повышенный']],'1'),scenarioTarget=select(['1','2','3','4','5'].map(v=>[v,v]),'5'),scenarioOut=p('');
+    const calc=()=>{try{const v=gradeScenario(r,{grade:Number(scenarioGrade.value),weight:Number(scenarioWeight.value),target:Number(scenarioTarget.value)});scenarioOut.textContent='После одной отметки: '+v.mean.toFixed(2)+' · предложение '+v.suggested+'. Для цели '+scenarioTarget.value+': '+(v.needed===0?'уже достигнута':v.needed===null?'не достигается за '+v.maxAttempts+' одинаковых отметок':v.needed+' одинаковых отметок')+'.';}catch(e){scenarioOut.textContent=e.message;}};
+    scenarioGrade.onchange=scenarioWeight.onchange=scenarioTarget.onchange=calc;calc();
+    const scenario=el('details',{class:'grade-scenario'},[el('summary',{text:'Что будет с баллом?'}),p('Условный расчёт, не изменяет журнал и не гарантирует итог.'),field('Следующая отметка',scenarioGrade),field('Вес',scenarioWeight),field('Цель',scenarioTarget),scenarioOut]);
+    return card(r.student.fullName,p('Оценок: '+r.count+' · средневзвешенный: '+(r.mean==null?'нет данных':r.mean.toFixed(2))+' · предложение: '+(r.suggested||'нет')),p('Не отмечена явка: '+r.unknown+' · итог: '+(r.final||'нет')),scenario,field('Решение учителя',chosen),apply);
    })),btn('Предпросмотр ведомости',()=>openDocumentPreview(report('Проверка периода · '+periodName(t),rows,['Предложения не являются утверждёнными отметками.'],true),returnToClass),'primary'));
   }catch(e){view.replaceChildren(p(e.message));}
  };

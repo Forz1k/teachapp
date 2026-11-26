@@ -7,7 +7,7 @@ import {validateSchoolCompetition,validateTeacherPortfolio} from './teacher-port
 import {validateStudentGoal} from './student-goals.js';
 import {validateMaterial,materialKinds} from './library-materials.js';
 import {validateOpponentNote} from './coach-opponents.js';
-import {validateVideoReview} from './video-review.js';
+import {validateVideoReview,videoMarkers,importedVideoMarkers} from './video-review.js';
 import {validateBriefing,validateGymBoard} from './methodical.js';
 import * as db from './db.js';
 import {uid,exemptionCovers} from './model.js';
@@ -92,6 +92,32 @@ export async function saveWork(input){
    r.revision=old?(old.revision??0)+1:0;validateNormAssignment(r);
   }
   await s.workRecords.put(r);return r;
+ });
+}
+/** Compare-and-save for the video editor. No schema or revision migration:
+ * expected is the exact previously read record, or null for a new review. */
+export async function saveVideoReview(input,expected){
+ require(expected===null||expected?.kind==='videoReview'&&expected.id===input?.id&&expected.matchId===input?.matchId,'Требуется исходный снимок видеоразбора');
+ require(input?.kind==='videoReview'&&(expected!==null||!input.id),'Проверьте новую запись видеоразбора');
+ const next=structuredClone({...input,id:input.id||uid('videoReview')}),baseline=structuredClone(expected);
+ validateVideoReview(next);
+ return db.transaction(['workRecords','coachMatches'],'readwrite',async s=>{
+  const reviews=(await s.workRecords.index('kind').getAll('videoReview')).filter(r=>r.matchId===next.matchId);
+  require(reviews.length<=1,'Найдены дубликаты видеоразбора. Требуется проверка данных');
+  const actual=reviews[0]??null;
+  require(JSON.stringify(actual)===JSON.stringify(baseline),'Видеоразбор изменился в другой вкладке. Откройте его заново');
+  const match=await s.coachMatches.get(next.matchId);
+  require(match&&(match.detail||match.imported),'Протокол матча недоступен');
+  const markers=match.detail?videoMarkers(match.detail,0):importedVideoMarkers(match,[]);
+  const count=markers.length;
+  require([...next.anchors,...next.notes].every(x=>x.index<=count),'Розыгрыш отсутствует в протоколе');
+  if(match.detail&&next.anchors.length) {
+   // Validate increasing recorded times as well as manual video times.
+   const byIndex=new Map(markers.map(m=>[m.index,m.seconds]));
+   require(next.anchors.every((a,i)=>i===0||byIndex.get(a.index)>byIndex.get(next.anchors[i-1].index)),'Контрольные точки должны иметь различное время записи');
+  }
+  if(actual)await s.workRecords.put(next);else await s.workRecords.add(next);
+  return next;
  });
 }
 export async function deleteWork(id,kind){return db.transaction(kind==='archive'?['workRecords','students','lessons']:['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');if(kind==='schoolCompetition')require(!(await s.workRecords.index('kind').getAll('schoolCompetition')).some(x=>x.previousStageId===id),'Сначала удалите связанный следующий этап');if(kind==='archive'){const pupils=new Set(old.snapshot.students.map(p=>p.id)),lessons=new Set(old.snapshot.lessons.map(l=>l.id));for(const p of await s.students.getAll())pupils.delete(p.id);for(const l of await s.lessons.getAll())lessons.delete(l.id);for(const r of await s.workRecords.index('kind').getAll('gradeHistory'))if(pupils.has(r.studentId)||lessons.has(r.lessonId))await s.workRecords.delete(r.id);}await s.workRecords.delete(id);});}
