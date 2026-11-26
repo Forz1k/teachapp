@@ -1,6 +1,7 @@
 /* Device-local opt-in. No network, background push, or personal fields in storage. */
 import {foregroundReminderBatch} from './work-calendar.js';
 import {addDays} from './model.js';
+import {PRIVACY_VISIBILITY_EVENT} from './privacy-shield.js';
 export const reminderSources={school:'Уроки',coach:'Волейбол',tournament:'Турниры',schoolCompetition:'Олимпиады и соревнования',normRetake:'Пересдачи',custom:'Свои события',review:'Проверки',backup:'Резервные копии'};
 export const REMINDER_KEY='teachapp.reminder-preferences.v1',REMINDER_EVENT='teachapp:reminder-preferences';
 const defaults=()=>({enabled:false,sources:Object.keys(reminderSources)});
@@ -46,20 +47,30 @@ export function reminderController({read=readReminderPreferences,allowed,load,pr
  return {poll,invalidate,stop};
 }
 function todayIsoAt(d){return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');}
-export function installReminders({load,documentTarget=globalThis.document,windowTarget=globalThis.window,navigatorTarget=globalThis.navigator}){
- const allowed=()=>documentTarget.visibilityState==='visible'&&!documentTarget.body.classList.contains('privacy-covered')&&globalThis.Notification?.permission==='granted';
- const controller=reminderController({load,allowed,prepare:async()=>{
+// Page lifecycle is a fence even if visibilityState has not changed yet.
+// Explicit privacy events invalidate old reads when cover + reveal happen
+// before an awaited calendar/registration operation completes.
+export function installReminders({load,documentTarget=globalThis.document,windowTarget=globalThis.window,navigatorTarget=globalThis.navigator,read=readReminderPreferences,permission=()=>globalThis.Notification?.permission,now,prepare,setTimer=setInterval,clearTimer=clearInterval}){
+ let pageActive=true,frozen=false,disposed=false;
+ const allowed=()=>!disposed&&pageActive&&!frozen&&documentTarget.visibilityState==='visible'&&!documentTarget.body.classList.contains('privacy-covered')&&permission()==='granted';
+ const controller=reminderController({load,read,now,allowed,prepare:prepare??(async()=>{
   const registration=await navigatorTarget.serviceWorker?.getRegistration();
   if(registration?.showNotification)return (title,opts)=>registration.showNotification(title,opts);
   if(typeof globalThis.Notification==='function')return (title,opts)=>new Notification(title,opts);
   return null;
- }});
+ })});
  const changed=()=>{controller.invalidate();void controller.poll();};
  const storageChanged=e=>{if(e.key===REMINDER_KEY||e.key===null)changed();};
  const tick=()=>void controller.poll();
- const timer=setInterval(tick,30000);
- documentTarget.addEventListener('visibilitychange',changed);
- windowTarget.addEventListener(REMINDER_EVENT,changed);windowTarget.addEventListener('storage',storageChanged);windowTarget.addEventListener('focus',tick);
+ const hidePage=()=>{pageActive=false;changed();};
+ const showPage=()=>{pageActive=true;frozen=false;changed();};
+ const freeze=()=>{frozen=true;changed();};
+ const resume=()=>{frozen=false;changed();};
+ const timer=setTimer(tick,30000);
+ const docEvents=[['visibilitychange',changed],['freeze',freeze],['resume',resume]];
+ const winEvents=[[REMINDER_EVENT,changed],[PRIVACY_VISIBILITY_EVENT,changed],['storage',storageChanged],['focus',tick],['pagehide',hidePage],['pageshow',showPage]];
+ for(const [event,listener] of docEvents)documentTarget.addEventListener(event,listener);
+ for(const [event,listener] of winEvents)windowTarget.addEventListener(event,listener);
  tick();
- return ()=>{clearInterval(timer);controller.stop();documentTarget.removeEventListener('visibilitychange',changed);windowTarget.removeEventListener(REMINDER_EVENT,changed);windowTarget.removeEventListener('storage',storageChanged);windowTarget.removeEventListener('focus',tick);};
+ return ()=>{if(disposed)return;disposed=true;clearTimer(timer);controller.stop();for(const [event,listener] of docEvents)documentTarget.removeEventListener(event,listener);for(const [event,listener] of winEvents)windowTarget.removeEventListener(event,listener);};
 }
