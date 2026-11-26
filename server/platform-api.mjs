@@ -1,7 +1,7 @@
 /* Isolated synthetic workspace service. State and authorization decisions live
  * inside one workspace transaction. No access to the personal relay or Firebase. */
 import {authorizeWorkspace,assistantProjection,athleteProjection} from './workspace-policy.mjs';
-import {notificationLabState,changeNotificationLab,queueAthleteNoticeLab,notificationInboxLab,acknowledgeNoticeLab} from './platform-notification-lab.mjs';
+import {notificationLabState,changeNotificationLab,queueAthleteNoticeLab,notificationInboxLab,acknowledgeNoticeLab,claimNoticeDeliveryLab,finishNoticeDeliveryLab,noticeDeliveryCurrentLab} from './platform-notification-lab.mjs';
 export const BODY_LIMIT=64*1024, STATE_LIMIT=512*1024;
 const DAY=86400000,LEASE_MS=45000,INVITE_MS=600000;
 const id=x=>typeof x==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(x);
@@ -41,7 +41,7 @@ export function workspaceRatePolicy(s,{auth,rootHash,method,path,now}){
  if(method==='POST'&&path==='recover'&&hash(s.recoveryHash)&&auth===s.recoveryHash&&auth!==rootHash)return {key:'recovery',limit:6};
  if(method==='POST'&&path==='redeem'&&s.invites.some(i=>i.hash===auth&&i.usedAt===null&&i.expiresAt>now))return {key:'redeem',limit:64};
  const actor=memberByHash(s,auth,now);if(!actor)return null;
- const kind=method==='GET'?'read':/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/revoke|notification-lab|notification-lab\/ack)$/.test(path)?'access':'write';
+ const kind=method==='GET'?'read':/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/revoke|notification-lab|notification-lab\/ack|notification-lab\/delivery\/(?:claim|finish|check))$/.test(path)?'access':'write';
  return {key:'member:'+actor.id+':'+kind,limit:kind==='read'?240:kind==='access'?24:180};
 }
 /** Rolling fixed-minute windows, bounded retry interval; a clock regression
@@ -90,6 +90,31 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
   const actor=memberByHash(s,auth,now);require(actor,401,'unauthorized');
   const owner=()=>require(allowed(s,actor,'workspace.manage',resource(s,'workspace')),403,'forbidden');
   const result=()=>{
+   // Owner-only simulated execution on the already isolated local Worker.
+   // These routes never call a push service or represent proof of delivery.
+   if(method==='POST'&&['notification-lab/delivery/claim','notification-lab/delivery/check','notification-lab/delivery/finish'].includes(path)){
+    owner();
+    const claim=path.endsWith('/claim'),check=path.endsWith('/check');
+    const keys=claim?['memberId','expectedRevision','sequence']:check?['memberId','ticket']:['memberId','ticket','outcome','retryAfter'];
+    require(exact(body,keys)&&id(body.memberId),400,'packet');
+    const member=exists(s.members,body.memberId);
+    require(member&&member.role==='athlete',404,'member');
+    if(claim){
+     require(int(body.expectedRevision)&&int(body.sequence,1)&&hash(issued?.hash),400,'packet');
+     const n=notificationInboxLab(member,now);
+     require(n?.pending&&n.revision===body.expectedRevision&&n.sequence===body.sequence,409,'revision');
+     const result=claimNoticeDeliveryLab(member,{now,id:issued.hash.slice(-32)});
+     return ok({status:result.status,ticket:result.ticket},200,result.changed);
+    }
+    const ticket=body.ticket;
+    require(exact(ticket,['revision','sequence','attempt','id','leaseUntil','expiresAt'])&&int(ticket.revision)&&int(ticket.sequence,1)&&int(ticket.attempt,1,3)&&typeof ticket.id==='string'&&/^[a-f0-9]{32}$/.test(ticket.id)&&int(ticket.leaseUntil)&&int(ticket.expiresAt),400,'ticket');
+    if(check)return ok({current:noticeDeliveryCurrentLab(member,ticket,now)});
+    const result=finishNoticeDeliveryLab(member,{ticket,outcome:body.outcome,retryAfter:body.retryAfter,now});
+    if(result.status==='invalid')return err(400,'packet');
+    if(result.status==='stale')return err(409,'revision');
+    if(result.changed)audit(s,actor,'notification.lab.simulated.'+result.status,member.id,now);
+    return ok({status:result.status},200,result.changed);
+   }
    if(method==='GET'&&path==='notification-lab/inbox'){
     const notice=notificationInboxLab(actor,now);return notice?ok(notice):err(403,'forbidden');
    }

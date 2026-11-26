@@ -125,3 +125,31 @@ test('Synthetic athlete notice is scoped, coalesced, expires and is revision-bou
  f.clock(86400000);assert.equal(read(a).pending,false);assert.equal(ack(a,1,3).status,409);
  assert.equal(c('w','POST','session/revoke',a).status,200);assert.equal(c('w','GET','notification-lab/inbox',a).status,401);
 });
+
+test('Owner-only synthetic delivery claims persist atomically, are fenced and never acknowledge inbox',()=>{
+ const f=fixture(),c=f.call,o=c('delivery','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ c('delivery','POST','teams',o,{id:'t',name:'Team',players:[{id:'p',name:'P',number:1}]});
+ const athlete=c('delivery','POST','redeem',c('delivery','POST','invite',o,{role:'athlete',teamId:'t',athleteId:'p',matchId:null}).body.invite).body;
+ const endpoint='https://push.example.invalid/sub/00000000-0000-4000-8000-000000000001';
+ c('delivery','PUT','notification-lab',athlete.token,{expectedRevision:0,enabled:true,endpoint});
+ const update=expectedRevision=>c('delivery','PUT','teams/t/athletes/p',o,{expectedRevision,goals:[],assignments:[],schedule:[]});
+ const op=(route,body,token=o,workspace='delivery')=>c(workspace,'POST','notification-lab/delivery/'+route,token,body);
+ const packet={memberId:athlete.member.id,expectedRevision:1,sequence:1};
+ assert.equal(update(0).status,200);
+ assert.equal(op('claim',packet,athlete.token).status,403);assert.equal(op('claim',packet,o,'other').status,401);
+ assert.equal(op('claim',{...packet,endpoint}).status,400);
+ const a=op('claim',packet);assert.equal(a.body.status,'claimed');assert.equal(a.changed,true);assert.equal(a.state.members.find(m=>m.id===packet.memberId).notificationLab.notice.delivery.phase,'sending');
+ const ticket=a.body.ticket;
+ assert.equal(op('claim',packet).body.status,'busy');assert.deepEqual(op('check',{memberId:packet.memberId,ticket}).body,{current:true});
+ assert.equal(op('finish',{memberId:packet.memberId,ticket,outcome:'accepted',retryAfter:null}).body.status,'accepted');
+ assert.equal(op('claim',packet).body.status,'settled');
+ assert.equal(c('delivery','GET','notification-lab/inbox',athlete.token).body.pending,true);
+ assert.equal(update(1).status,200);
+ assert.equal(op('finish',{memberId:packet.memberId,ticket,outcome:'subscription-gone',retryAfter:null}).status,409);
+ const b=op('claim',{...packet,sequence:2}).body.ticket;
+ f.clock(30000);assert.equal(op('check',{memberId:packet.memberId,ticket:b}).body.current,false);
+ assert.equal(op('claim',{...packet,sequence:2}).body.status,'unknown');
+ assert.equal(op('claim',{...packet,sequence:2}).body.status,'settled');
+ assert.equal(op('finish',{memberId:packet.memberId,ticket:b,outcome:'accepted',retryAfter:null}).status,409);
+ assert.doesNotMatch(JSON.stringify(c('delivery','GET','audit',o).body),/example.invalid|leaseUntil|tokenHash/);
+});
