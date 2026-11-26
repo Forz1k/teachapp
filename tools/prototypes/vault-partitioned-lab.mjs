@@ -5,6 +5,7 @@
  * transactions. Only snapshots independently valid in each scope are accepted. */
 import {SCHEMA,createDataAccess} from '../../js/db.js';
 import {splitVaultScopesLab,joinVaultScopesLab,validateVaultScopeResultLab} from './vault-scope-bundle.mjs';
+import {splitSchoolVaultLayoutLab,joinSchoolVaultLayoutLab,validateSchoolVaultLayoutResultLab} from './vault-school-layout-lab.mjs';
 import {sealPartitionScopeLab,openPartitionKeySessionLab,samePartitionCiphertextLab} from './local-vault.mjs';
 import {prepareSchemaSnapshotTransactionLab} from './vault-schema-adapter.mjs';
 import {validPartitionPasswordsLab as passwordsOK,independentPartitionPasswordsLab,createPartitionRecoveryCopyLab,openPartitionRecoveryCopyLab,sourceMatchesPartitionLab,samePartitionSnapshotLab} from './vault-partition-recovery-lab.mjs';
@@ -12,8 +13,6 @@ const scopes=['school','coach','workspace'],stores=['state',...scopes];
 const check=(v,m)=>{if(!v)throw Error(m);};
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,rev=/^[0-9a-f]{32}$/;
 const empty=()=>Object.fromEntries(Object.keys(SCHEMA).map(n=>[n,[]]));
-const blankParts=()=>splitVaultScopesLab(empty());
-const fullPart=(scope,part)=>joinVaultScopesLab({...blankParts(),[scope]:part});
 const withMeta=(scope,bundleId,data)=>({...data,bundleMeta:[{id:'bundle',scope,bundleId}]});
 function validPointer(p){
  return p&&Object.keys(p).sort().join('|')==='bundleId|id|revisions'&&p.id==='active'&&typeof p.bundleId==='string'&&uuid.test(p.bundleId)&&p.revisions&&Object.keys(p.revisions).length===3&&scopes.every(s=>Object.hasOwn(p.revisions,s)&&typeof p.revisions[s]==='string'&&rev.test(p.revisions[s]));
@@ -93,14 +92,18 @@ function commitRotation(db,expected,after){
   tx.oncomplete=()=>resolve(next);tx.onabort=()=>reject(failure||tx.error||Error('Ротация LAB отменена'));tx.onerror=()=>{};
  });
 }
-export function partitionedVaultLab(id){
- check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id),'Некорректный ID LAB');
- const name='teachapp-vault-mutable-lab-'+id;
+export function partitionedVaultLab(id,{layout='v1'}={}){
+ check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id)&&['v1','school-v2'].includes(layout),'Некорректный ID или layout LAB');
+ // Explicit, incompatible synthetic layout uses a new database name. Never
+ // reinterpret or implicitly migrate an existing ciphertext partition.
+ const schoolLayout=layout==='school-v2',name=(schoolLayout?'teachapp-vault-mutable-school-lab-':'teachapp-vault-mutable-lab-')+id;
+ const split=schoolLayout?splitSchoolVaultLayoutLab:splitVaultScopesLab,join=schoolLayout?joinSchoolVaultLayoutLab:joinVaultScopesLab,validateResult=schoolLayout?validateSchoolVaultLayoutResultLab:validateVaultScopeResultLab;
+ const blankParts=()=>split(empty()),fullPart=(scope,part)=>join({...blankParts(),[scope]:part});
  const using=async fn=>{const db=await open(name);try{return await fn(db);}finally{db.close();}};
  const current=selected=>using(async db=>requireActive(await readSlices(db,selected),selected));
  const stage=async({data,passwords})=>{
   check(passwordsOK(passwords),'Требуются три независимых пароля LAB');
-  const parts=splitVaultScopesLab(data);
+  const parts=split(data);
   // Deliberately refuse cross-scope-dependent records until shared metadata is designed.
   for(const scope of scopes)fullPart(scope,parts[scope]);
   const bundleId=crypto.randomUUID(),rows=await sealAll(parts,bundleId,passwords);
@@ -112,9 +115,9 @@ export function partitionedVaultLab(id){
   const snapshot=await current(scopes),parts={};
   for(const scope of scopes){
    const key=await openPartitionKeySessionLab({scope,bundleId:snapshot.pointer.bundleId,password:passwords[scope],rows:snapshot.rows[scope]});
-   try{parts[scope]=validateVaultScopeResultLab(await key.read(snapshot.rows[scope]),scope).data;}finally{key.close();}
+   try{parts[scope]=validateResult(await key.read(snapshot.rows[scope]),scope).data;}finally{key.close();}
   }
-  return {snapshot,parts,data:joinVaultScopesLab(parts)};
+  return {snapshot,parts,data:join(parts)};
  };
  return Object.freeze({
   stage,
@@ -152,7 +155,7 @@ export function partitionedVaultLab(id){
    let allowed;
    try{
     key=await openPartitionKeySessionLab({scope,bundleId,password,rows:initial.rows[scope],assertActive:guard});password=undefined;guard();
-    const part=validateVaultScopeResultLab(await key.read(initial.rows[scope]),scope).data;fullPart(scope,part);allowed=new Set(Object.keys(part));guard();arm();
+    const part=validateResult(await key.read(initial.rows[scope]),scope).data;fullPart(scope,part);allowed=new Set(Object.keys(part));guard();arm();
    }catch(e){close();throw e;}
    const run=async(names,mode,fn)=>{
     guard();const job=tail.then(async()=>{
@@ -161,10 +164,10 @@ export function partitionedVaultLab(id){
       check(selected.length&&new Set(selected).size===selected.length&&selected.every(n=>allowed.has(n)),'Хранилище недоступно в этой области');
       const before=await current([scope]);guard();
       check(before.pointer.bundleId===bundleId&&before.pointer.revisions[scope]===revision,'Ревизия области LAB изменилась. Откройте заново');
-      const part=validateVaultScopeResultLab(await key.read(before.rows[scope]),scope).data;
+      const part=validateResult(await key.read(before.rows[scope]),scope).data;
       const prepared=await prepareSchemaSnapshotTransactionLab(fullPart(scope,part),selected,mode,fn,{guard,isOpen:()=>{try{guard();return true;}catch{return false;}}});guard();
       if(mode==='readwrite'){
-       const next=splitVaultScopesLab(prepared.data);
+       const next=split(prepared.data);
        check(scopes.every(s=>s===scope||Object.values(next[s]).every(rows=>rows.length===0)),'Запись другой области LAB');
        const after=await key.seal(withMeta(scope,bundleId,next[scope]));guard();
        await using(db=>commitScope(db,scope,before,after,guard));guard();revision=after[0].vaultId;
@@ -175,7 +178,7 @@ export function partitionedVaultLab(id){
     tail=job.then(()=>undefined,()=>undefined);return job;
    };
    const a=createDataAccess(run);
-   return Object.freeze({scope,close,isClosed:()=>closed,transaction:a.transaction,readSnapshot:a.readSnapshot,get:a.get,getAll:a.getAll,put:a.put,del:a.del,bulkPut:a.bulkPut,byIndex:a.byIndex,count:a.count});
+   return Object.freeze({scope,...(schoolLayout&&scope==='school'?{settingsScope:'school'}:{}),close,isClosed:()=>closed,transaction:a.transaction,readSnapshot:a.readSnapshot,get:a.get,getAll:a.getAll,put:a.put,del:a.del,bulkPut:a.bulkPut,byIndex:a.byIndex,count:a.count});
   }
  });
 }
