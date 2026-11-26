@@ -328,6 +328,48 @@ try{
   assert.deepEqual(errors,[]);
  }finally{await writableUiContext.close();await page.bringToFront();}
 
+
+ const partitionUiContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block',acceptDownloads:true});
+ try{
+  const tab=await partitionUiContext.newPage(),errors=[];tab.on('pageerror',e=>errors.push(e.message));
+  const url=origin+'/tools/prototypes/vault-ui/partitioned.html?id=webkit';
+  await tab.goto(url);await tab.bringToFront();
+  if(await tab.evaluate(()=>typeof BroadcastChannel==='function')){
+   await tab.getByRole('button',{name:'Подготовить демо-копию'}).click();
+   await tab.getByText('Сохраните файл отдельно, затем выберите сохранённую копию.').waitFor({timeout:60000});
+   const [download]=await Promise.all([tab.waitForEvent('download'),tab.getByRole('link',{name:'Скачать демо-копию'}).click()]);
+   const bytes=await readFile(await download.path());assert.doesNotMatch(bytes.toString('utf8'),/Демо-ученик/);
+   await tab.locator('#copy').setInputFiles({name:'invalid.json',mimeType:'application/json',buffer:Buffer.from('{}')});await tab.locator('#confirm').check();
+   await tab.getByRole('button',{name:'Проверить файл и перенести'}).click();await tab.getByText('Перенос не подтверждён. Исходник не заменяется при ошибке.').waitFor();
+   assert.equal(await tab.locator('#scopes').isVisible(),false);
+   await tab.locator('#copy').setInputFiles({name:'teachapp-demo-recovery.json',mimeType:'application/json',buffer:bytes});
+   await tab.getByRole('button',{name:'Проверить файл и перенести'}).click();await tab.getByText('Перенос завершён. Откройте нужную область.').waitFor({timeout:60000});
+   const row=scope=>tab.locator('[data-scope="'+scope+'"]'),open=async(scope,password)=>{await row(scope).getByLabel('Демо-пароль',{exact:true}).fill(password);await row(scope).getByRole('button',{name:'Открыть',exact:true}).click();};
+   await open('school','incorrect-demo');await tab.getByText('Введите указанный демо-пароль.').waitFor();
+   await open('school','teachapp-school-demo');await row('school').getByText('Демо-оценка: 4').waitFor();
+   await open('coach','teachapp-coach-demo');await row('coach').locator('.result').filter({hasText:'Демо-команда'}).waitFor();
+   await open('workspace','teachapp-owner-demo');await row('workspace').getByText('Демо-событие · Запланировано').waitFor();
+   await row('school').getByLabel('Демо-оценка',{exact:true}).selectOption('5');await row('school').getByRole('button',{name:'Сохранить оценку'}).click();await row('school').getByText('Демо-оценка: 5').waitFor();
+   await row('coach').getByRole('button',{name:'Изменить демо-команду'}).click();await row('coach').getByText('Демо-команда 2',{exact:true}).waitFor();
+   await row('workspace').getByRole('button',{name:'Изменить статус события'}).click();await row('workspace').getByText('Демо-событие · Выполнено').waitFor();
+   await row('school').getByRole('button',{name:'Заблокировать',exact:true}).click();assert.equal(await row('school').locator('.result').textContent(),'');assert.equal(await row('coach').locator('.result').textContent(),'Демо-команда 2');
+   await tab.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
+   for(const scope of ['school','coach','workspace'])assert.equal(await row(scope).locator('.result').textContent(),'');
+   await tab.reload();await tab.getByText('Перенос завершён. Откройте нужную область.').waitFor();
+   await open('school','teachapp-school-demo');await row('school').getByText('Демо-оценка: 5').waitFor();
+   const sender=await partitionUiContext.newPage();try{
+    await sender.goto(url);await tab.bringToFront();await tab.waitForFunction(()=>document.visibilityState==='visible');
+    if(await row('school').getByRole('button',{name:'Открыть',exact:true}).isVisible())await open('school','teachapp-school-demo');
+    await row('school').getByText('Демо-оценка: 5').waitFor();
+    await sender.evaluate(()=>{window.partitionSender=new BroadcastChannel('teachapp-vault-partition-lock-lab-school-v2-migrated-ui-part-webkit');window.partitionSender.postMessage({kind:'lock-all',version:1});});
+    await row('school').locator('.state').filter({hasText:'Заблокировано'}).waitFor();assert.equal(await row('school').locator('.result').textContent(),'');
+   }finally{await sender.close();}
+   assert.ok(await tab.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+   console.log('WEBKIT PARTITION UI PASS: actual saved file, invalid copy rejected, migrated school/coach/owner writes, independent lock, reload and cross-tab revoke.');
+  }else{await tab.getByText('Межвкладочная блокировка недоступна. Доступ закрыт.').waitFor();assert.equal(await tab.locator('#scopes').isVisible(),false);}
+  assert.deepEqual(errors,[]);
+ }finally{await partitionUiContext.close();await page.bringToFront();}
+
  // A separate same-origin context with two actual tabs, no application boot
  // or service worker; all records and keys below are synthetic.
  const routingContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block'});
