@@ -499,6 +499,33 @@ try{
  let relayRequests=0;page.on('request',r=>{if(r.url().includes('/v1/snapshot/'))relayRequests++;});
  await page.locator('.workspace-nav [aria-label="Ещё"]').click();
  await page.locator('.sheet.show').getByRole('button',{name:'Настройки',exact:true}).click();
+ // Verify a selected encrypted file through the actual settings UI offline,
+ // rather than only invoking the helper. No restore or backup timestamp write.
+ await page.bringToFront();
+ const savedCopy=await page.evaluate(async()=>{
+  const S=await import('./js/store.js'),P=await import('./js/privacy.js'),payload=await S.makeBackup(),before=JSON.stringify(payload.data),password='synthetic-webkit-copy-password';
+  const matching=JSON.stringify(await P.encryptBackup(payload,password));
+  const stale=structuredClone(payload);stale.data.meta.push({id:'synthetic-backup-verification-only',value:'Synthetic changed copy'});
+  return {before,matching,different:JSON.stringify(await P.encryptBackup(stale,password))};
+ });
+ await context.setOffline(true);
+ const verifyField=page.locator('input[type=file][aria-label="Файл для проверки копии"]'),verifyBtn=page.getByRole('button',{name:'Проверить сохранённую защищённую копию',exact:true});
+ async function verifySaved(text,password,expected){
+  await verifyField.setInputFiles({name:'synthetic-backup.json',mimeType:'application/json',buffer:Buffer.from(text)});
+  const dialog=page.locator('.dialog-backdrop.show .dialog');
+  await dialog.getByRole('heading',{name:'Пароль сохранённой копии',exact:true}).waitFor();
+  await dialog.locator('input[type=password]').fill(password);
+  await dialog.getByRole('button',{name:'Проверить',exact:true}).click();
+  await page.getByText(expected).waitFor({timeout:30000});
+  await verifyBtn.waitFor({state:'visible'});
+  assert.equal(await verifyBtn.isEnabled(),true);
+ }
+ await verifySaved(savedCopy.matching,'incorrect-webkit-password',/Не удалось подтвердить копию/);
+ await verifySaved(savedCopy.matching,'synthetic-webkit-copy-password',/Переносимые записи совпадают с текущим снимком/);
+ await verifySaved(savedCopy.different,'synthetic-webkit-copy-password',/Отличаются разделы: 1/);
+ assert.equal(await page.evaluate(async()=>JSON.stringify((await (await import('./js/store.js')).makeBackup()).data)),savedCopy.before);
+ await context.setOffline(false);
+ console.log('WEBKIT BACKUP VERIFY PASS: selected encrypted file, wrong password, current and different snapshot, offline UI and unchanged data.');
  await page.getByRole('button',{name:'Синхронизация устройств · бета',exact:true}).click();
  await page.getByText('Расширенные настройки',{exact:true}).click();
  await page.locator('select[aria-label="Контур синхронизации"]').waitFor();
