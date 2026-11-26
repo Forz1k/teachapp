@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import test from 'node:test';import assert from 'node:assert/strict';
-import {vaultRouterLab,openRouterActivationBackupLab} from '../tools/prototypes/vault-router-lab.mjs';
+import {vaultRouterLab,openRouterActivationBackupLab,openRouterRollbackBackupLab} from '../tools/prototypes/vault-router-lab.mjs';
 import {openPlainSchemaLab,readPlainSchemaLab} from '../tools/prototypes/vault-migration-rehearsal.mjs';
 const password='synthetic-routing-password';
 function lockQueue(){
@@ -158,4 +158,34 @@ test('Strict activation rejects a saved snapshot that no longer matches a restag
  await a.put('meta',{id:'fixture',value:2});
  await assert.rejects(a.activateWithBackup({password,backupPassword,file:p.file,expectedGeneration:1,saved:true}),/устарела/);
  assert.equal((await a.status()).phase,'source');assert.equal((await a.snapshot()).meta[0].value,2);
+});
+
+test('Strict rollback needs an independent current revision backup and supports exact resume after pointer failure',async t=>{
+ const a=vaultRouterLab('strict-rollback',{locks:lockQueue()}),backupPassword='synthetic-independent-backup';
+ await a.initialize();await a.put('meta',{id:'fixture',value:1});await a.stage({password});await a.activate({password});
+ await a.put('meta',{id:'fixture',value:2},{password});
+ await assert.rejects(a.prepareRollbackBackup({password,backupPassword:password}),/отдельный пароль/);
+ const p=await a.prepareRollbackBackup({password,backupPassword});assert.equal(p.generation,2);assert.equal(p.records,1);
+ const reopened=await openRouterRollbackBackupLab({id:'strict-rollback',backupPassword,file:p.file});assert.equal(reopened.revision,p.revision);assert.equal(reopened.data.meta[0].value,2);
+ await assert.rejects(openRouterRollbackBackupLab({id:'other',backupPassword,file:p.file}),/другого маршрута/);
+ const options={password,backupPassword,file:p.file,expectedGeneration:2,saved:true};
+ await assert.rejects(a.rollbackWithBackup({...options,saved:false}),/Подтвердите/);
+ await assert.rejects(a.rollbackWithBackup({...options,expectedGeneration:1}),/поколение/);
+ await assert.rejects(a.rollbackWithBackup({...options,backupPassword:'wrong-password'}),/неверный пароль/);
+ // Even a same-content write creates a different authenticated vault revision.
+ await a.put('meta',{id:'fixture',value:2},{password});
+ await assert.rejects(a.rollbackWithBackup(options),/устарела/);
+ const target=await openPlainSchemaLab('teachapp-plain-lab-rollback-strict-rollback');t.after(()=>target.close());
+ assert.ok(Object.values(await readPlainSchemaLab(target)).every(rows=>rows.length===0));
+ const next=await a.prepareRollbackBackup({password,backupPassword}),args={...options,file:next.file};
+ const proto=IDBObjectStore.prototype,put=proto.put;
+ proto.put=function(value,...rest){
+  if(this.transaction.db.name==='teachapp-vault-routing-lab-strict-rollback'&&value.phase==='rollback')throw new DOMException('Synthetic pointer failure','QuotaExceededError');
+  return put.call(this,value,...rest);
+ };
+ try{await assert.rejects(a.rollbackWithBackup(args),e=>e.name==='QuotaExceededError');}finally{proto.put=put;}
+ assert.equal((await a.status()).phase,'vault');assert.equal((await readPlainSchemaLab(target)).meta[0].value,2);
+ await assert.rejects(a.rollbackWithBackup(args),/не пуста/);
+ assert.equal((await a.rollbackWithBackup({...args,resume:true})).phase,'rollback');
+ assert.equal((await a.snapshot()).meta[0].value,2);
 });

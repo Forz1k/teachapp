@@ -4,7 +4,7 @@
 import {SCHEMA} from '../../js/db.js';
 import {BACKUP_VERSION,validateBackup} from '../../js/backup.js';
 import {encryptBackup,decryptBackup} from '../../js/privacy.js';
-import {openVaultLab} from './local-vault.mjs';
+import {openVaultLab,readVaultLab} from './local-vault.mjs';
 import {schemaVaultAdapter} from './vault-schema-adapter.mjs';
 import {openPlainSchemaLab,readPlainSchemaLab,stageSchemaMigrationLab,verifySchemaMigrationLab,restoreSchemaMigrationLab,plainSchemaTransactionLab} from './vault-migration-rehearsal.mjs';
 const check=(ok,msg)=>{if(!ok)throw Error(msg);};
@@ -61,6 +61,15 @@ export async function openRouterActivationBackupLab({id,backupPassword,file}){
  check(exact(p.data,Object.keys(SCHEMA)),'Требуется полная схема LAB');
  check(Array.isArray(p.data.meta)&&p.data.meta.every(r=>typeof r?.id==='string'&&!r.id.startsWith('sync-checkpoint-')),'Контрольные точки синхронизации не переносятся в LAB');
  return validateBackup({app:'teachapp',version:BACKUP_VERSION,data:p.data});
+}
+export async function openRouterRollbackBackupLab({id,backupPassword,file}){
+ check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id),'Некорректный ID репетиции LAB');
+ independentPassword(undefined,backupPassword);
+ check(typeof file==='string'&&file.length<=96*1024*1024,'Некорректный файл копии LAB');
+ const p=await decryptBackup(JSON.parse(file),backupPassword);
+ check(exact(p,['app','version','backupVersion','id','generation','revision','data'])&&p.app==='teachapp-vault-rollback-backup'&&p.version===1&&p.backupVersion===BACKUP_VERSION&&p.id===id&&p.generation===2&&typeof p.revision==='string'&&/^[a-f0-9-]{36}$/.test(p.revision),'Копия другого маршрута или версии LAB');
+ check(exact(p.data,Object.keys(SCHEMA))&&Array.isArray(p.data.meta)&&p.data.meta.every(r=>typeof r?.id==='string'&&!r.id.startsWith('sync-checkpoint-')),'Требуется полный переносимый снимок LAB');
+ return {revision:p.revision,data:validateBackup({app:'teachapp',version:BACKUP_VERSION,data:p.data})};
 }
 export function vaultRouterLab(id,{locks=globalThis.navigator?.locks}={}){
  check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id),'Некорректный ID репетиции LAB');
@@ -128,6 +137,31 @@ export function vaultRouterLab(id,{locks=globalThis.navigator?.locks}={}){
    const s=await state(db);expect(s,'source');
    await plain('source',p=>encrypted(v=>verifySchemaMigrationLab(p,v,{password})));
    const n=next(s,'vault');await setState(db,s,n);return n;
+  }),
+  prepareRollbackBackup:({password,backupPassword})=>guarded(async db=>{
+   const s=await state(db);expect(s,'vault');independentPassword(password,backupPassword);
+   return encrypted(async v=>{
+    const before=await readVaultLab(v,{scope:'workspace',password});
+    const file=JSON.stringify(await encryptBackup({app:'teachapp-vault-rollback-backup',version:1,backupVersion:BACKUP_VERSION,id,generation:s.generation,revision:before.revision,data:before.data},backupPassword));
+    const opened=await openRouterRollbackBackupLab({id,backupPassword,file});
+    const after=await readVaultLab(v,{scope:'workspace',password});
+    check(opened.revision===before.revision&&after.revision===before.revision&&sameSnapshot(opened.data,before.data)&&sameSnapshot(before.data,after.data),'Снимок LAB изменился; повторите подготовку копии');
+    return {file,generation:s.generation,revision:before.revision,records:Object.values(before.data).reduce((n,rows)=>n+rows.length,0)};
+   });
+  }),
+  rollbackWithBackup:({password,backupPassword,file,expectedGeneration,saved=false,resume=false})=>guarded(async db=>{
+   const s=await state(db);expect(s,'vault');independentPassword(password,backupPassword);
+   check(saved===true&&expectedGeneration===s.generation,'Подтвердите сохранённую копию и поколение LAB');
+   const backup=await openRouterRollbackBackupLab({id,backupPassword,file});
+   await encrypted(async v=>{
+    const matches=async()=>{const current=await readVaultLab(v,{scope:'workspace',password});check(backup.revision===current.revision&&sameSnapshot(backup.data,current.data),'Сохранённая копия LAB устарела; откат запрещён');};
+    await matches();
+    await plain('rollback',p=>restoreSchemaMigrationLab(v,p,{password,resume:resume===true}));
+    await matches();
+    check(sameSnapshot(backup.data,await plain('rollback',readPlainSchemaLab)),'Восстановленный снимок LAB изменился; откат запрещён');
+    await matches();
+   });
+   const n=next(s,'rollback');await setState(db,s,n);return n;
   }),
   rollback:({password,resume=false})=>guarded(async db=>{
    const s=await state(db);expect(s,'vault');
