@@ -1,4 +1,4 @@
-import {filterJournalLessons,lessonFilterLabels,periodMarks,journalDensityLabels,readJournalDensity,saveJournalDensity,planJournalPaste} from '../journal-filters.js';
+import {filterJournalLessons,lessonFilterLabels,periodMarks,journalDensityLabels,readJournalDensity,saveJournalDensity,planJournalPaste,journalNavigation,journalRectangle} from '../journal-filters.js';
 import {animateOnce} from '../motion.js';
 import { openHealth, warning, checkGrade } from './health.js';
 /* screens/journal.js — сетка журнала класса: ученики × даты уроков.
@@ -197,7 +197,7 @@ export function renderJournal(root, ctx) {
         class: `cell ${mark ? 'filled' : ''}${lesson.date===today?' journal-today':''}`,
         'data-student': st.id,
         'data-lesson': lesson.id,
-        tabindex:'0','aria-label':st.fullName+' · '+M.lessonLabel(lesson)+' · '+(mark?.value||mark?.flag||'нет отметки'),
+        tabindex:'-1','aria-label':st.fullName+' · '+M.lessonLabel(lesson)+' · '+(mark?.value||mark?.flag||'нет отметки'),
       }, [el('div', { class: 'cell-inner' }, [badgeFor(mark)])]);
 
       cellBadges.set(cell,badgeKey(mark));
@@ -221,19 +221,40 @@ export function renderJournal(root, ctx) {
   table.append(tbody);
   // Delegate cell actions instead of allocating two listeners for every cell.
   // Keep native keyboard focus and identical click/keyboard behavior.
-  let selecting=false;const chosenCells=new Set();
+  let selecting=false,focusedCell=null,rangeAnchor=null;const chosenCells=new Set();
+  const visibleRows=()=>[...tbody.rows].filter(row=>!row.hidden);
+  const coordinates=(cell,rows)=>({row:rows.indexOf(cell.parentElement),col:cell.cellIndex-2});
+  function roving(cell,focus=false){if(focusedCell)focusedCell.tabIndex=-1;focusedCell=cell||null;if(focusedCell){focusedCell.tabIndex=0;if(focus)focusedCell.focus();}}
+  roving(tbody.querySelector('td.cell'));
+  tbody.addEventListener('focusin',e=>{const cell=e.target.closest?.('td.cell');if(cell&&tbody.contains(cell)&&!cell.parentElement.hidden)roving(cell);});
   const selectionToggle=el('button',{type:'button',class:'btn small',text:'Выбрать ячейки','aria-pressed':'false'}),selectionApply=el('button',{type:'button',class:'btn small primary',text:'Изменить выбранные',disabled:true,hidden:true}),selectionStatus=el('span',{role:'status',class:'journal-count',hidden:true});
-  function selectionDraw(){selectionToggle.setAttribute('aria-pressed',String(selecting));selectionToggle.textContent=selecting?'Отменить выбор':'Выбрать ячейки';selectionApply.hidden=selectionStatus.hidden=!selecting;selectionApply.disabled=!chosenCells.size;selectionStatus.textContent='Выбрано: '+chosenCells.size;}
-  function clearSelection(){for(const cell of chosenCells)cell.classList.remove('journal-selected');chosenCells.clear();selectionDraw();}
-  function toggleCell(cell){if(chosenCells.has(cell)){chosenCells.delete(cell);cell.classList.remove('journal-selected');}else{if(chosenCells.size>=500)return ui.toast('Не более 500 ячеек');chosenCells.add(cell);cell.classList.add('journal-selected');}selectionDraw();}
+  function selectionDraw(){selectionToggle.setAttribute('aria-pressed',String(selecting));selectionToggle.textContent=selecting?'Отменить выбор':'Выбрать ячейки';selectionApply.hidden=selectionStatus.hidden=!selecting;selectionApply.disabled=!chosenCells.size;selectionStatus.textContent='Выбрано: '+chosenCells.size+' · Shift + стрелки / клик — прямоугольник';}
+  function clearSelection(){for(const cell of chosenCells)cell.classList.remove('journal-selected');chosenCells.clear();rangeAnchor=null;selectionDraw();}
+  function toggleCell(cell){if(chosenCells.has(cell)){chosenCells.delete(cell);cell.classList.remove('journal-selected');rangeAnchor=null;}else{if(chosenCells.size>=500)return ui.toast('Не более 500 ячеек');chosenCells.add(cell);cell.classList.add('journal-selected');rangeAnchor=cell;}selectionDraw();}
+  function selectRange(anchor,target){
+   const rows=visibleRows();let cells;
+   try{cells=journalRectangle(coordinates(anchor,rows),coordinates(target,rows),rows.length,lessons.length).map(p=>rows[p.row].cells[p.col+2]);}catch(e){ui.toast(e.message);return false;}
+   for(const cell of chosenCells)cell.classList.remove('journal-selected');chosenCells.clear();
+   for(const cell of cells){chosenCells.add(cell);cell.classList.add('journal-selected');}
+   rangeAnchor=anchor;selectionDraw();return true;
+  }
   selectionToggle.onclick=()=>{selecting=!selecting;clearSelection();};selectionApply.onclick=()=>{if(!chosenCells.size)return;const cells=[...chosenCells].map(cell=>({student:studentById.get(cell.dataset.student),lesson:lessons.find(l=>l.id===cell.dataset.lesson)}));openJournalSelection(classId,cells,()=>{selecting=false;clearSelection();});};
   tools.append(selectionToggle,selectionApply,selectionStatus);
-  tbody.addEventListener('click',e=>{const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell))return;ui.haptic(6);if(selecting){toggleCell(cell);return;}openMarkSheet(cell.dataset.student,cell.dataset.lesson,classId);});
-  tbody.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell))return;e.preventDefault();if(selecting){toggleCell(cell);return;}openMarkSheet(cell.dataset.student,cell.dataset.lesson,classId);});
+  tbody.addEventListener('click',e=>{const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell))return;roving(cell,true);ui.haptic(6);if(selecting){if(e.shiftKey&&rangeAnchor)selectRange(rangeAnchor,cell);else toggleCell(cell);return;}openMarkSheet(cell.dataset.student,cell.dataset.lesson,classId);});
+  tbody.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell))return;e.preventDefault();if(e.repeat)return;if(selecting){toggleCell(cell);return;}openMarkSheet(cell.dataset.student,cell.dataset.lesson,classId);});
   const filterStatus=el('p',{class:'empty',text:'Ученики не найдены',hidden:true});
-  search.oninput=()=>{clearSelection();const q=search.value.trim().toLocaleLowerCase('ru');let count=0;for(const row of tbody.rows){row.hidden=!row.dataset.name.includes(q);if(!row.hidden)count++;}filterStatus.hidden=count!==0;};
+  search.oninput=()=>{clearSelection();const q=search.value.trim().toLocaleLowerCase('ru');let count=0;for(const row of tbody.rows){row.hidden=!row.dataset.name.includes(q);if(!row.hidden)count++;}filterStatus.hidden=count!==0;if(!focusedCell||focusedCell.parentElement.hidden)roving(visibleRows()[0]?.querySelector('td.cell'));};
   wrap.append(table,filterStatus);
-  wrap.addEventListener('keydown',e=>{if(e.key==='Escape'&&wrap.classList.contains('journal-expanded')){wrap.querySelector('.journal-close-expanded')?.click();return;}const cell=e.target.closest?.('.cell');if(!cell||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;const row=cell.parentElement,col=cell.cellIndex;let target=null;if(e.key==='ArrowLeft'||e.key==='ArrowRight')target=row.cells[col+(e.key==='ArrowLeft'?-1:1)];else{let r=e.key==='ArrowUp'?row.previousElementSibling:row.nextElementSibling;while(r?.hidden)r=e.key==='ArrowUp'?r.previousElementSibling:r.nextElementSibling;target=r?.cells[col];}if(target?.classList.contains('cell')){e.preventDefault();target.focus();}});
+  wrap.addEventListener('keydown',e=>{
+   if(e.key==='Escape'&&selecting){e.preventDefault();selecting=false;clearSelection();return;}
+   if(e.key==='Escape'&&wrap.classList.contains('journal-expanded')){e.preventDefault();wrap.querySelector('.journal-close-expanded')?.click();return;}
+   const cell=e.target.closest?.('td.cell');if(!cell||!tbody.contains(cell)||e.altKey||((e.ctrlKey||e.metaKey)&&!['Home','End'].includes(e.key)))return;
+   const rows=visibleRows(),p=coordinates(cell,rows),next=journalNavigation(p.row,p.col,rows.length,lessons.length,e.key,e.ctrlKey||e.metaKey);
+   if(!next)return;e.preventDefault();const target=rows[next.row].cells[next.col+2];
+   if(selecting&&e.shiftKey){if(!selectRange(rangeAnchor||cell,target))return;}
+   else if(selecting)rangeAnchor=null;
+   roving(target,true);
+  });
   tools.append(el('button',{type:'button',class:'btn small',text:'Сегодня',onclick:()=>{const th=table.querySelector('th.journal-today');if(!th)return ui.toast('Сегодня нет урока в выбранном периоде');const left=th.getBoundingClientRect().left-wrap.getBoundingClientRect().left;wrap.scrollLeft+=left-(table.querySelector('.col-num').offsetWidth+table.querySelector('.col-name').offsetWidth);syncScroll();}}));
   const density=el('select',{'aria-label':'Масштаб журнала',class:'journal-density'},Object.entries(journalDensityLabels).map(([value,text])=>el('option',{value,text})));density.value=readJournalDensity();density.onchange=()=>{try{const value=saveJournalDensity(density.value);const left=wrap.scrollLeft;wrap.dataset.density=value;wrap.scrollLeft=left;syncScroll();}catch(e){density.value=readJournalDensity();ui.toast(e.message);}};tools.append(density);
   const full=el('button',{type:'button',class:'btn small',text:'Развернуть',onclick:()=>{wrap.classList.toggle('journal-expanded');if(wrap.classList.contains('journal-expanded')){const close=el('button',{type:'button',class:'btn wide journal-close-expanded',text:'Свернуть журнал',onclick:()=>{wrap.classList.remove('journal-expanded');close.remove();full.textContent='Развернуть';syncScroll();}});wrap.prepend(close);close.focus();}else wrap.querySelector('.journal-close-expanded')?.remove();full.textContent=wrap.classList.contains('journal-expanded')?'Свернуть':'Развернуть';syncScroll();}});tools.append(full);
