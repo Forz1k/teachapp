@@ -102,3 +102,21 @@ test('Duplicate Studio layer preserves dimensions and styles without sharing obj
  const moved=duplicateStudioLayer([{...a,x:10,y:10}],0)[1];assert.equal(moved.x,13);assert.equal(moved.y,13);assert.equal(moved.width,40);assert.equal(moved.align,'right');
  assert.throws(()=>duplicateStudioLayer([a],1),/Слой/);assert.throws(()=>duplicateStudioLayer(Array(6).fill(a),0),/Максимум/);
 });
+
+test('Studio photo zoom is portable, bounded and keeps cover alignment in every format',()=>{
+ const style=studioStyle({photoZoom:175});assert.equal(style.photoZoom,175);
+ assert.equal(studioStyle({photoZoom:5}).photoZoom,100);assert.equal(studioStyle({photoZoom:300}).photoZoom,200);
+ const file=JSON.parse(studioStyleFile(style));assert.equal(parseStudioStyleFile(JSON.stringify(file)).photoZoom,175);
+ delete file.style.photoZoom;assert.equal(parseStudioStyleFile(JSON.stringify(file)).photoZoom,100);
+ file.style.photoZoom=201;assert.throws(()=>parseStudioStyleFile(JSON.stringify(file)));
+ assert.deepEqual(studioCrop(200,100,100,100,'right',150),{x:-200,y:-25,width:300,height:150});
+ assert.deepEqual(studioCrop(100,200,100,100,'top',200),{x:-50,y:0,width:200,height:400});
+ for(const [w,h] of Object.values(formats))for(const focus of ['left','right','top','bottom','center']){
+  const r=studioCrop(320,240,w,h,focus,150);assert.ok(r.x<=0&&r.y<=0&&r.x+r.width>=w-1e-8&&r.y+r.height>=h-1e-8);
+ }
+ assert.throws(()=>studioCrop(100,100,100,100,'center',99));
+ const draws=[],ctx={measureText:s=>({width:s.length*10}),fillRect(){},fillText(){},drawImage(...args){draws.push(args);}},canvas={getContext:()=>ctx},img={width:100,height:100};
+ paintStudio(canvas,{photoZoom:150,focus:'right'},{backgroundImage:img});
+ assert.deepEqual(draws[0],[img,-540,-270,1620,1620]);
+ assert.ok(studioMatchKit({team:'A',opponent:'B',score:'2:0',photoZoom:150},'Hall').every(c=>c.photoZoom===150));
+});
