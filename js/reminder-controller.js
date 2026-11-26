@@ -22,9 +22,12 @@ export function saveReminderPreferences(value,storage,windowTarget=globalThis.wi
 /** Injected dependencies enable deterministic tests. Recheck consent, privacy
  * and permission immediately before dispatch; stale reads never send alerts. */
 export function reminderController({read=readReminderPreferences,allowed,load,prepare,now=()=>new Date()}){
- let busy=false,epoch=0,stopped=false,seen=new Set();
+ let busy=false,epoch=0,stopped=false,queued=false,seen=new Set();
  const invalidate=()=>{epoch++;};
- const stop=()=>{stopped=true;invalidate();seen.clear();};
+ const stop=()=>{stopped=true;queued=false;invalidate();seen.clear();};
+ // A lifecycle/settings change must not wait for the next periodic tick.
+ // Coalesce all changes during a running check into one fresh read.
+ function refresh(){if(stopped)return;invalidate();if(busy){queued=true;return;}void poll();}
  async function poll(){
   if(stopped||busy||!allowed())return 0;
   const settings=read();if(!settings.enabled)return 0;
@@ -38,13 +41,14 @@ export function reminderController({read=readReminderPreferences,allowed,load,pr
    const dispatch=await prepare();
    if(!valid()||typeof dispatch!=='function')return 0;
    await dispatch(batch.title,{body:batch.body,tag:'teachapp-calendar-reminders'});
+   if(stopped)return 0;
    for(const key of batch.keys)seen.add(key);
    // Bound per-tab memory. Repeats remain possible after restart or very large histories.
    while(seen.size>5000)seen.delete(seen.values().next().value);
    return batch.keys.length;
-  }catch{return 0;}finally{busy=false;}
+  }catch{return 0;}finally{busy=false;if(queued){queued=false;if(!stopped)void poll();}}
  }
- return {poll,invalidate,stop};
+ return {poll,invalidate,refresh,stop};
 }
 function todayIsoAt(d){return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');}
 // Page lifecycle is a fence even if visibilityState has not changed yet.
@@ -59,7 +63,7 @@ export function installReminders({load,documentTarget=globalThis.document,window
   if(typeof globalThis.Notification==='function')return (title,opts)=>new Notification(title,opts);
   return null;
  })});
- const changed=()=>{controller.invalidate();void controller.poll();};
+ const changed=()=>controller.refresh();
  const storageChanged=e=>{if(e.key===REMINDER_KEY||e.key===null)changed();};
  const tick=()=>void controller.poll();
  const hidePage=()=>{pageActive=false;changed();};
