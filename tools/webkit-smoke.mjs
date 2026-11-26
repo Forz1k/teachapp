@@ -44,6 +44,36 @@ try{
   const db=await V.openVaultLab('teachapp-vault-lab-schema-webkit');try{await A.stageSchemaVault(db,{backup:{app:'teachapp',version:B.BACKUP_VERSION,data},password});const a=A.schemaVaultAdapter(db,{password});const before=await a.transaction('marks','readonly',s=>s.marks.index('lessonId_studentId').get(['l','p']));await a.transaction('marks','readwrite',s=>s.marks.put({...before,value:'5'}));const after=await a.snapshot();return {before:before.value,after:after.marks[0].value,private: (await V.exportVaultLab(db,{scope:'workspace',password})).includes('Synthetic pupil')};}finally{db.close();}
  });assert.deepEqual(schemaVault,{before:'4',after:'5',private:false});
  console.log('WEBKIT FULL SCHEMA VAULT PASS: validated synthetic school snapshot, compound index, atomic encrypted update.');
+ const atomicVault=await page.evaluate(async()=>{
+  const V=await import('/tools/prototypes/local-vault.mjs'),A=await import('/tools/prototypes/vault-schema-adapter.mjs'),D=await import('./js/db.js'),B=await import('./js/backup.js');
+  const password='synthetic-webkit-atomic',data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));data.meta=[{id:'fixture',value:1}];
+  const db=await V.openVaultLab('teachapp-vault-lab-webkit-atomic');let adapter;
+  try{
+   await A.stageSchemaVault(db,{backup:{app:'teachapp',version:B.BACKUP_VERSION,data},password});
+   adapter=A.schemaVaultAdapter(db,{password});
+   const before=await V.readVaultLab(db,{scope:'workspace',password}),errors=[];
+   for(const ignored of [false,true]){
+    try{
+     await adapter.transaction(['meta','classes'],'readwrite',async stores=>{
+      await stores.meta.put({id:'new',value:2});
+      await stores.classes.put({id:'c',name:'Synthetic class',gradeLevel:7});
+      const request=stores.meta.add({id:'fixture',value:3});
+      if(!ignored)try{await request;}catch{}
+     });
+     errors.push('unexpected success');
+    }catch(e){errors.push(e.name);}
+   }
+   const after=await V.readVaultLab(db,{scope:'workspace',password});
+   await adapter.transaction(['meta','classes'],'readwrite',async stores=>{
+    await stores.meta.put({id:'new',value:2});await stores.classes.put({id:'c',name:'Synthetic class',gradeLevel:7});
+   });
+   const committed=await V.readVaultLab(db,{scope:'workspace',password});
+   return {errors,unchangedRevision:before.revision===after.revision,unchangedData:JSON.stringify(before.data)===JSON.stringify(after.data),newRevision:committed.revision!==before.revision,records:[committed.data.meta.length,committed.data.classes.length]};
+  }finally{adapter?.close();db.close();}
+ });
+ assert.deepEqual(atomicVault,{errors:['ConstraintError','ConstraintError'],unchangedRevision:true,unchangedData:true,newRevision:true,records:[2,1]});
+ console.log('WEBKIT VAULT ATOMICITY PASS: caught and ignored request failures preserve encrypted revision and both stores; valid commit succeeds.');
+
 
  const keyContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block'});
  try{
