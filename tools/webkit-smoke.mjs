@@ -75,7 +75,7 @@ try{
  try{
   const tab=await vaultUiContext.newPage(),errors=[];tab.on('pageerror',e=>errors.push(e.message));
   await tab.goto(origin+'/tools/prototypes/vault-ui/index.html?id=webkit-ui');await tab.bringToFront();
-  if(await tab.evaluate(()=>typeof navigator.locks?.request==='function')){
+  if(await tab.evaluate(()=>typeof navigator.locks?.request==='function'&&typeof BroadcastChannel==='function')){
    await tab.getByRole('button',{name:'Создать демо-набор'}).click();
    await tab.getByText('Демо-набор активен. Откройте нужную область.').waitFor();
    const school=tab.locator('[data-scope=school]'),coach=tab.locator('[data-scope=coach]');
@@ -96,12 +96,29 @@ try{
    await school.getByLabel('Пароль').fill('teachapp-school-demo');
    await school.getByRole('button',{name:'Открыть',exact:true}).click();
    await school.locator('.result').filter({hasText:'Записей: 1'}).waitFor();
-   await school.getByRole('button',{name:'Заблокировать',exact:true}).click();
+   // A second real tab sends only the lock control message, never fixture data.
+   const sender=await vaultUiContext.newPage();
+   try{
+    await sender.goto(origin+'/tools/prototypes/vault-ui/index.html?id=webkit-ui');
+    await tab.bringToFront();await tab.waitForFunction(()=>document.visibilityState==='visible');
+    if(await school.getByRole('button',{name:'Открыть',exact:true}).isEnabled()){
+     await school.getByLabel('Пароль').fill('teachapp-school-demo');await school.getByRole('button',{name:'Открыть',exact:true}).click();
+    }
+    await school.locator('.result').filter({hasText:'Записей: 1'}).waitFor();
+    await sender.evaluate(()=>{window.labLockSender=new BroadcastChannel('teachapp-vault-lock-lab-webkit-ui');window.labLockSender.postMessage({kind:'lock-all',version:1});});
+    await tab.getByText('Получена блокировка всех вкладок демо-набора.').waitFor();
+    assert.equal(await school.locator('.result').textContent(),'');
+   }finally{await sender.close();}
+   await tab.bringToFront();await tab.waitForFunction(()=>document.visibilityState==='visible');
+   await school.getByLabel('Пароль').fill('teachapp-school-demo');
+   await school.getByRole('button',{name:'Открыть',exact:true}).click();
+   await school.locator('.result').filter({hasText:'Записей: 1'}).waitFor();
+   await tab.getByRole('button',{name:'Заблокировать все вкладки',exact:true}).click();
    assert.equal(await school.locator('.result').textContent(),'');
    assert.ok(await tab.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
    console.log('WEBKIT VAULT UI LAB PASS: synthetic setup, scoped unlock, wrong demo password, pagehide, reload, manual lock and mobile layout.');
   }else{
-   await tab.getByText('Неверный ID набора или Web Locks недоступен.').waitFor();
+   await tab.getByText(/Неверный ID набора или Web Locks недоступен|Межвкладочная блокировка LAB недоступна/).waitFor();
    assert.equal(await tab.locator('#scopes').isVisible(),false);
    console.log('WEBKIT VAULT UI LAB: Web Locks unavailable, fail-closed confirmed.');
   }
