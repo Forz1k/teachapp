@@ -33,3 +33,26 @@ test('LAB refuses missing, injected and swapped envelopes; separate scopes do no
 test('Invalid duplicate ID never creates partial ciphertext',async t=>{
  const db=await dbFor(t,'invalid');await assert.rejects(stageVaultLab(db,{scope:'school',data:{students:[data.students[0],data.students[0]]},password}),/ID/);assert.deepEqual(await raw(db),[]);
 });
+
+import {readVaultLab,replaceVaultLab,exportVaultLab,restoreVaultLab} from '../tools/prototypes/local-vault.mjs';
+test('LAB snapshot replacement detects concurrent writers and rotates the password without losing data',async t=>{
+ const db=await dbFor(t,'cas'),other=await openVaultLab(db.name);t.after(()=>other.close());
+ await stageVaultLab(db,{scope:'school',data,password});
+ const old=await readVaultLab(db,{scope:'school',password}),oldRows=await raw(db),a={...data,marks:[{id:'grade-secret',value:3}]},b={...data,marks:[{id:'grade-secret',value:4}]};
+ const results=await Promise.allSettled([replaceVaultLab(db,{scope:'school',password,expectedRevision:old.revision,data:a}),replaceVaultLab(other,{scope:'school',password,expectedRevision:old.revision,data:b})]);
+ assert.equal(results.filter(x=>x.status==='fulfilled').length,1);assert.match(results.find(x=>x.status==='rejected').reason.message,/изменился/);
+ const current=await readVaultLab(db,{scope:'school',password});assert.notEqual(current.revision,old.revision);assert.ok([3,4].includes(current.data.marks[0].value));
+ assert.notDeepEqual((await raw(db)).find(r=>r.id==='header').salt,oldRows.find(r=>r.id==='header').salt);
+ await assert.rejects(replaceVaultLab(db,{scope:'school',password,expectedRevision:old.revision,data}),/изменился/);
+ const newPassword='new-synthetic-vault-password';await replaceVaultLab(db,{scope:'school',password,expectedRevision:current.revision,data:current.data,nextPassword:newPassword});
+ await assert.rejects(readVaultLab(db,{scope:'school',password}),/неверный пароль/);assert.deepEqual((await readVaultLab(db,{scope:'school',password:newPassword})).data,current.data);
+});
+test('Portable encrypted LAB backup restores independently and cannot overwrite an existing vault',async t=>{
+ const db=await dbFor(t,'export'),dest=await dbFor(t,'restore'),bad=await dbFor(t,'bad-restore');
+ await stageVaultLab(db,{scope:'coach',data,password});const source=await readVaultLab(db,{scope:'coach',password}),file=await exportVaultLab(db,{scope:'coach',password});
+ assert.doesNotMatch(file,/student-secret|grade-secret|Синтетический ученик/);
+ await assert.rejects(restoreVaultLab(bad,{scope:'coach',password:'wrong-password-123',file}),/неверный пароль/);assert.deepEqual(await raw(bad),[]);
+ const edited=JSON.parse(file);edited.rows=edited.rows.filter(r=>r.id==='header'||r.id==='manifest');await assert.rejects(restoreVaultLab(bad,{scope:'coach',password,file:JSON.stringify(edited)}),/повреждение/);assert.deepEqual(await raw(bad),[]);
+ await restoreVaultLab(dest,{scope:'coach',password,file});const copy=await readVaultLab(dest,{scope:'coach',password});assert.deepEqual(copy.data,source.data);assert.notEqual(copy.revision,source.revision);
+ await assert.rejects(restoreVaultLab(dest,{scope:'coach',password,file}),/перезапись запрещена/);assert.deepEqual((await readVaultLab(dest,{scope:'coach',password})).data,source.data);
+});

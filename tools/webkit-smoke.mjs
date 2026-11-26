@@ -11,7 +11,7 @@ import {webkit,devices} from 'playwright';
 import {timingRows,timingPdf} from '../tests/fixtures/volleypoint-timing-fixture.mjs';
 
 const root=process.cwd();
-const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png'};
+const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png'};
 const server=createServer(async(req,res)=>{
  try{
   const url=new URL(req.url,'http://localhost');
@@ -32,6 +32,12 @@ try{
  page.on('pageerror',error=>errors.push(error.message));
  await page.goto(origin+'/index.html');
  await page.locator('.workspace-nav').waitFor();
+ const vault=await page.evaluate(async()=>{
+  const V=await import('/tools/prototypes/local-vault.mjs'),password='synthetic-webkit-password',data={students:[{id:'synthetic',name:'Synthetic'}]},db=await V.openVaultLab('teachapp-vault-lab-webkit'),dest=await V.openVaultLab('teachapp-vault-lab-webkit-restore');
+  try{await V.stageVaultLab(db,{scope:'school',password,data});const old=await V.readVaultLab(db,{scope:'school',password});const update=await V.replaceVaultLab(db,{scope:'school',password,expectedRevision:old.revision,data:{students:[{id:'synthetic',name:'Changed'}]}});const file=await V.exportVaultLab(db,{scope:'school',password});await V.restoreVaultLab(dest,{scope:'school',password,file});const restored=await V.readVaultLab(dest,{scope:'school',password});return {changed:update.revision!==old.revision,independent:restored.revision!==update.revision,name:restored.data.students[0].name,plaintext:file.includes('Changed')};}
+  finally{db.close();dest.close();}
+ });assert.deepEqual(vault,{changed:true,independent:true,name:'Changed',plaintext:false});
+ console.log('WEBKIT VAULT LAB PASS: independent encrypted snapshot update and recovery using real IndexedDB and WebCrypto.');
  const fixture=await page.evaluate(async()=>{
   const S=await import('./js/store.js'),M=await import('./js/model.js');
   const cls=await S.addClass('7А'),p=await S.addStudent(cls.id,'Тестовый ученик',1,'girls');

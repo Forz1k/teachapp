@@ -473,3 +473,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### Security 6.1: изолированное LAB-хранилище
 - Реализована атомарная запись отдельно зашифрованных записей и манифеста в отдельную IndexedDB, проверка повторным открытием, отказ при неверном пароле, подмене, пропуске и лишней записи. Тесты синтетические; живой журнал не изменён.
+
+### Security LAB — revision CAS and independent recovery
+- Whole-snapshot authenticated byte CAS, fresh salt per revision, password rotation, ciphertext-only portable backup and explicit restore to empty independent LAB. Added synthetic concurrent-write and tampered recovery tests. No production adapter or database migration.
