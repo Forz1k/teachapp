@@ -9,14 +9,16 @@ export function platformEndpoint(value){
 export function platformClient(endpoint,workspace,secret,{fetcher=globalThis.fetch,location=globalThis.location}={}){
  if(!isLocalPlatformPage(location))throw Error('Тестовые кабинеты доступны только на localhost');
  const origin=platformEndpoint(endpoint);if(!id(workspace)||!token(secret))throw Error('Проверьте ID пространства и секретный код');
- let closed=false,key=secret;
+ let closed=false,key=secret;const pending=new Set();
  return {async request(path,method='GET',body){
   if(closed)throw Error('Сессия закрыта');
   if(!/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(path)||!['GET','POST','PUT'].includes(method))throw Error('Некорректный запрос');
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+  pending.add(controller);
+  const checkActive=()=>{if(closed)throw Error('Сессия закрыта');if(controller.signal.aborted)throw Error('Время ожидания запроса истекло');};
   try{const r=await fetcher(origin+'/v1/workspaces/'+workspace+'/'+path,{method,headers:{Authorization:'Bearer '+key,...(body!==undefined?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:controller.signal,redirect:'error',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer'});
-   if(closed)throw Error('Сессия закрыта');
-   const value=await r.json();if(!r.ok){const retry=Number(r.headers.get('Retry-After')||value?.retryAfter);if(r.status===429&&Number.isInteger(retry)&&retry>=1&&retry<=60)throw Object.assign(Error('Слишком много запросов. Повторите через '+retry+' с.'),{status:429,retryAfter:retry});throw Object.assign(Error('Сервер: '+(typeof value?.error==='string'?value.error:'ошибка')+' (HTTP '+r.status+')'),{status:r.status});}return value;
-  }finally{clearTimeout(timer);}
- },close(){closed=true;key='';}};
+   checkActive();
+   const value=await r.json();checkActive();if(!r.ok){const retry=Number(r.headers.get('Retry-After')||value?.retryAfter);if(r.status===429&&Number.isInteger(retry)&&retry>=1&&retry<=60)throw Object.assign(Error('Слишком много запросов. Повторите через '+retry+' с.'),{status:429,retryAfter:retry});throw Object.assign(Error('Сервер: '+(typeof value?.error==='string'?value.error:'ошибка')+' (HTTP '+r.status+')'),{status:r.status});}return value;
+  }catch(err){checkActive();throw err;}finally{clearTimeout(timer);pending.delete(controller);}
+ },close(){closed=true;key='';for(const controller of pending)controller.abort();pending.clear();}};
 }
