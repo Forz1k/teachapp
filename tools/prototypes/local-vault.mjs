@@ -252,12 +252,16 @@ function unb64(s,max){
  const b=Uint8Array.from(atob(s),x=>x.charCodeAt(0));check(b.length<=max&&b64(b)===s,'Некорректная копия LAB');return b;
 }
 const maxFileBytes=Math.ceil(maxSealedBytes/3)*4+maxRecords*256+4096;
+function serializeVaultRows(rows){
+ const file=JSON.stringify({app:'teachapp-vault-lab',version:1,rows:rows.map(r=>r.id==='header'?{...r,salt:b64(r.salt)}:{id:r.id,iv:b64(r.iv),data:b64(r.data)})});
+ check(file.length<=maxFileBytes,'Копия LAB слишком велика');return file;
+}
 export async function exportVaultLab(db,{scope,password}){
  assertLab(db);const rows=await readRows(db);await decodeSnapshot(rows,{scope,password});
- return JSON.stringify({app:'teachapp-vault-lab',version:1,rows:rows.map(r=>r.id==='header'?{...r,salt:b64(r.salt)}:{id:r.id,iv:b64(r.iv),data:b64(r.data)})});
+ return serializeVaultRows(rows);
 }
-export async function restoreVaultLab(db,{scope,password,file}){
- assertLab(db);check(typeof file==='string'&&file.length<=maxFileBytes,'Копия LAB слишком велика');
+function parseVaultRows(file){
+ check(typeof file==='string'&&file.length<=maxFileBytes,'Копия LAB слишком велика');
  const parsed=JSON.parse(file);check(parsed?.app==='teachapp-vault-lab'&&parsed.version===1&&Array.isArray(parsed.rows)&&parsed.rows.length<=maxRecords+2,'Некорректная копия LAB');
  let total=0;
  const rows=parsed.rows.map(r=>{
@@ -268,6 +272,13 @@ export async function restoreVaultLab(db,{scope,password,file}){
   check(Object.keys(r).sort().join('|')==='data|id|iv'&&(r.id==='manifest'||idPattern.test(r.id)),'Некорректная запись LAB');
   const data=unb64(r.data,maxSealedBytes-total);total+=data.length;return {id:r.id,iv:unb64(r.iv,12),data};
  });
+ return rows;
+}
+export const partitionCiphertextFileLimitLab=maxFileBytes;
+export const encodePartitionCiphertextLab=serializeVaultRows;
+export const decodePartitionCiphertextLab=parseVaultRows;
+export async function restoreVaultLab(db,{scope,password,file}){
+ assertLab(db);const rows=parseVaultRows(file);
  const opened=await decodeSnapshot(rows,{scope,password});
  // Generate a fresh independent revision/key derivation rather than copying
  // a revision token shared by two writable databases.

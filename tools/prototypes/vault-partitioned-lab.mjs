@@ -7,12 +7,12 @@ import {SCHEMA,createDataAccess} from '../../js/db.js';
 import {splitVaultScopesLab,joinVaultScopesLab,validateVaultScopeResultLab} from './vault-scope-bundle.mjs';
 import {sealPartitionScopeLab,openPartitionKeySessionLab,samePartitionCiphertextLab} from './local-vault.mjs';
 import {prepareSchemaSnapshotTransactionLab} from './vault-schema-adapter.mjs';
+import {validPartitionPasswordsLab as passwordsOK,independentPartitionPasswordsLab,createPartitionRecoveryCopyLab,openPartitionRecoveryCopyLab,sourceMatchesPartitionLab,samePartitionSnapshotLab} from './vault-partition-recovery-lab.mjs';
 const scopes=['school','coach','workspace'],stores=['state',...scopes];
 const check=(v,m)=>{if(!v)throw Error(m);};
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,rev=/^[0-9a-f]{32}$/;
 const empty=()=>Object.fromEntries(Object.keys(SCHEMA).map(n=>[n,[]]));
 const blankParts=()=>splitVaultScopesLab(empty());
-const passwordsOK=p=>p&&Object.keys(p).length===scopes.length&&scopes.every(s=>typeof p[s]==='string'&&p[s].length>=12&&p[s].length<=1024)&&new Set(scopes.map(s=>p[s])).size===scopes.length;
 const fullPart=(scope,part)=>joinVaultScopesLab({...blankParts(),[scope]:part});
 const withMeta=(scope,bundleId,data)=>({...data,bundleMeta:[{id:'bundle',scope,bundleId}]});
 function validPointer(p){
@@ -72,35 +72,74 @@ function commitScope(db,scope,expected,after,guard){
   tx.oncomplete=resolve;tx.onabort=()=>reject(failure||tx.error||Error('Запись LAB отменена'));tx.onerror=()=>{};
  });
 }
+async function sealAll(parts,bundleId,passwords){
+ const rows={};
+ for(const scope of scopes)rows[scope]=await sealPartitionScopeLab({scope,bundleId,password:passwords[scope],data:withMeta(scope,bundleId,parts[scope])});
+ return rows;
+}
+function commitRotation(db,expected,after){
+ return new Promise((resolve,reject)=>{
+  const tx=db.transaction(stores,'readwrite'),state=tx.objectStore('state'),p=state.get('active'),requests=Object.fromEntries(scopes.map(s=>[s,tx.objectStore(s).getAll()]));let remaining=4,failure,next;
+  const compare=()=>{
+   if(--remaining)return;
+   try{
+    const pointer=p.result;
+    check(validPointer(pointer)&&pointer.bundleId===expected.pointer.bundleId&&scopes.every(s=>pointer.revisions[s]===expected.pointer.revisions[s]&&samePartitionCiphertextLab(requests[s].result,expected.rows[s])),'Ревизии LAB изменились. Подготовьте новую копию');
+    for(const scope of scopes){const table=tx.objectStore(scope);table.clear();for(const row of after[scope])table.add(row);}
+    next={...pointer,revisions:Object.fromEntries(scopes.map(s=>[s,after[s][0].vaultId]))};state.put(next);
+   }catch(e){failure=e;tx.abort();}
+  };
+  p.onsuccess=compare;for(const request of Object.values(requests))request.onsuccess=compare;
+  tx.oncomplete=()=>resolve(next);tx.onabort=()=>reject(failure||tx.error||Error('Ротация LAB отменена'));tx.onerror=()=>{};
+ });
+}
 export function partitionedVaultLab(id){
  check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id),'Некорректный ID LAB');
  const name='teachapp-vault-mutable-lab-'+id;
  const using=async fn=>{const db=await open(name);try{return await fn(db);}finally{db.close();}};
  const current=selected=>using(async db=>requireActive(await readSlices(db,selected),selected));
+ const stage=async({data,passwords})=>{
+  check(passwordsOK(passwords),'Требуются три независимых пароля LAB');
+  const parts=splitVaultScopesLab(data);
+  // Deliberately refuse cross-scope-dependent records until shared metadata is designed.
+  for(const scope of scopes)fullPart(scope,parts[scope]);
+  const bundleId=crypto.randomUUID(),rows=await sealAll(parts,bundleId,passwords);
+  const pointer={id:'active',bundleId,revisions:Object.fromEntries(scopes.map(s=>[s,rows[s][0].vaultId]))};
+  return using(db=>commitInitial(db,pointer,rows));
+ };
+ const authenticate=async passwords=>{
+  check(passwordsOK(passwords),'Требуются три независимых пароля LAB');
+  const snapshot=await current(scopes),parts={};
+  for(const scope of scopes){
+   const key=await openPartitionKeySessionLab({scope,bundleId:snapshot.pointer.bundleId,password:passwords[scope],rows:snapshot.rows[scope]});
+   try{parts[scope]=validateVaultScopeResultLab(await key.read(snapshot.rows[scope]),scope).data;}finally{key.close();}
+  }
+  return {snapshot,parts,data:joinVaultScopesLab(parts)};
+ };
  return Object.freeze({
-  async stage({data,passwords}){
-   check(passwordsOK(passwords),'Требуются три независимых пароля LAB');
-   const parts=splitVaultScopesLab(data);
-   // Deliberately refuse cross-scope-dependent records (e.g. archived grade
-   // history) until a separately authorized shared metadata design exists.
-   for(const scope of scopes)fullPart(scope,parts[scope]);
-   const bundleId=crypto.randomUUID(),rows={};
-   for(const scope of scopes)rows[scope]=await sealPartitionScopeLab({scope,bundleId,password:passwords[scope],data:withMeta(scope,bundleId,parts[scope])});
-   const pointer={id:'active',bundleId,revisions:Object.fromEntries(scopes.map(s=>[s,rows[s][0].vaultId]))};
-   return using(db=>commitInitial(db,pointer,rows));
-  },
+  stage,
   async status(){
    const {pointer}=await using(db=>readSlices(db,[]));
    if(pointer===undefined)return {active:false};check(validPointer(pointer),'Указатель LAB повреждён');return {active:true,...pointer};
   },
-  async snapshot({passwords}){
-   check(passwordsOK(passwords),'Требуются три независимых пароля LAB');
-   const snapshot=await current(scopes),parts={};
-   for(const scope of scopes){
-    const key=await openPartitionKeySessionLab({scope,bundleId:snapshot.pointer.bundleId,password:passwords[scope],rows:snapshot.rows[scope]});
-    try{parts[scope]=validateVaultScopeResultLab(await key.read(snapshot.rows[scope]),scope).data;}finally{key.close();}
-   }
-   return joinVaultScopesLab(parts);
+  async snapshot({passwords}){return (await authenticate(passwords)).data;},
+  async prepareRecoveryCopy({passwords,backupPasswords}){
+   check(independentPartitionPasswordsLab(passwords,backupPasswords),'Пароли копии должны быть независимыми от активного набора LAB');
+   const {snapshot,data}=await authenticate(passwords);
+   return createPartitionRecoveryCopyLab({data,pointer:snapshot.pointer,passwords:backupPasswords});
+  },
+  async restoreRecoveryCopy({file,backupPasswords,newPasswords,confirmed=false}){
+   check(confirmed===true&&independentPartitionPasswordsLab(backupPasswords,newPasswords),'Подтвердите восстановление в пустой LAB с независимыми паролями');
+   const {data}=await openPartitionRecoveryCopyLab(file,{passwords:backupPasswords});
+   return stage({data,passwords:newPasswords});
+  },
+  async rotatePasswords({passwords,newPasswords,backupPasswords,backupFile,saved=false}){
+   check(saved===true&&independentPartitionPasswordsLab(passwords,newPasswords,backupPasswords),'Требуется сохранённая независимая копия и три новых пароля LAB');
+   const {snapshot,parts,data}=await authenticate(passwords);
+   const backup=await openPartitionRecoveryCopyLab(backupFile,{passwords:backupPasswords});
+   check(sourceMatchesPartitionLab(backup.source,snapshot.pointer)&&samePartitionSnapshotLab(backup.data,data),'Копия устарела или не совпадает с текущими ревизиями LAB');
+   const after=await sealAll(parts,snapshot.pointer.bundleId,newPasswords);
+   return using(db=>commitRotation(db,snapshot,after));
   },
   async openScope({scope,password,idleMs=5*60*1000,now=()=>performance.now(),assertActive=()=>{}}){
    check(scopes.includes(scope)&&Number.isSafeInteger(idleMs)&&idleMs>0&&idleMs<=30*60*1000&&typeof now==='function'&&typeof assertActive==='function','Некорректный сеанс LAB');
