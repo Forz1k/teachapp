@@ -577,7 +577,7 @@ test('Настройки: поиск сохраняет исходные пол�
  await seed();const screen=doc.createElement('div');const {renderSettings}=await import('../js/screens/settings.js');renderSettings(screen,{});
  const search=screen.querySelector('input[aria-label="Найти настройку"]'),backup=[...screen.querySelectorAll('.settings-group>.card-block')].find(c=>c.querySelector('.head')?.textContent==='Резервная копия');
  assert.ok(backup);search.value='Резервная копия';search.dispatchEvent(new window.Event('input'));assert.equal(backup.hidden,false);assert.ok(screen.querySelector('.settings-group[data-group=school]').hidden);
- search.value='';search.dispatchEvent(new window.Event('input'));assert.ok(!screen.querySelector('.settings-group[data-group=school]').hidden);assert.equal(backup.querySelectorAll('input[type=file]').length,1);
+ search.value='';search.dispatchEvent(new window.Event('input'));assert.ok(!screen.querySelector('.settings-group[data-group=school]').hidden);assert.equal(backup.querySelectorAll('input[type=file]').length,2);assert.ok(backup.querySelector('input[type=file][aria-label="Файл для восстановления"]'));assert.ok(backup.querySelector('input[type=file][aria-label="Файл для проверки копии"]'));
 });
 
 test('expiry warning opens a fresh record list instead of analytics',async()=>{
