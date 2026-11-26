@@ -83,3 +83,22 @@ test('Studio photo opacity and logo placement are bounded, portable and backward
 
 import {studioLayers,paintStudioLayers} from '../js/media-studio.js';
 test('Transient Studio layers are bounded and ordered; style and match kit never store private layer text',()=>{const raw={team:'A',opponent:'B',score:'2:0',layers:[{kind:'rect',x:95,y:95,width:90,height:50,color:'#123456',opacity:70},{kind:'text',x:5,y:5,width:40,height:20,size:4,text:'PRIVATE'}]};const ls=studioLayers(raw.layers);assert.equal(ls[0].width,5);assert.equal(ls[0].height,5);assert.equal(ls[1].text,'PRIVATE');assert.equal(studioLayers(Array(10).fill(raw.layers[0])).length,6);assert.doesNotMatch(studioStyleFile(raw),/PRIVATE|layers/);assert.ok(studioMatchKit(raw,'Hall').every(x=>x.layers.length===0));const seen=[],ctx={save(){},restore(){},beginPath(){},rect(...x){seen.push(['clip',...x]);},clip(){},fillRect(...x){seen.push(['rect',...x,this.globalAlpha]);},fillText(t,x,y){seen.push(['text',t,x,y]);},measureText(s){return {width:s.length*10};}};paintStudioLayers(ctx,ls,1080,1920);assert.deepEqual(seen[0],['clip',1026,1824,54,96]);assert.equal(seen[1][5],.7);assert.equal(seen[3][1],'PRIVATE');});
+
+import {duplicateStudioLayer} from '../js/media-studio.js';
+test('Studio text alignment is backward-compatible, clipped and relative to each layer',()=>{
+ const old=studioLayers([{kind:'text',text:'Old'}])[0];assert.equal(old.align,'left');assert.equal(old.vertical,'top');
+ const malformed=studioLayers([{kind:'text',align:'start',vertical:'baseline'}])[0];assert.equal(malformed.align,'left');assert.equal(malformed.vertical,'top');
+ const seen=[],ctx={save(){},restore(){},beginPath(){},rect(){},clip(){},measureText(s){return {width:s.length*10};},fillText(t,x,y){seen.push({t,x,y,align:this.textAlign});}};
+ const layer={kind:'text',text:'Line',x:10,y:20,width:40,height:20,size:5};
+ paintStudioLayers(ctx,[{...layer,align:'center',vertical:'middle'},{...layer,align:'right',vertical:'bottom'}],1000,1000);
+ assert.equal(seen[0].align,'center');assert.equal(seen[0].x,300);assert.ok(Math.abs(seen[0].y-271)<.001);
+ assert.equal(seen[1].align,'right');assert.equal(seen[1].x,500);assert.ok(Math.abs(seen[1].y-342)<.001);
+ assert.doesNotMatch(studioStyleFile({layers:[{...layer,align:'center'}]}),/layers|Line/);
+});
+test('Duplicate Studio layer preserves dimensions and styles without sharing object or exceeding limits',()=>{
+ const a={kind:'text',x:60,y:80,width:40,height:20,text:'A',align:'right',vertical:'bottom'},b={kind:'rect',x:10,y:10,width:20,height:20};
+ const rows=duplicateStudioLayer([a,b],0);
+ assert.equal(rows.length,3);assert.deepEqual(rows[1],rows[0]);assert.notEqual(rows[1],rows[0]);assert.equal(rows[2].kind,'rect');
+ const moved=duplicateStudioLayer([{...a,x:10,y:10}],0)[1];assert.equal(moved.x,13);assert.equal(moved.y,13);assert.equal(moved.width,40);assert.equal(moved.align,'right');
+ assert.throws(()=>duplicateStudioLayer([a],1),/Слой/);assert.throws(()=>duplicateStudioLayer(Array(6).fill(a),0),/Максимум/);
+});
