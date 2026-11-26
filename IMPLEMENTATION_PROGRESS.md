@@ -490,3 +490,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### Platform LAB — session lifecycle and rate budgets
 - Persistent per-principal operation-class limits in workspace DO, 429 Retry-After, self-revocation with recovery guard, explicit inactive-session pruning and capacity check on redeem. Synthetic unit and HTTP tests; external IP/edge quotas and production onboarding remain separate.
+
+### Reminders — opt-in app-wide foreground delivery
+- Local source preferences, explicit permission, polling only in visible/uncovered TeachApp, stale consent rechecked after each asynchronous read, generic count only, per-tab dedup and scoped notification click. No network, subscription endpoint or promise of background push. Device testing still required.

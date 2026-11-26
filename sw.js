@@ -37,7 +37,7 @@ const PRECACHE = [
   './js/tournaments.js',
   './js/screens/tournaments.js',
   './js/work-calendar.js',
-  './js/screens/work-calendar.js',
+  './js/screens/work-calendar.js','./js/reminder-controller.js',
   './js/school-archive.js',
   './js/screens/school-archive.js',
   './js/screens/library.js','./js/screens/methodical.js',
@@ -135,4 +135,16 @@ self.addEventListener('fetch', event => {
 
 self.addEventListener('message', event => {
   if (event.data === 'skipWaiting') event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener('notificationclick',event=>{
+ if(event.notification.tag!=='teachapp-calendar-reminders')return;
+ event.notification.close();
+ event.waitUntil((async()=>{
+  const target=new URL('index.html',self.registration.scope),root=new URL(self.registration.scope);
+  const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});
+  const existing=windows.find(c=>{const u=new URL(c.url);return u.origin===target.origin&&(u.pathname===target.pathname||u.pathname===root.pathname);});
+  if(existing?.focus)return existing.focus();
+  if(self.clients.openWindow)return self.clients.openWindow(target.href);
+ })());
 });

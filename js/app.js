@@ -23,6 +23,8 @@ import {animateOnce} from './motion.js';
 import {readSyncIdentity} from './device-trust.js';
 import {installPrivacyShield,screenLockEnabled} from './privacy-shield.js';
 import {openSyncSession,runPersonalSync,autoSyncStatus,syncRetryDelay} from './auto-sync.js';
+import {installReminders} from './reminder-controller.js';
+import {calendarReminderEntries} from './screens/work-calendar.js';
 const { el, icon } = ui;
 
 const TABS = [
@@ -333,6 +335,7 @@ async function boot() {
   window.addEventListener('beforeunload', () => { /* данные уже в IndexedDB */ });
 
   registerServiceWorker();
+  installReminders({load:calendarReminderEntries});
 }
 
 /** Регистрация service worker для офлайна. */
