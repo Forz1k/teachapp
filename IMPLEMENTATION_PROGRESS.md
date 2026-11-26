@@ -454,3 +454,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 6.8 follow-up — editable overlay layers
 - Local Studio editor adds up to six text/rectangle overlay layers with normalized position, bounds, color, size, opacity and ordering. Clipped rendering, PNG and multi-format ZIP support; layer contents never go into style presets, publication TXT or combined match kit. Existing styles remain compatible. Also exclude conflicting complete captures from recorded setter/attacker connections.
+
+### 6.4 follow-up — multi-year school analytics
+- Added a consistent read-only snapshot of current school year and archives, with cohort/grade-level comparison, actual grade weight denominators and attendance opportunities. Future records excluded, duplicate years flagged rather than silently combined. No individual or teacher performance ranking, no changes to historical records.
