@@ -3,6 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as D from '../js/db.js';
 import * as W from '../js/workbench.js';
+import * as S from '../js/store.js';
+import {saveBriefing,saveGymBoard} from '../js/methodical.js';
 import {initialMarkers} from '../js/tactics.js';
 import {workRecordScope} from '../js/work-scope.js';
 import {splitVaultScopesLab} from '../tools/prototypes/vault-scope-bundle.mjs';
@@ -40,4 +42,39 @@ test('Closed work session rejects pending read and queued writes',async()=>{
  const access={close(){closes++;},async transaction(names,mode,fn){calls++;enter();await wait;return fn({workRecords:{index:()=>({getAll:async()=>[{...event,id:'e'}]})}});}};
  const session=W.createWorkSession(access,'workspace'),a=session.listWork('event'),b=session.saveWork(event);
  await entered;session.close();release();await assert.rejects(a,/заблокирован/);await assert.rejects(b,/заблокирован/);assert.equal(calls,1);assert.equal(closes,1);
+});
+
+test('School methodical commands are bound to encrypted school work, validate participants and revoke on failure',async t=>{
+ await D.clearAll();t.after(()=>D.clearAll());await S.load();
+ const nc=await S.addClass('Native class'),np=await S.addStudent(nc.id,'Native pupil',1,'girls');
+ const gym={name:'Synthetic gym',court:'gym',note:'',markers:[],arrows:[]};
+ const briefing=(classId,participantIds)=>({classId,participantIds,date:'2025-09-01',category:'lesson',topic:'Synthetic safety',note:''});
+ const nativeBrief=await saveBriefing(briefing(nc.id,[np.id]),true);
+ const nativeGym=await saveGymBoard(gym);
+ const native=await D.dumpAll();
+ const router=vaultRouterLab('methodical-session',{locks:locks()});await router.initialize();await router.stage({password});await router.activate({password});
+ const access=()=>routedDataAccessLab(router,{expectedGeneration:2,password});
+ const setup=S.createSchoolSession(access());t.after(()=>setup.close());await setup.load();
+ const cls=await setup.addClass('7А'),p=await setup.addStudent(cls.id,'Synthetic pupil',1,'girls');
+ const open=scope=>W.createWorkSession(access(),scope);
+ const school=open('school'),coach=open('coach'),owner=open('workspace'),bad=open('school'),unconfirmed=open('school'),collision=open('school');
+ t.after(()=>[school,coach,owner,bad,unconfirmed,collision].forEach(s=>s.close()));
+ const record=await school.saveBriefing(briefing(cls.id,[p.id]),true);
+ assert.equal(record.className,cls.name);assert.deepEqual(record.participantIds,[p.id]);
+ const board=await school.saveGymBoard(gym);
+ const updated=await school.saveGymBoard({...board,name:'Updated gym'});assert.equal(updated.id,board.id);
+ assert.deepEqual(await school.listWork('gymBoard'),[updated]);
+ assert.deepEqual(await school.listWork('briefing'),[record]);
+ for(const foreign of [coach,owner]){
+  assert.equal(foreign.saveBriefing,undefined);assert.equal(foreign.saveGymBoard,undefined);
+  assert.deepEqual(await foreign.listWork('briefing'),[]);assert.deepEqual(await foreign.listWork('gymBoard'),[]);
+ }
+ await assert.rejects(bad.saveBriefing(briefing(cls.id,[np.id]),true),/участников/);assert.equal(bad.isClosed(),true);
+ await assert.rejects(unconfirmed.saveBriefing(briefing(cls.id,[p.id])),/Подтвердите/);assert.equal(unconfirmed.isClosed(),true);
+ await assert.rejects(collision.saveGymBoard({...board,id:record.id}),/Недопустимая замена/);assert.equal(collision.isClosed(),true);
+ const data=await router.snapshot({password});
+ assert.deepEqual(data.workRecords.filter(x=>x.kind==='briefing'),[record]);assert.deepEqual(data.workRecords.filter(x=>x.kind==='gymBoard'),[updated]);
+ assert.ok(!data.workRecords.some(x=>x.id===nativeBrief.id||x.id===nativeGym.id));
+ school.close();await assert.rejects(school.saveGymBoard(gym),/заблокирован/);
+ assert.deepEqual(await D.dumpAll(),native);
 });
