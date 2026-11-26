@@ -19,6 +19,24 @@ export function saveReminderPreferences(value,storage,windowTarget=globalThis.wi
  if(JSON.stringify(actual)!==JSON.stringify(p))throw Error('Не удалось сохранить настройки напоминаний');
  windowTarget?.dispatchEvent(new Event(REMINDER_EVENT));return p;
 }
+export const REMINDER_SHEET_EVENT='teachapp:sheet-content';
+/** Preserve the user's opt-in intent across the asynchronous OS permission dialog.
+ * A grant alone must never enable reminders after a change in consent/context. */
+export async function enableReminderPermission({sources,read=readReminderPreferences,save=saveReminderPreferences,request,active,documentTarget=globalThis.document,windowTarget=globalThis.window,sourceTarget}){
+ const desired=validateReminderPreferences({enabled:true,sources}),before=JSON.stringify(read());
+ if(!active()||read().enabled)return 'stale';
+ let invalid=false;const invalidate=()=>{invalid=true;};
+ const storage=e=>{if(e.key===REMINDER_KEY||e.key===null)invalidate();};
+ const listeners=[[windowTarget,REMINDER_EVENT,invalidate],[windowTarget,PRIVACY_VISIBILITY_EVENT,invalidate],[windowTarget,REMINDER_SHEET_EVENT,invalidate],[windowTarget,'pagehide',invalidate],[windowTarget,'storage',storage],[documentTarget,'visibilitychange',invalidate],[documentTarget,'freeze',invalidate],[sourceTarget,'change',invalidate]];
+ for(const [target,event,fn] of listeners)target?.addEventListener(event,fn);
+ const valid=()=>!invalid&&active()&&JSON.stringify(read())===before;
+ try{
+  let permission;try{permission=await request();}catch(e){if(!valid())return 'stale';throw e;}
+  if(!valid())return 'stale';
+  if(permission!=='granted')return 'denied';
+  save(desired);return 'enabled';
+ }finally{for(const [target,event,fn] of listeners)target?.removeEventListener(event,fn);}
+}
 /** Injected dependencies enable deterministic tests. Recheck consent, privacy
  * and permission immediately before dispatch; stale reads never send alerts. */
 export function reminderController({read=readReminderPreferences,allowed,load,prepare,now=()=>new Date()}){
