@@ -476,3 +476,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### Security LAB — revision CAS and independent recovery
 - Whole-snapshot authenticated byte CAS, fresh salt per revision, password rotation, ciphertext-only portable backup and explicit restore to empty independent LAB. Added synthetic concurrent-write and tampered recovery tests. No production adapter or database migration.
+
+### Documents — year comparison and season plan reports
+- Two new local document templates: aggregated school-year comparison (optional class breakdown, export confirmation), and season plan attainment including weeks and uncovered dates. Uses existing calculations, excludes individual names, health data and private phase notes; preserves unknown denominators and duplicate-year conflict rows. Word/Excel/print reuse the existing export pipeline.
