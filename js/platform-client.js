@@ -16,7 +16,7 @@ export function platformClient(endpoint,workspace,secret,{fetcher=globalThis.fet
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
   try{const r=await fetcher(origin+'/v1/workspaces/'+workspace+'/'+path,{method,headers:{Authorization:'Bearer '+key,...(body!==undefined?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:controller.signal,redirect:'error',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer'});
    if(closed)throw Error('Сессия закрыта');
-   const value=await r.json();if(!r.ok)throw Object.assign(Error('Сервер: '+(typeof value?.error==='string'?value.error:'ошибка')+' (HTTP '+r.status+')'),{status:r.status});return value;
+   const value=await r.json();if(!r.ok){const retry=Number(r.headers.get('Retry-After')||value?.retryAfter);if(r.status===429&&Number.isInteger(retry)&&retry>=1&&retry<=60)throw Object.assign(Error('Слишком много запросов. Повторите через '+retry+' с.'),{status:429,retryAfter:retry});throw Object.assign(Error('Сервер: '+(typeof value?.error==='string'?value.error:'ошибка')+' (HTTP '+r.status+')'),{status:r.status});}return value;
   }finally{clearTimeout(timer);}
  },close(){closed=true;key='';}};
 }

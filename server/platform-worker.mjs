@@ -1,7 +1,7 @@
 /* Separate local-only candidate; no production route or personal sync binding. */
 import {DurableObject} from 'cloudflare:workers';
 import {digestToken} from './cloudflare-protocol.mjs';
-import {dispatchWorkspace,BODY_LIMIT} from './platform-api.mjs';
+import {dispatchWorkspace,BODY_LIMIT,workspaceRatePolicy,consumeWorkspaceRate} from './platform-api.mjs';
 const H={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Type':'application/json; charset=utf-8'};
 const json=(status,body,cors={})=>new Response(JSON.stringify(body),{status,headers:{...H,...cors}});
 function config(env){try{const origin=new URL(env.TEACHAPP_PLATFORM_ORIGIN);if(env.TEACHAPP_PLATFORM_SYNTHETIC!=='true'||!(origin.protocol==='https:'||origin.protocol==='http:'&&['127.0.0.1','localhost','[::1]'].includes(origin.hostname))||origin.origin!==env.TEACHAPP_PLATFORM_ORIGIN||!/^[a-f0-9]{64}$/.test(env.TEACHAPP_PLATFORM_ROOT_HASH))return null;return {origin:origin.origin,rootHash:env.TEACHAPP_PLATFORM_ROOT_HASH};}catch{return null;}}
@@ -17,7 +17,7 @@ export default {async fetch(request,env){
  const settings=config(env),u=new URL(request.url);if(u.pathname==='/healthz'&&request.method==='GET')return json(settings?200:503,{status:settings?'synthetic-ready':'disabled'});
  if(!settings)return json(503,{error:'disabled'});
  const r=/^\/v1\/workspaces\/([A-Za-z0-9_-]{1,64})\/([A-Za-z0-9_/-]{1,200})$/.exec(u.pathname);if(!r||u.search||u.hash)return json(404,{error:'route'});
- const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
+ const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin','Access-Control-Expose-Headers':'Retry-After'}:{};if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
  if(request.method==='OPTIONS')return origin===settings.origin?new Response(null,{status:204,headers:{...cors,'Access-Control-Allow-Methods':'GET, POST, PUT, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'}}):json(403,{error:'origin'});
  if(!['GET','POST','PUT'].includes(request.method))return json(405,{error:'method'},cors);
  const token=/^Bearer ([a-f0-9]{64})$/.exec(request.headers.get('Authorization')||'');if(!token)return json(401,{error:'unauthorized'},cors);
@@ -26,16 +26,25 @@ export default {async fetch(request,env){
   const issuedSecret=secret(),issued={id:crypto.randomUUID(),hash:await digestToken(issuedSecret),secret:issuedSecret};
   const stub=env.WORKSPACES.get(env.WORKSPACES.idFromName(r[1]));
   const response=await stub.fetch(new Request('https://internal/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({workspaceId:r[1],path:r[2],method:request.method,auth,rootHash:settings.rootHash,body:packet.body,issued})}));
-  return new Response(response.body,{status:response.status,headers:{...H,...cors}});
+  const retry=response.headers.get('Retry-After');return new Response(response.body,{status:response.status,headers:{...H,...cors,...(retry?{'Retry-After':retry}:{})}});
  }catch{return json(503,{error:'unavailable'},cors);}
 }};
 export class PlatformWorkspace extends DurableObject{
- constructor(ctx,env){super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;this.sql.exec('CREATE TABLE IF NOT EXISTS workspace_state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)');}
+ constructor(ctx,env){super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;this.sql.exec('CREATE TABLE IF NOT EXISTS workspace_state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)');this.sql.exec('CREATE TABLE IF NOT EXISTS rate_buckets (key TEXT PRIMARY KEY, start INTEGER NOT NULL, count INTEGER NOT NULL)');}
  async fetch(request){
   if(request.method!=='POST'||new URL(request.url).pathname!=='/dispatch')return json(404,{error:'route'});
   try{const input=await request.json();const out=this.storage.transactionSync(()=>{
-   const row=this.sql.exec('SELECT body FROM workspace_state WHERE id=1').toArray()[0],result=dispatchWorkspace(row?JSON.parse(row.body):null,{...input,now:Date.now()});
+   const row=this.sql.exec('SELECT body FROM workspace_state WHERE id=1').toArray()[0],current=row?JSON.parse(row.body):null,now=Date.now();
+   const policy=workspaceRatePolicy(current,{...input,now});
+   if(policy){
+    this.sql.exec('DELETE FROM rate_buckets WHERE start<=?',now-60000);
+    const previous=this.sql.exec('SELECT start,count FROM rate_buckets WHERE key=?',policy.key).toArray()[0];
+    const rate=consumeWorkspaceRate(policy,previous,now);
+    if(!rate.allowed)return {status:429,body:{error:'rate-limit',retryAfter:rate.retryAfter},retryAfter:rate.retryAfter};
+    this.sql.exec('INSERT INTO rate_buckets(key,start,count) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET start=excluded.start,count=excluded.count',policy.key,rate.start,rate.count);
+   }
+   const result=dispatchWorkspace(current,{...input,now});
    if(result.changed)this.sql.exec('INSERT INTO workspace_state(id,body) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',JSON.stringify(result.state));return result;
-  });return json(out.status,out.body);}catch{return json(503,{error:'storage'});}
+  });return json(out.status,out.body,out.retryAfter?{'Retry-After':String(out.retryAfter)}:{});}catch{return json(503,{error:'storage'});}
  }
 }

@@ -33,6 +33,25 @@ function inviteScope(s,b){require(exact(b,['role','teamId','athleteId','matchId'
  if(b.role==='assistant'){const m=exists(s.matches,b.matchId);require(m&&m.teamId===team.id&&m.status==='live',400,'match');return {role:'assistant',teamId:team.id,athleteId:null,teamIds:[team.id],matchIds:[m.id]};}
  require(b.matchId===null,400,'scope');return {role:'coach',teamId:team.id,athleteId:null,teamIds:[team.id],matchIds:[]};}
 function makeMember(s,scope,newId,tokenHash,now){require(id(newId)&&hash(tokenHash)&&!exists(s.members,newId)&&!s.members.some(m=>m.tokenHash===tokenHash)&&tokenHash!==s.recoveryHash&&!s.invites.some(i=>i.hash===tokenHash)&&s.members.length<128,409,'member-limit');const m={id:newId,...scope,tokenHash,expiresAt:now+7*DAY,revokedAt:null};s.members.push(m);return m;}
+// Only known credentials get persistent rate buckets; arbitrary invalid tokens
+// must not fill the database or exhaust a valid member's budget.
+export function workspaceRatePolicy(s,{auth,rootHash,method,path,now}){
+ if(!s||!hash(auth)||!int(now))return null;
+ if(method==='POST'&&path==='recover'&&hash(s.recoveryHash)&&auth===s.recoveryHash&&auth!==rootHash)return {key:'recovery',limit:6};
+ if(method==='POST'&&path==='redeem'&&s.invites.some(i=>i.hash===auth&&i.usedAt===null&&i.expiresAt>now))return {key:'redeem',limit:64};
+ const actor=memberByHash(s,auth,now);if(!actor)return null;
+ const kind=method==='GET'?'read':/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/revoke)$/.test(path)?'access':'write';
+ return {key:'member:'+actor.id+':'+kind,limit:kind==='read'?240:kind==='access'?24:180};
+}
+/** Rolling fixed-minute windows, bounded retry interval; a clock regression
+ * cannot reset an existing bucket prematurely. */
+export function consumeWorkspaceRate(policy,bucket,now){
+ if(!policy)return null;
+ const start=bucket&&now<bucket.start+60000?bucket.start:now,count=bucket&&start===bucket.start?bucket.count:0;
+ if(count>=policy.limit)return {allowed:false,start,count,retryAfter:Math.min(60,Math.max(1,Math.ceil((start+60000-now)/1000)))};
+ return {allowed:true,start,count:count+1,retryAfter:0};
+}
+function releaseMemberLeases(s,ids){for(const m of s.matches)if(ids.has(m.lease?.holderId)){m.lease=null;m.generation++;}}
 function leaseFor(m,actor,body,now){require(m.status==='live',409,'finished');require(m.lease&&m.lease.until>now&&m.lease.holderId===actor.id&&body.generation===m.generation,409,'lease');}
 function exactRevision(m,revision){require(int(revision)&&revision===m.revision,409,'revision');}
 function validateSetScore(m){const target=m.set===m.bestOf?m.decider:m.target;return Math.max(m.score.ours,m.score.theirs)>=target&&Math.abs(m.score.ours-m.score.theirs)>=2;}
@@ -65,7 +84,7 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
    require(invite,401,'unauthorized');const issuer=exists(s.members,invite.issuerId);require(issuer&&issuer.role==='owner'&&issuer.revokedAt===null&&issuer.expiresAt>now,401,'unauthorized');
    // Revalidate current resource binding: an invitation cannot outlive a removed/finished assignment.
    const scope=inviteScope(s,{role:invite.scope.role,teamId:invite.scope.teamId,athleteId:invite.scope.athleteId,matchId:invite.scope.matchIds[0]??null});
-   const m=makeMember(s,scope,issued.id,issued.hash,now);invite.usedAt=now;audit(s,m,'member.redeem',m.id,now);return {...ok({workspaceId,member:publicMember(m),token:issued.secret},201,true),state:s};
+   const m=makeMember(s,scope,issued.id,issued.hash,now);invite.usedAt=now;audit(s,m,'member.redeem',m.id,now);require(new TextEncoder().encode(JSON.stringify(s)).length<=STATE_LIMIT,409,'workspace-limit');return {...ok({workspaceId,member:publicMember(m),token:issued.secret},201,true),state:s};
   }
   const actor=memberByHash(s,auth,now);require(actor,401,'unauthorized');
   const owner=()=>require(allowed(s,actor,'workspace.manage',resource(s,'workspace')),403,'forbidden');
@@ -80,6 +99,22 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
     return ok({configured:true,version:s.recoveryVersion},200,true);
    }
    if(method==='GET'&&path==='members'){owner();return ok({members:s.members.map(publicMember)});}
+   if(method==='POST'&&path==='session/revoke'){
+    require(exact(body,[]),400,'packet');
+    // An owner may end the server session only with an independent recovery code configured.
+    require(actor.role!=='owner'||hash(s.recoveryHash),409,'recovery-required');
+    actor.revokedAt=now;s.invites=s.invites.filter(i=>i.issuerId!==actor.id);releaseMemberLeases(s,new Set([actor.id]));audit(s,actor,'session.revoke',actor.id,now);return ok({revoked:true},200,true);
+   }
+   if(method==='GET'&&path==='members/prunable'){
+    owner();return ok({members:s.members.filter(m=>m.role!=='owner'&&(m.revokedAt!==null||m.expiresAt<=now)).map(publicMember)});
+   }
+   if(method==='POST'&&path==='members/prune'){
+    owner();require(exact(body,['memberIds'])&&Array.isArray(body.memberIds)&&body.memberIds.length>0&&body.memberIds.length<=128&&body.memberIds.every(id)&&uniq(body.memberIds),400,'packet');
+    const ids=new Set(body.memberIds);
+    require(body.memberIds.every(k=>{const m=exists(s.members,k);return m&&m.role!=='owner'&&(m.revokedAt!==null||m.expiresAt<=now);}),409,'member-changed');
+    releaseMemberLeases(s,ids);s.members=s.members.filter(m=>!ids.has(m.id));s.invites=s.invites.filter(i=>!ids.has(i.issuerId));
+    audit(s,actor,'member.prune',String(ids.size),now);return ok({removed:ids.size},200,true);
+   }
    if(method==='GET'&&path==='audit'){owner();return ok({events:s.audit.slice().reverse()});}
    if(method==='GET'&&path==='invites'){owner();return ok({invites:s.invites.filter(i=>i.usedAt===null&&i.expiresAt>now).map(i=>({id:i.id,role:i.scope.role,teamId:i.scope.teamId,athleteId:i.scope.athleteId,matchId:i.scope.matchIds[0]??null,expiresAt:i.expiresAt}))});}
    if(method==='POST'&&path==='invites/cancel'){

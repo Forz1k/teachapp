@@ -487,3 +487,6 @@ PR #94 не объединён, новый релиз не опубликова�
 - Prevent stale async previews after closing/changing template and duplicate preview activation. Real WebKit UI scenarios for both new templates, privacy and viewport width.
 
 - WebKit first run for the new report controls exposed an exact accessible-label lookup failure for the team selector. Added explicit aria-labels to all document-generator selects and a diagnostic for the actual form; rerun required.
+
+### Platform LAB — session lifecycle and rate budgets
+- Persistent per-principal operation-class limits in workspace DO, 429 Retry-After, self-revocation with recovery guard, explicit inactive-session pruning and capacity check on redeem. Synthetic unit and HTTP tests; external IP/edge quotas and production onboarding remain separate.
