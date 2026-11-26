@@ -1,8 +1,9 @@
 /* Localhost-only writable synthetic UI; never opens native TeachApp DB. */
 import {vaultRouterLab,routedDataAccessLab} from '../vault-router-lab.mjs';
 import {routedVaultLifecycleLab} from '../vault-routed-lifecycle-lab.mjs';
-import {journalMarkSnapshot,journalLessonSnapshot,writeJournalPaste} from '../../../js/journal-commands.js';
+import {journalMarkSnapshot,journalLessonSnapshot} from '../../../js/journal-commands.js';
 import {lessonHistoryKey} from '../../../js/grade-history.js';
+import {createSchoolSession} from '../../../js/store.js';
 const demo='teachapp-writable-demo',gradeId='demo-mark';
 const $=id=>document.getElementById(id);
 const ui=Object.fromEntries(['status','setup','new-demo','session','unlock','password','lock','lock-tabs','editor','record','edit','grade'].map(id=>[id,$(id)]));
@@ -16,9 +17,9 @@ async function readRecord(access){
   return {grade:mark.value,revision:(hist?.events.length??0)+1,classId:student.classId,entry:{studentId:student.id,studentName:student.fullName,lessonId:lesson.id,date:lesson.date,slot:lesson.slot??null,time:lesson.time||'',expectedMark:journalMarkSnapshot(mark),expectedLesson:journalLessonSnapshot(lesson,topic),expectedHistoryId:hist?.events.at(-1)?.id??null}};
  });
 }
-async function writeRecord(access,expected,value){
+async function writeRecord(access,school,expected,value){
  checked(['2','3','4','5'].includes(value),'Выберите оценку');
- await writeJournalPaste(access,expected.classId,[{...expected.entry,value}],true,{replace:true,requireLessonSnapshot:true});
+ await school.applyJournalPaste(expected.classId,[{...expected.entry,value}],true,{replace:true,requireLessonSnapshot:true});
  return readRecord(access);
 }
 function start(){
@@ -26,7 +27,7 @@ function start(){
  const tag=new URLSearchParams(location.search).get('id')||'default-v2';
  if(!/^[a-z0-9-]{1,32}$/.test(tag)){message('Некорректный ID демо-журнала.');return;}
  const id='ui-write-'+tag;let router,lifecycle;
- let access=null,shown=null,busy=false,active=false,epoch=0,disposed=false;
+ let access=null,school=null,shown=null,busy=false,active=false,epoch=0,disposed=false;
  function render(){
   const open=!!access&&!!shown&&lifecycle?.isUnlocked();
   ui.editor.hidden=!open;ui.unlock.hidden=!!access;
@@ -34,7 +35,7 @@ function start(){
   ui.lock.disabled=!busy&&!access;ui.grade.disabled=busy||!open;ui.edit.querySelector('button').disabled=busy||!open;
  }
  function clear(){
-  epoch++;access=null;shown=null;busy=false;ui.password.value='';ui.grade.value='';ui.record.textContent='';render();
+  epoch++;const old=school;school=null;access=null;shown=null;busy=false;old?.close();ui.password.value='';ui.grade.value='';ui.record.textContent='';render();
  }
  function locked(){clear();if(active&&!disposed)message('Журнал заблокирован.');}
  try{router=vaultRouterLab(id);lifecycle=routedVaultLifecycleLab(router,{id,onLock:locked});}
@@ -54,16 +55,18 @@ function start(){
   busy=true;const token=++epoch;render();
   try{
    const opened=await lifecycle.unlock(pass);if(!valid(token)){opened.close();return;}
-   const row=await readRecord(opened);if(!valid(token)){opened.close();return;}
+   const instance=createSchoolSession(opened);school=instance;
+   await instance.load();if(!valid(token)){instance.close();return;}
+   const row=await readRecord(opened);if(!valid(token)){instance.close();return;}
    access=opened;display(row);message('Зашифрованный журнал открыт.');
   }catch{if(token===epoch){lifecycle.lock();locked();message('Не удалось открыть демо-журнал.');}}
   finally{if(token===epoch){busy=false;render();}}
  });
  ui.edit.addEventListener('submit',async e=>{
   e.preventDefault();if(busy||!access||!shown||disposed)return;
-  const token=epoch,handle=access,expected=shown,value=ui.grade.value;busy=true;render();
+  const token=epoch,handle=access,instance=school,expected=shown,value=ui.grade.value;busy=true;render();
   try{
-   const row=await writeRecord(handle,expected,value);
+   const row=await writeRecord(handle,instance,expected,value);
    if(valid(token)){display(row);message('Оценка сохранена в зашифрованном журнале.');}
   }catch{if(token===epoch){lifecycle.lock();locked();message('Запись отклонена; откройте журнал заново.');}}
   finally{if(token===epoch){busy=false;render();}}
