@@ -354,6 +354,14 @@ try{
  await page.getByRole('textbox',{name:'Дата, время и место встречи',exact:true}).fill('12 декабря · зал');assert.match(await page.locator('.studio-kit-summary').textContent(),/6 PNG \+ 2 TXT/);assert.equal(await page.getByRole('button',{name:'Скачать комплект матча ZIP',exact:true}).isEnabled(),true);
  await page.getByRole('button',{name:'+ Текстовый слой',exact:true}).click();
  await page.getByLabel('Текст слоя 1',{exact:true}).fill('Синтетический слой');
+ await page.getByLabel('Выравнивание текста слоя 1',{exact:true}).selectOption('center');
+ await page.getByLabel('Вертикальное выравнивание слоя 1',{exact:true}).selectOption('bottom');
+ await page.locator('.studio-editor fieldset').getByRole('button',{name:'Дублировать слой',exact:true}).first().click();
+ assert.equal(await page.getByLabel('Текст слоя 2',{exact:true}).inputValue(),'Синтетический слой');
+ assert.equal(await page.getByLabel('Выравнивание текста слоя 2',{exact:true}).inputValue(),'center');
+ assert.equal(await page.getByLabel('Вертикальное выравнивание слоя 2',{exact:true}).inputValue(),'bottom');
+ assert.equal(await page.getByLabel('X (%) слоя 2',{exact:true}).inputValue(),'13');
+ await page.locator('.studio-editor fieldset').getByRole('button',{name:'Удалить слой',exact:true}).last().click();
  await page.getByRole('button',{name:'+ Прямоугольник',exact:true}).click();
  await page.getByLabel('X (%) слоя 2',{exact:true}).fill('20');
  await page.getByLabel('X (%) слоя 2',{exact:true}).press('Tab');

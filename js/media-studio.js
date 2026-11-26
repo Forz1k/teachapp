@@ -53,12 +53,23 @@ export function studioCrop(width,height,w,h,focus='center'){
 }
 const clamp=(value,min,max,fallback)=>Number.isFinite(value)?Math.min(max,Math.max(min,Math.round(value))):fallback;
 export const studioLayerLimit=6;
+export const studioLayerAlign=Object.freeze({left:'Слева',center:'По центру',right:'Справа'});
+export const studioLayerVertical=Object.freeze({top:'Сверху',middle:'По центру',bottom:'Снизу'});
 export function studioLayers(raw){
  if(!Array.isArray(raw))return [];
  return raw.slice(0,studioLayerLimit).filter(l=>l&&['text','rect'].includes(l.kind)).map(l=>{
   const x=clamp(l.x,0,95,10),y=clamp(l.y,0,95,70),width=clamp(l.width,5,100-x,40),height=clamp(l.height,5,100-y,12);
-  return {kind:l.kind,x,y,width:Math.min(width,100-x),height:Math.min(height,100-y),color:color(l.color,'#ffffff'),opacity:clamp(l.opacity,0,100,100),...(l.kind==='text'?{text:clean(l.text,160),size:clamp(l.size,1,12,4)}:{})};
+  return {kind:l.kind,x,y,width:Math.min(width,100-x),height:Math.min(height,100-y),color:color(l.color,'#ffffff'),opacity:clamp(l.opacity,0,100,100),...(l.kind==='text'?{text:clean(l.text,160),size:clamp(l.size,1,12,4),align:Object.hasOwn(studioLayerAlign,l.align)?l.align:'left',vertical:Object.hasOwn(studioLayerVertical,l.vertical)?l.vertical:'top'}:{})};
  });
+}
+/** Duplicate only an existing transient layer, immediately above the original.
+ * Keep its size; offset by up to 3 percentage points within the canvas. */
+export function duplicateStudioLayer(raw,index){
+ const layers=studioLayers(raw);
+ if(!Number.isInteger(index)||index<0||index>=layers.length)throw Error('Слой не найден');
+ if(layers.length>=studioLayerLimit)throw Error('Максимум '+studioLayerLimit+' слоёв');
+ const l=layers[index],copy={...l,x:Math.min(100-l.width,l.x+3),y:Math.min(100-l.height,l.y+3)};
+ layers.splice(index+1,0,copy);return layers;
 }
 /** Extra layers are transient, rendered in list order, and never stored in style presets. */
 export function paintStudioLayers(ctx,layers,w,h){
@@ -70,9 +81,12 @@ export function paintStudioLayers(ctx,layers,w,h){
    ctx.beginPath();ctx.rect(x,y,width,height);ctx.clip();
    if(l.kind==='rect'){ctx.fillRect(x,y,width,height);continue;}
    const size=Math.max(1,Math.round(Math.min(w,h)*l.size/100)),lineHeight=size*1.16;
-   ctx.font='700 '+size+'px system-ui, sans-serif';ctx.textAlign='left';ctx.textBaseline='top';
+   ctx.font='700 '+size+'px system-ui, sans-serif';ctx.textAlign=l.align;ctx.textBaseline='top';
    const maxLines=Math.floor(height/lineHeight);if(!maxLines)continue;
-   wrapStudioText(ctx,l.text,width,maxLines).forEach((line,i)=>ctx.fillText(line,x,y+i*lineHeight));
+   const lines=wrapStudioText(ctx,l.text,width,maxLines),free=Math.max(0,height-lines.length*lineHeight);
+   const anchor=x+(l.align==='center'?width/2:l.align==='right'?width:0);
+   const start=y+(l.vertical==='middle'?free/2:l.vertical==='bottom'?free:0);
+   lines.forEach((line,i)=>ctx.fillText(line,anchor,start+i*lineHeight));
   }finally{ctx.restore();}
  }
 }
