@@ -100,7 +100,7 @@ try{
    const sender=await vaultUiContext.newPage();
    try{
     await sender.goto(origin+'/tools/prototypes/vault-ui/index.html?id=webkit-ui');
-    await tab.bringToFront();
+    await tab.bringToFront();await tab.waitForFunction(()=>document.visibilityState==='visible');
     if(await school.getByRole('button',{name:'Открыть',exact:true}).isEnabled()){
      await school.getByLabel('Пароль').fill('teachapp-school-demo');await school.getByRole('button',{name:'Открыть',exact:true}).click();
     }
@@ -109,11 +109,11 @@ try{
     await tab.getByText('Получена блокировка всех вкладок демо-набора.').waitFor();
     assert.equal(await school.locator('.result').textContent(),'');
    }finally{await sender.close();}
-   await tab.bringToFront();
+   await tab.bringToFront();await tab.waitForFunction(()=>document.visibilityState==='visible');
    await school.getByLabel('Пароль').fill('teachapp-school-demo');
    await school.getByRole('button',{name:'Открыть',exact:true}).click();
    await school.locator('.result').filter({hasText:'Записей: 1'}).waitFor();
-   await school.getByRole('button',{name:'Заблокировать все вкладки',exact:true}).click();
+   await tab.getByRole('button',{name:'Заблокировать все вкладки',exact:true}).click();
    assert.equal(await school.locator('.result').textContent(),'');
    assert.ok(await tab.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
    console.log('WEBKIT VAULT UI LAB PASS: synthetic setup, scoped unlock, wrong demo password, pagehide, reload, manual lock and mobile layout.');
