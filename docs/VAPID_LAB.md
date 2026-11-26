@@ -1,0 +1,3 @@
+# VAPID LAB
+
+Separate nonextractable P-256 ECDSA signing key (not the ephemeral ECDH encryption key), ES256 JWS, origin-bound audience and bounded expiration, fixed synthetic contact and endpoint on push.example.invalid. RFC 8292: https://www.rfc-editor.org/rfc/rfc8292.html. The helper returns an Authorization header in memory for tests only. It never calls a network service, logs headers, stores keys or accepts production endpoints. Tests independently verify signature and claims, tampering, key mismatch and expiry bounds. Production still needs managed long-lived VAPID keys, key rotation/resubscription, reviewed endpoint validation and actual delivery acceptance; this is not a deployed sender.
