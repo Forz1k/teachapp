@@ -7,6 +7,8 @@ import * as S from '../js/store.js';
 import {saveBriefing,saveGymBoard} from '../js/methodical.js';
 import {initialMarkers} from '../js/tactics.js';
 import {lineageOf} from '../js/school-tools.js';
+import {todayIso,addDays} from '../js/model.js';
+import {defaultRegulation} from '../js/match-rules.js';
 import {saveStudentGoal} from '../js/student-goals.js';
 import {instantiateMaterial} from '../js/library-materials.js';
 import {workRecordScope} from '../js/work-scope.js';
@@ -128,4 +130,62 @@ test('Student goals and material application stay in their explicit encrypted sc
  assert.ok(!data.ktp.some(x=>x.id===nk.id));assert.ok(!data.workRecords.some(x=>x.id===ng.id));
  school.close();await assert.rejects(school.instantiateMaterial(km,{confirmed:true}),/заблокирован/);
  assert.deepEqual(await D.dumpAll(),native);
+});
+
+test('Encrypted school specialist commands retain olympiad links, retake CAS and lesson checks',async t=>{
+ await D.clearAll();t.after(()=>D.clearAll());await W.saveWork({...event,name:'Native sentinel'});const native=await D.dumpAll();
+ const router=vaultRouterLab('school-specialist-work',{locks:locks()});await router.initialize();await router.stage({password});await router.activate({password});
+ const access=()=>routedDataAccessLab(router,{expectedGeneration:2,password});
+ const setup=S.createSchoolSession(access());t.after(()=>setup.close());await setup.load();await setup.setYear('2025-09-01','2026-08-31');
+ const cls=await setup.addClass('7А'),p=await setup.addStudent(cls.id,'Synthetic pupil',1,'girls'),q=await setup.addStudent(cls.id,'Second pupil',2,'girls');
+ const lesson=await setup.addLesson(cls.id,'2025-10-01',null,'',{slot:1,time:'09:00'});
+ const norm=await setup.saveNorm({name:'Synthetic norm',activityId:'pass',unit:'count',direction:'higher',scale:[1,2,3,4,5]});
+ const sessions=[];const open=scope=>{const s=W.createWorkSession(access(),scope);sessions.push(s);return s;};t.after(()=>sessions.forEach(s=>s.close()));
+ const school=open('school'),coach=open('coach'),owner=open('workspace');
+ const source=await school.saveSchoolCompetition({name:'Synthetic olympiad',eventType:'olympiad',stage:'school',date:'2025-10-01',time:'',venue:'',status:'completed',note:'',participants:[{studentId:lineageOf(p),status:'participated',result:'Synthetic result',place:1}]});
+ const next=await school.advanceOlympiad({sourceId:source.id,revision:source.revision,studentIds:[lineageOf(p)],date:addDays(todayIso(),1),confirmed:true});
+ assert.equal(next.previousStageId,source.id);assert.equal(next.stage,'city');assert.equal(next.participants[0].className,cls.name);
+ const portfolio=await school.saveTeacherPortfolio({category:'methodical',name:'Synthetic portfolio',date:'2025-10-01',result:'',evidence:'',note:''});
+ const revised=await school.saveTeacherPortfolio({...portfolio,note:'Updated'});assert.equal(revised.revision,1);
+ const assignment=await school.saveWork({kind:'normAssignment',name:'Synthetic assignment',classId:cls.id,normId:norm.id,yearFrom:'2025-09-01',yearTo:'2026-08-31',from:'2025-09-01',to:'2025-12-01',targetGrade:4,studentIds:[p.id]});
+ const retake=await school.saveNormRetake({assignmentId:assignment.id,studentId:p.id,date:'2025-10-02',time:'',status:'planned'});
+ const held=await school.saveNormRetake({...retake,status:'held'});assert.equal(held.revision,1);
+ const alt=await school.saveLessonAlternative({lessonId:lesson.id,studentId:p.id,date:lesson.date,type:'theory',task:'Synthetic theory',status:'planned'},true);
+ const done=await school.saveLessonAlternative({...alt,status:'completed'},true);assert.equal(done.revision,1);
+ assert.deepEqual(await school.lessonAlternatives(lesson.id),[done]);
+ for(const other of [coach,owner]){
+  for(const name of ['saveSchoolCompetition','advanceOlympiad','saveTeacherPortfolio','saveNormRetake','saveLessonAlternative','lessonAlternatives'])assert.equal(other[name],undefined);
+  for(const kind of ['schoolCompetition','teacherPortfolio','normRetake','lessonAlternative'])assert.deepEqual(await other.listWork(kind),[]);
+ }
+ const duplicate=open('school'),stale=open('school'),wrongPupil=open('school'),noConfirm=open('school'),staleAlt=open('school'),parent=open('school');
+ await assert.rejects(duplicate.advanceOlympiad({sourceId:source.id,revision:source.revision,studentIds:[lineageOf(p)],date:addDays(todayIso(),1),confirmed:true}),/уже создан/);
+ await assert.rejects(stale.saveNormRetake({...retake,status:'held'}),/изменилась/);
+ await assert.rejects(wrongPupil.saveNormRetake({assignmentId:assignment.id,studentId:q.id,date:'2025-10-02',time:'',status:'planned'}),/недоступны/);
+ await assert.rejects(noConfirm.saveLessonAlternative({...alt,status:'completed'}),/Подтвердите/);
+ await assert.rejects(staleAlt.saveLessonAlternative({...alt,status:'cancelled'},true),/изменилось/);
+ await assert.rejects(parent.deleteWork(source.id,'schoolCompetition'),/следующий этап/);
+ assert.ok([duplicate,stale,wrongPupil,noConfirm,staleAlt,parent].every(s=>s.isClosed()));
+ const data=await router.snapshot({password});assert.equal(data.workRecords.filter(x=>x.kind==='schoolCompetition').length,2);assert.deepEqual(data.workRecords.filter(x=>x.kind==='normRetake'),[held]);assert.deepEqual(data.workRecords.filter(x=>x.kind==='lessonAlternative'),[done]);assert.deepEqual(data.workRecords.filter(x=>x.kind==='teacherPortfolio'),[revised]);
+ assert.deepEqual(await D.dumpAll(),native);
+});
+test('Encrypted coach specialist commands preserve season revisions and regulation uniqueness',async t=>{
+ await D.clearAll();t.after(()=>D.clearAll());await W.saveWork({...event,name:'Native sentinel'});const native=await D.dumpAll();
+ const router=vaultRouterLab('coach-specialist-work',{locks:locks()});await router.initialize();await router.put('coachTeams',{id:'t',name:'Synthetic team',archived:false});await router.stage({password});await router.activate({password});
+ const sessions=[];const open=scope=>{const s=W.createWorkSession(routedDataAccessLab(router,{expectedGeneration:2,password}),scope);sessions.push(s);return s;};t.after(()=>sessions.forEach(s=>s.close()));
+ const coach=open('coach'),school=open('school'),owner=open('workspace');
+ const plan={teamId:'t',name:'Synthetic season',from:'2025-09-01',to:'2026-08-31',phases:[{name:'Synthetic phase',kind:'general',from:'2025-09-01',to:'2025-10-01',goal:'',sessions:8,minutes:400}]};
+ const regulation={bestOf:3,target:25,decider:15,substitutionMode:'simple',limits:{substitutions:6,timeouts:2},regulation:{...defaultRegulation,name:'Synthetic rules'}};
+ const p=await coach.saveSeasonPlan(plan),updated=await coach.saveSeasonPlan({...p,name:'Updated season'});assert.equal(updated.revision,1);
+ const rule=await coach.saveMatchRegulation(regulation);assert.deepEqual(await coach.listWork('matchRegulation'),[rule]);
+ for(const other of [school,owner]){
+  for(const name of ['saveSeasonPlan','deleteSeasonPlan','saveMatchRegulation'])assert.equal(other[name],undefined);
+  assert.deepEqual(await other.listWork('seasonPlan'),[]);assert.deepEqual(await other.listWork('matchRegulation'),[]);
+ }
+ const stale=open('coach'),bypass=open('coach'),dup=open('coach'),badTeam=open('coach');
+ await assert.rejects(stale.deleteSeasonPlan(p.id,p.revision),/изменился/);
+ await assert.rejects(bypass.deleteWork(p.id,'seasonPlan'),/ревизии/);
+ await assert.rejects(dup.saveMatchRegulation(regulation),/уже существует/);
+ await assert.rejects(badTeam.saveSeasonPlan({...plan,teamId:'missing'}),/Команда недоступна/);
+ await coach.deleteSeasonPlan(updated.id,updated.revision);assert.deepEqual(await coach.listWork('seasonPlan'),[]);
+ const data=await router.snapshot({password});assert.deepEqual(data.workRecords.filter(x=>x.kind==='matchRegulation'),[rule]);assert.equal(data.workRecords.filter(x=>x.kind==='seasonPlan').length,0);assert.deepEqual(await D.dumpAll(),native);
 });
