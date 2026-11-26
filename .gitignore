@@ -13,3 +13,6 @@ backups/
 .env
 .env.*
 cloudflare-secrets.json
+
+# Local release acceptance evidence (never commit operator records)
+/release-evidence.json
