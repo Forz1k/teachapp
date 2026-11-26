@@ -46,7 +46,7 @@ test('LAB query validation and range get match native IndexedDB even when the se
  const range=IDBKeyRange.bound('a','b');
  assert.deepEqual(await tx(['meta'],s=>s.meta.get(range)),await native(['meta'],s=>s.meta.get(range)));
  for(const [name,fn] of [
-  ['students',s=>s.students.getAll({bad:true})],
+  ['students',s=>s.students.getAll(false)],
   ['students',s=>s.students.index('classId').getAll(NaN)],
   ['students',s=>s.students.index('classId').count({bad:true})],
   ['students',s=>s.students.index('classId').getAllKeys(false)],
