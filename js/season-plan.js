@@ -16,9 +16,10 @@ export function validateSeasonPlan(r){
  }
  return r;
 }
-export async function saveSeasonPlan(input){
+export async function saveSeasonPlan(input){return writeSeasonPlan(db,input);}
+export async function writeSeasonPlan(access,input){
  input=structuredClone(input);
- return db.transaction(['workRecords','coachTeams'],'readwrite',async s=>{
+ return access.transaction(['workRecords','coachTeams'],'readwrite',async s=>{
   const old=input.id?await s.workRecords.get(input.id):null,team=await s.coachTeams.get(input.teamId);
   check(team&&(!team.archived||old),'Команда недоступна');
   check(!input.id||old?.kind==='seasonPlan'&&old.teamId===input.teamId&&old.revision===input.revision,'План изменился. Откройте его заново');
@@ -26,9 +27,10 @@ export async function saveSeasonPlan(input){
   validateSeasonPlan(record);await s.workRecords.put(record);return record;
  });
 }
-export async function deleteSeasonPlan(id,expectedRevision){
+export async function deleteSeasonPlan(id,expectedRevision){return removeSeasonPlan(db,id,expectedRevision);}
+export async function removeSeasonPlan(access,id,expectedRevision){
  check(text(id)&&bounded(expectedRevision,1000000),'Требуется исходная версия плана');
- return db.transaction(['workRecords'],'readwrite',async s=>{
+ return access.transaction(['workRecords'],'readwrite',async s=>{
   const old=await s.workRecords.get(id);
   check(old?.kind==='seasonPlan'&&old.revision===expectedRevision,'План изменился или удалён. Откройте его заново');
   await s.workRecords.delete(id);
