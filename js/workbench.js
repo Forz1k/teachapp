@@ -8,7 +8,7 @@ import {validateStudentGoal} from './student-goals.js';
 import {validateMaterial,materialKinds} from './library-materials.js';
 import {validateOpponentNote} from './coach-opponents.js';
 import {validateVideoReview,videoMarkers,importedVideoMarkers} from './video-review.js';
-import {validateBriefing,validateGymBoard} from './methodical.js';
+import {validateBriefing,validateGymBoard,writeBriefing,writeGymBoard} from './methodical.js';
 import * as nativeDb from './db.js';
 import {workRecordScope} from './work-scope.js';
 import {writeBoard} from './tactics.js';
@@ -253,6 +253,7 @@ export function createWorkSession(access,scope){
   const result=await access.transaction(names,mode,fn);guard();return result;
  }});
  const core={...buildWorkCommands(db,scope),saveMaterial:r=>{require(workRecordScope(r)===scope,'Рабочая запись недоступна в этой области');return writeMaterial(db,r);}};
+ if(scope==='school')Object.assign(core,{saveBriefing:(...args)=>writeBriefing(db,...args),saveGymBoard:input=>writeGymBoard(db,input)});
  if(scope==='coach')Object.assign(core,{saveBoard:input=>writeBoard(db,input),saveGoal:input=>writeGoal(db,input)});
  if(scope==='workspace')Object.assign(core,{saveInventory:input=>writeInventory(db,input),inventoryMovement:(...a)=>writeInventoryMovement(db,...a)});
  const api={scope,close,isClosed:()=>closed};
