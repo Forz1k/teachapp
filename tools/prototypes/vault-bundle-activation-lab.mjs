@@ -1,8 +1,8 @@
 /* Immutable scope bundle activation LAB. No live DB or plaintext fallback.
  * Cooperative Web Lock protects registry operations; raw IDB is out of scope. */
 import {SCHEMA} from '../../js/db.js';
-import {openVaultLab} from './local-vault.mjs';
-import {readVaultScopeLab,readVaultScopeBundleLab,stageVaultScopeBundleLab,splitVaultScopesLab,joinVaultScopesLab} from './vault-scope-bundle.mjs';
+import {openVaultLab,openVaultReadSessionLab} from './local-vault.mjs';
+import {validateVaultScopeResultLab,readVaultScopeLab,readVaultScopeBundleLab,stageVaultScopeBundleLab,splitVaultScopesLab,joinVaultScopesLab} from './vault-scope-bundle.mjs';
 const scopes=['school','coach','workspace'],names=Object.keys(SCHEMA);
 const check=(ok,msg)=>{if(!ok)throw Error(msg);};
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,revision=/^[0-9a-f]{32}$/;
@@ -58,6 +58,26 @@ export function vaultBundleActivationLab(id,{locks=globalThis.navigator?.locks}=
   readScope:({scope,password})=>guarded(async(registry,dbs)=>{
    check(scopes.includes(scope),'Неизвестная область LAB');const pointer=await active(registry),result=await readVaultScopeLab(dbs[scope],{scope,password});
    match(pointer,result,scope);return result.data;
+  }),
+  openScopeSession:({scope,password,idleMs,now})=>guarded(async(registry,dbs)=>{
+   check(scopes.includes(scope),'Неизвестная область LAB');const pointer=await active(registry);
+   const session=await openVaultReadSessionLab(dbs[scope],{scope,password,idleMs,now});
+   try{match(pointer,validateVaultScopeResultLab(await session.read(),scope),scope);}
+   catch(e){session.close();throw e;}
+   return Object.freeze({
+    scope,close:session.close,isLocked:session.isLocked,
+    async read(){
+     check(!session.isLocked(),'Сеанс LAB заблокирован; откройте заново');
+     try{
+      const data=await guarded(async(registry,dbs)=>{
+       const current=await active(registry),result=validateVaultScopeResultLab(await session.read(dbs[scope]),scope);
+       match(pointer,result,scope);match(current,result,scope);
+       check(!session.isLocked(),'Сеанс LAB заблокирован; откройте заново');return result.data;
+      });
+      check(!session.isLocked(),'Сеанс LAB заблокирован; откройте заново');return data;
+     }catch(e){session.close();throw e;}
+    }
+   });
   }),
   snapshot:({passwords})=>guarded(async(registry,dbs)=>{
    const pointer=await active(registry),result=await readVaultScopeBundleLab(dbs,{passwords});

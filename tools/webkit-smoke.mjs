@@ -45,6 +45,33 @@ try{
  });assert.deepEqual(schemaVault,{before:'4',after:'5',private:false});
  console.log('WEBKIT FULL SCHEMA VAULT PASS: validated synthetic school snapshot, compound index, atomic encrypted update.');
 
+ const keyContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block'});
+ try{
+  const url=origin+'/vault-session-smoke.html';
+  await keyContext.route(url,route=>route.fulfill({status:200,contentType:'text/html; charset=utf-8',body:'<!doctype html><title>Vault key session LAB</title>'}));
+  const tab=await keyContext.newPage();await tab.goto(url);await tab.bringToFront();
+  const keyTest=await tab.evaluate(async()=>{
+   const {openVaultLab,stageVaultLab,openVaultReadSessionLab}=await import('/tools/prototypes/local-vault.mjs');
+   const {vaultSessionLifecycleLab}=await import('/tools/prototypes/vault-session-lifecycle-lab.mjs');
+   const db=await openVaultLab('teachapp-vault-lab-webkit-key'),password='synthetic-webkit-key-session';
+   let lifecycle;
+   try{
+    await stageVaultLab(db,{scope:'school',password,data:{students:[{id:'p',name:'Synthetic pupil'}]}});
+    lifecycle=vaultSessionLifecycleLab({openScopeSession:options=>openVaultReadSessionLab(db,options)});
+    await lifecycle.unlock('school',password);
+    const before=(await lifecycle.read('school')).data.students[0].id;
+    const pending=lifecycle.read('school').then(()=>false,e=>/заблокирован/.test(e.message));
+    window.dispatchEvent(new Event('pagehide'));
+    const invalidated=await pending,locked=!lifecycle.isUnlocked('school');
+    await lifecycle.unlock('school',password);
+    const after=(await lifecycle.read('school')).data.students[0].id;
+    return {before,after,locked,invalidated};
+   }finally{lifecycle?.dispose();db.close();}
+  });assert.deepEqual(keyTest,{before:'p',after:'p',locked:true,invalidated:true});
+  console.log('WEBKIT VAULT KEY SESSION PASS: native WebCrypto key, pagehide event, pending read blocked, explicit reopen.');
+ }finally{await keyContext.close();}
+
+
  // A separate same-origin context with two actual tabs, no application boot
  // or service worker; all records and keys below are synthetic.
  const routingContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block'});
