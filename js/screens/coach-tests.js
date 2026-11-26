@@ -1,5 +1,5 @@
 import * as C from '../coach.js';
-import {testPresets,testRestrictions,testHistory,summarizeTests,teamSkillMap} from '../coach-tests.js';
+import {testPresets,testRestrictions,testHistory,summarizeTests,teamSkillMap,skillMapCoverage} from '../coach-tests.js';
 import {todayIso,fmtFull,addDays} from '../model.js';
 import {catalog} from '../health.js';
 import {el,openSheet,closeSheet,toast,confirmDialog} from '../ui.js';
@@ -66,19 +66,21 @@ export function playerTestCards(view,id,range){
 }
 
 export function openTeamSkillMap(team,view,back=closeSheet){
- const from=inp(addDays(todayIso(),-89),'date'),to=inp(todayIso(),'date'),min=inp('10','number',{min:1,max:1000,step:1}),archived=el('input',{type:'checkbox'}),method=sel([['','Все методики']],'');
+ const from=inp(addDays(todayIso(),-89),'date'),to=inp(todayIso(),'date'),min=inp('10','number',{min:1,max:1000,step:1}),archived=el('input',{type:'checkbox'}),onlyIncomplete=el('input',{type:'checkbox'}),method=sel([['','Все методики']],'');
  const result=el('div',{class:'coach-stack'}),format=v=>v==null?'—':Number(v.toFixed(2)).toString().replace('.',','),states={missing:'Нет записи',excluded:'Нет сопоставимого результата',sample:'Малая выборка',recorded:'Есть данные'};
  function draw(){try{
   const map=teamSkillMap(view.tests,view.players,team.id,{from:from.value,to:to.value,minAttempts:Number(min.value),includeArchived:archived.checked}),old=method.value;
   method.replaceChildren(el('option',{value:'',text:'Все методики'}),...map.methods.map(m=>el('option',{value:m.key,text:m.definition.name+' · '+m.definition.protocol})));
   method.value=map.methods.some(m=>m.key===old)?old:'';
   const names=new Map(map.players.map(p=>[p.id,p])),chosen=map.methods.filter(m=>!method.value||m.key===method.value);
-  result.replaceChildren(p('Срез по '+fmtFull(map.cutoff)+' · игроков '+map.players.length+' · методик '+map.methods.length),...chosen.map(m=>card(m.definition.name,[p(m.definition.protocol),p('Тестирований '+m.sessions+' · с данными '+m.coverage.recorded+' · малая выборка '+m.coverage.sample+' · исключено '+m.coverage.excluded+' · без записи '+m.coverage.missing),
+  const coverage=skillMapCoverage(map,{methodKey:method.value,onlyIncomplete:onlyIncomplete.checked}),counts=x=>'с данными '+x.recorded+' · малая выборка '+x.sample+' · исключено '+x.excluded+' · без записи '+x.missing;
+  const overview=card('Покрытие наблюдений',[p('Ячейки спортсменка × методика: '+counts(coverage.totals)+'. Это полнота данных, а не оценка уровня.'),p('Показано спортсменок: '+coverage.rows.length+' из '+coverage.players),...coverage.rows.map(r=>el('details',{},[el('summary',{text:label(r.player)+' · '+counts(r.counts)}),...r.cells.map(c=>p(c.name+' · '+c.protocol+' · '+states[c.state]+(c.lastDate?' · '+fmtFull(c.lastDate):'')))])),!coverage.methods?p('Нет методик в периоде.'):null,coverage.methods&&!coverage.rows.length?p('Нет спортсменок с неполным покрытием по выбранным методикам.'):null]);
+  result.replaceChildren(p('Срез по '+fmtFull(map.cutoff)+' · игроков '+map.players.length+' · методик '+map.methods.length),overview,...chosen.map(m=>card(m.definition.name,[p(m.definition.protocol),p('Тестирований '+m.sessions+' · с данными '+m.coverage.recorded+' · малая выборка '+m.coverage.sample+' · исключено '+m.coverage.excluded+' · без записи '+m.coverage.missing),
    m.definition.kind==='skill'?p('Взвешенная успешность команды: '+percent(m.pct)+' · '+m.success+'/'+m.attempts+' · попадание в цель: '+percent(m.targetPct)+' ('+m.target+'/'+m.targetAttempts+')'):p('Замеры показаны отдельно по каждой спортсменке. Средняя по разным спортсменкам не используется.'),
-   ...m.rows.map(x=>{const player=names.get(x.playerId);return el('div',{class:'card-block coach-stack'},[el('strong',{text:label(player)}),p(states[x.state]+(x.lastDate?' · '+fmtFull(x.lastDate):'')),m.definition.kind==='skill'?p('Успех: '+percent(x.pct)+' · '+x.success+'/'+x.attempts+' · ошибки '+x.errors+' · цель '+percent(x.targetPct)+' ('+x.target+'/'+x.targetAttempts+')'):p('Первый: '+format(x.first)+' · последний: '+format(x.last)+' · лучший: '+format(x.best)+' '+m.definition.unit+' · изменение '+format(x.delta)+' · замеров '+x.measurements),p('Исключённые записи: '+(x.adapted+x.restricted+x.skipped))]);})
+   ...m.rows.filter(x=>!onlyIncomplete.checked||x.state!=='recorded').map(x=>{const player=names.get(x.playerId);return el('div',{class:'card-block coach-stack'},[el('strong',{text:label(player)}),p(states[x.state]+(x.lastDate?' · '+fmtFull(x.lastDate):'')),m.definition.kind==='skill'?p('Успех: '+percent(x.pct)+' · '+x.success+'/'+x.attempts+' · ошибки '+x.errors+' · цель '+percent(x.targetPct)+' ('+x.target+'/'+x.targetAttempts+')'):p('Первый: '+format(x.first)+' · последний: '+format(x.last)+' · лучший: '+format(x.best)+' '+m.definition.unit+' · изменение '+format(x.delta)+' · замеров '+x.measurements),p('Исключённые записи: '+(x.adapted+x.restricted+x.skipped))]);})
   ])));
   if(!chosen.length)result.append(p('За выбранный период нет сопоставимых методик.'));
  }catch(e){result.replaceChildren(p(e.message));}}
- for(const n of [from,to,min,archived,method])n.onchange=draw;
- draw();openSheet(el('div',{class:'coach-form'},[el('h2',{text:'Карта навыков · '+team.name}),p('Сравниваются только одинаковые методики. Адаптированные и пропущенные результаты не влияют на проценты; малая выборка — не оценка уровня спортсменки. Данные предназначены для тренера, без рейтинга.'),el('div',{class:'coach-columns'},[field('С',from),field('По',to)]),field('Минимум попыток для выборки',min),field('Включить архивных спортсменок',archived),field('Методика',method),result,btn('Закрыть',back)]));
+ for(const n of [from,to,min,archived,method,onlyIncomplete])n.onchange=draw;
+ draw();openSheet(el('div',{class:'coach-form'},[el('h2',{text:'Карта навыков · '+team.name}),p('Сравниваются только одинаковые методики. Адаптированные и пропущенные результаты не влияют на проценты; малая выборка — не оценка уровня спортсменки. Данные предназначены для тренера, без рейтинга.'),el('div',{class:'coach-columns'},[field('С',from),field('По',to)]),field('Минимум попыток для выборки',min),field('Включить архивных спортсменок',archived),field('Методика',method),field('Только неполные наблюдения',onlyIncomplete),result,btn('Закрыть',back)]));
 }
