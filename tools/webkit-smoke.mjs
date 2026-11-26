@@ -144,6 +144,22 @@ try{
   }finally{school.close();coach.close();stale.close();}
  });assert.deepEqual(partitioned,{changed:true,denied:true,rolled:true,school:1,coach:1,records:1,stable:true,rotated:true,oldDenied:true,recovery:true,private:true});
  console.log('WEBKIT PARTITIONED VAULT PASS: independent writable keys, native pointer/ciphertext CAS, rollback, full-key rotation and independent recovery.');
+ const schoolLayout=await writableTab.evaluate(async()=>{
+  const P=await import('/tools/prototypes/vault-partitioned-lab.mjs'),D=await import('/js/db.js'),S=await import('/js/store.js');
+  const lab=P.partitionedVaultLab('webkit-school-layout',{layout:'school-v2'}),passwords={school:'synthetic-school-webkit',coach:'synthetic-coach-webkit',workspace:'synthetic-owner-webkit'};
+  const data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));data.meta=[{id:'settings',year:{from:'2025-09-01',to:'2026-08-31'},theme:'dark',ownerField:'Synthetic owner only'}];
+  await lab.stage({data,passwords});
+  const school=S.createSchoolSession(await lab.openScope({scope:'school',password:passwords.school}));
+  try{
+   await school.load();const hidden=school.state.settings.ownerField===undefined&&school.state.settings.theme===undefined;
+   const cls=await school.addClass('7А'),p=await school.addStudent(cls.id,'Synthetic pupil',1,'girls'),l=await school.addLesson(cls.id,'2025-10-01',null,'',{slot:1,time:'09:00'});
+   await school.setMark(p.id,l.id,{value:'5'});await school.setRules({capAt3OnBad:true});
+   const saved=await lab.snapshot({passwords}),settings=saved.meta.find(r=>r.id==='settings');
+   return {hidden,grade:saved.marks[0]?.value,history:saved.workRecords.filter(r=>r.kind==='gradeHistory').length,owner:settings.ownerField,theme:settings.theme,rule:settings.rules.capAt3OnBad};
+  }finally{school.close();}
+ });assert.deepEqual(schoolLayout,{hidden:true,grade:'5',history:1,owner:'Synthetic owner only',theme:'dark',rule:true});
+ console.log('WEBKIT SCHOOL PARTITION PASS: real school store and journal, isolated school settings, owner metadata preserved.');
+
  }finally{await writableContext.close();await page.bringToFront();}
  const schemaVault=await page.evaluate(async()=>{
   const V=await import('/tools/prototypes/local-vault.mjs'),A=await import('/tools/prototypes/vault-schema-adapter.mjs'),D=await import('./js/db.js'),B=await import('./js/backup.js'),password='synthetic-schema-webkit',data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));
