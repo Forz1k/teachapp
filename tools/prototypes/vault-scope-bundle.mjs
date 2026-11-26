@@ -63,7 +63,11 @@ function empty(db){
 const bundleIdPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export async function readVaultScopeLab(db,{scope,password}){
  check(scopes.includes(scope),'Неизвестная область LAB');
- const result=await readVaultLab(db,{scope,password}),{bundleMeta,...part}=result.data;
+ return validateVaultScopeResultLab(await readVaultLab(db,{scope,password}),scope);
+}
+export function validateVaultScopeResultLab(result,scope){
+ check(scopes.includes(scope)&&result.scope===scope,'Неизвестная область LAB');
+ const {bundleMeta,...part}=result.data;
  const row=bundleMeta?.[0];
  check(Array.isArray(bundleMeta)&&bundleMeta.length===1&&row&&Object.keys(row).sort().join('|')==='bundleId|id|scope'&&row.id==='bundle'&&row.scope===scope&&typeof row.bundleId==='string'&&bundleIdPattern.test(row.bundleId),'Повреждена связь областей LAB');
  return {bundleId:row.bundleId,scope,revision:result.revision,data:checkPart(part,scope)};
