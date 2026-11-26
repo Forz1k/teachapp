@@ -29,3 +29,31 @@ test('Vault migration rejects incomplete, partial, device checkpoints and lossy 
  for(const x of [undefined,NaN,new Date(),new Uint8Array([1])])await assert.rejects(stageVaultLab(db,{scope:'workspace',password,data:{meta:[{id:'x',x}]}}),/неподдерживаем/);
  const tx=db.transaction('sealed');const count=await new Promise((resolve,reject)=>{const q=tx.objectStore('sealed').count();q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});assert.equal(count,0);
 });
+
+test('LAB query validation and range get match native IndexedDB even when the selected table is empty',async t=>{
+ const {prepareSchemaSnapshotTransactionLab}=await import('../tools/prototypes/vault-schema-adapter.mjs');
+ const {openPlainSchemaLab,plainSchemaTransactionLab}=await import('../tools/prototypes/vault-migration-rehearsal.mjs');
+ const data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));
+ const db=await openPlainSchemaLab('teachapp-plain-lab-source-query-contract');t.after(()=>db.close());
+ await plainSchemaTransactionLab(db,'meta','readwrite',async s=>{await s.meta.put({id:'a',value:1});await s.meta.put({id:'b',value:2});});
+ data.meta=[{id:'a',value:1},{id:'b',value:2}];
+ const tx=(stores,fn)=>prepareSchemaSnapshotTransactionLab(data,stores,'readonly',fn).then(r=>r.result);
+ const native=(stores,fn)=>new Promise((resolve,reject)=>{
+  const tr=db.transaction(stores,'readonly'),s=Object.fromEntries(stores.map(name=>[name,tr.objectStore(name)]));let result;
+  try{result=fn(s);}catch(e){reject(e);return;}
+  tr.oncomplete=()=>resolve(result?.result);tr.onabort=()=>reject(tr.error);
+ });
+ const range=IDBKeyRange.bound('a','b');
+ assert.deepEqual(await tx(['meta'],s=>s.meta.get(range)),await native(['meta'],s=>s.meta.get(range)));
+ for(const [name,fn] of [
+  ['students',s=>s.students.getAll({bad:true})],
+  ['students',s=>s.students.index('classId').getAll(NaN)],
+  ['students',s=>s.students.index('classId').count({bad:true})],
+  ['students',s=>s.students.index('classId').getAllKeys(false)],
+  ['students',s=>s.students.index('classId').get(null)],
+  ['students',s=>s.students.get(undefined)]
+ ]){
+  await assert.rejects(native([name],fn),e=>e.name==='DataError');await assert.rejects(tx([name],fn),e=>e.name==='DataError');
+ }
+ assert.deepEqual(await tx(['students'],s=>s.students.index('classId').getAll(null)),[]);
+});
