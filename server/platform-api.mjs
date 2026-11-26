@@ -160,7 +160,7 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
     }
    }
    if(method==='POST'&&path==='matches'){
-    require(exact(body,['id','teamId','opponent','bestOf','target','decider'])&&id(body.id)&&id(body.teamId)&&str(body.opponent)&&[3,5].includes(body.bestOf)&&[15,21,25].includes(body.target)&&[15,21,25].includes(body.decider),400,'match');require(exists(s.teams,body.teamId),404,'resource');require(allowed(s,actor,'team.write',resource(s,'team',{teamId:body.teamId})),403,'forbidden');
+    require(exact(body,['id','teamId','opponent','bestOf','target','decider'])&&id(body.id)&&id(body.teamId)&&str(body.opponent)&&[3,5].includes(body.bestOf)&&[15,21,25].includes(body.target)&&[15,21,25].includes(body.decider),400,'match');require(allowed(s,actor,'team.write',resource(s,'team',{teamId:body.teamId})),403,'forbidden');require(exists(s.teams,body.teamId),404,'resource');
     require(!exists(s.matches,body.id)&&s.matches.length<32,409,'match-limit');const m={...clone(body),status:'live',revision:0,set:1,score:{ours:0,theirs:0},sets:[],lease:null,generation:0,ops:[]};s.matches.push(m);audit(s,actor,'match.create',m.id,now);return ok({match:publicMatch(m,now)},201,true);
    }
    r=/^matches\/([A-Za-z0-9_-]{1,64})(?:\/(acquire|renew|release|score|next|finish))?$/.exec(path);
@@ -191,7 +191,12 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
      if(op==='next'||op==='finish'){
       require(ended,409,'set-not-ended');const finalWins=wins+(m.score.ours>m.score.theirs?1:0),finalLosses=losses+(m.score.theirs>m.score.ours?1:0),finished=Math.max(finalWins,finalLosses)>=needed;
       require(op==='finish'?finished:!finished,409,finished?'match-ended':'match-not-ended');m.sets.push(clone(m.score));
-      if(op==='finish'){m.status='finished';m.lease=null;m.generation++;}else{m.set++;m.score={ours:0,theirs:0};}
+      if(op==='finish'){
+       m.status='finished';m.lease=null;m.generation++;
+       // Pending assistant invitations are no longer redeemable after the
+       // assigned match ends. Remove them in the same transaction as finish.
+       s.invites=s.invites.filter(i=>!(i.scope.role==='assistant'&&i.scope.matchIds.includes(m.id)));
+      }else{m.set++;m.score={ours:0,theirs:0};}
      }
      m.revision++;m.ops.push({id:body.opId,actorId:actor.id,generation:body.generation,expectedRevision:body.expectedRevision,op,side:body.side??null,revision:m.revision});audit(s,actor,'match.'+op,m.id,now);return ok({match:publicMatch(m,now),appliedRevision:m.revision,replayed:false},200,true);
     }
