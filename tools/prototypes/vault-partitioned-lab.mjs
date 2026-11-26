@@ -16,7 +16,7 @@ const passwordsOK=p=>p&&Object.keys(p).length===scopes.length&&scopes.every(s=>t
 const fullPart=(scope,part)=>joinVaultScopesLab({...blankParts(),[scope]:part});
 const withMeta=(scope,bundleId,data)=>({...data,bundleMeta:[{id:'bundle',scope,bundleId}]});
 function validPointer(p){
- return p&&Object.keys(p).sort().join('|')==='bundleId|id|revisions'&&p.id==='active'&&typeof p.bundleId==='string'&&uuid.test(p.bundleId)&&p.revisions&&Object.keys(p.revisions).length===3&&scopes.every(s=>typeof p.revisions[s]==='string'&&rev.test(p.revisions[s]));
+ return p&&Object.keys(p).sort().join('|')==='bundleId|id|revisions'&&p.id==='active'&&typeof p.bundleId==='string'&&uuid.test(p.bundleId)&&p.revisions&&Object.keys(p.revisions).length===3&&scopes.every(s=>Object.hasOwn(p.revisions,s)&&typeof p.revisions[s]==='string'&&rev.test(p.revisions[s]));
 }
 function open(name){
  return new Promise((resolve,reject)=>{
@@ -106,8 +106,8 @@ export function partitionedVaultLab(id){
    check(scopes.includes(scope)&&Number.isSafeInteger(idleMs)&&idleMs>0&&idleMs<=30*60*1000&&typeof now==='function'&&typeof assertActive==='function','Некорректный сеанс LAB');
    assertActive();const initial=await current([scope]),bundleId=initial.pointer.bundleId;
    let revision=initial.pointer.revisions[scope],key=null,closed=false,timer,deadline=0,tail=Promise.resolve();
-   const close=()=>{if(closed)return;closed=true;clearTimeout(timer);key?.close();key=null;};
-   const guard=()=>{if(!closed&&now()>=deadline)close();check(!closed,'Сеанс LAB заблокирован');assertActive();};
+   const close=()=>{closed=true;clearTimeout(timer);key?.close();key=null;};
+   const guard=()=>{if(!closed&&now()>=deadline)close();check(!closed,'Сеанс LAB заблокирован');try{assertActive();}catch(e){close();throw e;}};
    const arm=()=>{clearTimeout(timer);deadline=now()+idleMs;timer=setTimeout(close,idleMs);timer?.unref?.();};
    arm();
    let allowed;
