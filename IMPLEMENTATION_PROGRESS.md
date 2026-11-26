@@ -495,3 +495,6 @@ PR #94 не объединён, новый релиз не опубликова�
 - Local source preferences, explicit permission, polling only in visible/uncovered TeachApp, stale consent rechecked after each asynchronous read, generic count only, per-tab dedup and scoped notification click. No network, subscription endpoint or promise of background push. Device testing still required.
 
 - First integrated reminder run failed syntax check in calendar openSheet call; corrected closing parenthesis. Added WebKit app-wide UI test with mocked OS notification transport (not physical device permission).
+
+### Coach Pro — method-specific team skill map
+- Read-only team view by method/date and optional archived athletes, weighted skill attempts, separate physical measurement trends, visible insufficient/excluded/missing coverage, minimum sample choice. No fabricated ranking or zero substitution. No new schema or public projection.

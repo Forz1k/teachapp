@@ -67,3 +67,27 @@ export function summarizeTests(history){
  }
  return [...groups.values()].map(g=>({...g,pct:g.attempts?100*g.success/g.attempts:null,targetPct:g.targetAttempts?100*g.target/g.targetAttempts:null,first:g.measurements[0]?.value??null,last:g.measurements.at(-1)?.value??null,best:g.measurements.length?(g.definition.direction==='higher'?Math.max(...g.measurements.map(m=>m.value)):Math.min(...g.measurements.map(m=>m.value))):null}));
 }
+
+/** Compare only identical methods, never merge different protocols or
+ * replace missing/adapted/contraindicated results with zero. */
+export function teamSkillMap(sessions,players,teamId,{from='',to='',includeArchived=false,minAttempts=10,today=todayIso()}={}){
+ ensure((!from||validPeriod(from,null))&&(!to||validPeriod(to,null))&&(!from||!to||from<=to)&&Number.isInteger(minAttempts)&&minAttempts>=1&&minAttempts<=1000,'Проверьте период и минимальное число попыток');
+ const roster=players.filter(p=>p.teamId===teamId&&(includeArchived||!p.archived)).sort((a,b)=>(a.number??100)-(b.number??100)||a.name.localeCompare(b.name,'ru')||a.id.localeCompare(b.id)),ids=new Set(roster.map(p=>p.id)),groups=new Map();
+ const chosen=sessions.filter(s=>s.teamId===teamId&&s.date<=today&&(!from||s.date>=from)&&(!to||s.date<=to)).sort((a,b)=>a.date.localeCompare(b.date)||a.id.localeCompare(b.id));
+ for(const s of chosen){
+  const key=definitionKey(s.definition);if(!groups.has(key))groups.set(key,{key,definition:s.definition,byPlayer:new Map(),sessions:0});
+  const g=groups.get(key);g.sessions++;
+  for(const [playerId,result] of Object.entries(s.results)){if(!ids.has(playerId))continue;let h=g.byPlayer.get(playerId);if(!h){h=[];g.byPlayer.set(playerId,h);}h.push({id:s.id,date:s.date,definition:s.definition,result});}
+ }
+ const methods=[...groups.values()].map(g=>{
+  const skill=g.definition.kind==='skill',rows=roster.map(player=>{
+   const history=g.byPlayer.get(player.id)||[],v=summarizeTests(history)[0],comparable=skill?(v?.attempts??0)>0:!!v?.measurements.length;
+   const state=!history.length?'missing':!comparable?'excluded':skill&&v.attempts<minAttempts?'sample':'recorded';
+   const delta=skill?null:v?.measurements.length>=2?v.last-v.first:null;
+   return {playerId:player.id,state,attempts:v?.attempts??0,success:v?.success??0,errors:v?.errors??0,targetAttempts:v?.targetAttempts??0,target:v?.target??0,pct:v?.pct??null,targetPct:v?.targetPct??null,first:v?.first??null,last:v?.last??null,best:v?.best??null,measurements:v?.measurements.length??0,delta,adapted:v?.adapted??0,restricted:v?.restricted??0,skipped:v?.skipped??0,lastDate:history.filter(h=>h.result.status==='done'&&!h.result.adapted).at(-1)?.date??null};
+  });
+  const aggregate=rows.reduce((a,x)=>({attempts:a.attempts+x.attempts,success:a.success+x.success,errors:a.errors+x.errors,targetAttempts:a.targetAttempts+x.targetAttempts,target:a.target+x.target}),{attempts:0,success:0,errors:0,targetAttempts:0,target:0});
+  return {key:g.key,definition:g.definition,sessions:g.sessions,rows,coverage:{roster:rows.length,recorded:rows.filter(x=>x.state==='recorded').length,sample:rows.filter(x=>x.state==='sample').length,excluded:rows.filter(x=>x.state==='excluded').length,missing:rows.filter(x=>x.state==='missing').length},...aggregate,pct:aggregate.attempts?100*aggregate.success/aggregate.attempts:null,targetPct:aggregate.targetAttempts?100*aggregate.target/aggregate.targetAttempts:null};
+ }).sort((a,b)=>a.definition.name.localeCompare(b.definition.name,'ru')||a.key.localeCompare(b.key));
+ return {players:roster.map(p=>({id:p.id,name:p.name,number:p.number??null,archived:!!p.archived})),methods,cutoff:to&&to<today?to:today,minAttempts};
+}
