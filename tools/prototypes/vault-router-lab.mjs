@@ -24,13 +24,13 @@ function readState(db){
 }
 function setState(db,expected,next){
  return new Promise((resolve,reject)=>{
-  const tx=db.transaction('state','readwrite'),store=tx.objectStore('state'),req=store.get('active');let conflict=false;
+  const tx=db.transaction('state','readwrite'),store=tx.objectStore('state'),req=store.get('active');let conflict=false,failure=null;
   req.onsuccess=()=>{
    const current=req.result;
    if(expected?(!validState(current)||current.phase!==expected.phase||current.generation!==expected.generation):current!==undefined){conflict=true;tx.abort();return;}
-   store.put(next);
+   try{store.put(next);}catch(e){failure=e;tx.abort();}
   };
-  tx.oncomplete=resolve;tx.onabort=()=>reject(conflict?Error('Маршрут LAB изменился'):tx.error||Error('Запись маршрута LAB отменена'));
+  tx.oncomplete=resolve;tx.onabort=()=>reject(conflict?Error('Маршрут LAB изменился'):failure||tx.error||Error('Запись маршрута LAB отменена'));
  });
 }
 function countSealed(db){
@@ -78,18 +78,18 @@ export function vaultRouterLab(id,{locks=globalThis.navigator?.locks}={}){
     return s.phase==='vault'?encrypted(v=>adapter(v,password,a=>a.transaction(table,'readwrite',stores=>stores[table].put(copy)))):plain(s.phase,p=>nativePut(p,table,copy));
    });
   },
-  stage:({password})=>guarded(async db=>{
+  stage:({password,resume=false})=>guarded(async db=>{
    expect(await state(db),'source');
-   return plain('source',p=>encrypted(v=>stageSchemaMigrationLab(p,v,{password})));
+   return plain('source',p=>encrypted(async v=>resume===true&&(await countSealed(v))>0?verifySchemaMigrationLab(p,v,{password}):stageSchemaMigrationLab(p,v,{password})));
   }),
   activate:({password})=>guarded(async db=>{
    const s=await state(db);expect(s,'source');
    await plain('source',p=>encrypted(v=>verifySchemaMigrationLab(p,v,{password})));
    const n=next(s,'vault');await setState(db,s,n);return n;
   }),
-  rollback:({password})=>guarded(async db=>{
+  rollback:({password,resume=false})=>guarded(async db=>{
    const s=await state(db);expect(s,'vault');
-   await encrypted(v=>plain('rollback',p=>restoreSchemaMigrationLab(v,p,{password})));
+   await encrypted(v=>plain('rollback',p=>restoreSchemaMigrationLab(v,p,{password,resume:resume===true})));
    const n=next(s,'rollback');await setState(db,s,n);return n;
   })
  };
