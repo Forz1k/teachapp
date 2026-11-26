@@ -18,11 +18,12 @@ export const schoolViewStores=Object.freeze(['meta','classes','students','lesson
 export {journalMarkSnapshot,journalReplacementReason,lessonBatchReason} from './journal-commands.js';
 
 /** One state/cache per fixed backend. No global switch and no implicit fallback. */
-function buildSchoolStore(db,{allowFullBackup=false}={}){
+function buildSchoolStore(db,{allowFullBackup=false,schoolSettingsOnly=false}={}){
+const settingsDefaults=()=>schoolSettingsOnly?M.schoolSettingsProjection(M.defaultSettings()):M.defaultSettings();
 /** Кэш в памяти. Грузим один раз при старте — база маленькая (сотни записей). */
 const emptyState = () => ({
   ready: false,
-  settings: M.defaultSettings(),
+  settings: settingsDefaults(),
   classes: [],
   students: [],   // все ученики
   lessons: [],    // все уроки
@@ -92,7 +93,8 @@ async function load() {
 
 function applySnapshot({ meta: settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides,
   marks, exemptions, studentHealthProfiles, activityRestrictions, activityCategories, monthly, participation, norms, normResults, finalGrades }) {
-  state.settings = { ...M.defaultSettings(), ...(settingsArr.find((s) => s.id === 'settings') || {}) };
+  const saved=settingsArr.find(s=>s.id==='settings')||{};
+  state.settings = { ...settingsDefaults(), ...(schoolSettingsOnly?M.schoolSettingsProjection(saved):saved) };
   state.settings.trimesters = (settingsArr.find((s) => s.id === 'settings')?.trimesters) || M.defaultSettings().trimesters;
   state.settings.rules = { ...M.defaultSettings().rules, ...(settingsArr.find((s) => s.id === 'settings')?.rules || {}) };
   rightOrderTrimesters(state.settings);
@@ -212,9 +214,10 @@ function lessonsOfMonth(classId, year, month) {
 /* ---------- настройки ---------- */
 
 async function saveSettings(patch) {
+  if(schoolSettingsOnly&&(!patch||Object.keys(patch).some(k=>!M.schoolSettingsFields.includes(k))))throw Error('Настройка недоступна в школьной области');
   const settings = await db.transaction(['meta'],'readwrite', async s => {
     const current = await s.meta.get('settings');
-    const next = { ...M.defaultSettings(), ...current, ...patch };
+    const next = { ...settingsDefaults(), ...(schoolSettingsOnly?M.schoolSettingsProjection(current):current), ...patch };
     rightOrderTrimesters(next);
     await s.meta.put(next);
     return next;
@@ -1393,7 +1396,7 @@ export function createSchoolSession(access){
   if(!tables.length||tables.some(n=>!sessionStores.has(n)))throw Error('Хранилище недоступно в школьном сеансе');
   const result=await access[method](names,...args);guard();return result;
  }])));
- core=buildSchoolStore(scoped);
+ core=buildSchoolStore(scoped,{schoolSettingsOnly:access.settingsScope==='school'});
  function enqueue(fn,args,load=false){
   guard();const input=structuredClone(args);
   const job=tail.then(async()=>{
