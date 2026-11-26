@@ -80,10 +80,10 @@ test('Delta checkpoint restore refuses torn destination status, old key epoch an
  let mode='torn',writes=0,heads=0,checks=0,row=null;
  const fetcher=async(url,init)=>{
   if(url.endsWith('/head')){
-   heads++;return Response.json({...head(mode==='advance'&&heads>=4?2:row?1:0),keyEpoch:mode==='epoch'?1:0});
+   heads++;return Response.json({...head(mode==='epoch'||mode==='advance'&&heads>=4?2:row?1:0),keyEpoch:mode==='epoch'?1:0});
   }
   if(url.endsWith('/rollback-status')){
-   checks++;return Response.json({revision:mode==='torn'?1:mode==='status-advance'&&checks>=2?2:row?1:0,seal:null});
+   checks++;return Response.json({revision:mode==='torn'?1:mode==='epoch'||mode==='status-advance'&&checks>=2?2:row?1:0,seal:null});
   }
   if(url.endsWith('/anchor')){writes++;row={revision:1,kind:'anchor',envelope:JSON.parse(init.body).envelope};return Response.json({revision:1,replayed:false});}
   if(url.endsWith('/revision/1'))return Response.json(row);
