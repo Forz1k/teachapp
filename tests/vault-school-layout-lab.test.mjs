@@ -57,3 +57,38 @@ test('School-v2 executes the complete current school store and journal with isol
  const target=partitionedVaultLab('school-layout-recovery',{layout:'school-v2'});await target.restoreRecoveryCopy({file:copy.file,backupPasswords,newPasswords:restorePasswords,confirmed:true});
  assert.ok(samePartitionSnapshotLab(await target.snapshot({passwords:restorePasswords}),after));
 });
+
+test('Owner-approved school year rollover atomically moves active history and preserves coach and owner settings',async t=>{
+ const data=fixture(),lab=partitionedVaultLab('year-rollover',{layout:'school-v2'});await lab.stage({data,passwords});
+ const school=createSchoolSession(await lab.openScope({scope:'school',password:passwords.school})),coach=await lab.openScope({scope:'coach',password:passwords.coach}),owner=await lab.openScope({scope:'workspace',password:passwords.workspace});t.after(()=>[school,coach,owner].forEach(s=>s.close()));
+ await school.load();const lesson=await school.addLesson('c','2025-10-01',null,'',{slot:1,time:'09:00'});
+ await school.setMark('p',lesson.id,{value:'5'});const historyId=lessonHistoryKey('p',lesson.id);
+ const preview=await lab.previewSchoolYear({passwords}),copy=await lab.prepareRecoveryCopy({passwords,backupPasswords});
+ assert.equal(preview.year.from,'2025-09-01');assert.equal(preview.marks,1);assert.equal(preview.classes[0].id,'c');assert.equal(preview.token,undefined);
+ const input={passwords,backupPasswords,backupFile:copy.file,saved:true,confirmed:true,expected:preview.source,year:{from:'2026-09-01',to:'2027-05-31'},transfers:[{id:'c',name:'8А',gradeLevel:8}],kind:'trimester'};
+ await assert.rejects(lab.rollSchoolYear({...input,confirmed:false}),/Подтвердите/);
+ await assert.rejects(lab.rollSchoolYear({...input,passwords:{...passwords,coach:'incorrect-coach-key'}}),/неверный пароль/);
+ const before=await lab.status(),beforeData=await lab.snapshot({passwords}),proto=IDBObjectStore.prototype,put=proto.put;
+ proto.put=function(...args){if(this.transaction.db.name==='teachapp-vault-mutable-school-lab-year-rollover'&&this.name==='state')throw new DOMException('Synthetic pointer quota','QuotaExceededError');return put.apply(this,args);};
+ try{await assert.rejects(lab.rollSchoolYear(input),e=>e.name==='QuotaExceededError');}finally{proto.put=put;}
+ assert.deepEqual(await lab.status(),before);assert.ok(samePartitionSnapshotLab(await lab.snapshot({passwords}),beforeData));
+ // A write after preview must invalidate both the approval and backup.
+ await school.setRules({capAt3OnBad:true});await assert.rejects(lab.rollSchoolYear(input),/Предпросмотр устарел/);
+ const fresh=await lab.previewSchoolYear({passwords});
+ await assert.rejects(lab.rollSchoolYear({...input,expected:fresh.source}),/Копия устарела/);
+ const latest=await lab.prepareRecoveryCopy({passwords,backupPasswords});
+ const preRoll=await lab.status(),result=await lab.rollSchoolYear({...input,expected:fresh.source,backupFile:latest.file});
+ assert.equal(result.classes,1);assert.equal(result.students,1);assert.equal(result.pointer.revisions.coach,preRoll.revisions.coach);
+ assert.notEqual(result.pointer.revisions.school,preRoll.revisions.school);assert.notEqual(result.pointer.revisions.workspace,preRoll.revisions.workspace);
+ await assert.rejects(school.setRules({capAt3OnBad:false}),/Ревизия области/);await assert.rejects(owner.getAll('workRecords'),/Ревизия области/);
+ assert.deepEqual(await coach.getAll('coachTeams'),data.coachTeams);
+ const after=await lab.snapshot({passwords}),settings=after.meta.find(r=>r.id==='settings'),archive=after.workRecords.find(r=>r.id===result.archiveId);
+ assert.equal(settings.year.from,'2026-09-01');assert.equal(settings.theme,'dark');assert.equal(settings.futureOwnerField,'Synthetic owner-only');assert.equal(settings.lastBackupAt,data.meta[0].lastBackupAt);
+ assert.equal(archive.snapshot.marks[0].value,'5');assert.equal(archive.snapshot.meta[0].theme,undefined);assert.equal(archive.snapshot.meta[0].futureOwnerField,undefined);
+ assert.equal(after.students[0].lineageId,'p');assert.notEqual(after.students[0].id,'p');assert.equal(after.marks.length,0);
+ const freshSchool=await lab.openScope({scope:'school',password:passwords.school}),freshOwner=await lab.openScope({scope:'workspace',password:passwords.workspace});t.after(()=>[freshSchool,freshOwner].forEach(s=>s.close()));
+ assert.deepEqual(await freshSchool.getAll('workRecords'),[]);assert.ok((await freshOwner.getAll('workRecords')).some(r=>r.id===historyId));
+ assert.ok((await freshOwner.getAll('workRecords')).some(r=>r.id===result.archiveId));
+ const restored=partitionedVaultLab('year-rollover-recovered',{layout:'school-v2'});await restored.restoreRecoveryCopy({file:latest.file,backupPasswords,newPasswords:restorePasswords,confirmed:true});
+ const old=await restored.snapshot({passwords:restorePasswords});assert.equal(old.marks[0].value,'5');assert.equal(old.meta.find(r=>r.id==='settings').year.from,'2025-09-01');
+});
