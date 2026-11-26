@@ -5,7 +5,7 @@ import {vaultSessionLifecycleLab} from '../vault-session-lifecycle-lab.mjs';
 
 const demo=Object.freeze({school:'teachapp-school-demo',coach:'teachapp-coach-demo',workspace:'teachapp-owner-demo'});
 const names={school:'Школа',coach:'Тренер',workspace:'Общие данные'};
-const scopes=Object.keys(demo),status=document.querySelector('#status'),setup=document.querySelector('#setup'),newDemo=document.querySelector('#new-demo'),root=document.querySelector('#scopes');
+const scopes=Object.keys(demo),status=document.querySelector('#status'),setup=document.querySelector('#setup'),newDemo=document.querySelector('#new-demo'),root=document.querySelector('#scopes'),lockTabs=document.querySelector('#lock-tabs');
 function fixture(){
  const data=Object.fromEntries(Object.keys(SCHEMA).map(n=>[n,[]]));
  data.classes.push({id:'demo-class',name:'Демо-класс',gradeLevel:7});
@@ -18,8 +18,11 @@ function start(){
  const id=new URLSearchParams(location.search).get('id')||'ui-demo-v1';
  let bundle;
  try{bundle=vaultBundleActivationLab(id);}catch{status.textContent='Неверный ID набора или Web Locks недоступен.';return;}
- const lifecycle=vaultSessionLifecycleLab(bundle),rows=new Map();
+ const rows=new Map();let lifecycle;
  let active=false,disposed=false;
+ try{lifecycle=vaultSessionLifecycleLab(bundle,{bundleId:id,onRemoteLock:()=>{lockAll();status.textContent='Получена блокировка всех вкладок демо-набора.';}});}
+ catch{status.textContent='Межвкладочная блокировка LAB недоступна.';return;}
+ lockTabs.hidden=false;lockTabs.addEventListener('click',()=>{lockAll();try{lifecycle.lockEveryTab();status.textContent='Блокировка отправлена открытым вкладкам этого демо-набора.';}catch{status.textContent='Локальный сеанс закрыт, доставка блокировки другим вкладкам не подтверждена.';}});
  newDemo.hidden=false;newDemo.addEventListener('click',()=>location.assign('?id=demo-'+crypto.randomUUID()));
  function clear(row){row.result.textContent='';row.input.value='';}
  function render(scope){
