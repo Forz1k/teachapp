@@ -5,6 +5,7 @@ import {SCHEMA} from '../js/db.js';
 import {createWorkSession} from '../js/workbench.js';
 import {createCoachSession} from '../js/coach.js';
 import {partitionedVaultLab} from '../tools/prototypes/vault-partitioned-lab.mjs';
+import {openPartitionRecoveryCopyLab} from '../tools/prototypes/vault-partition-recovery-lab.mjs';
 const passwords={school:'synthetic-school-password',coach:'synthetic-coach-password',workspace:'synthetic-owner-password'};
 const fixture=()=>{const data=Object.fromEntries(Object.keys(SCHEMA).map(n=>[n,[]]));data.classes=[{id:'c',name:'Synthetic class',gradeLevel:7}];data.students=[{id:'p',classId:'c',fullName:'Synthetic pupil',number:1,normGroup:'girls'}];data.coachTeams=[{id:'t',name:'Synthetic team',archived:false}];data.meta=[{id:'owner',value:'Synthetic owner-only'}];return data;};
 const open=(lab,scope,extra={})=>lab.openScope({scope,password:passwords[scope],...extra});
@@ -64,4 +65,45 @@ test('Stale scope sessions and close during pending callback fail without overwr
  assert.equal(await b.get('classes','closed'),undefined);
  let clock=0;const expired=await open(lab,'school',{idleMs:10000,now:()=>clock});t.after(()=>expired.close());clock=10001;
  await assert.rejects(expired.getAll('classes'),/заблокирован/);assert.ok(expired.isClosed());
+});
+
+const backupPasswords={school:'synthetic-backup-school',coach:'synthetic-backup-coach',workspace:'synthetic-backup-owner'};
+const newPasswords={school:'synthetic-new-school',coach:'synthetic-new-coach',workspace:'synthetic-new-owner'};
+const restoredPasswords={school:'synthetic-restore-school',coach:'synthetic-restore-coach',workspace:'synthetic-restore-owner'};
+test('Partition recovery copy is ciphertext-only, binds source revisions and restores independent keys',async t=>{
+ const lab=partitionedVaultLab('recovery'),data=fixture(),initial=await lab.stage({data,passwords});
+ await assert.rejects(lab.prepareRecoveryCopy({passwords,backupPasswords:{...backupPasswords,school:passwords.coach}}),/независимыми/);
+ const first=await lab.prepareRecoveryCopy({passwords,backupPasswords});
+ assert.doesNotMatch(first.file,/Synthetic pupil|Synthetic team|owner-only|synthetic-backup-school/);
+ const recovered=await openPartitionRecoveryCopyLab(first.file,{passwords:backupPasswords});assert.deepEqual(recovered.data,data);assert.equal(recovered.source.sourceBundleId,initial.bundleId);assert.deepEqual(recovered.source.sourceRevisions,initial.revisions);
+ await assert.rejects(openPartitionRecoveryCopyLab(first.file,{passwords:{...backupPasswords,coach:'wrong-backup-coach'}}),/неверный пароль/);
+ const another=await lab.prepareRecoveryCopy({passwords,backupPasswords}),mixed=JSON.parse(first.file);mixed.parts.coach=JSON.parse(another.file).parts.coach;
+ await assert.rejects(openPartitionRecoveryCopyLab(JSON.stringify(mixed),{passwords:backupPasswords}),/Другая область или набор/);
+ const target=partitionedVaultLab('recovery-target');
+ await assert.rejects(target.restoreRecoveryCopy({file:first.file,backupPasswords,newPasswords:restoredPasswords}),/Подтвердите/);
+ const restored=await target.restoreRecoveryCopy({file:first.file,backupPasswords,newPasswords:restoredPasswords,confirmed:true});
+ assert.notEqual(restored.bundleId,initial.bundleId);assert.deepEqual(await target.snapshot({passwords:restoredPasswords}),data);assert.deepEqual(await lab.status(),{active:true,...initial});
+ await assert.rejects(target.restoreRecoveryCopy({file:first.file,backupPasswords,newPasswords:restoredPasswords,confirmed:true}),/перезапись запрещена/);
+});
+test('All-key rotation requires exact independent copy and atomically rejects quota and stale sessions',async t=>{
+ const lab=partitionedVaultLab('rotation'),data=fixture();await lab.stage({data,passwords});
+ const staleCopy=await lab.prepareRecoveryCopy({passwords,backupPasswords});
+ const school=await open(lab,'school'),coach=await open(lab,'coach');t.after(()=>[school,coach].forEach(s=>s.close()));
+ await school.put('classes',{id:'new',name:'Synthetic changed class'});const changed=await lab.snapshot({passwords});
+ const rotate=backupFile=>lab.rotatePasswords({passwords,newPasswords,backupPasswords,backupFile,saved:true});
+ await assert.rejects(rotate(staleCopy.file),/Копия устарела/);
+ const copy=await lab.prepareRecoveryCopy({passwords,backupPasswords}),before=await lab.status();
+ await assert.rejects(lab.rotatePasswords({passwords,newPasswords,backupPasswords,backupFile:copy.file}),/сохранённая независимая копия/);
+ const proto=IDBObjectStore.prototype,put=proto.put;
+ proto.put=function(...args){if(this.transaction.db.name==='teachapp-vault-mutable-lab-rotation'&&this.name==='state')throw new DOMException('Synthetic quota','QuotaExceededError');return put.apply(this,args);};
+ try{await assert.rejects(rotate(copy.file),e=>e.name==='QuotaExceededError');}finally{proto.put=put;}
+ assert.deepEqual(await lab.status(),before);assert.deepEqual(await lab.snapshot({passwords}),changed);
+ assert.equal((await school.getAll('classes')).length,2);
+ const next=await rotate(copy.file);assert.equal(next.bundleId,before.bundleId);for(const s of Object.keys(passwords))assert.notEqual(next.revisions[s],before.revisions[s]);
+ await assert.rejects(school.getAll('classes'),/Ревизия области/);await assert.rejects(coach.getAll('coachTeams'),/Ревизия области/);
+ await assert.rejects(lab.snapshot({passwords}),/неверный пароль/);
+ assert.deepEqual(await lab.snapshot({passwords:newPasswords}),changed);
+ const restored=partitionedVaultLab('rotation-restored');
+ await restored.restoreRecoveryCopy({file:copy.file,backupPasswords,newPasswords:restoredPasswords,confirmed:true});
+ assert.deepEqual(await restored.snapshot({passwords:restoredPasswords}),changed);
 });
