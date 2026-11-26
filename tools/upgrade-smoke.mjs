@@ -7,7 +7,7 @@ import {webkit,devices} from 'playwright';
 
 const candidate=process.cwd(),baseline=resolve(process.argv[2]||'');
 const readVersion=async root=>JSON.parse(await readFile(resolve(root,'package.json'),'utf8')).version;
-const baselineVersion=await readVersion(baseline);assert.ok(['5.1.0','5.1.1','6.0.0'].includes(baselineVersion));
+const baselineVersion=await readVersion(baseline);assert.ok(['5.1.0','5.1.1','6.0.0','6.0.2'].includes(baselineVersion));
 const expected=await readVersion(candidate);assert.notEqual(expected,baselineVersion);
 let root=baseline;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png'};

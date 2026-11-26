@@ -1,5 +1,8 @@
 name: TeachApp WebKit
 on:
+  push:
+    branches:
+      - 'roadmap/8.0-integration'
   pull_request:
   workflow_dispatch:
 permissions:
@@ -31,3 +34,10 @@ jobs:
           git archive f7066c1c57cfe63bdfc98b10d8e8b7f6f52d9b22 | tar -x -C "$RUNNER_TEMP/teachapp-6.0.0"
       - name: Verify real PWA update from 6.0.0
         run: node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-6.0.0"
+      - name: Prepare published 6.0.2 baseline
+        run: |
+          git fetch --no-tags --depth=1 origin d4cb5bb3c4cae0658e7b2d4816679f367f8d4a19
+          mkdir -p "$RUNNER_TEMP/teachapp-6.0.2"
+          git archive d4cb5bb3c4cae0658e7b2d4816679f367f8d4a19 | tar -x -C "$RUNNER_TEMP/teachapp-6.0.2"
+      - name: Verify real PWA update from 6.0.2
+        run: node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-6.0.2"

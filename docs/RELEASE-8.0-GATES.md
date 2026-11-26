@@ -51,3 +51,7 @@ node tools/release-readiness.mjs --check "$SHA" release-evidence.json
 ## Статический пакет для review
 
 Основной CI собирает `teachapp-static-review`: только явно перечисленные production-файлы из precache, sw.js и .nojekyll. Проверяет относительные зависимости модулей, HTML и манифеста, отказывается от symlink, пути за пределами allowlist или перезаписи существующего каталога. LAB, server, tools, тесты, конфиги и документация не входят. Это CI-артефакт, не Pages deployment: фактический способ публикации, настройки GitHub Pages и проверка сайта после deploy требуют отдельной приёмки. Для локальной сборки `node tools/build-static-release.mjs NEW_OUTPUT_DIRECTORY`.
+
+## Проверка точного push SHA и обновления с 6.0.2
+
+Все шесть workflow запускаются также при push строго в `roadmap/8.0-integration` (не в main; Cloudflare deployment по-прежнему запрещён в этой ветке). Это обеспечивает доказательства exact-head, которые принимает сборщик CI. WebKit дополнительно проверяет реальное обновление с опубликованной 6.0.2, pinned `d4cb5bb3c4cae0658e7b2d4816679f367f8d4a19`, с сохранностью IndexedDB, синхронизации, офлайн и восстановлением защищённой копии. Приёмка на физическом устройстве остаётся обязательной.
