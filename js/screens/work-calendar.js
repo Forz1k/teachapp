@@ -9,7 +9,7 @@ import {calendarEntries,dueReminders,timeConflicts,calendarIcs,eventTypes} from 
 import {portalInfo} from '../public-publisher.js';
 import {el,openSheet,closeSheet,toast,confirmDialog,downloadBlob} from '../ui.js';
 import {calendarMonth,dashboardHeading} from '../dashboard.js';
-import {readReminderPreferences,saveReminderPreferences,reminderSources} from '../reminder-controller.js';
+import {readReminderPreferences,saveReminderPreferences,reminderSources,enableReminderPermission} from '../reminder-controller.js';
 const p=text=>el('p',{text});
 const btn=(text,onclick,kind='')=>el('button',{type:'button',class:'btn wide '+kind,text,onclick});
 const field=(name,node)=>el('label',{class:'field'},[el('span',{text:name}),node]);
@@ -40,9 +40,11 @@ export async function openWorkCalendar(options={}){
    if(prefs.enabled){saveReminderPreferences({...prefs,enabled:false});refreshReminderSettings();return;}
    const sources=selectedSources();if(!sources.length)throw Error('Выберите хотя бы один источник');
    if(!globalThis.Notification?.requestPermission){reminderStatus.textContent='Браузер не поддерживает уведомления. Используйте экспорт .ics.';return;}
-   reminderPrompt=true;const permission=await Notification.requestPermission();if(!reminderOpen())return;
-   if(permission!=='granted'){reminderStatus.textContent='Разрешение не выдано. Экспорт .ics доступен.';return;}
-   saveReminderPreferences({enabled:true,sources});refreshReminderSettings();
+   reminderPrompt=true;
+   const result=await enableReminderPermission({sources,sourceTarget:reminderOptions,request:()=>Notification.requestPermission(),active:()=>reminderOpen()&&document.visibilityState==='visible'&&!document.body.classList.contains('privacy-covered')});
+   if(!reminderOpen()||document.visibilityState!=='visible'||document.body.classList.contains('privacy-covered'))return;
+   if(result==='denied'){reminderStatus.textContent='Разрешение не выдано. Экспорт .ics доступен.';return;}
+   refreshReminderSettings();if(result==='stale')reminderStatus.textContent+=' Запрос устарел; при необходимости включите снова.';
   }catch(e){reminderStatus.textContent=e.message;}finally{reminderPrompt=false;}
  }
  function saveSources(){try{const prefs=readReminderPreferences();saveReminderPreferences({enabled:prefs.enabled,sources:selectedSources()});refreshReminderSettings();}catch(e){reminderStatus.textContent=e.message;}}
