@@ -1,8 +1,9 @@
-import {privacyIdleOptions,readShieldPreferences,saveShieldPreferences,screenLockEnabled,changeScreenLock} from '../privacy-shield.js';
+import {privacyIdleOptions,readShieldPreferences,saveShieldPreferences,screenLockEnabled,changeScreenLock,PRIVACY_VISIBILITY_EVENT} from '../privacy-shield.js';
 import {openBriefings,openGymBoards} from './methodical.js';
 import {isEncryptedBackup,decryptBackup} from '../privacy.js';
 import {retentionPreview,purgeExpired} from '../retention.js';
 import { validateBackup } from '../backup.js';
+import {verifyProtectedBackup} from '../backup-verify.js';
 import {inspectLocalMigration} from '../migration-preflight.js';
 /* screens/settings.js — настройки, импорт, экспорт, резервные копии, управление классами. */
 
@@ -234,7 +235,7 @@ export function renderSettings(root, ctx = {}) {
     if(password!==repeat){ui.toast('Пароли не совпадают');return;}
     try{await exporter.exportBackup(password);}catch(e){ui.toast(e.message);}finally{password=repeat=null;}
   }})]));
-  const restoreInput = el('input', { type: 'file', accept: '.json', style: 'display:none' });
+  const restoreInput = el('input', { type: 'file', accept: '.json', 'aria-label':'Файл для восстановления', style: 'display:none' });
   restoreInput.addEventListener('change', async () => {
     const file = restoreInput.files?.[0];
     if (!file) return;
@@ -271,6 +272,28 @@ export function renderSettings(root, ctx = {}) {
     el('div', { class: 'label', text: 'Восстановить из копии' }),
     el('button', { class: 'btn small', type: 'button', text: 'Выбрать файл', onclick: () => restoreInput.click() }),
   ]));
+  const verifyInput=el('input',{type:'file',accept:'.json,application/json','aria-label':'Файл для проверки копии',style:'display:none'});
+  const verifyStatus=el('p',{role:'status',text:'Проверка защищённой копии без восстановления.'});
+  const verifyButton=el('button',{class:'btn wide',type:'button',text:'Проверить сохранённую защищённую копию',onclick:()=>verifyInput.click()});
+  verifyInput.onchange=async()=>{
+   const file=verifyInput.files?.[0];verifyInput.value='';if(!file||verifyButton.disabled)return;
+   verifyButton.disabled=true;let invalid=false,password=null;
+   const invalidate=()=>{invalid=true;verifyStatus.textContent='Проверка прервана. Повторите при необходимости.';};
+   const active=()=>!invalid&&verifyStatus.isConnected&&document.visibilityState==='visible'&&!document.body.classList.contains('privacy-covered');
+   window.addEventListener(PRIVACY_VISIBILITY_EVENT,invalidate);window.addEventListener('pagehide',invalidate);
+   try{
+    if(file.size>96*1024*1024)throw Error('Файл слишком велик');
+    const envelope=await exporter.readBackupFile(file);if(!active())return;
+    if(!isEncryptedBackup(envelope))throw Error('Требуется защищённая копия');
+    password=await ui.promptDialog({title:'Пароль сохранённой копии',text:'Только проверка. Действующая база не будет заменена.',password:true,ok:'Проверить'});
+    if(password===null||!active())return;
+    const result=await verifyProtectedBackup(envelope,password,{load:store.makeBackup,active});
+    if(!active())return;
+    verifyStatus.textContent='Пароль и структура подтверждены. Записей: '+result.records+'. '+(result.comparison==='matches'?'Переносимые записи совпадают с текущим снимком (кроме даты и напоминания о копии).':result.comparison==='older-format'?'Копия старого формата; совпадение с текущей базой не подтверждено.':'Отличаются разделы: '+result.differentTables+'. Копия может быть более ранней.')+' Восстановление не выполнялось.';
+   }catch{if(active())verifyStatus.textContent='Не удалось подтвердить копию. Проверьте пароль, формат и размер файла. Данные не изменены.';}
+   finally{password=null;window.removeEventListener(PRIVACY_VISIBILITY_EVENT,invalidate);window.removeEventListener('pagehide',invalidate);verifyButton.disabled=false;}
+  };
+  backupBlock.append(verifyInput,verifyButton,verifyStatus);
   backupBlock.append(el('button',{class:'btn wide',type:'button',text:'Выборочная копия / восстановление',onclick:openSelectiveBackup}));
   backupBlock.append(el('button',{class:'btn wide',type:'button',text:'Синхронизация устройств · бета',onclick:openSync}));
   body.append(backupBlock);
