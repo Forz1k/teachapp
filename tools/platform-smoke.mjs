@@ -64,6 +64,15 @@ const syntheticEndpoint='https://push.example.invalid/sub/00000000-0000-4000-800
  assert.equal((await call('alpha','notification-lab',athlete.token)).enabled,true);
  assert.equal((await call('alpha','notification-lab',athlete.token,'PUT',registration)).status,409);
  assert.doesNotMatch(JSON.stringify(await call('alpha','members',owner)),/push\.example\.invalid/);
+ const oldProfile=await call('alpha','teams/t/athletes/p',owner);
+ assert.equal((await call('alpha','teams/t/athletes/p',owner,'PUT',{expectedRevision:oldProfile.revision,goals:oldProfile.record.goals,assignments:oldProfile.record.assignments,schedule:oldProfile.record.schedule})).status,200);
+ const notice=await call('alpha','notification-lab/inbox',athlete.token);assert.equal(notice.pending,true);assert.equal(notice.sequence,1);
+ assert.deepEqual(notice.notice,{title:'TeachApp',body:'В личном кабинете есть обновления.'});
+ await stop();await start();
+ assert.equal((await call('alpha','notification-lab/inbox',athlete.token)).pending,true);
+ assert.equal((await call('alpha','notification-lab/ack',athlete.token,'POST',{expectedRevision:3,sequence:0})).status,400);
+ assert.equal((await call('alpha','notification-lab/ack',athlete.token,'POST',{expectedRevision:3,sequence:1})).pending,false);
+ assert.equal((await call('alpha','notification-lab/ack',athlete.token,'POST',{expectedRevision:3,sequence:1})).pending,false);
  assert.equal((await call('alpha','notification-lab',athlete.token,'PUT',{expectedRevision:3,enabled:false,endpoint:null})).enabled,false);
  console.log('PLATFORM NOTIFICATION LAB PASS: consent, isolation, restart, CAS and unsubscribe; no delivery.');
  const recovery='b'.repeat(64);assert.equal((await call('alpha','owner/recovery',owner,'POST',{recoveryHash:await digestToken(recovery),expectedVersion:0})).status,200);await stop();await start();assert.equal((await call('beta','recover',recovery,'POST',{})).status,401);const recovered=await call('alpha','recover',recovery,'POST',{});assert.equal(recovered.status,201);assert.equal((await call('alpha','me',owner)).status,401);assert.equal((await call('alpha','matches/m',recovered.token)).match.score.ours,2);assert.equal((await call('alpha','me',recovery)).status,401);assert.ok(!JSON.stringify(await call('alpha','audit',recovered.token)).includes(recovery));console.log('PLATFORM RECOVERY PASS: hashed workspace recovery, restart, owner revocation and preserved match');
