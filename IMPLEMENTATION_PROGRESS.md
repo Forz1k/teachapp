@@ -482,3 +482,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### Archive V3 — read-only migration inventory
 - Strict bounded pagination across both paths with repeated scans, boundary and corruption checks; reports copy-ready, identical, conflicting and destination-only IDs. Does not write or guarantee snapshot isolation: a publication freeze remains required.
+
+### Documents — browser acceptance
+- Prevent stale async previews after closing/changing template and duplicate preview activation. Real WebKit UI scenarios for both new templates, privacy and viewport width.

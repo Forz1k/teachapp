@@ -110,7 +110,15 @@ export async function openDocuments(defaultType='lesson'){
    }
    return buildDocument(k,base);
   }
-  const form=stack([el('h2',{text:'Генератор документов'}),p('Локальные Word, Excel и печать. Измените заголовок, реквизиты и выводы. Сведения об ограничениях и личные заметки автоматически не включаются.'),field('Шаблон',type),field('Заголовок',title),field('Организация',organization),field('Ответственный',author),field('Дата',date),field('Место',venue),field('Группа / участники',audience),specific,field('Выводы / примечания',conclusion),field('Добавить поля подписей',signature),field('Название поля подписи',signatureLabel),p('Шаблоны сохраняют только заголовок, организацию, место и настройки подписи на этом устройстве. Не указывайте персональные данные в этих полях.'),btn('Сохранить реквизиты шаблона',async()=>{try{if(!await confirmDialog({title:'Сохранить шаблон на устройстве?',text:'Будут сохранены только общие реквизиты, не списки участников и не результаты.',ok:'Сохранить'}))return;savePreset(type.value,{title:title.value,organization:organization.value,venue:venue.value,signatures:signature.checked,signatureLabel:signatureLabel.value});toast('Шаблон сохранён');}catch(e){toast(e.message);}}),btn('Сбросить реквизиты шаблона',()=>{try{removePreset(type.value);applyPreset();toast('Реквизиты сброшены');}catch(e){toast(e.message);}}),btn('Предпросмотр',async()=>{try{const report=await build();if(form.isConnected)openDocumentPreview(report,()=>openSheet(form));}catch(e){toast(e.message);}},'primary'),btn('Закрыть',closeSheet)]);
+  let previewBusy=false;
+  const preview=btn('Предпросмотр',async()=>{
+   if(previewBusy)return;previewBusy=true;preview.disabled=true;
+   const chosen=type.value;
+   try{const report=await build();if(form.closest('.sheet.show')&&type.value===chosen)openDocumentPreview(report,()=>openSheet(form));}
+   catch(e){if(form.closest('.sheet.show'))toast(e.message);}
+   finally{previewBusy=false;preview.disabled=false;}
+  },'primary');
+  const form=stack([el('h2',{text:'Генератор документов'}),p('Локальные Word, Excel и печать. Измените заголовок, реквизиты и выводы. Сведения об ограничениях и личные заметки автоматически не включаются.'),field('Шаблон',type),field('Заголовок',title),field('Организация',organization),field('Ответственный',author),field('Дата',date),field('Место',venue),field('Группа / участники',audience),specific,field('Выводы / примечания',conclusion),field('Добавить поля подписей',signature),field('Название поля подписи',signatureLabel),p('Шаблоны сохраняют только заголовок, организацию, место и настройки подписи на этом устройстве. Не указывайте персональные данные в этих полях.'),btn('Сохранить реквизиты шаблона',async()=>{try{if(!await confirmDialog({title:'Сохранить шаблон на устройстве?',text:'Будут сохранены только общие реквизиты, не списки участников и не результаты.',ok:'Сохранить'}))return;savePreset(type.value,{title:title.value,organization:organization.value,venue:venue.value,signatures:signature.checked,signatureLabel:signatureLabel.value});toast('Шаблон сохранён');}catch(e){toast(e.message);}}),btn('Сбросить реквизиты шаблона',()=>{try{removePreset(type.value);applyPreset();toast('Реквизиты сброшены');}catch(e){toast(e.message);}}),preview,btn('Закрыть',closeSheet)]);
   openSheet(form);
  }catch(e){toast(e.message);}
 }
