@@ -28,3 +28,16 @@ test('Adjacent marker navigation uses filtered valid timestamps, skips current m
  assert.equal(adjacentVideoMarker(markers,0,20,0),null);
  assert.equal(adjacentVideoMarker(markers.filter(m=>m.index===7),0,20,1).index,7);
 });
+
+test('Indexed playback navigation is equivalent to linear reference across ties, boundaries and large marker lists',async()=>{
+ const {adjacentVideoMarker,createVideoMarkerIndex}=await import('../js/video-review.js');
+ const markers=Array.from({length:12000},(_,i)=>({index:i+1,seconds:(i*73%5000)/10,alignment:i%19===0?'unlinked':'manual',outsideVideo:i%23===0}));
+ markers.push({index:15000,seconds:10,alignment:'manual'},{index:15001,seconds:null,alignment:'unlinked'});
+ const index=createVideoMarkerIndex(markers);
+ for(const duration of [0,10,35,100,499.9,600,NaN]){
+  assert.equal(index.count(duration),Number.isFinite(duration)&&duration>=0?markers.filter(m=>!m.outsideVideo&&m.alignment!=='unlinked'&&Number.isFinite(m.seconds)&&m.seconds<=duration).length:0);
+  for(const current of [0,.05,5,9.95,10,10.05,25.01,100,499.9,NaN])for(const dir of [-1,1])assert.deepEqual(index.adjacent(current,duration,dir),adjacentVideoMarker(markers,current,duration,dir));
+ }
+ const source=[{index:1,seconds:2,alignment:'manual'},{index:2,seconds:2,alignment:'manual'}],cached=createVideoMarkerIndex(source);
+ source[0].seconds=100;const returned=cached.adjacent(0,5,1);assert.equal(returned.index,1);returned.seconds=200;assert.equal(cached.adjacent(0,5,1).seconds,2);
+});

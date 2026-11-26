@@ -8,3 +8,7 @@
 ## Навигация по отметкам
 
 Кнопки предыдущей/следующей отметки используют только текущий отфильтрованный список, игнорируют неизвестное время, непривязанные PDF-розыгрыши и позиции вне открытого файла. Переход останавливает воспроизведение и A–B, устанавливает время отметки без отступа; при экспорте отключён. Окно 50 мс предотвращает повторный выбор текущей отметки после округления seek; на границе нет циклического перехода. Оценочные отметки сохраняют прежнюю маркировку, точность кадра не гарантируется. Нет сохранения новой информации и передачи видео.
+
+### Playback navigation read budget (6.9)
+
+The filtered marker index and note lookup map are built when the filters, alignment or record changes. Playback events now use binary search for both adjacent markers and the in-range count, instead of three linear scans per timeupdate. Equal times retain lowest rally index; no wrap, no unlinked or out-of-video marks. A 12,000-marker deterministic test compares results to the previous linear reference across duration/timestamp boundaries, duplicates and invalid values. No timing claim for physical iPhone; no schema or storage changes.
