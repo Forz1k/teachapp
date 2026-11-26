@@ -61,3 +61,23 @@ test('LAB query validation and range get match native IndexedDB even when the se
  assert.deepEqual(await tx(['students'],s=>s.students.index('classId').getAll()),await native(['students'],s=>s.students.index('classId').getAll()));
  assert.deepEqual(await tx(['students'],s=>s.students.index('classId').getAll(null)),[]);
 });
+
+test('Caught or ignored failed LAB requests never commit a partial encrypted transaction',async t=>{
+ const data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));data.meta=[{id:'a',value:1}];
+ const db=await openVaultLab(name+'-request-abort');t.after(()=>db.close());
+ await stageSchemaVault(db,{backup:{app:'teachapp',version:(await import('../js/backup.js')).BACKUP_VERSION,data},password});
+ const a=schemaVaultAdapter(db,{password});
+ const before=await readVaultLab(db,{scope:'workspace',password});
+ for(const callback of [
+  async s=>{await s.meta.put({id:'b',value:2});try{await s.meta.add({id:'a',value:3});}catch{}await s.meta.put({id:'c',value:4});},
+  async s=>{await s.meta.put({id:'b',value:2});void s.meta.add({id:'a',value:3});},
+  async s=>{await s.meta.put({id:'b',value:2});try{s.meta.index('missing');}catch{}},
+  async s=>{await s.meta.put({id:'b',value:2});try{await s.meta.get(undefined);}catch{}}
+ ]){
+  await assert.rejects(a.transaction('meta','readwrite',callback),e=>['ConstraintError','NotFoundError','DataError'].includes(e.name));
+  const after=await readVaultLab(db,{scope:'workspace',password});assert.equal(after.revision,before.revision);assert.deepEqual(after.data,before.data);
+ }
+ await a.transaction('meta','readwrite',s=>s.meta.put({id:'b',value:2}));
+ assert.equal((await a.snapshot()).meta.length,2);
+ a.close();
+});

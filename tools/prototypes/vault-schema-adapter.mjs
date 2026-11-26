@@ -38,7 +38,7 @@ function limited(rows,count){
  if(!Number.isInteger(count)||count<0||count>0xffffffff)throw TypeError('Некорректный count');
  return count===0?rows:rows.slice(0,count);
 }
-function makeStore(table,def,active,writable){
+function makeStore(table,def,active,writable,failed){
  const ensure=write=>{if(!active())throw dom('TransactionInactiveError','Транзакция завершена');if(write&&!writable)throw dom('ReadOnlyError','Только чтение');};
  const ordered=()=>[...table.values()].sort((a,b)=>cmp(a.id,b.id));
  const lookup=k=>{validateQuery(k,{required:true});return typeof IDBKeyRange!=='undefined'&&k instanceof IDBKeyRange?ordered().find(row=>k.includes(row.id)):table.get(k);};
@@ -52,7 +52,13 @@ function makeStore(table,def,active,writable){
   }
   table.set(k,row);return k;
  }
- const asyncOp=fn=>async(...args)=>fn(...args);
+ // Request failures in a writable LAB transaction are fatal, even when
+ // the callback catches them. Observe ignored rejections without changing
+ // the returned promise's rejection semantics.
+ const asyncOp=fn=>(...args)=>{
+  try{return Promise.resolve(fn(...args));}
+  catch(error){if(active()&&writable)failed(error);const rejected=Promise.reject(error);rejected.catch(()=>{});return rejected;}
+ };
  return {
   get:asyncOp(key=>{ensure(false);return copy(lookup(key));}),
   getAll:asyncOp((q,c)=>copy(select(q,c))),
@@ -61,7 +67,7 @@ function makeStore(table,def,active,writable){
   delete:asyncOp(key=>{ensure(true);if(!keyOK(key))throw dom('DataError','Некорректный ключ');if(typeof IDBKeyRange!=='undefined'&&key instanceof IDBKeyRange)throw dom('DataError','Диапазон удаления пока не поддержан');table.delete(key);}),
   clear:asyncOp(()=>{ensure(true);table.clear();}),
   index(name){
-   ensure(false);const idx=def.indexes.find(i=>i[0]===name);if(!idx)throw dom('NotFoundError','Нет индекса');
+   ensure(false);const idx=def.indexes.find(i=>i[0]===name);if(!idx){const error=dom('NotFoundError','Нет индекса');if(writable)failed(error);throw error;}
    const rows=(query,count)=>{ensure(false);validateQuery(query);const found=ordered().map(row=>({row,key:keyPath(row,idx[1])})).filter(x=>keyOK(x.key)&&match(x.key,query)).sort((a,b)=>cmp(a.key,b.key)||cmp(a.row.id,b.row.id));return limited(found,count).map(x=>x.row);};
    return {getAll:asyncOp((q,c)=>copy(rows(q,c))),get:asyncOp(q=>{ensure(false);validateQuery(q,{required:true});return copy(rows(q,1)[0]);}),getAllKeys:asyncOp((q,c)=>rows(q,c).map(row=>row.id)),count:asyncOp(q=>rows(q).length)};
   }
@@ -73,10 +79,12 @@ export async function prepareSchemaSnapshotTransactionLab(input,storeNames,mode,
  const selected=[].concat(storeNames);
  check(selected.length&&new Set(selected).size===selected.length&&selected.every(n=>Object.hasOwn(SCHEMA,n))&&['readonly','readwrite'].includes(mode)&&typeof fn==='function','Некорректная транзакция LAB');
  guard();const data=checkedData(copy(input)),tables=new Map(selected.map(n=>[n,new Map(data[n].map(row=>[row.id,row]))]));
- let active=true;const stores=Object.fromEntries(selected.map(n=>[n,makeStore(tables.get(n),SCHEMA[n],()=>active&&isOpen(),mode==='readwrite')]));
+ let active=true,firstError=null;const failed=error=>{if(!firstError)firstError=error;};
+ const stores=Object.fromEntries(selected.map(n=>[n,makeStore(tables.get(n),SCHEMA[n],()=>active&&isOpen(),mode==='readwrite',failed)]));
  let result;try{result=await fn(stores);}finally{active=false;}
  guard();
  if(mode==='readwrite'){
+  if(firstError)throw firstError;
   for(const n of selected)data[n]=[...tables.get(n).values()].sort((a,b)=>cmp(a.id,b.id));
   checkedData(data);
  }
