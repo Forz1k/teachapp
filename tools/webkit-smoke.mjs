@@ -247,6 +247,7 @@ try{
  await shown.getByRole('heading',{name:'По классам',exact:true}).waitFor();assert.match(await shown.textContent(),/Содержит персональные данные/);assert.doesNotMatch(await shown.locator('.document-preview').textContent(),/Тестовый ученик/);
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'year document overflow');
  await page.evaluate(async f=>{const M=await import('./js/model.js'),P=await import('./js/season-plan.js'),date=M.todayIso();await P.saveSeasonPlan({teamId:f.teamId,name:'Синтетический план сезона',from:date,to:M.addDays(date,14),revision:0,phases:[{name:'Техника',kind:'technical',from:date,to:M.addDays(date,7),goal:'PRIVATE PHASE NOTE',sessions:2,minutes:120}]});await (await import('./js/screens/documents.js')).openDocuments('seasonPlanReport');},vpFixture);
+ await shown.getByRole('heading',{name:'Генератор документов',exact:true}).waitFor().catch(async e=>{throw Error('Season document form: '+JSON.stringify({errors,sheet:await shown.textContent().catch(()=>null),toast:await page.locator('.toast').textContent().catch(()=>null)})+' '+e.message);});
  await shown.getByLabel('Команда',{exact:true}).selectOption(vpFixture.teamId);
  await shown.getByLabel('План сезона',{exact:true}).selectOption({label:await shown.getByLabel('План сезона',{exact:true}).locator('option').first().textContent()});
  await shown.getByRole('button',{name:'Предпросмотр',exact:true}).click();
