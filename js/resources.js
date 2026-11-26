@@ -2,6 +2,7 @@ import * as db from './db.js';
 import {uid,todayIso} from './model.js';
 import {validPeriod} from './health.js';
 import {lineageOf} from './school-tools.js';
+import {workRecordScope} from './work-scope.js';
 const check=(ok,m)=>{if(!ok)throw Error(m);};
 const text=(s,max=200)=>typeof s==='string'&&s.trim().length>0&&s.length<=max;
 const opt=(s,max=2000)=>typeof s==='string'&&s.length<=max;
@@ -71,11 +72,16 @@ export function achievementSubjects(school,coach,archives=[]){
  }
  return [...out.values()];
 }
-export async function saveAchievement(input){
- return db.transaction(['workRecords','classes','students','coachTeams','coachPlayers'],'readwrite',async s=>{
+export async function saveAchievement(input){return writeAchievement(db,input);}
+export async function writeAchievement(access,input,scope=null){
+ check(scope===null||['school','coach'].includes(scope)&&workRecordScope({kind:'achievement',subjectType:input.subjectType})===scope,'Достижение недоступно в этой области');
+ const tables=['workRecords',...(scope==='coach'?[]:['classes','students']),...(scope==='school'?[]:['coachTeams','coachPlayers'])];
+ return access.transaction(tables,'readwrite',async s=>{
   const old=input.id?await s.workRecords.get(input.id):null;
   check(!input.id||old?.kind==='achievement'&&old.revision===input.revision,'Достижение изменено. Откройте заново');
-  const [classes,students,coachTeams,coachPlayers,archives]=await Promise.all([s.classes.getAll(),s.students.getAll(),s.coachTeams.getAll(),s.coachPlayers.getAll(),s.workRecords.index('kind').getAll('archive')]);
+  check(!scope||!old||workRecordScope(old)===scope,'Достижение недоступно в этой области');
+  // Only the legacy native path can read the mixed archive and both domains.
+  const [classes,students,coachTeams,coachPlayers,archives]=await Promise.all([scope==='coach'?[]:s.classes.getAll(),scope==='coach'?[]:s.students.getAll(),scope==='school'?[]:s.coachTeams.getAll(),scope==='school'?[]:s.coachPlayers.getAll(),scope===null?s.workRecords.index('kind').getAll('archive'):[]]);
   const subjects=achievementSubjects({classes,students},{coachTeams,coachPlayers},archives);
   check(subjects.some(x=>x.type===input.subjectType&&x.id===input.subjectId)||old&&old.subjectId===input.subjectId&&old.subjectType===input.subjectType,'Участник недоступен');
   const record={...input,id:input.id||uid('achievement'),kind:'achievement',revision:old?old.revision+1:0};
