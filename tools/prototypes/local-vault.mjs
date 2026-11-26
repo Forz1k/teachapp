@@ -157,10 +157,11 @@ function createReadSession(db,scope,header,initialKey,idleMs,now){
   scope,revision:header.vaultId,
   isLocked(){if(!closed&&now()>=deadline)close();return closed;},
   close,
-  async read(){
+  async read(connection=db){
    guard();
    try{
-    const rows=await readRows(db);guard();
+    assertLab(connection);check(connection.name===db.name,'Другая база LAB');
+    const rows=await readRows(connection);guard();
     const result=await decodeSnapshot(rows,{scope,key,expectedHeader:header});guard();
     deadline=now()+idleMs;arm();return result;
    }catch(e){close();throw e;}
