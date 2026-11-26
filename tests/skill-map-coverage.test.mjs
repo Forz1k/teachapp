@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {teamSkillMap,skillMapCoverage,testPresets} from '../js/coach-tests.js';
+const players=[{id:'p',teamId:'t',name:'P',number:1},{id:'q',teamId:'t',name:'Q',number:2},{id:'r',teamId:'t',name:'R',number:3},{id:'a',teamId:'t',name:'A',archived:true}];
+const skill=(attempts,success,adapted=false)=>({status:'done',attempts,success,errors:attempts-success,target:null,value:null,adapted,note:''});
+const testSession=(id,definition,results)=>({id,date:'2026-11-01',definition,results,teamId:'t'});
+test('Skill coverage keeps absent and excluded results distinct and does not rank athletes',()=>{
+ const sessions=[testSession('1',testPresets.serve,{p:skill(20,15),q:skill(2,2),r:skill(10,9,true),a:skill(20,20)}),testSession('2',{...testPresets.serve,protocol:'Different methodology'},{p:skill(15,10)})];
+ const map=teamSkillMap(sessions,players,'t',{today:'2026-11-26',minAttempts:10});
+ const all=skillMapCoverage(map);
+ assert.equal(all.methods,2);assert.equal(all.players,3);assert.deepEqual(all.totals,{recorded:2,sample:1,excluded:1,missing:2});
+ assert.deepEqual(all.rows.map(r=>r.player.id),['p','q','r']);assert.equal(all.rows[0].incomplete,false);
+ const filtered=skillMapCoverage(map,{onlyIncomplete:true});
+ assert.deepEqual(filtered.rows.map(r=>r.player.id),['q','r']);assert.deepEqual(filtered.totals,all.totals);
+ const original=map.methods.find(m=>m.definition.protocol===testPresets.serve.protocol);
+ const selected=skillMapCoverage(map,{methodKey:original.key});
+ assert.deepEqual(selected.totals,{recorded:1,sample:1,excluded:1,missing:0});assert.equal(selected.rows[1].cells[0].state,'sample');
+ assert.equal(selected.rows[0].cells[0].lastDate,'2026-11-01');assert.equal(selected.rows[2].cells[0].lastDate,null);
+ assert.equal(skillMapCoverage(teamSkillMap([],players,'t'),{onlyIncomplete:true}).rows.length,0);
+});
