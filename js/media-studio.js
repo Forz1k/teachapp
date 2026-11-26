@@ -51,9 +51,34 @@ export function studioCrop(width,height,w,h,focus='center'){
  const k=Math.max(w/width,h/height),x=focus==='left'?0:focus==='right'?1:.5,y=focus==='top'?0:focus==='bottom'?1:.5;
  return {x:(w-width*k)*x||0,y:(h-height*k)*y||0,width:width*k,height:height*k};
 }
+const clamp=(value,min,max,fallback)=>Number.isFinite(value)?Math.min(max,Math.max(min,Math.round(value))):fallback;
+export const studioLayerLimit=6;
+export function studioLayers(raw){
+ if(!Array.isArray(raw))return [];
+ return raw.slice(0,studioLayerLimit).filter(l=>l&&['text','rect'].includes(l.kind)).map(l=>{
+  const x=clamp(l.x,0,95,10),y=clamp(l.y,0,95,70),width=clamp(l.width,5,100-x,40),height=clamp(l.height,5,100-y,12);
+  return {kind:l.kind,x,y,width:Math.min(width,100-x),height:Math.min(height,100-y),color:color(l.color,'#ffffff'),opacity:clamp(l.opacity,0,100,100),...(l.kind==='text'?{text:clean(l.text,160),size:clamp(l.size,1,12,4)}:{})};
+ });
+}
+/** Extra layers are transient, rendered in list order, and never stored in style presets. */
+export function paintStudioLayers(ctx,layers,w,h){
+ for(const l of studioLayers(layers)){
+  const x=w*l.x/100,y=h*l.y/100,width=w*l.width/100,height=h*l.height/100;
+  ctx.save();
+  try{
+   ctx.globalAlpha=l.opacity/100;ctx.fillStyle=l.color;
+   ctx.beginPath();ctx.rect(x,y,width,height);ctx.clip();
+   if(l.kind==='rect'){ctx.fillRect(x,y,width,height);continue;}
+   const size=Math.max(1,Math.round(Math.min(w,h)*l.size/100)),lineHeight=size*1.16;
+   ctx.font='700 '+size+'px system-ui, sans-serif';ctx.textAlign='left';ctx.textBaseline='top';
+   const maxLines=Math.floor(height/lineHeight);if(!maxLines)continue;
+   wrapStudioText(ctx,l.text,width,maxLines).forEach((line,i)=>ctx.fillText(line,x,y+i*lineHeight));
+  }finally{ctx.restore();}
+ }
+}
 export function studioModel(raw={}){
  const template=Object.hasOwn(templates,raw.template)?raw.template:'matchday';
- return {...studioStyle(raw),template,title:clean(raw.title||templates[template],80),team:clean(raw.team,100),opponent:clean(raw.opponent,100),score:clean(raw.score,24),details:clean(raw.details,500)};
+ return {...studioStyle(raw),template,title:clean(raw.title||templates[template],80),team:clean(raw.team,100),opponent:clean(raw.opponent,100),score:clean(raw.score,24),details:clean(raw.details,500),layers:studioLayers(raw.layers)};
 }
 export function studioPublication(raw={},link=''){
  const m=studioModel(raw),rows=[m.title,[m.team,m.opponent].filter(Boolean).join(' — '),m.score,m.details].filter(Boolean);
@@ -102,7 +127,7 @@ export function paintStudio(canvas,raw,{logo=null,backgroundImage=null}={}){
  // Never move details back over the headline; reserve the footer's own space.
  const size=scale*.031,end=h*.855,available=Math.floor((end-y)/(size*1.16));
  if(d.details&&available>0)text(d.details,y,size,'500',ink,available);
- text(d.footer||'TeachApp Studio',h*.905,scale*.023,'600',ink,2);return d;
+ text(d.footer||'TeachApp Studio',h*.905,scale*.023,'600',ink,2);paintStudioLayers(x,d.layers,w,h);return d;
 }
 export function canvasPng(canvas){
  return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob&&blob.size?resolve(blob):reject(Error('Не удалось создать PNG')),'image/png'));

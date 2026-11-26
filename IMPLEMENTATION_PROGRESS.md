@@ -451,3 +451,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 6.5 follow-up — PRO data quality and player profile
 - Added terminal-action/author and serve/receive consistency auditing. Historical conflicting observations stay readable but are excluded from complete-sample rates; newly submitted conflicting complete records are rejected. Per-player season profile shows attempt counts, points/errors and weighted efficiency from checked full PRO sequences only, separate from PDFs/manual records.
+
+### 6.8 follow-up — editable overlay layers
+- Local Studio editor adds up to six text/rectangle overlay layers with normalized position, bounds, color, size, opacity and ordering. Clipped rendering, PNG and multi-format ZIP support; layer contents never go into style presets, publication TXT or combined match kit. Existing styles remain compatible. Also exclude conflicting complete captures from recorded setter/attacker connections.
