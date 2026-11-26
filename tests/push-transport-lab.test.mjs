@@ -33,3 +33,32 @@ test('Push response classification preserves uncertainty, gone subscriptions and
  assert.equal(classify(429,'900').retryAfter,null);assert.equal(classify(429,'3601',7200).retryAfter,null);
  assert.equal(classify(429,'0').retryAfter,1);assert.equal(classify(429,'garbage').retryAfter,60);assert.equal(classify(503,null,60).retryAfter,null);
 });
+
+test('Transport snapshots keys, requires literal consent and rechecks time before sending and classifying retries',async()=>{
+ const f=await fixture();let calls=0;
+ const transport=async()=>{calls++;return {status:201};};
+ for(const stillCurrent of [()=>1,()=>({allowed:true}),()=>{throw Error('PRIVATE');},async()=>{throw Error('PRIVATE');}]){
+  assert.equal((await deliverGenericPushLab({...f,stillCurrent,transport})).outcome,'cancelled');
+ }
+ for(const readClock of [()=>NaN,()=>now-1,()=>{throw Error('PRIVATE');}]){
+  assert.equal((await deliverGenericPushLab({...f,readClock,transport})).outcome,'cancelled');
+ }
+ let time=now,checks=0;
+ assert.equal((await deliverGenericPushLab({...f,readClock:()=>time,stillCurrent:()=>{if(++checks===2)time=f.expiresAt;return true;},transport})).outcome,'cancelled');
+ time=now;checks=0;
+ assert.equal((await deliverGenericPushLab({...f,readClock:()=>time,stillCurrent:()=>{if(++checks===2)time=now+600;return true;},transport})).outcome,'cancelled','expired VAPID must not be sent');
+ assert.equal(calls,0);
+ time=now;checks=0;
+ const captured=await fixture();
+ const outcome=await deliverGenericPushLab({...captured,readClock:()=>time,stillCurrent:()=>{
+  if(++checks===1){captured.receiverPublic.fill(0);captured.auth.fill(0);captured.keyPair.privateKey=null;}
+  if(checks===2)time=now+100;
+  return true;
+ },transport:async(_url,req)=>{
+  calls++;assert.equal(req.headers.TTL,'800');time=now+850;
+  return {status:429,headers:{get:()=> '60'}};
+ }});
+ assert.deepEqual(outcome,{outcome:'retry-later',retryAfter:null});assert.equal(calls,1);
+ time=now;
+ assert.deepEqual(await deliverGenericPushLab({...f,readClock:()=>time,transport:async()=>{time=NaN;return {status:201};}}),{outcome:'accepted',retryAfter:null});
+});
