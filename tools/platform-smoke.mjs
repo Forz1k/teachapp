@@ -43,6 +43,18 @@ const binary=['google-chrome','google-chrome-stable','chromium','chromium-browse
  assert.equal(await page.getByLabel('Секретный код',{exact:true}).inputValue(),'');
  await ownerContext.close();await athleteContext.close();console.log('PLATFORM BROWSER PASS: real server, role-specific owner/athlete screens, athlete response, LIVE lease/scoring, mobile overflow, no stored credentials');
  }finally{await browser.close();}
-const recovery='b'.repeat(64);assert.equal((await call('alpha','owner/recovery',owner,'POST',{recoveryHash:await digestToken(recovery),expectedVersion:0})).status,200);await stop();await start();assert.equal((await call('beta','recover',recovery,'POST',{})).status,401);const recovered=await call('alpha','recover',recovery,'POST',{});assert.equal(recovered.status,201);assert.equal((await call('alpha','me',owner)).status,401);assert.equal((await call('alpha','matches/m',recovered.token)).match.score.ours,2);assert.equal((await call('alpha','me',recovery)).status,401);assert.ok(!JSON.stringify(await call('alpha','audit',recovered.token)).includes(recovery));console.log('PLATFORM RECOVERY PASS: hashed workspace recovery, restart, owner revocation and preserved match');
+const syntheticEndpoint='https://push.example.invalid/sub/00000000-0000-4000-8000-000000000001';
+ const registration={expectedRevision:0,enabled:true,endpoint:syntheticEndpoint};
+ assert.equal((await call('alpha','notification-lab',athlete.token)).enabled,false);
+ assert.equal((await call('alpha','notification-lab',athlete.token,'PUT',{...registration,endpoint:'https://example.com/real'})).status,400);
+ assert.equal((await call('alpha','notification-lab',athlete.token,'PUT',registration)).revision,1);
+ assert.equal((await call('alpha','notification-lab',owner)).enabled,false);
+ await stop();await start();
+ assert.equal((await call('alpha','notification-lab',athlete.token)).enabled,true);
+ assert.equal((await call('alpha','notification-lab',athlete.token,'PUT',registration)).status,409);
+ assert.doesNotMatch(JSON.stringify(await call('alpha','members',owner)),/push\.example\.invalid/);
+ assert.equal((await call('alpha','notification-lab',athlete.token,'PUT',{expectedRevision:1,enabled:false,endpoint:null})).enabled,false);
+ console.log('PLATFORM NOTIFICATION LAB PASS: consent, isolation, restart, CAS and unsubscribe; no delivery.');
+ const recovery='b'.repeat(64);assert.equal((await call('alpha','owner/recovery',owner,'POST',{recoveryHash:await digestToken(recovery),expectedVersion:0})).status,200);await stop();await start();assert.equal((await call('beta','recover',recovery,'POST',{})).status,401);const recovered=await call('alpha','recover',recovery,'POST',{});assert.equal(recovered.status,201);assert.equal((await call('alpha','me',owner)).status,401);assert.equal((await call('alpha','matches/m',recovered.token)).match.score.ours,2);assert.equal((await call('alpha','me',recovery)).status,401);assert.ok(!JSON.stringify(await call('alpha','audit',recovered.token)).includes(recovery));console.log('PLATFORM RECOVERY PASS: hashed workspace recovery, restart, owner revocation and preserved match');
 }finally{await stop();await rm(state,{recursive:true,force:true});await new Promise(r=>site.close(r));}
 
