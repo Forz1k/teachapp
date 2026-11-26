@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import test from 'node:test';import assert from 'node:assert/strict';
-import {vaultRouterLab} from '../tools/prototypes/vault-router-lab.mjs';
+import {vaultRouterLab,openRouterActivationBackupLab} from '../tools/prototypes/vault-router-lab.mjs';
 import {openPlainSchemaLab,readPlainSchemaLab} from '../tools/prototypes/vault-migration-rehearsal.mjs';
 const password='synthetic-routing-password';
 function lockQueue(){
@@ -127,4 +127,35 @@ test('Plain routed CAS refuses raw concurrent changes and never retries callback
  await ready;
  await new Promise((resolve,reject)=>{const tx=db.transaction('meta','readwrite');tx.objectStore('meta').put({id:'fixture',value:9});tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});
  finish();await assert.rejects(work,/ревизия LAB изменилась/);assert.equal(calls,1);assert.equal((await a.snapshot()).meta[0].value,9);
+});
+
+test('Strict LAB activation requires a read-back independent encrypted copy and exact generation',async()=>{
+ const a=vaultRouterLab('backup-activation',{locks:lockQueue()}),backupPassword='synthetic-independent-backup';
+ await a.initialize();await a.put('meta',{id:'fixture',value:'synthetic-private-fixture'});await a.stage({password});
+ await assert.rejects(a.prepareActivationBackup({password,backupPassword:password}),/отдельный пароль/);
+ const p=await a.prepareActivationBackup({password,backupPassword});assert.equal(p.generation,1);assert.equal(p.records,1);
+ assert.doesNotMatch(p.file,/synthetic-private-fixture|synthetic-independent-backup|synthetic-routing-password/);
+ const reopened=await openRouterActivationBackupLab({id:'backup-activation',backupPassword,file:p.file});assert.equal(reopened.meta[0].value,'synthetic-private-fixture');
+ await assert.rejects(openRouterActivationBackupLab({id:'foreign',backupPassword,file:p.file}),/другого маршрута/);
+ const args={password,backupPassword,file:p.file,expectedGeneration:1,saved:true};
+ await assert.rejects(a.activateWithBackup({...args,saved:false}),/Подтвердите/);
+ await assert.rejects(a.activateWithBackup({...args,expectedGeneration:2}),/поколение/);
+ await assert.rejects(a.activateWithBackup({...args,backupPassword:'incorrect-backup-password'}),/неверный пароль/);
+ const corrupt=JSON.parse(p.file);corrupt.data=(corrupt.data[0]==='A'?'B':'A')+corrupt.data.slice(1);
+ await assert.rejects(a.activateWithBackup({...args,file:JSON.stringify(corrupt)}),/повреждён/);
+ assert.equal((await a.status()).phase,'source');
+ assert.equal((await a.activateWithBackup(args)).phase,'vault');
+ assert.equal((await a.snapshot({password})).meta[0].value,'synthetic-private-fixture');
+});
+test('Strict activation rejects a saved snapshot that no longer matches a restaged source and vault',async()=>{
+ const locks=lockQueue(),a=vaultRouterLab('backup-stale',{locks}),backupPassword='synthetic-independent-backup';
+ await a.initialize();await a.put('meta',{id:'fixture',value:1});await a.stage({password});
+ const p=await a.prepareActivationBackup({password,backupPassword});
+ // A raw LAB writer can update both stores; the independent copy is now stale.
+ const {openVaultLab,readVaultLab,replaceVaultLab}=await import('../tools/prototypes/local-vault.mjs');
+ const db=await openVaultLab('teachapp-vault-lab-routing-backup-stale');
+ try{const v=await readVaultLab(db,{scope:'workspace',password});v.data.meta[0].value=2;await replaceVaultLab(db,{scope:'workspace',password,expectedRevision:v.revision,data:v.data});}finally{db.close();}
+ await a.put('meta',{id:'fixture',value:2});
+ await assert.rejects(a.activateWithBackup({password,backupPassword,file:p.file,expectedGeneration:1,saved:true}),/устарела/);
+ assert.equal((await a.status()).phase,'source');assert.equal((await a.snapshot()).meta[0].value,2);
 });
