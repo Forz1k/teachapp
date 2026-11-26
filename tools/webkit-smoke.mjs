@@ -80,6 +80,25 @@ try{
  });if(writableLifecycle.supported)assert.deepEqual(writableLifecycle,{supported:true,blocked:true,hidden:true,value:2,locked:true,compatible:true});
  console.log('WEBKIT WRITABLE LIFECYCLE LAB '+(writableLifecycle.supported?'PASS: guarded write rollback and pagehide lock.':'SKIPPED: browser capabilities unavailable.'));
 
+ const coachSession=await writableTab.evaluate(async()=>{
+  const R=await import('/tools/prototypes/vault-router-lab.mjs'),L=await import('/tools/prototypes/vault-routed-lifecycle-lab.mjs'),C=await import('/js/coach.js');
+  if(!navigator.locks?.request||!globalThis.BroadcastChannel)return {supported:false};
+  const id='webkit-coach-session',password='synthetic-coach-webkit',router=R.vaultRouterLab(id);
+  await router.initialize();await router.stage({password});await router.activate({password});
+  let session;const lifecycle=L.routedVaultLifecycleLab(router,{id,onLock:()=>session?.close()});
+  try{
+   session=C.createCoachSession(await lifecycle.unlock(password));
+   const team=await session.saveTeam({name:'Synthetic WebKit team'}),p=await session.savePlayer({teamId:team.id,name:'Synthetic WebKit player',number:1,position:'setter'});
+   await session.saveTraining({teamId:team.id,date:'2025-09-01',time:'16:00',title:'Synthetic',minutes:60,exercises:[],roster:[p.id],held:true,attendance:{[p.id]:'present'}});
+   await session.saveMatch({teamId:team.id,date:'2025-09-01',opponent:'Synthetic',competition:'Cup',sets:[{ours:25,theirs:20}],roster:[p.id],stats:{}});
+   const view=await session.loadCoachForView(team.id);const counts=[view.data.coachPlayers.length,view.data.coachTrainings.length,view.data.coachMatches.length];
+   window.dispatchEvent(new Event('pagehide'));let blocked=false;try{await session.loadCoach();}catch{blocked=true;}
+   const cleared=view.selectedTeamId===null&&Object.values(view.data).every(rows=>rows.length===0)&&session.isClosed();
+   session=C.createCoachSession(await lifecycle.unlock(password));const restored=await session.loadCoachForView(team.id);
+   return {supported:true,counts,blocked,cleared,reopened:restored.data.coachMatches.length};
+  }finally{lifecycle.dispose();}
+ });if(coachSession.supported)assert.deepEqual(coachSession,{supported:true,counts:[1,1,1],blocked:true,cleared:true,reopened:1});
+ console.log('WEBKIT COACH SESSION LAB '+(coachSession.supported?'PASS: native commands, encrypted team view, lifecycle revocation and reopen.':'SKIPPED: browser capabilities unavailable.'));
  }finally{await writableContext.close();await page.bringToFront();}
  const schemaVault=await page.evaluate(async()=>{
   const V=await import('/tools/prototypes/local-vault.mjs'),A=await import('/tools/prototypes/vault-schema-adapter.mjs'),D=await import('./js/db.js'),B=await import('./js/backup.js'),password='synthetic-schema-webkit',data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));

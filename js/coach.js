@@ -1,6 +1,6 @@
 /* Автономные данные тренера. Ни одного чтения школьных учеников, отметок или медпрофилей.
    Общий каталог видов нагрузки — только статический, без персональных данных. */
-import * as db from './db.js';
+import * as nativeDb from './db.js';
 import {uid,todayIso} from './model.js';
 import {catalog,validPeriod,active,ancestorIds} from './health.js';
 import {replay,appendEvent,undoEvent,validateLiveData} from './volleyball.js';
@@ -65,19 +65,6 @@ export function validateCoachData(data){
   validateCoachTests(data);
   return data;
 }
-export async function loadCoach(){
-  return db.readSnapshot(coachStores);
-}
-/** Team picker and selected-team records from one consistent readonly snapshot.
- * Do not use this partial view for backups, validation, or global search. */
-export async function loadCoachForView(teamId,{archived=false}={}){
- return db.transaction(coachStores,'readonly',async s=>{
-  const coachTeams=await s.coachTeams.getAll(),visible=coachTeams.filter(t=>archived||!t.archived);
-  const selected=visible.find(t=>t.id===teamId)||visible[0]||null;
-  const rows=await Promise.all(coachStores.filter(n=>n!=='coachTeams').map(async n=>[n,selected?await s[n].index('teamId').getAll(selected.id):[]]));
-  return {selectedTeamId:selected?.id??null,data:{coachTeams,...Object.fromEntries(rows)}};
- });
-}
 /** Local roster index preserves record order and original object references.
  * Built anew for each calculation, no stale global cache across edits. */
 export function indexPlayerRecords(records){
@@ -86,68 +73,6 @@ export function indexPlayerRecords(records){
   let rows=index.get(id);if(!rows)index.set(id,rows=[]);rows.push(record);
  }
  return index;
-}
-async function write(name,record,guard){
-  return db.transaction(coachStores,'readwrite',async s=>{
-    const data=Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()])));
-    const old=data[name].find(x=>x.id===record.id);
-    if(guard)guard(data,old);
-    data[name]=data[name].filter(x=>x.id!==record.id).concat(record);
-    validateCoachData(data);
-    await s[name].put(record);return record;
-  });
-}
-const teamGuard=(d,old,r)=>assert(d.coachTeams.some(t=>t.id===r.teamId&&(!t.archived||old))&&(!old||old.teamId===r.teamId),'Команда недоступна');
-export async function saveTeam(input){
-  return write('coachTeams',{id:input.id||uid('team'),name:String(input.name||'').trim(),archived:input.archived===true});
-}
-export async function savePlayer(input){
-  const r={id:input.id||uid('player'),teamId:input.teamId,name:String(input.name||'').trim(),number:input.number??null,position:input.position,archived:input.archived===true,
-    restrictions:(input.restrictions||[]).map(x=>({activityId:x.activityId,dateFrom:x.dateFrom,dateTo:x.dateTo||null,type:x.type}))};
-  return write('coachPlayers',r,(d,old)=>teamGuard(d,old,r));
-}
-export async function saveCoachTest(input){
- const r={id:input.id||uid('coachtest'),teamId:input.teamId,date:input.date,definition:structuredClone(input.definition),results:structuredClone(input.results)};
- return write('coachTests',r,(d,old)=>{if(input.id&&!old)throw Error('Тестирование уже удалено');guardTestWrite(d,old,r);});
-}
-export async function deleteCoachTest(id){await db.del('coachTests',id);}
-export async function saveTraining(input){
-  const r={id:input.id||uid('training'),teamId:input.teamId,date:input.date,time:input.time,title:String(input.title||'').trim(),minutes:input.minutes,
-    exercises:(input.exercises||[]).map(x=>({name:String(x.name||'').trim(),activityId:x.activityId,minutes:x.minutes})),roster:[...input.roster],held:input.held===true,attendance:{...input.attendance}};
-  if(input.effort!==undefined){assert(input.effort&&typeof input.effort==='object'&&!Array.isArray(input.effort),'Проверьте нагрузку');r.effort=structuredClone(input.effort);}
-  assert(!r.held||r.date<=todayIso(),'Будущая тренировка не может быть проведённой');
-  return write('coachTrainings',r,(d,old)=>teamGuard(d,old,r));
-}
-export async function saveMatch(input){
-  const r={id:input.id||uid('match'),teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),
-    sets:input.sets.map(x=>({ours:x.ours,theirs:x.theirs})),roster:[...input.roster],stats:Object.fromEntries(Object.entries(input.stats||{}).map(([id,s])=>[id,{...s}]))};
-  assert(r.date<=todayIso(),'Результат будущего матча недоступен');
-  return write('coachMatches',r,(d,old)=>{teamGuard(d,old,r);assert(!old?.detail&&!old?.imported,'Матч с протоколом нельзя редактировать вручную');});
-}
-export async function saveVolleyImport(input){
- const r={id:uid('match'),teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),sets:structuredClone(input.sets),roster:[...input.roster],stats:structuredClone(input.stats),imported:structuredClone(input.imported)};
- assert(r.date<=todayIso(),'Результат будущего матча недоступен');
- return write('coachMatches',r,(d,old)=>{teamGuard(d,old,r);validateVolleyImport(r);assert(!duplicateVolleyMatch(d.coachMatches,r),'Такой матч уже есть в истории');});
-}
-// Enrich exactly the already imported source; do not replace its identity, user labels,
- // roster mapping, scores or historical statistics. Re-read inside the write transaction.
-export async function enrichVolleyImport(input,{confirmed=false}={}){
- assert(confirmed,'Подтвердите дополнение существующего матча');validateVolleyImport(input);
- return db.transaction(coachStores,'readwrite',async s=>{
-  const data=Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()])));
-  const matches=data.coachMatches.filter(m=>m.teamId===input.teamId&&m.imported?.hash===input.imported.hash);
-  assert(matches.length===1,'Исходный импорт не найден или неоднозначен');const old=matches[0];
-  const evidence=m=>{const {timing,...imported}=m.imported;return {roster:m.roster,sets:m.sets,stats:m.stats,imported};};
-  assert(sameVolleyEvidence(evidence(old),evidence(input)),'PDF или сопоставление игроков отличается от сохранённого матча');
-  const timing=mergeVolleyTiming(old.imported.timing,input.imported.timing);
-  const r={...old,imported:{...old.imported,timing}};
-  if(sameVolleyEvidence(old,r))return old;
-  data.coachMatches=data.coachMatches.map(m=>m.id===r.id?r:m);validateCoachData(data);await s.coachMatches.put(r);return r;
- });
-}
-export async function removeEvent(name,id){
-  assert(['coachTrainings','coachMatches'].includes(name),'Нельзя удалить состав этой командой');
-  await db.del(name,id);
 }
 export function trainingWarnings(training,players){
   const out=[];
@@ -274,56 +199,6 @@ export function attendanceCsv(view){
   return '\uFEFF'+rows.map(r=>r.map(csvCell).join(';')).join('\r\n');
 }
 
-export async function saveLineup(input){
- const r={id:input.id||uid('lineup'),teamId:input.teamId,name:String(input.name||'').trim(),scheme:input.scheme,roster:[...input.roster],lineup:[...input.lineup],libero:input.libero||null};
- return write('coachLineups',r,(d,old)=>teamGuard(d,old,r));
-}
-export async function deleteLineup(id){await db.del('coachLineups',id);}
-export async function startLiveMatch(input){
- const d={id:uid('live'),teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),
-   scheme:input.scheme,roster:[...input.roster],lineup:[...input.lineup],libero:input.libero||null,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,events:[],revision:0};
- assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
- return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&!p.archived)),'Состав изменился');});
-}
-export async function startDetailedMatch(input){
- const d={id:uid('live'),mode:'dual',teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),venue:String(input.venue||'').trim(),
-   teamName:String(input.teamName||'').trim(),roster:[...input.roster],ourPlayers:input.ourPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),awayPlayers:input.awayPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),
-   lineup:[...input.lineup],awayLineup:[...input.awayLineup],libero:input.libero||null,...(input.libero2?{libero2:input.libero2}:{}),...(input.substitutionMode!==undefined?{substitutionMode:input.substitutionMode}:{}),...(input.limits!==undefined?{limits:{...input.limits}}:{}),...(input.regulation!==undefined?{regulation:structuredClone(input.regulation)}:{}),...(input.boardColors!==undefined?{boardColors:{...input.boardColors}}:{}),...(input.boardLogos!==undefined?{boardLogos:{...input.boardLogos}}:{}),scheme:input.scheme,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,startedAt:new Date().toISOString(),events:[],revision:0};
- assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
- return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&p.teamId===d.teamId&&!p.archived)),'Состав изменился');});
-}
-export async function changeLiveMatch(id,revision,event){
- return db.transaction(['coachLive'],'readwrite',async s=>{
-  const d=await s.coachLive.get(id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');
-  const next=event===null?undoEvent(d):appendEvent(d,event);
-  next.revision++;await s.coachLive.put(next);return next;
- });
-}
-export async function changeLiveColors(id,revision,colors,logos=undefined){
- assert(validBoardColors(colors),'Выберите два разных цвета команд');
- assert(logos===undefined||validBoardLogos(logos),'Проверьте изображения эмблем');
- return db.transaction(['coachLive'],'readwrite',async s=>{
-  const d=await s.coachLive.get(id);assert(d?.mode==='dual'&&d.revision===revision,'Матч изменился. Откройте его заново');
-  const next={...d,boardColors:{...colors},...(logos!==undefined?{boardLogos:{...logos}}:{}),revision:d.revision+1};replayDetailed(next);
-  await s.coachLive.put(next);return next;
- });
-}
-export async function discardLiveMatch(id,revision){
- return db.transaction(['coachLive'],'readwrite',async s=>{
-  const d=await s.coachLive.get(id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');await s.coachLive.delete(id);
- });
-}
-export async function finishLiveMatch(id,revision){
- return db.transaction(coachStores,'readwrite',async s=>{
-  const data=Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()])));
-  const d=data.coachLive.find(x=>x.id===id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');
-  const state=replay(d);assert(state.finished,'Сначала завершите матч по партиям');
-  const m={id:uid('match'),teamId:d.teamId,date:d.date,opponent:d.opponent,competition:d.competition,sets:state.sets,roster:d.roster,stats:state.stats,...(d.mode==='dual'?{detail:d}:{})};
-  data.coachMatches.push(m);data.coachLive=data.coachLive.filter(x=>x.id!==id);validateCoachData(data);
-  await s.coachMatches.add(m);await s.coachLive.delete(id);return m;
- });
-}
-
 /** sRPE load = explicitly recorded actual minutes × perceived effort, not planned duration. */
 export function playerTrainingLoad(playerId,trainings,{from='',to='',today=todayIso()}={}){
  const rows=[];let attended=0;
@@ -335,4 +210,180 @@ export function playerTrainingLoad(playerId,trainings,{from='',to='',today=today
  }
  rows.sort((a,b)=>a.date.localeCompare(b.date));
  return {rows,attended,known:rows.length,unknown:attended-rows.length,total:rows.length?rows.reduce((n,r)=>n+r.value,0):null};
+}
+
+/** Backend-bound commands; pure analytics and validation stay shared. */
+function buildCoachCommands(db){
+async function loadCoach(){
+  return db.readSnapshot(coachStores);
+}
+/** Team picker and selected-team records from one consistent readonly snapshot.
+ * Do not use this partial view for backups, validation, or global search. */
+async function loadCoachForView(teamId,{archived=false}={}){
+ return db.transaction(coachStores,'readonly',async s=>{
+  const coachTeams=await s.coachTeams.getAll(),visible=coachTeams.filter(t=>archived||!t.archived);
+  const selected=visible.find(t=>t.id===teamId)||visible[0]||null;
+  const rows=await Promise.all(coachStores.filter(n=>n!=='coachTeams').map(async n=>[n,selected?await s[n].index('teamId').getAll(selected.id):[]]));
+  return {selectedTeamId:selected?.id??null,data:{coachTeams,...Object.fromEntries(rows)}};
+ });
+}
+
+async function write(name,record,guard){
+  return db.transaction(coachStores,'readwrite',async s=>{
+    const data=Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()])));
+    const old=data[name].find(x=>x.id===record.id);
+    if(guard)guard(data,old);
+    data[name]=data[name].filter(x=>x.id!==record.id).concat(record);
+    validateCoachData(data);
+    await s[name].put(record);return record;
+  });
+}
+const teamGuard=(d,old,r)=>assert(d.coachTeams.some(t=>t.id===r.teamId&&(!t.archived||old))&&(!old||old.teamId===r.teamId),'Команда недоступна');
+async function saveTeam(input){
+  return write('coachTeams',{id:input.id||uid('team'),name:String(input.name||'').trim(),archived:input.archived===true});
+}
+async function savePlayer(input){
+  const r={id:input.id||uid('player'),teamId:input.teamId,name:String(input.name||'').trim(),number:input.number??null,position:input.position,archived:input.archived===true,
+    restrictions:(input.restrictions||[]).map(x=>({activityId:x.activityId,dateFrom:x.dateFrom,dateTo:x.dateTo||null,type:x.type}))};
+  return write('coachPlayers',r,(d,old)=>teamGuard(d,old,r));
+}
+async function saveCoachTest(input){
+ const r={id:input.id||uid('coachtest'),teamId:input.teamId,date:input.date,definition:structuredClone(input.definition),results:structuredClone(input.results)};
+ return write('coachTests',r,(d,old)=>{if(input.id&&!old)throw Error('Тестирование уже удалено');guardTestWrite(d,old,r);});
+}
+async function deleteCoachTest(id){await db.del('coachTests',id);}
+async function saveTraining(input){
+  const r={id:input.id||uid('training'),teamId:input.teamId,date:input.date,time:input.time,title:String(input.title||'').trim(),minutes:input.minutes,
+    exercises:(input.exercises||[]).map(x=>({name:String(x.name||'').trim(),activityId:x.activityId,minutes:x.minutes})),roster:[...input.roster],held:input.held===true,attendance:{...input.attendance}};
+  if(input.effort!==undefined){assert(input.effort&&typeof input.effort==='object'&&!Array.isArray(input.effort),'Проверьте нагрузку');r.effort=structuredClone(input.effort);}
+  assert(!r.held||r.date<=todayIso(),'Будущая тренировка не может быть проведённой');
+  return write('coachTrainings',r,(d,old)=>teamGuard(d,old,r));
+}
+async function saveMatch(input){
+  const r={id:input.id||uid('match'),teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),
+    sets:input.sets.map(x=>({ours:x.ours,theirs:x.theirs})),roster:[...input.roster],stats:Object.fromEntries(Object.entries(input.stats||{}).map(([id,s])=>[id,{...s}]))};
+  assert(r.date<=todayIso(),'Результат будущего матча недоступен');
+  return write('coachMatches',r,(d,old)=>{teamGuard(d,old,r);assert(!old?.detail&&!old?.imported,'Матч с протоколом нельзя редактировать вручную');});
+}
+async function saveVolleyImport(input){
+ const r={id:uid('match'),teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),sets:structuredClone(input.sets),roster:[...input.roster],stats:structuredClone(input.stats),imported:structuredClone(input.imported)};
+ assert(r.date<=todayIso(),'Результат будущего матча недоступен');
+ return write('coachMatches',r,(d,old)=>{teamGuard(d,old,r);validateVolleyImport(r);assert(!duplicateVolleyMatch(d.coachMatches,r),'Такой матч уже есть в истории');});
+}
+// Enrich exactly the already imported source; do not replace its identity, user labels,
+ // roster mapping, scores or historical statistics. Re-read inside the write transaction.
+async function enrichVolleyImport(input,{confirmed=false}={}){
+ assert(confirmed,'Подтвердите дополнение существующего матча');validateVolleyImport(input);
+ return db.transaction(coachStores,'readwrite',async s=>{
+  const data=Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()])));
+  const matches=data.coachMatches.filter(m=>m.teamId===input.teamId&&m.imported?.hash===input.imported.hash);
+  assert(matches.length===1,'Исходный импорт не найден или неоднозначен');const old=matches[0];
+  const evidence=m=>{const {timing,...imported}=m.imported;return {roster:m.roster,sets:m.sets,stats:m.stats,imported};};
+  assert(sameVolleyEvidence(evidence(old),evidence(input)),'PDF или сопоставление игроков отличается от сохранённого матча');
+  const timing=mergeVolleyTiming(old.imported.timing,input.imported.timing);
+  const r={...old,imported:{...old.imported,timing}};
+  if(sameVolleyEvidence(old,r))return old;
+  data.coachMatches=data.coachMatches.map(m=>m.id===r.id?r:m);validateCoachData(data);await s.coachMatches.put(r);return r;
+ });
+}
+async function removeEvent(name,id){
+  assert(['coachTrainings','coachMatches'].includes(name),'Нельзя удалить состав этой командой');
+  await db.del(name,id);
+}
+
+async function saveLineup(input){
+ const r={id:input.id||uid('lineup'),teamId:input.teamId,name:String(input.name||'').trim(),scheme:input.scheme,roster:[...input.roster],lineup:[...input.lineup],libero:input.libero||null};
+ return write('coachLineups',r,(d,old)=>teamGuard(d,old,r));
+}
+async function deleteLineup(id){await db.del('coachLineups',id);}
+async function startLiveMatch(input){
+ const d={id:uid('live'),teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),
+   scheme:input.scheme,roster:[...input.roster],lineup:[...input.lineup],libero:input.libero||null,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,events:[],revision:0};
+ assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
+ return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&!p.archived)),'Состав изменился');});
+}
+async function startDetailedMatch(input){
+ const d={id:uid('live'),mode:'dual',teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),venue:String(input.venue||'').trim(),
+   teamName:String(input.teamName||'').trim(),roster:[...input.roster],ourPlayers:input.ourPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),awayPlayers:input.awayPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),
+   lineup:[...input.lineup],awayLineup:[...input.awayLineup],libero:input.libero||null,...(input.libero2?{libero2:input.libero2}:{}),...(input.substitutionMode!==undefined?{substitutionMode:input.substitutionMode}:{}),...(input.limits!==undefined?{limits:{...input.limits}}:{}),...(input.regulation!==undefined?{regulation:structuredClone(input.regulation)}:{}),...(input.boardColors!==undefined?{boardColors:{...input.boardColors}}:{}),...(input.boardLogos!==undefined?{boardLogos:{...input.boardLogos}}:{}),scheme:input.scheme,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,startedAt:new Date().toISOString(),events:[],revision:0};
+ assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
+ return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&p.teamId===d.teamId&&!p.archived)),'Состав изменился');});
+}
+async function changeLiveMatch(id,revision,event){
+ return db.transaction(['coachLive'],'readwrite',async s=>{
+  const d=await s.coachLive.get(id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');
+  const next=event===null?undoEvent(d):appendEvent(d,event);
+  next.revision++;await s.coachLive.put(next);return next;
+ });
+}
+async function changeLiveColors(id,revision,colors,logos=undefined){
+ assert(validBoardColors(colors),'Выберите два разных цвета команд');
+ assert(logos===undefined||validBoardLogos(logos),'Проверьте изображения эмблем');
+ return db.transaction(['coachLive'],'readwrite',async s=>{
+  const d=await s.coachLive.get(id);assert(d?.mode==='dual'&&d.revision===revision,'Матч изменился. Откройте его заново');
+  const next={...d,boardColors:{...colors},...(logos!==undefined?{boardLogos:{...logos}}:{}),revision:d.revision+1};replayDetailed(next);
+  await s.coachLive.put(next);return next;
+ });
+}
+async function discardLiveMatch(id,revision){
+ return db.transaction(['coachLive'],'readwrite',async s=>{
+  const d=await s.coachLive.get(id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');await s.coachLive.delete(id);
+ });
+}
+async function finishLiveMatch(id,revision){
+ return db.transaction(coachStores,'readwrite',async s=>{
+  const data=Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()])));
+  const d=data.coachLive.find(x=>x.id===id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');
+  const state=replay(d);assert(state.finished,'Сначала завершите матч по партиям');
+  const m={id:uid('match'),teamId:d.teamId,date:d.date,opponent:d.opponent,competition:d.competition,sets:state.sets,roster:d.roster,stats:state.stats,...(d.mode==='dual'?{detail:d}:{})};
+  data.coachMatches.push(m);data.coachLive=data.coachLive.filter(x=>x.id!==id);validateCoachData(data);
+  await s.coachMatches.add(m);await s.coachLive.delete(id);return m;
+ });
+}
+ return Object.freeze({loadCoach,loadCoachForView,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch});
+}
+
+// Native API stays permanently bound to the existing IndexedDB backend.
+export const {loadCoach,loadCoachForView,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch}=buildCoachCommands(nativeDb);
+
+const coachSessionStores=new Set(coachStores);
+const emptyCoachView=()=>({selectedTeamId:null,data:Object.fromEntries([...coachSessionStores].map(n=>[n,[]]))});
+/** Explicit coach access owns its handle; never opens native DB or school tables.
+ * Call close on lifecycle lock and clear the UI, including any detached data. */
+export function createCoachSession(access){
+ if(!access||['close','readSnapshot','transaction','del'].some(k=>typeof access[k]!=='function'))throw TypeError('Требуется явный интерфейс тренерского сеанса');
+ let closed=false,tail=Promise.resolve(),view=null;
+ const guard=()=>{if(closed)throw Error('Тренерский сеанс заблокирован');};
+ function invalidateView(){
+  if(!view)return;
+  const previous=view;view=null;previous.snapshot=emptyCoachView();
+ }
+ function close(){if(closed)return;closed=true;try{invalidateView();}finally{access.close();}}
+ const scoped=Object.freeze(Object.fromEntries(['readSnapshot','transaction','del'].map(method=>[method,async(names,...args)=>{
+  guard();const tables=Array.isArray(names)?names:[names];
+  if(!tables.length||tables.some(n=>!coachSessionStores.has(n)))throw Error('Хранилище недоступно в тренерском сеансе');
+  const result=await access[method](names,...args);guard();return result;
+ }])));
+ const core=buildCoachCommands(scoped);
+ const api={close,isClosed:()=>closed,get view(){guard();return view?.facade??null;}};
+ for(const [name,fn] of Object.entries(core)){
+  api[name]=async(...args)=>{
+   guard();const input=structuredClone(args);
+   const job=tail.then(async()=>{
+    guard();
+    try{
+     const result=await fn(...input);guard();
+     if(name==='loadCoachForView'){
+      invalidateView();const cell={snapshot:result};
+      cell.facade=Object.freeze({get selectedTeamId(){return cell.snapshot.selectedTeamId;},get data(){return cell.snapshot.data;}});
+      view=cell;return cell.facade;
+     }
+     if(name!=='loadCoach')invalidateView();
+     return result;
+    }catch(e){close();throw e;}
+   });
+   tail=job.then(()=>undefined,()=>undefined);return job;
+  };
+ }
+ return Object.freeze(api);
 }
