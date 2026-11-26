@@ -13,7 +13,9 @@ test('RFC 8291 section 5 known answer: exact full encrypted record',async()=>{
  const payload=b64('V2hlbiBJIGdyb3cgdXAsIEkgd2FudCB0byBiZSBhIHdhdGVybWVsb24');
  const result=await sealPushRecordVectorLab({payload,receiverPublic,auth,salt,sender:{publicKey,privateKey}});
  assert.equal(Buffer.from(result).toString('base64url'),'DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN');
- assert.equal(result.length,145);
+ // The published base64url body decodes to 144 bytes (86 + 41 + 1 + 16),
+ // despite the illustrative Content-Length: 145 in section 5.
+ assert.equal(result.length,144);assert.equal(result.length,86+payload.length+17);
 });
 test('Generic record uses fresh salt and ephemeral key; receiver independently decrypts it',async()=>{
  const ua=await crypto.subtle.generateKey(ecdh,false,['deriveBits']);
