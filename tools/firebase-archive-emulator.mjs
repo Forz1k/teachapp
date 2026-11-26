@@ -37,7 +37,7 @@ await call('DELETE',page,undefined,owner.idToken,200);await call('GET',v3+'/r1',
 const slug='migration',oldPath='publicMatchArchive/'+owner.localId+'/'+slug,newPath='publicMatchArchiveV3/'+owner.localId+'/'+slug,control='archiveMigration/'+owner.localId+'/'+slug,parent='publicTeams/'+owner.localId+'/'+slug;
 await call('PUT',parent,{schema:1,team:'Synthetic Migration',updatedAt:1},owner.idToken,200);
 for(let i=0;i<45;i++)await call('PUT',oldPath+'/'+key(i),row(i),owner.idToken,200);
-await call('GET',control,undefined,null,401);await call('PUT',control,{phase:'frozen',generation:1},other.idToken,401);await call('PUT',control,{phase:'v3',generation:1},owner.idToken,401);
+await call('GET',control,undefined,null,200);await call('PUT',control,{phase:'frozen',generation:1},other.idToken,401);await call('PUT',control,{phase:'v3',generation:1},owner.idToken,401);
 const initial=await call('GET',control,undefined,owner.idToken,200,{}, {'X-Firebase-ETag':'true'});assert.equal(initial.data,null);assert.ok(initial.etag);
 await call('PUT',control,{phase:'frozen',generation:1},owner.idToken,200,{}, {'If-Match':initial.etag});
 await call('PUT',oldPath+'/'+key(1),{...row(1),opponent:'Changed'},owner.idToken,401);
@@ -60,5 +60,5 @@ assert.equal(migrated.length,45);for(const v of migrated){const i=Number(v.id.sl
 const ready=await call('GET',control,undefined,owner.idToken,200,{}, {'X-Firebase-ETag':'true'});await call('PUT',control,{phase:'v3',generation:4},owner.idToken,200,{}, {'If-Match':ready.etag});
 await call('PUT',oldPath+'/'+key(0),row(0),owner.idToken,401);await call('PUT',control,{phase:'legacy',generation:5},owner.idToken,401);
 await call('PUT',newPath+'/r1',v3row({...row(1),opponent:'Corrected'}),owner.idToken,200);
-assert.equal((await call('GET',oldPath+'/'+key(1),undefined,null,200)).data.opponent,'Synthetic');
-console.log('V3 MIGRATION BARRIER PASS: owner-only monotonic state, V2 freeze, exact create-only copies, 45 verified rows, pre-cutover thaw, irreversible activation and legacy read preservation.');
+await call('GET',oldPath+'/'+key(1),undefined,null,401);await call('GET',oldPath,undefined,null,401,{orderBy:'"$key"',limitToLast:'40'});assert.equal((await call('GET',oldPath+'/'+key(1),undefined,owner.idToken,200)).data.opponent,'Synthetic');assert.deepEqual((await call('GET',control,undefined,null,200)).data,{phase:'v3',generation:4});
+console.log('V3 MIGRATION BARRIER PASS: owner-only monotonic state, V2 freeze, exact create-only copies, 45 verified rows, pre-cutover thaw, irreversible activation and legacy owner recovery read; public stale path denied.');

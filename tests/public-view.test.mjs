@@ -52,7 +52,7 @@ test('Spectator can open a previously unknown season and ignores an older pendin
  const dom=new JSDOM('<header id="connection"></header><nav id="portal-nav"></nav><main id="portal"></main>',{url:'https://example.com/live/'});
  const w=dom.window,originalFetch=globalThis.fetch;Object.assign(globalThis,{document:w.document,window:w,location:w.location});let stream;
  globalThis.EventSource=class{constructor(){this.listeners={};stream=this;}addEventListener(type,fn){this.listeners[type]=fn;}close(){}emit(data){this.listeners.put({type:'put',data:JSON.stringify({path:'/',data})});}};
- const pending=[];globalThis.fetch=url=>new Promise(resolve=>pending.push({url,resolve}));
+ const pending=[];globalThis.fetch=url=>url.includes('/archiveMigration/')?Promise.resolve(new Response('null')):new Promise(resolve=>pending.push({url,resolve}));
  const wait=()=>new Promise(resolve=>setImmediate(resolve));
  const row=(year,id)=>({id,opponent:'Соперник '+year,startedAt:Date.UTC(year,9,1),setsWon:{ours:1,theirs:0},sets:[{ours:25,theirs:21}]});
  const reply=(i,r)=>pending[i].resolve(new Response(JSON.stringify({[String(r.startedAt).padStart(16,'0')+'_'+r.id]:r})));
@@ -61,7 +61,7 @@ test('Spectator can open a previously unknown season and ignores an older pendin
   stream.emit({schema:1,team:'Команда',updatedAt:Date.now(),schedule:[],archive:[row(2026,'recent')]});
   document.querySelector('[data-tab=results]').click();
   const choose=year=>{document.querySelector('.archive-season-year').value=String(year);[...document.querySelectorAll('button')].find(n=>n.textContent==='Загрузить сезон').click();};
-  choose(2023);choose(2024);assert.equal(pending.length,2);
+  choose(2023);await wait();choose(2024);await wait();assert.equal(pending.length,2);
   assert.equal(JSON.parse(new URL(pending[1].url).searchParams.get('startAt')),String(Date.UTC(2024,8,1)).padStart(16,'0')+'_');
   reply(1,row(2024,'old24'));await wait();
   assert.match(document.querySelector('.result-card').textContent,/Соперник 2024/);assert.equal(document.querySelector('.season-filter').value,'2024');
@@ -76,7 +76,7 @@ test('Viewer flags conflicting loaded archive IDs instead of selecting a date si
  globalThis.EventSource=class{constructor(){this.listeners={};stream=this;}addEventListener(t,f){this.listeners[t]=f;}close(){}emit(data){this.listeners.put({type:'put',data:JSON.stringify({path:'/',data})});}};
  const a={id:'duplicate',opponent:'Гости',startedAt:Date.UTC(2026,9,1),setsWon:{ours:1,theirs:0},sets:[{ours:25,theirs:20}]},b={...a,startedAt:a.startedAt+3600000};
  const key=r=>String(r.startedAt).padStart(16,'0')+'_'+r.id;
- globalThis.fetch=async()=>new Response(JSON.stringify({[key(a)]:a,[key(b)]:b}));
+ globalThis.fetch=async url=>url.includes('/archiveMigration/')?new Response('null'):new Response(JSON.stringify({[key(a)]:a,[key(b)]:b}));
  try{await import('../js/public-view.js?duplicate-archive=1');stream.onopen();stream.emit({schema:1,team:'Команда',updatedAt:Date.now(),schedule:[],archive:[]});
   document.querySelector('[data-tab=results]').click();[...document.querySelectorAll('button')].find(n=>n.textContent==='Загрузить расширенный архив').click();
   await new Promise(r=>setImmediate(r));assert.match(document.body.textContent,/противоречивые записи/);assert.equal(document.querySelectorAll('.result-card').length,0);

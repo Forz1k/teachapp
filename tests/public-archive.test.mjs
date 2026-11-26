@@ -105,3 +105,19 @@ test('Migration refuses unstable data and corrupt key rather than silently skipp
  await assert.rejects(inspectArchiveV3Migration(address,{fetcher}),/изменился/);
  const broken=async()=>new Response(JSON.stringify({bad:archiveProjection(row(1))}));await assert.rejects(inspectArchiveV3Migration(address,{fetcher:broken}),/Некорректная запись/);
 });
+
+import {resolveArchiveRoute,routedArchivePage,routedArchiveRecord,routedArchiveVersion,routedArchiveWrite,requireWritableArchive} from '../js/public-archive.js';
+test('Route mode preserves old URLs across date corrections, never leaks stale V2 after V3 deletion',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,a=row(1),corrected={...a,startedAt:a.startedAt+5000,opponent:'Corrected'},v3=archiveV3Projection(corrected),calls=[];
+ const fetcher=async(url,opt)=>{calls.push({url,opt});const u=new URL(url);if(u.pathname.includes('/archiveMigration/'))return new Response(JSON.stringify({phase:'v3',generation:2}));if(u.pathname.includes('/publicMatchArchiveV3/'))return new Response(JSON.stringify(u.pathname.endsWith('/r1.json')?v3:{r1:v3}),{headers:{ETag:'v3'}});throw Error('V2 must not be read');};
+ const route=await resolveArchiveRoute(address,{fetcher});assert.equal(route.version,3);assert.equal(route.key,'3:2');
+ const page=await routedArchivePage(route,{fetcher});assert.equal(page.rows[0].archiveKey,archiveKey(corrected));
+ const old=await routedArchiveRecord(route,{archiveKey:archiveKey(a)},fetcher);assert.equal(old.opponent,'Corrected');assert.equal(old.startedAt,corrected.startedAt);
+ assert.equal((await routedArchiveVersion(route,a,fetcher)).value.startedAt,corrected.startedAt);
+ await routedArchiveWrite(route,a,corrected,'token','v3',async(url,opt)=>{assert.match(new URL(url).pathname,/publicMatchArchiveV3\/.*\/r1\.json$/);assert.equal(opt.headers['If-Match'],'v3');return new Response('{}');});
+ assert.equal(await routedArchiveRecord(route,{archiveKey:archiveKey(a)},async()=>new Response('null')),null);
+ await assert.rejects(resolveArchiveRoute(address,{previous:route,fetcher:async()=>new Response('{}',{status:401})}),/подтвердить/);
+ const legacy=await resolveArchiveRoute(address,{fetcher:async()=>new Response('{}',{status:401})});assert.equal(legacy.version,2);
+ const frozen=await resolveArchiveRoute(address,{fetcher:async()=>new Response(JSON.stringify({phase:'frozen',generation:1}))});assert.throws(()=>requireWritableArchive(frozen),/перенос/);await assert.rejects(routedArchiveVersion(frozen,a,async()=>{throw Error('must not call');}),/перенос/);
+ assert.ok(calls.every(x=>!x.url.includes('/publicMatchArchive/')));
+});

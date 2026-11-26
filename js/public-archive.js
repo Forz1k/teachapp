@@ -9,7 +9,7 @@ export function archiveProjection(r){
  return {id:r.id,opponent:r.opponent,startedAt:r.startedAt,setsWon:{ours,theirs},sets:sets.map(s=>({ours:s.ours,theirs:s.theirs}))};
 }
 export function archiveKey(r){const x=archiveProjection(r);return String(x.startedAt).padStart(16,'0')+'_'+x.id;}
-export function archiveTarget(address){const u=new URL(address);if(u.protocol!=='https:'||!/^([a-z0-9-]+\.)+(firebaseio\.com|firebasedatabase\.app)$/.test(u.hostname)||!/^\/publicTeams\/[A-Za-z0-9_-]{1,100}\/[A-Za-z0-9_-]{1,100}\.json$/.test(u.pathname)||u.search||u.hash)throw Error('Некорректный адрес архива');u.pathname=u.pathname.replace('/publicTeams/','/publicMatchArchive/');return u.href;}
+export function archiveTarget(address){const u=new URL(address);if(u.protocol!=='https:'||u.username||u.password||u.port||!/^([a-z0-9-]+\.)+(firebaseio\.com|firebasedatabase\.app)$/.test(u.hostname)||!/^\/publicTeams\/[A-Za-z0-9_-]{1,100}\/[A-Za-z0-9_-]{1,100}\.json$/.test(u.pathname)||u.search||u.hash)throw Error('Некорректный адрес архива');u.pathname=u.pathname.replace('/publicTeams/','/publicMatchArchive/');return u.href;}
 // UTC September–August bounds use the same sortable keys as archiveKey.
 export function archiveSeasonBounds(season='all'){
  if(season==='all')return null;

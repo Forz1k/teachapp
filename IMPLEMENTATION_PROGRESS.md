@@ -507,3 +507,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### Archive V3 — candidate server migration barrier
 - Owner-only monotonic migration phase. Freeze V2; permit only exact missing V3 copies while frozen; explicit pre-cutover thaw and irreversible activation; preserve old links read-only. Emulator migrates 45 records and checks permissions, stale generations, altered results and verified counts. Production not deployed.
+
+### Archive V3 — client routing and old-link compatibility
+- Public phase/generation lookup, explicit frozen write refusal, V3 list/record/CAS, legacy URL ID resolution across date corrections, pagination reset. Public V2 reads closed after V3 to avoid stale deleted records; owner recovery reads retained. Existing production rule denial falls back to V2. No production switch.

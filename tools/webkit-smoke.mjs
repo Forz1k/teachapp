@@ -318,6 +318,7 @@ try{
   const original=window.fetch.bind(window);window.__archiveRequests=[];
   window.fetch=async(input,options)=>{
    const url=new URL(typeof input==='string'?input:input.url,location.href);
+   if(url.pathname.includes('/archiveMigration/'))return new Response('null');
    if(!url.pathname.includes('/publicMatchArchive/'))return original(input,options);
    window.__archiveRequests.push(url.href);
    const value=url.pathname.endsWith('/'+oldKey+'.json')?old:url.searchParams.get('equalTo')===JSON.stringify(old.id)?{[oldKey]:old}:url.searchParams.has('startAt')?{[oldKey]:old}:null;
