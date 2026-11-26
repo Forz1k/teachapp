@@ -501,3 +501,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### Video review — independent A/B rehearsal loop
 - Local 0.5–120 second repeat with point capture, pause-aware seek, media-end handling. Reset on source change, manual step, rally seek and clip export; no persistence or automatic video upload. Added range and playback policy tests.
+
+### Security — full-schema encrypted transaction baseline (LAB)
+- Validate portable current-format backup, schema-aware table/index operations and uniqueness, atomic snapshot CAS, abort/conflict and independent encrypted recovery. Reject lossy JSON values and sync checkpoints. A single workspace key for this synthetic baseline, no live DB switch; separate scope keys and efficient storage remain gates.

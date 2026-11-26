@@ -4,7 +4,7 @@ const maxSealedBytes=maxBytes+4*1024*1024;
 const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true});
 const check=(ok,msg)=>{if(!ok)throw Error(msg);};
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
-const validScope=v=>v==='school'||v==='coach';
+const validScope=v=>v==='school'||v==='coach'||v==='workspace';
 const hex=bytes=>Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
 const random=n=>crypto.getRandomValues(new Uint8Array(n));
 const idPattern=/^[0-9a-f]{32}$/;
@@ -19,6 +19,19 @@ const aad=(header,slot)=>encoder.encode(JSON.stringify(['teachapp-vault-lab',1,h
 function validateHeader(h){
  check(plain(h)&&h.id==='header'&&h.version===1&&validScope(h.scope)&&idPattern.test(h.vaultId)&&bytes(h.salt,16)&&h.iterations===iterations,'Повреждён заголовок хранилища');
 }
+// Refuse lossy JSON conversion rather than claiming an incomplete migration.
+function checkJson(value,stack=new Set()){
+ if(value===null||typeof value==='string'||typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value)&&!Object.is(value,-0))return;
+ check(typeof value==='object'&&value!==null&&!stack.has(value),'Снимок содержит неподдерживаемое значение');
+ const proto=Object.getPrototypeOf(value);check(Array.isArray(value)||proto===Object.prototype||proto===null,'Снимок содержит неподдерживаемый тип');
+ check(!Object.getOwnPropertySymbols(value).length,'Снимок содержит неподдерживаемый ключ');
+ stack.add(value);
+ if(Array.isArray(value)){
+  check(Object.keys(value).length===value.length,'Снимок содержит разреженный массив');
+  for(let i=0;i<value.length;i++)checkJson(value[i],stack);
+ }else for(const key of Object.keys(value))checkJson(value[key],stack);
+ stack.delete(value);
+}
 function normalize(data){
  check(plain(data)&&Object.keys(data).length<=64,'Некорректный снимок LAB');
  let count=0,size=0;
@@ -28,7 +41,7 @@ function normalize(data){
   const seen=new Set();snapshot[name]=[];
   for(const row of rows){
    check(plain(row)&&typeof row.id==='string'&&row.id.length>0&&row.id.length<=1024&&!seen.has(row.id),'Повторный или отсутствующий ID');
-   const json=JSON.stringify(row);size+=encoder.encode(json).length;count++;
+   checkJson(row);const json=JSON.stringify(row);size+=encoder.encode(json).length;count++;
    check(count<=maxRecords&&size<=maxBytes,'Снимок LAB превышает лимит');
    seen.add(row.id);snapshot[name].push(JSON.parse(json));
   }
@@ -65,9 +78,9 @@ function readRows(db){
 function commitNew(db,rows){
  return new Promise((resolve,reject)=>{
   const tx=db.transaction('sealed','readwrite'),store=tx.objectStore('sealed'),count=store.count();
-  let conflict=false;
-  count.onsuccess=()=>{if(count.result){conflict=true;tx.abort();return;}for(const row of rows)store.add(row);};
-  tx.oncomplete=()=>resolve();tx.onabort=()=>reject(conflict?Error('Хранилище LAB уже существует; перезапись запрещена'):tx.error||Error('Запись отменена'));tx.onerror=()=>{};
+  let conflict=false,failed=null;
+  count.onsuccess=()=>{if(count.result){conflict=true;tx.abort();return;}try{for(const row of rows)store.add(row);}catch(e){failed=e;tx.abort();}};
+  tx.oncomplete=()=>resolve();tx.onabort=()=>reject(conflict?Error('Хранилище LAB уже существует; перезапись запрещена'):failed||tx.error||Error('Запись отменена'));tx.onerror=()=>{};
  });
 }
 function assertLab(db){check(db&&/^teachapp-vault-lab-[a-z0-9-]{1,80}$/.test(db.name),'Разрешена только база LAB');}
@@ -133,9 +146,9 @@ function sameRows(a,b){
 /** Compare every previously authenticated byte, not just an untrusted header. */
 function commitReplace(db,before,after){
  return new Promise((resolve,reject)=>{
-  const tx=db.transaction('sealed','readwrite'),store=tx.objectStore('sealed'),read=store.getAll();let conflict=false;
-  read.onsuccess=()=>{if(!sameRows(read.result,before)){conflict=true;tx.abort();return;}store.clear();for(const row of after)store.add(row);};
-  tx.oncomplete=()=>resolve();tx.onabort=()=>reject(conflict?Error('Снимок LAB изменился. Откройте заново'):tx.error||Error('Запись отменена'));tx.onerror=()=>{};
+  const tx=db.transaction('sealed','readwrite'),store=tx.objectStore('sealed'),read=store.getAll();let conflict=false,failed=null;
+  read.onsuccess=()=>{try{if(!sameRows(read.result,before)){conflict=true;tx.abort();return;}store.clear();for(const row of after)store.add(row);}catch(e){failed=e;tx.abort();}};
+  tx.oncomplete=()=>resolve();tx.onabort=()=>reject(conflict?Error('Снимок LAB изменился. Откройте заново'):failed||tx.error||Error('Запись отменена'));tx.onerror=()=>{};
  });
 }
 /** Whole-snapshot CAS, using fresh salt, vault ID and IVs on every rewrite.
