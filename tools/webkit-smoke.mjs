@@ -118,6 +118,24 @@ try{
   }finally{lifecycle.dispose();}
  });if(workSession.supported)assert.deepEqual(workSession,{supported:true,count:1,blocked:true,hidden:true,denied:true,still:true,closed:true});
  console.log('WEBKIT WORK SESSION LAB '+(workSession.supported?'PASS: encrypted event, cross-scope denial, lifecycle revocation.':'SKIPPED: browser capabilities unavailable.'));
+ const partitioned=await writableTab.evaluate(async()=>{
+  const P=await import('/tools/prototypes/vault-partitioned-lab.mjs'),D=await import('/js/db.js'),W=await import('/js/workbench.js'),C=await import('/js/coach.js');
+  const lab=P.partitionedVaultLab('webkit-scope-write'),passwords={school:'synthetic-school-webkit',coach:'synthetic-coach-webkit',workspace:'synthetic-owner-webkit'};
+  const data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));data.classes=[{id:'c',name:'Synthetic class',gradeLevel:7}];data.students=[{id:'p',classId:'c',fullName:'Synthetic pupil',number:1,normGroup:'girls'}];
+  const before=await lab.stage({data,passwords}),open=scope=>lab.openScope({scope,password:passwords[scope]});
+  const school=W.createWorkSession(await open('school'),'school'),coach=C.createCoachSession(await open('coach')),stale=await open('coach');
+  try{
+   await Promise.all([school.saveBriefing({classId:'c',participantIds:['p'],date:'2025-09-01',category:'lesson',topic:'Synthetic safety',note:''},true),coach.saveTeam({name:'Synthetic team'})]);
+   const next=await lab.status(),changed=next.revisions.school!==before.revisions.school&&next.revisions.coach!==before.revisions.coach&&next.revisions.workspace===before.revisions.workspace;
+   let denied=false;try{await stale.getAll('coachTeams');}catch(e){denied=String(e.message).includes('Ревизия');}
+   const failing=await open('school'),proto=IDBObjectStore.prototype,put=proto.put;let rolled=false;
+   proto.put=function(...args){if(this.transaction.db.name==='teachapp-vault-mutable-lab-webkit-scope-write'&&this.name==='state')throw new DOMException('Synthetic pointer quota','QuotaExceededError');return put.apply(this,args);};
+   try{await failing.put('classes',{id:'bad',name:'Uncommitted'});}catch(e){rolled=e.name==='QuotaExceededError';}finally{proto.put=put;failing.close();}
+   const restored=await lab.snapshot({passwords}),latest=await lab.status();
+   return {changed,denied,rolled,school:restored.classes.length,coach:restored.coachTeams.length,records:restored.workRecords.length,stable:JSON.stringify(latest)===JSON.stringify(next)};
+  }finally{school.close();coach.close();stale.close();}
+ });assert.deepEqual(partitioned,{changed:true,denied:true,rolled:true,school:1,coach:1,records:1,stable:true});
+ console.log('WEBKIT PARTITIONED VAULT PASS: independent writable keys, atomic native pointer/ciphertext commit, stale revision and rollback.');
  }finally{await writableContext.close();await page.bringToFront();}
  const schemaVault=await page.evaluate(async()=>{
   const V=await import('/tools/prototypes/local-vault.mjs'),A=await import('/tools/prototypes/vault-schema-adapter.mjs'),D=await import('./js/db.js'),B=await import('./js/backup.js'),password='synthetic-schema-webkit',data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));
