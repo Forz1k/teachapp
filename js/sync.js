@@ -328,6 +328,7 @@ export async function buildSyncDelta(base,next,{area,workspaceId,baseRevision}){
 }
 function checkDeltaHeader(packet,{area,workspaceId,baseRevision}){
  const ctx=deltaContext(area,workspaceId,baseRevision);
+ if(packet?.app===deltaApp&&packet.version===1&&Number.isSafeInteger(packet.backupVersion)&&packet.backupVersion>BACKUP_VERSION)throw Object.assign(Error('Обновите TeachApp на всех устройствах: сервер содержит более новый формат данных. Локальные записи сохранены.'),{code:'newer-backup-format'});
  check(exactFields(packet,['app','version','backupVersion','area','workspaceId','baseRevision','revision','baseHash','resultHash','changes'])&&
   packet.app===deltaApp&&packet.version===1&&[21,BACKUP_VERSION].includes(packet.backupVersion)&&
   Object.entries(ctx).every(([k,v])=>packet[k]===v)&&typeof packet.baseHash==='string'&&digestPattern.test(packet.baseHash)&&
@@ -395,32 +396,39 @@ export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sea
  }
  async function writeAnchor(kind,expectedRevision,envelope,secret,rotation){
   const body={expectedRevision,envelope};
-  if(kind!=='rotate'&&new TextEncoder().encode(JSON.stringify(body)).length<=defaultCloudflarePacketLimit)return request(kind,body,secret);
+  if(kind!=='rotate'&&new TextEncoder().encode(JSON.stringify(body)).length<=defaultCloudflarePacketLimit)return writeAck(await request(kind,body,secret),expectedRevision);
   const {uploadId,manifest,chunks}=await splitDeltaAnchor(envelope,{kind,expectedRevision,rotation}),path='multipart/'+kind+'/'+uploadId+'/';
   const begun=await request(path+'begin',{manifest},secret);
-  if(begun?.revision===expectedRevision+1&&begun.replayed===true)return {revision:begun.revision,replayed:true};
-  check(begun?.uploadId===uploadId&&Number.isSafeInteger(begun.expiresAt),'Сервер не подтвердил начало загрузки');
+  if(exactFields(begun,['revision','replayed'])&&begun.replayed===true)return writeAck(begun,expectedRevision);
+  check(exactFields(begun,['uploadId','expiresAt'])&&begun.uploadId===uploadId&&Number.isSafeInteger(begun.expiresAt)&&begun.expiresAt>0,'Сервер не подтвердил начало загрузки');
   for(let index=0;index<chunks.length;index++){
    const ack=await request(path+'part/'+index,{data:chunks[index]},secret);
-   check(ack?.index===index&&typeof ack.replayed==='boolean','Сервер не подтвердил часть снимка');
+   check(exactFields(ack,['index','replayed'])&&ack.index===index&&typeof ack.replayed==='boolean','Сервер не подтвердил часть снимка');
   }
-  const ack=await request(path+'commit',{},secret);
-  check(ack?.revision===expectedRevision+1&&typeof ack.replayed==='boolean','Сервер не подтвердил снимок');
-  return ack;
+  return writeAck(await request(path+'commit',{},secret),expectedRevision);
  }
- return {head:()=>request('head'),rollbackStatus:()=>request('rollback-status'),rollbackReceipt:()=>request('rollback-receipt'),sealRollback:migrationId=>{check(validToken(sealToken)&&typeof migrationId==='string'&&uuid.test(migrationId),'Нужен отдельный ключ закрытия назначения');return request('rollback-seal',{expectedRevision:1,migrationId},sealToken);},getRevision:async rev=>{
+ function writeAck(ack,expectedRevision){
+  check(exactFields(ack,['revision','replayed'])&&revision(ack.revision)&&ack.revision===expectedRevision+1&&typeof ack.replayed==='boolean','Сервер не подтвердил ожидаемую ревизию Delta LAB');return ack;
+ }
+ function rollbackState(state){
+  check(exactFields(state,['revision','seal'])&&Number.isSafeInteger(state.revision)&&state.revision>=0&&(state.seal===null||state.revision===1&&exactFields(state.seal,['migrationId','revision'])&&state.seal.revision===1&&typeof state.seal.migrationId==='string'&&uuid.test(state.seal.migrationId)),'Некорректный ответ барьера назначения Delta LAB');return state;
+ }
+ return {head:async()=>{
+  const head=await request('head');check(validDeltaHead(head)&&exactFields(head,['revision','anchorRevision','count','bytes','maxEntries','maxBytes','keyEpoch'])&&Number.isSafeInteger(head.bytes)&&head.bytes>=0&&head.maxEntries===129&&head.maxBytes===16*1024*1024&&head.bytes<=head.maxBytes&&Number.isSafeInteger(head.keyEpoch)&&head.keyEpoch>=0&&(head.revision!==0||head.bytes===0&&head.keyEpoch===0),'Некорректная цепочка Delta LAB');return head;
+ },rollbackStatus:async()=>rollbackState(await request('rollback-status')),rollbackReceipt:()=>request('rollback-receipt'),sealRollback:async migrationId=>{check(validToken(sealToken)&&typeof migrationId==='string'&&uuid.test(migrationId),'Нужен отдельный ключ закрытия назначения');const state=rollbackState(await request('rollback-seal',{expectedRevision:1,migrationId},sealToken));check(state.seal?.migrationId===migrationId,'Закрытие назначения не подтверждено');return state;},getRevision:async rev=>{
    check(revision(rev),'Некорректная ревизия');const row=await request('revision/'+rev);
-   if(!Object.hasOwn(row,'multipart'))return row;
+   check(plain(row)&&row.revision===rev&&['anchor','delta'].includes(row.kind),'Пропущена или подменена ревизия изменений');
+   if(!Object.hasOwn(row,'multipart')){check(exactFields(row,['revision','kind','envelope'])&&isEncryptedBackup(row.envelope),'Некорректный снимок Delta LAB');return row;}
    const manifest=normalizeAnchorManifest(row.multipart);
-   check(row.revision===rev&&row.kind==='anchor'&&manifest?.expectedRevision===rev-1,'Некорректный multipart снимок');
+   check(exactFields(row,['revision','kind','multipart','uploadId'])&&row.kind==='anchor'&&manifest?.expectedRevision===rev-1,'Некорректный multipart снимок');
    const envelope=await joinDeltaAnchor(manifest,row.uploadId,async index=>{
     const part=await request('revision/'+rev+'/part/'+index);
-    check(part?.revision===rev&&part.index===index,'Подмена части снимка');return part.data;
+    check(exactFields(part,['revision','index','data'])&&part.revision===rev&&part.index===index,'Подмена части снимка');return part.data;
    });
    return {revision:rev,kind:'anchor',envelope};
   },
   anchor:envelope=>writeAnchor('anchor',0,envelope,token),
-  append:(expectedRevision,envelope)=>request('append',{expectedRevision,envelope}),
+  append:async(expectedRevision,envelope)=>writeAck(await request('append',{expectedRevision,envelope}),expectedRevision),
   compact:(expectedRevision,envelope)=>{check(validToken(compactToken),'Нужен отдельный ключ компактизации');return writeAnchor('compact',expectedRevision,envelope,compactToken);},
   rotate:(expectedRevision,envelope,rotation)=>{check(validToken(rotateToken)&&normalizeRotationHashes(rotation),'Нужен отдельный ключ ротации');return writeAnchor('rotate',expectedRevision,envelope,rotateToken,rotation);}
  };
