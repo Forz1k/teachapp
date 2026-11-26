@@ -200,6 +200,35 @@ try{
 
 
 
+ const writableUiContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block'});
+ try{
+  const tab=await writableUiContext.newPage(),errors=[];tab.on('pageerror',e=>errors.push(e.message));
+  const url=origin+'/tools/prototypes/vault-ui/writable.html?id=webkit';
+  await tab.goto(url);await tab.bringToFront();
+  if(await tab.evaluate(()=>typeof navigator.locks?.request==='function'&&typeof BroadcastChannel==='function')){
+   await tab.getByRole('button',{name:'Создать синтетический журнал'}).click();
+   await tab.getByText('Журнал активен. Разблокируйте сеанс.').waitFor();
+   await tab.getByLabel('Демо-пароль',{exact:true}).fill('incorrect-demo');await tab.getByRole('button',{name:'Разблокировать'}).click();
+   await tab.getByText('Введите указанный демо-пароль.').waitFor();assert.equal(await tab.locator('#record').textContent(),'');
+   const unlock=async()=>{await tab.getByLabel('Демо-пароль',{exact:true}).fill('teachapp-writable-demo');await tab.getByRole('button',{name:'Разблокировать'}).click();};
+   await unlock();await tab.getByText('Демо-оценка: 4 · Ревизия: 1').waitFor();
+   await tab.getByLabel('Демо-оценка',{exact:true}).selectOption('5');await tab.getByRole('button',{name:'Сохранить оценку'}).click();
+   await tab.getByText('Демо-оценка: 5 · Ревизия: 2').waitFor();
+   // An independent cooperative writer changes the encrypted grade before the UI saves.
+   await tab.evaluate(async()=>{const {vaultRouterLab,routedDataAccessLab}=await import('/tools/prototypes/vault-router-lab.mjs');const r=vaultRouterLab('ui-write-webkit'),a=routedDataAccessLab(r,{expectedGeneration:2,password:'teachapp-writable-demo'});try{await a.transaction(['marks','meta'],'readwrite',async s=>{const m=await s.marks.get('demo-mark'),v=await s.meta.get('demo-revision');await s.marks.put({...m,value:'3'});await s.meta.put({...v,value:v.value+1});});}finally{a.close();}});
+   await tab.getByLabel('Демо-оценка',{exact:true}).selectOption('2');await tab.getByRole('button',{name:'Сохранить оценку'}).click();await tab.getByText('Журнал заблокирован.',{exact:true}).waitFor();
+   assert.equal(await tab.locator('#record').textContent(),'');assert.equal(await tab.locator('#grade').inputValue(),'');
+   await unlock();await tab.getByText('Демо-оценка: 3 · Ревизия: 3').waitFor();
+   await tab.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
+   assert.equal(await tab.locator('#record').textContent(),'');assert.equal(await tab.locator('#grade').inputValue(),'');
+   await tab.reload();await tab.getByText('Журнал активен. Разблокируйте сеанс.').waitFor();await unlock();await tab.getByText('Демо-оценка: 3 · Ревизия: 3').waitFor();
+   await tab.getByRole('button',{name:'Заблокировать',exact:true}).click();assert.equal(await tab.locator('#record').textContent(),'');
+   assert.ok(await tab.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+   console.log('WEBKIT WRITABLE UI LAB PASS: encrypted grade edit, stale write rejection, screen clearing, reload and mobile layout.');
+  }else{await tab.getByText('Web Locks или BroadcastChannel недоступны. Журнал закрыт.').waitFor();assert.equal(await tab.locator('#session').isVisible(),false);}
+  assert.deepEqual(errors,[]);
+ }finally{await writableUiContext.close();await page.bringToFront();}
+
  // A separate same-origin context with two actual tabs, no application boot
  // or service worker; all records and keys below are synthetic.
  const routingContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block'});

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>TeachApp · Writable Vault LAB</title><link rel="stylesheet" href="./vault-ui.css"></head>
+<body><main>
+<header><p class="eyebrow">TeachApp / Security 6.1 / LAB</p><h1>Зашифрованный журнал</h1><p>Только фиксированные синтетические записи на localhost. Не вводите реальные пароли и данные.</p></header>
+<section aria-label="Состояние демо"><p id="status" role="status">Проверка среды…</p><button id="setup" type="button" hidden>Создать синтетический журнал</button> <button id="new-demo" type="button" hidden>Новый демо-журнал</button></section>
+<section id="session" hidden><article><h2>Сеанс журнала</h2><p class="hint">Демо-пароль: teachapp-writable-demo</p>
+<form id="unlock"><label>Демо-пароль<input id="password" type="password" autocomplete="off" required maxlength="128"></label><button type="submit">Разблокировать</button></form>
+<button id="lock" type="button" disabled>Заблокировать</button> <button id="lock-tabs" type="button">Заблокировать все вкладки</button>
+<div id="editor" hidden><p id="record" class="result"></p><form id="edit"><label>Демо-оценка<select id="grade"><option value="">Выберите оценку</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label><button type="submit">Сохранить оценку</button></form></div>
+</article></section>
+<p class="note">Закрытие сеанса очищает экран и аннулирует старые операции. Уже зафиксированные записи остаются сохранёнными. Это изолированная репетиция, не рабочий журнал.</p>
+<noscript>Для тестового интерфейса требуется JavaScript.</noscript>
+</main><script type="module" src="./writable-ui.js"></script></body></html>
