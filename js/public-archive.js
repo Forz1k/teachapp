@@ -149,13 +149,24 @@ export function planArchiveV3Migration(rows){const {rows:merged,conflicts}=merge
 
 /** Migration preview is intentionally read-only. The source must be frozen
  * during a real migration; two scans detect many, not all, concurrent edits. */
+// Remote migration records are a strict score-only contract; do not silently
+// sanitize unknown nested fields when proving that a backup is complete.
+function exactArchiveFields(value,fields){
+ return !!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join('|')===fields.slice().sort().join('|');
+}
+function assertMigrationShape(value,version){
+ const allowed=version===2?['id','opponent','sets','setsWon','startedAt']:['id','opponent','sets','setsWon','sortKey','startedAt'];
+ if(!exactArchiveFields(value,allowed)||!exactArchiveFields(value.setsWon,['ours','theirs'])||
+    !value.sets||typeof value.sets!=='object'||Object.values(value.sets).some(s=>!exactArchiveFields(s,['ours','theirs'])))
+  throw Error('Некорректная запись при миграции');
+}
 function migrationRows(raw,version,limit){
  if(raw===null)return [];
  if(!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).length>limit)throw Error('Некорректная страница миграции');
  return Object.entries(raw).map(([k,value])=>{
+  assertMigrationShape(value,version);
   const r=version===2?archiveProjection(value):checkedV3Row(value,k);
-  const allowed=version===2?['id','opponent','sets','setsWon','startedAt']:['id','opponent','sets','setsWon','sortKey','startedAt'];
-  if(Object.keys(value).some(x=>!allowed.includes(x))||version===2&&archiveKey(r)!==k)throw Error('Некорректная запись при миграции');
+  if(version===2&&archiveKey(r)!==k)throw Error('Некорректная запись при миграции');
   return {...archiveV3Projection(r)};
  }).sort((a,b)=>a.sortKey<b.sortKey?1:a.sortKey>b.sortKey?-1:0);
 }
@@ -193,10 +204,58 @@ export async function inspectArchiveV3Migration(address,{fetcher=fetch,maxRecord
  if(!Number.isInteger(maxRecords)||maxRecords<1||maxRecords>5000)throw Error('Некорректный лимит сверки');
  const u=new URL(address);if(u.username||u.password)throw Error('Не передавайте секреты в адресе');
  const v2=archiveTarget(address),v3=archiveV3Target(address);
+ const {source,destination}=await scanStableMigration(v2,v3,fetcher,maxRecords);
+ return migrationPreview(source,destination);
+}
+async function scanStableMigration(v2,v3,fetcher,maxRecords){
  const source=await scanMigration(v2,2,fetcher,maxRecords),destination=await scanMigration(v3,3,fetcher,maxRecords);
  const sourceAgain=await scanMigration(v2,2,fetcher,maxRecords),destinationAgain=await scanMigration(v3,3,fetcher,maxRecords);
  if(JSON.stringify(source)!==JSON.stringify(sourceAgain)||JSON.stringify(destination)!==JSON.stringify(destinationAgain))throw Error('Архив изменился во время сверки. Повторите после остановки публикации.');
- return migrationPreview(source,destination);
+ return {source,destination};
+}
+
+// Portable score-only backup of both archive paths. Integrity, not signature:
+// the checksum detects accidental corruption, not an attacker who can rewrite it.
+const migrationBackupFormat='teachapp-public-archive-v3-backup-1';
+async function migrationChecksum(value){
+ const bytes=await globalThis.crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(value)));
+ return Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
+}
+function backupRows(rows,{uniqueIds=false}={}){
+ if(!Array.isArray(rows)||rows.length>5000)throw Error('Некорректный архив резервной копии');
+ const ids=new Set();let previous=null;
+ return rows.map(raw=>{
+  assertMigrationShape(raw,3);
+  const r=checkedV3Row(raw,raw.id);
+  if(previous!==null&&r.sortKey>=previous||uniqueIds&&ids.has(r.id))throw Error('Нарушена уникальность или порядок резервной копии');
+  previous=r.sortKey;ids.add(r.id);return r;
+ });
+}
+/** Read-only checkpoint. A changed server generation invalidates the entire backup.
+ * Does not perform a freeze, copy, deployment or cutover. */
+export async function captureFrozenArchiveV3Backup(address,{fetcher=fetch,maxRecords=5000}={}){
+ if(!Number.isInteger(maxRecords)||maxRecords<1||maxRecords>5000)throw Error('Некорректный лимит сверки');
+ const v2=archiveTarget(address),v3=archiveV3Target(address),canonical=v2.replace('/publicMatchArchive/','/publicTeams/');
+ const before=await resolveArchiveRoute(canonical,{fetcher});
+ if(before.phase!=='frozen')throw Error('Для резервной копии требуется замороженный архив');
+ const {source,destination}=await scanStableMigration(v2,v3,fetcher,maxRecords);
+ const after=await resolveArchiveRoute(canonical,{fetcher,previous:before});
+ if(after.phase!=='frozen'||after.generation!==before.generation)throw Error('Поколение миграции изменилось');
+ const payload={format:migrationBackupFormat,address:canonical,generation:before.generation,source:backupRows(source),destination:backupRows(destination,{uniqueIds:true})};
+ return {...payload,sha256:await migrationChecksum(payload)};
+}
+/** Offline integrity verification of the full two-path backup; no writes or network.
+ * Reports conflicts and missing rows without claiming that cutover is safe. */
+export async function verifyFrozenArchiveV3Backup(backup){
+ if(!exactArchiveFields(backup,['format','address','generation','source','destination','sha256'])||
+    backup.format!==migrationBackupFormat||typeof backup.address!=='string'||!Number.isInteger(backup.generation)||backup.generation<1||backup.generation>1000000||
+    typeof backup.sha256!=='string'||!/^[a-f0-9]{64}$/.test(backup.sha256))throw Error('Некорректная резервная копия архива');
+ const canonical=archiveTarget(backup.address).replace('/publicMatchArchive/','/publicTeams/');
+ if(backup.address!==canonical)throw Error('Некорректный адрес резервной копии');
+ const source=backupRows(backup.source),destination=backupRows(backup.destination,{uniqueIds:true});
+ const payload={format:migrationBackupFormat,address:canonical,generation:backup.generation,source,destination};
+ if(await migrationChecksum(payload)!==backup.sha256)throw Error('Контрольная сумма резервной копии не совпадает');
+ return {address:canonical,generation:backup.generation,...migrationPreview(source,destination)};
 }
 
 /** Public phase is only routing metadata, readable while the parent is
