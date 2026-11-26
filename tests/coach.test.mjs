@@ -81,3 +81,5 @@ test('Coach training flags descendant restrictions on broad exercise separately 
  const r=C.trainingWarnings({date:'2026-02-01',roster:['p'],exercises},[p]);
  assert.equal(r.length,2);assert.equal(r[0].potential,true);assert.deepEqual(r[0].exercises,[exercises[0]]);assert.deepEqual(r[1].exercises,[exercises[2]]);
 });
+
+test('Player season keeps PRO data separate from incomplete and manual records',()=>{const s=C.playerSeasonStats([{date:'2026-11-25',roster:['p'],stats:{p:{attacks:10,attackKills:8}}}],'p');assert.equal(s.capture.complete,0);assert.equal(s.capture.attackEfficiency.value,null);assert.equal(s.rates.attack.total,10);});

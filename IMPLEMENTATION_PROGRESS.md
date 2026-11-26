@@ -448,3 +448,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### 7.0 follow-up in integration branch
 - Workspace-specific owner recovery in synthetic LAB: separately saved 256-bit recovery code, hashed server storage, CAS rotation, owner session/invite revocation and release of prior owner's match leases. Added pure and real workerd restart tests. Not production account recovery.
+
+### 6.5 follow-up — PRO data quality and player profile
+- Added terminal-action/author and serve/receive consistency auditing. Historical conflicting observations stay readable but are excluded from complete-sample rates; newly submitted conflicting complete records are rejected. Per-player season profile shows attempt counts, points/errors and weighted efficiency from checked full PRO sequences only, separate from PDFs/manual records.

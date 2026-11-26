@@ -1,5 +1,5 @@
 import {createCourtClock,clockAdvance,clockEvent,clockPause,clockRally,clockNext,clockSummary} from './court-time.js';
-import {validateCapture} from './match-capture.js';
+import {validateCapture,captureIssue} from './match-capture.js';
 import {validMatchFormat,regulationOf,isSetWon} from './match-rules.js';
 /* TeachApp — detailed event-sourced indoor match. No external service. */
 const fail=(ok,msg)=>{if(!ok)throw Error(msg);};
@@ -217,6 +217,7 @@ export function detailEvent(d,event,now=new Date().toISOString()){
  }else if(event.type==='attribute'){
   const last=events.at(-1);fail(last?.type==='rally','Можно уточнить только последнее очко');
   events[events.length-1]={...last,kind:event.kind,player:event.player??null};
+  if(last.kind!==event.kind||last.player!==event.player){events[events.length-1].captureComplete=false;}
   if(last.kind!==event.kind){delete events[events.length-1].placement;delete events[events.length-1].secondary;events[events.length-1].captureComplete=false;}
  }else if(event.type==='observations'){
   const last=events.at(-1);fail(last?.type==='rally','Выберите завершённый розыгрыш');
@@ -236,7 +237,13 @@ export function detailEvent(d,event,now=new Date().toISOString()){
   const at=Date.parse(now)<Date.parse(last)?last:now;
   events.push({...event,at});
  }
- const next={...d,events};replayDetailed(next);return next;
+ const next={...d,events},state=replayDetailed(next);
+ // Validate newly recorded complete evidence, but preserve old score logs.
+ const changed=event.type==='editRally'?event.index:events.length-1;
+ if(events[changed]?.type==='rally'&&events[changed].captureComplete&&(event.type==='rally'||event.type==='editRally'||event.type==='attribute')){
+  const rawIndex=events.slice(0,changed+1).filter(e=>e.type==='rally').length-1,row=state.timeline.filter(e=>e.type==='rally')[rawIndex];const issue=captureIssue(row);if(issue)throw Error(issue);
+ }
+ return next;
 }
 export function courtTime(state,asOf=state.courtClock.lastAt){
  const lineups={ours:state.lineup.map(id=>id===state.liberoFor?state.liberoId:id),theirs:state.awayLineup};

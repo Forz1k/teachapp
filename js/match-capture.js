@@ -21,18 +21,31 @@ export function validateCapture(event,before,actor){
  }
  return touches;
 }
+// Audit previously saved observations without invalidating the score log or backup.
+export function captureIssue(event){
+ if(!event.captureComplete)return null;
+ const items=event.touches||[],last=items.at(-1);
+ if(!last)return 'Нет действий';
+ const expected={ace:['serve','point'],kill:['attack','point'],tip:['attack','point'],block:['block','point'],serveError:['serve','error'],attackError:['attack','error'],receiveError:['receive','error'],defenseError:['defense','error'],setError:['set','error']}[event.kind];
+ if(expected&&(last.action!==expected[0]||last.result!==expected[1]))return 'Завершающее действие не соответствует причине очка';
+ if(expected&&event.player&&last.player!==event.player)return 'Автор завершающего действия не соответствует автору очка';
+ if(items.filter(t=>t.action==='serve').length>1)return 'Больше одной подачи в розыгрыше';
+ if(items.filter(t=>t.action==='receive').length>1)return 'Больше одного приёма подачи';
+ if(items.some(t=>t.action==='receive'&&t.side===event.before?.serve))return 'Приём подачи записан подающей команде';
+ return null;
+}
 const rate=(n,total)=>total?100*n/total:null;
 const metric=(n,total)=>({n,total,value:rate(n,total)});
 /** Only explicit, complete touch records contribute to action percentages. */
 export function captureSummary(timeline,{set=0,side='ours',player=null}={}){
  const rallies=timeline.filter(e=>e.type==='rally'&&(!set||e.set===set));
  const selected=rallies.filter(e=>!player||e.before.lineups[side].includes(player));
- const modes={quick:0,standard:0,pro:0,legacy:0};let reasons=0,authors=0,touchRallies=0,complete=0;
+ const modes={quick:0,standard:0,pro:0,legacy:0};let reasons=0,authors=0,touchRallies=0,complete=0,conflicting=0;
  const counts=Object.fromEntries(Object.keys(touchActions).map(k=>[k,{total:0,point:0,error:0,positive:0,perfect:0,qualityKnown:0,resultKnown:0}]));
  let defenseTotal=0,defenseWon=0;
  for(const e of selected){
   modes[e.captureMode??'legacy']++;if(e.kind!=='point')reasons++;if(e.player)authors++;if(e.touches?.length)touchRallies++;
-  if(!e.captureComplete)continue;complete++;
+  if(!e.captureComplete)continue;if(captureIssue(e)){conflicting++;continue;}complete++;
   const own=e.touches.filter(t=>t.side===side&&(!player||t.player===player));
   for(const t of own){
    const r=counts[t.action];r.total++;if(t.result!=='unknown')r.resultKnown++;if(t.result==='point')r.point++;if(t.result==='error')r.error++;
@@ -43,7 +56,7 @@ export function captureSummary(timeline,{set=0,side='ours',player=null}={}){
  }
  const a=counts.attack,s=counts.serve,r=counts.receive;
  const efficiency=x=>x.total&&x.resultKnown===x.total?{n:x.point-x.error,total:x.total,value:100*(x.point-x.error)/x.total}:{n:null,total:x.total,value:null};
- return {rallies:selected.length,modes,reasons,authors,touchRallies,complete,counts,
+ return {rallies:selected.length,modes,reasons,authors,touchRallies,complete,conflicting,counts,
   attackEfficiency:efficiency(a),serveEfficiency:efficiency(s),positiveReceive:r.total&&r.qualityKnown===r.total?metric(r.positive,r.total):{n:null,total:r.total,value:null},
   perfectReceive:r.total&&r.qualityKnown===r.total?metric(r.perfect,r.total):{n:null,total:r.total,value:null},defenseConversion:metric(defenseWon,defenseTotal)};
 }
@@ -63,4 +76,21 @@ export function seasonCapture(timelines,{side='ours',action='serve',player=null,
  const all=timelines.flatMap(t=>t.filter(e=>e.type==='rally'&&(!set||e.set===set)&&(rotation===null||e.rotation?.[side]===rotation)));
  const summary=captureSummary(all,{side,player}),zones=captureZoneSummary(all,{side,action,player});
  return {matches:timelines.length,recordedMatches:timelines.filter(t=>t.some(e=>e.type==='rally'&&(!set||e.set===set)&&(rotation===null||e.rotation?.[side]===rotation)&&e.touches?.some(x=>x.side===side&&(!player||x.player===player)&&x.action===action))).length,summary,zones};
+}
+
+/** Sum per-match denominators without retaining complete timelines in memory. */
+export function combineCaptureSummaries(summaries){
+ const out=captureSummary([]);let defenseWon=0,defenseTotal=0;
+ for(const s of summaries){
+  for(const k of ['rallies','reasons','authors','touchRallies','complete','conflicting'])out[k]+=s[k]||0;
+  for(const k of Object.keys(out.modes))out.modes[k]+=s.modes[k]||0;
+  for(const k of Object.keys(out.counts))for(const n of Object.keys(out.counts[k]))out.counts[k][n]+=s.counts[k][n]||0;
+  defenseWon+=s.defenseConversion.n||0;defenseTotal+=s.defenseConversion.total||0;
+ }
+ const {attack:a,serve:b,receive:r}=out.counts;
+ const efficiency=x=>x.total&&x.resultKnown===x.total?metric(x.point-x.error,x.total):{n:null,total:x.total,value:null};
+ out.attackEfficiency=efficiency(a);out.serveEfficiency=efficiency(b);
+ out.positiveReceive=r.total&&r.qualityKnown===r.total?metric(r.positive,r.total):{n:null,total:r.total,value:null};
+ out.perfectReceive=r.total&&r.qualityKnown===r.total?metric(r.perfect,r.total):{n:null,total:r.total,value:null};
+ out.defenseConversion=metric(defenseWon,defenseTotal);return out;
 }
