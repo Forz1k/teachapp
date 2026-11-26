@@ -5,7 +5,7 @@ import {uid,todayIso} from './model.js';
 import {catalog,validPeriod,active,ancestorIds} from './health.js';
 import {replay,appendEvent,undoEvent,validateLiveData} from './volleyball.js';
 import {courtTimeLabel} from './court-time.js';
-import {captureSummary,combineCaptureSummaries} from './match-capture.js';
+import {captureSummary,combineCaptureSummaries,captureComparison} from './match-capture.js';
 import {replayDetailed,courtTime,validBoardColors,validBoardLogos} from './match-protocol.js';
 import {volleyPlayerTime,volleyTimeLabel,mergeVolleyTiming,sameVolleyEvidence} from './volleypoint-time.js';
 import {validateVolleyImport,duplicateVolleyMatch} from './volleypoint-import.js';
@@ -203,7 +203,7 @@ export function timedRate(r){return r.ms>=600000&&r.rallies>=10?r.points*600000/
 export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
  const chosen=matches.filter(m=>m.roster.includes(playerId)&&(!from||m.date>=from)&&(!to||m.date<=to));
  const summary=summarizeStats(chosen,[playerId]);
- const errors={serve:0,attack:0,receive:0,other:0},captures=[];
+ const errors={serve:0,attack:0,receive:0,other:0},captures=[],captureMatches=[];
  let detailedMatches=0,rallies=0,serviceRallies=0,serviceWins=0,serviceAces=0,serviceErrors=0,unclassifiedServiceLosses=0,unknownOnCourt=0;
  const playingTime={measuredMatches:0,partialMatches:0,unknownMatches:0,totalMs:0,teamMs:0,timedRallies:0,timedPoints:0,timedWon:0,timedLost:0,unattributedTimedWins:0,rateMatches:0,rateMs:0,ratePoints:0,rateRallies:0,rows:[],historicalMatches:0,historicalPartialMatches:0,historicalMinMs:0,historicalMaxMs:0,historicalRows:[]};
  let importedMatches=0,importedServiceWins=0,importedLongestSeries=0,importedErrors=0;
@@ -217,7 +217,8 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
    continue;
   }
   if(m.detail){
-   const state=replayDetailed(m.detail);detailedMatches++;captures.push(captureSummary(state.timeline,{player:playerId}));
+   const state=replayDetailed(m.detail);detailedMatches++;const captured=captureSummary(state.timeline,{player:playerId});captures.push(captured);
+   captureMatches.push({matchId:m.id,date:m.date,opponent:m.opponent,...captureComparison(captured)});
    const t=courtTime(state);
    if(t.measured){const ms=t.players.ours[playerId]||0;playingTime.measuredMatches++;if(t.partial)playingTime.partialMatches++;playingTime.totalMs+=ms;playingTime.teamMs+=t.elapsedMs;playingTime.rows.push({matchId:m.id,date:m.date,opponent:m.opponent,ms,teamMs:t.elapsedMs,partial:t.partial,sets:t.sets.map(s=>({measured:s.started,ms:s.started?(s.players.ours[playerId]||0):null,teamMs:s.elapsedMs,partial:s.untrackedRallies>0}))});}else playingTime.unknownMatches++;
    const tm=timedMatchPlayers(state).get(playerId);
@@ -244,7 +245,7 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
   }
  }
  playingTime.pointsPer10=timedRate({ms:playingTime.rateMs,rallies:playingTime.rateRallies,points:playingTime.ratePoints});
- return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,importedMatches,importedErrors,importedBreakdown,importedServiceWins,importedLongestSeries,rates,chosen,playingTime,capture:combineCaptureSummaries(captures)};
+ return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,importedMatches,importedErrors,importedBreakdown,importedServiceWins,importedLongestSeries,rates,chosen,playingTime,capture:combineCaptureSummaries(captures),captureMatches};
 }
 export function teamView(data,teamId){
   return {players:data.coachPlayers.filter(p=>p.teamId===teamId),trainings:data.coachTrainings.filter(t=>t.teamId===teamId).sort(dateOrder),
