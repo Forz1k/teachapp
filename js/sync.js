@@ -328,7 +328,7 @@ export async function buildSyncDelta(base,next,{area,workspaceId,baseRevision}){
 }
 function checkDeltaHeader(packet,{area,workspaceId,baseRevision}){
  const ctx=deltaContext(area,workspaceId,baseRevision);
- if(packet?.app===deltaApp&&packet.version===1&&Number.isSafeInteger(packet.backupVersion)&&packet.backupVersion>BACKUP_VERSION)throw Object.assign(Error('Обновите TeachApp на всех устройствах: сервер содержит более новый формат данных. Локальные записи сохранены.'),{code:'newer-backup-format'});
+ if(packet?.app===deltaApp&&packet.version===1&&Number.isSafeInteger(packet.backupVersion)&&packet.backupVersion>BACKUP_VERSION)throw Object.assign(Error('Несовместимый формат изменений. Обновите TeachApp на всех устройствах: сервер содержит более новый формат данных. Локальные записи сохранены.'),{code:'newer-backup-format'});
  check(exactFields(packet,['app','version','backupVersion','area','workspaceId','baseRevision','revision','baseHash','resultHash','changes'])&&
   packet.app===deltaApp&&packet.version===1&&[21,BACKUP_VERSION].includes(packet.backupVersion)&&
   Object.entries(ctx).every(([k,v])=>packet[k]===v)&&typeof packet.baseHash==='string'&&digestPattern.test(packet.baseHash)&&
