@@ -91,3 +91,23 @@ export function teamSkillMap(sessions,players,teamId,{from='',to='',includeArchi
  }).sort((a,b)=>a.definition.name.localeCompare(b.definition.name,'ru')||a.key.localeCompare(b.key));
  return {players:roster.map(p=>({id:p.id,name:p.name,number:p.number??null,archived:!!p.archived})),methods,cutoff:to&&to<today?to:today,minAttempts};
 }
+
+
+/** Coverage of recorded observations, not a rating or fitness assessment.
+ * One cell per player/method; different methodologies never share a metric. */
+export function skillMapCoverage(map,{methodKey='',onlyIncomplete=false}={}){
+ const methods=map.methods.filter(m=>!methodKey||m.key===methodKey);
+ const byMethod=methods.map(m=>({method:m,players:new Map(m.rows.map(r=>[r.playerId,r]))}));
+ const totals={recorded:0,sample:0,excluded:0,missing:0};
+ const rows=map.players.map(player=>{
+  const counts={recorded:0,sample:0,excluded:0,missing:0};
+  const cells=byMethod.map(({method,players})=>{
+   const row=players.get(player.id),state=row?.state??'missing';
+   ensure(Object.hasOwn(counts,state),'Некорректное состояние карты навыков');
+   counts[state]++;totals[state]++;
+   return {methodKey:method.key,name:method.definition.name,protocol:method.definition.protocol,state,lastDate:row?.lastDate??null};
+  });
+  return {player,counts,cells,incomplete:cells.length>0&&counts.recorded<cells.length};
+ });
+ return {methods:methods.length,players:map.players.length,totals,rows:onlyIncomplete?rows.filter(r=>r.incomplete):rows};
+}
