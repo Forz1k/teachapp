@@ -91,6 +91,26 @@ const syntheticEndpoint='https://push.example.invalid/sub/00000000-0000-4000-800
  assert.equal((await call('alpha','notification-lab/ack',athlete.token,'POST',{expectedRevision:3,sequence:1})).pending,false);
  assert.equal((await call('alpha','notification-lab',athlete.token,'PUT',{expectedRevision:3,enabled:false,endpoint:null})).enabled,false);
  console.log('PLATFORM NOTIFICATION LAB PASS: consent, isolation, restart, CAS and unsubscribe; no delivery.');
+ // Separate workspace to avoid exhausting the ordinary cabinet rate budget.
+ const deliveryOwner=(await call('delivery-lab','bootstrap',root,'POST',{name:'Synthetic delivery'})).token;
+ assert.equal((await call('delivery-lab','teams',deliveryOwner,'POST',{id:'t',name:'Team',players:[{id:'p',name:'P',number:1}]})).status,201);
+ const deliveryInvite=await call('delivery-lab','invite',deliveryOwner,'POST',{role:'athlete',teamId:'t',athleteId:'p',matchId:null});
+ const deliveryAthlete=await call('delivery-lab','redeem',deliveryInvite.invite,'POST',{});
+ assert.equal((await call('delivery-lab','notification-lab',deliveryAthlete.token,'PUT',{expectedRevision:0,enabled:true,endpoint:syntheticEndpoint})).status,200);
+ assert.equal((await call('delivery-lab','teams/t/athletes/p',deliveryOwner,'PUT',{expectedRevision:0,goals:[],assignments:[],schedule:[]})).status,200);
+ const claimPacket={memberId:deliveryAthlete.member.id,expectedRevision:1,sequence:1};
+ const deliveryCall=(path,body,token=deliveryOwner)=>call('delivery-lab','notification-lab/delivery/'+path,token,'POST',body);
+ assert.equal((await deliveryCall('claim',claimPacket,deliveryAthlete.token)).status,403);
+ const claims=await Promise.all([deliveryCall('claim',claimPacket),deliveryCall('claim',claimPacket)]);
+ assert.deepEqual(claims.map(x=>x.status).sort(),['busy','claimed']);
+ const ticket=claims.find(x=>x.ticket).ticket,checkPacket={memberId:claimPacket.memberId,ticket};
+ await stop();await start();
+ assert.equal((await deliveryCall('check',checkPacket)).current,true);
+ assert.equal((await deliveryCall('claim',claimPacket)).ticket,null);
+ assert.equal((await deliveryCall('finish',{...checkPacket,outcome:'accepted',retryAfter:null})).status,'accepted');
+ assert.equal((await deliveryCall('finish',{...checkPacket,outcome:'accepted',retryAfter:null})).status,409);
+ assert.equal((await call('delivery-lab','notification-lab/inbox',deliveryAthlete.token)).pending,true);
+ console.log('PLATFORM DELIVERY CLAIM LAB PASS: concurrent claim, persisted lease, restart, exact finish, separate acknowledgement; simulated outcomes only.');
  const recovery='b'.repeat(64);assert.equal((await call('alpha','owner/recovery',owner,'POST',{recoveryHash:await digestToken(recovery),expectedVersion:0})).status,200);await stop();await start();assert.equal((await call('beta','recover',recovery,'POST',{})).status,401);const recovered=await call('alpha','recover',recovery,'POST',{});assert.equal(recovered.status,201);assert.equal((await call('alpha','me',owner)).status,401);assert.equal((await call('alpha','matches/m',recovered.token)).match.score.ours,2);assert.equal((await call('alpha','me',recovery)).status,401);assert.ok(!JSON.stringify(await call('alpha','audit',recovered.token)).includes(recovery));console.log('PLATFORM RECOVERY PASS: hashed workspace recovery, restart, owner revocation and preserved match');
 }finally{await stop();await rm(state,{recursive:true,force:true});await new Promise(r=>site.close(r));}
 
