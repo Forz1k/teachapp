@@ -4,6 +4,8 @@
  * No connection to live TeachApp DB, no plaintext fallback, no cross-scope
  * transactions. Only snapshots independently valid in each scope are accepted. */
 import {SCHEMA,createDataAccess} from '../../js/db.js';
+import {schoolStores,archivePreview,prepareSchoolYearRollover} from '../../js/school-archive.js';
+import {schoolSettingsProjection} from '../../js/model.js';
 import {splitVaultScopesLab,joinVaultScopesLab,validateVaultScopeResultLab} from './vault-scope-bundle.mjs';
 import {splitSchoolVaultLayoutLab,joinSchoolVaultLayoutLab,validateSchoolVaultLayoutResultLab} from './vault-school-layout-lab.mjs';
 import {sealPartitionScopeLab,openPartitionKeySessionLab,samePartitionCiphertextLab} from './local-vault.mjs';
@@ -71,12 +73,12 @@ function commitScope(db,scope,expected,after,guard){
   tx.oncomplete=resolve;tx.onabort=()=>reject(failure||tx.error||Error('Запись LAB отменена'));tx.onerror=()=>{};
  });
 }
-async function sealAll(parts,bundleId,passwords){
+async function sealAll(parts,bundleId,passwords,selected=scopes){
  const rows={};
- for(const scope of scopes)rows[scope]=await sealPartitionScopeLab({scope,bundleId,password:passwords[scope],data:withMeta(scope,bundleId,parts[scope])});
+ for(const scope of selected)rows[scope]=await sealPartitionScopeLab({scope,bundleId,password:passwords[scope],data:withMeta(scope,bundleId,parts[scope])});
  return rows;
 }
-function commitRotation(db,expected,after){
+function commitRotation(db,expected,after,selected=scopes){
  return new Promise((resolve,reject)=>{
   const tx=db.transaction(stores,'readwrite'),state=tx.objectStore('state'),p=state.get('active'),requests=Object.fromEntries(scopes.map(s=>[s,tx.objectStore(s).getAll()]));let remaining=4,failure,next;
   const compare=()=>{
@@ -84,8 +86,8 @@ function commitRotation(db,expected,after){
    try{
     const pointer=p.result;
     check(validPointer(pointer)&&pointer.bundleId===expected.pointer.bundleId&&scopes.every(s=>pointer.revisions[s]===expected.pointer.revisions[s]&&samePartitionCiphertextLab(requests[s].result,expected.rows[s])),'Ревизии LAB изменились. Подготовьте новую копию');
-    for(const scope of scopes){const table=tx.objectStore(scope);table.clear();for(const row of after[scope])table.add(row);}
-    next={...pointer,revisions:Object.fromEntries(scopes.map(s=>[s,after[s][0].vaultId]))};state.put(next);
+    for(const scope of selected){const table=tx.objectStore(scope);table.clear();for(const row of after[scope])table.add(row);}
+    next={...pointer,revisions:{...pointer.revisions,...Object.fromEntries(selected.map(s=>[s,after[s][0].vaultId]))}};state.put(next);
    }catch(e){failure=e;tx.abort();}
   };
   p.onsuccess=compare;for(const request of Object.values(requests))request.onsuccess=compare;
@@ -143,6 +145,34 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
    check(sourceMatchesPartitionLab(backup.source,snapshot.pointer)&&samePartitionSnapshotLab(backup.data,data),'Копия устарела или не совпадает с текущими ревизиями LAB');
    const after=await sealAll(parts,snapshot.pointer.bundleId,newPasswords);
    return using(db=>commitRotation(db,snapshot,after));
+  },
+  async previewSchoolYear({passwords}){
+   check(schoolLayout,'Для перевода года требуется layout school-v2');
+   const {snapshot,data}=await authenticate(passwords),school=Object.fromEntries(schoolStores.map(n=>[n,data[n]]));
+   const {token,...report}=archivePreview(school);
+   return {...report,classes:school.classes.map(({id,name,gradeLevel})=>({id,name,gradeLevel:gradeLevel??null})),source:{id:'recovery',sourceBundleId:snapshot.pointer.bundleId,sourceRevisions:{...snapshot.pointer.revisions}}};
+  },
+  async rollSchoolYear({passwords,backupPasswords,backupFile,saved=false,expected,year,transfers,kind,confirmed=false}){
+   check(schoolLayout&&saved===true&&confirmed===true&&independentPartitionPasswordsLab(passwords,backupPasswords),'Подтвердите перевод года и независимую сохранённую копию school-v2');
+   const {snapshot,data,parts}=await authenticate(passwords);
+   check(sourceMatchesPartitionLab(expected,snapshot.pointer),'Предпросмотр устарел. Откройте заново');
+   const backup=await openPartitionRecoveryCopyLab(backupFile,{passwords:backupPasswords});
+   check(sourceMatchesPartitionLab(backup.source,snapshot.pointer)&&samePartitionSnapshotLab(backup.data,data),'Копия устарела или не совпадает с текущими ревизиями LAB');
+   // Do not copy owner metadata into a new archive unnecessarily: only the
+   // school-owned settings are needed for its year and grade calculations.
+   const school=Object.fromEntries(schoolStores.map(n=>[n,parts.school[n]]));
+   const {next,record}=prepareSchoolYearRollover(school,data.workRecords.filter(r=>r.kind==='archive'),{year,transfers,kind,expected:archivePreview(school).token,confirmed:true});
+   const newSettings=schoolSettingsProjection(next.meta.find(r=>r.id==='settings'));
+   const merged={...data,...Object.fromEntries(schoolStores.filter(n=>n!=='meta').map(n=>[n,next[n]])),
+    meta:parts.workspace.meta.map(r=>r.id==='settings'?{...r,...newSettings}:r),
+    workRecords:[...data.workRecords,record]};
+   if(!merged.meta.some(r=>r.id==='settings'))merged.meta.push(newSettings);
+   const nextParts=split(merged);
+   for(const scope of scopes)fullPart(scope,nextParts[scope]);
+   check(samePartitionSnapshotLab(nextParts.coach,parts.coach),'Перевод года не может изменять тренерскую область');
+   const selected=['school','workspace'],after=await sealAll(nextParts,snapshot.pointer.bundleId,passwords,selected);
+   const pointer=await using(db=>commitRotation(db,snapshot,after,selected));
+   return {archiveId:record.id,classes:next.classes.length,students:next.students.length,pointer};
   },
   async openScope({scope,password,idleMs=5*60*1000,now=()=>performance.now(),assertActive=()=>{}}){
    check(scopes.includes(scope)&&Number.isSafeInteger(idleMs)&&idleMs>0&&idleMs<=30*60*1000&&typeof now==='function'&&typeof assertActive==='function','Некорректный сеанс LAB');
