@@ -47,3 +47,13 @@ export function videoSeekStep(current,duration,delta){
  if(![current,duration,delta].every(Number.isFinite)||duration<=0||current<0||current>duration||Math.abs(delta)>30)throw Error('Некорректное положение видео');
  return Math.min(duration,Math.max(0,current+delta));
 }
+
+/** A/B rehearsal is independent of export and never persisted or uploaded. */
+export function videoLoopRange(start,end,duration){
+ if(![start,end,duration].every(Number.isFinite)||duration<=0||start<0||end>duration||end-start<.5||end-start>120)throw Error('Выберите отрезок от 0,5 до 120 секунд в пределах видео');
+ return {start,end};
+}
+export function videoLoopSeek(range,current,duration,{playing=false,ended=false}={}){
+ if(!range||!Number.isFinite(current)||!Number.isFinite(duration)||duration<=0||range.end>duration||(!playing&&!ended))return null;
+ return current>=range.end||current<range.start?range.start:null;
+}

@@ -8,3 +8,9 @@ test('Time stepping clamps to local media bounds and rejects missing duration',a
  assert.equal(videoSeekStep(5,10,1),6);assert.ok(videoReviewRates.includes(.25));
  for(const a of [[0,NaN,1],[1,0,1],[20,10,1],[1,10,31]])assert.throws(()=>videoSeekStep(...a));
 });
+
+test('A/B playback loops only during play or at media end, and validates independent range',async()=>{
+ const {videoLoopRange,videoLoopSeek}=await import('../js/video-review.js'),r=videoLoopRange(5,15,20);
+ assert.deepEqual(r,{start:5,end:15});assert.equal(videoLoopSeek(r,15,20,{playing:true}),5);assert.equal(videoLoopSeek(r,3,20,{playing:true}),5);assert.equal(videoLoopSeek(r,10,20,{playing:true}),null);assert.equal(videoLoopSeek(r,15,20),null);assert.equal(videoLoopSeek(r,20,20,{ended:true}),5);assert.equal(videoLoopSeek(null,20,20,{ended:true}),null);assert.equal(videoLoopSeek(r,15,12,{playing:true}),null);
+ for(const args of [[0,.1,20],[0,121,130],[1,21,20],[-1,4,20],[0,5,NaN]])assert.throws(()=>videoLoopRange(...args));
+});

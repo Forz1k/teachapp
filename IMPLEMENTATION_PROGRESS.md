@@ -498,3 +498,6 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### Coach Pro — method-specific team skill map
 - Read-only team view by method/date and optional archived athletes, weighted skill attempts, separate physical measurement trends, visible insufficient/excluded/missing coverage, minimum sample choice. No fabricated ranking or zero substitution. No new schema or public projection.
+
+### Video review — independent A/B rehearsal loop
+- Local 0.5–120 second repeat with point capture, pause-aware seek, media-end handling. Reset on source change, manual step, rally seek and clip export; no persistence or automatic video upload. Added range and playback policy tests.
