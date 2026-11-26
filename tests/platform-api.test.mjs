@@ -64,3 +64,36 @@ test('Finishing a match atomically invalidates only its outstanding assistant in
  assert.equal(c('w','POST','redeem',stale).status,401);assert.equal(c('w','GET','teams/t/roster',active).status,403);
  assert.equal(c('w','POST','redeem',unrelated).status,201);assert.equal(c('w','GET','matches/m',o).body.match.status,'finished');
 });
+
+test('Synthetic notification subscriptions are explicit, CAS-bound to their own session, and never expose endpoint data',()=>{
+ const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ c('w','POST','teams',o,{id:'t',name:'Team',players:[{id:'p',name:'P',number:1}]});
+ c('w','POST','matches',o,{id:'m',teamId:'t',opponent:'Guest',bestOf:3,target:15,decider:15});
+ const member=(role,athleteId=null,matchId=null)=>c('w','POST','redeem',c('w','POST','invite',o,{role,teamId:'t',athleteId,matchId}).body.invite).body;
+ const a=member('athlete','p'),b=member('coach'),helper=member('assistant',null,'m');
+ const endpoint='https://push.example.invalid/sub/00000000-0000-4000-8000-000000000001';
+ const packet={expectedRevision:0,enabled:true,endpoint};
+ assert.deepEqual(c('w','GET','notification-lab',a.token).body,{revision:0,enabled:false,expiresAt:null});
+ for(const p of [{...packet,endpoint:'https://real.example/sub/id'},{...packet,memberId:b.member.id},{...packet,endpoint:endpoint+'?key=secret'},{...packet,enabled:false}])assert.equal(c('w','PUT','notification-lab',a.token,p).status,400);
+ const enabled=c('w','PUT','notification-lab',a.token,packet);
+ assert.equal(enabled.status,200);assert.equal(enabled.body.revision,1);assert.equal(enabled.body.enabled,true);assert.equal(enabled.body.expiresAt,a.member.expiresAt);
+ assert.equal(c('w','GET','notification-lab',b.token).body.enabled,false);
+ assert.equal(c('w','GET','notification-lab',helper.token).status,403);
+ assert.equal(c('w','PUT','notification-lab',helper.token,packet).status,403);
+ assert.equal(c('other','GET','notification-lab',a.token).status,401);
+ assert.equal(c('w','PUT','notification-lab',a.token,packet).status,409);
+ assert.equal(c('w','PUT','notification-lab',a.token,{...packet,expectedRevision:1}).changed,false);
+ for(const path of ['members','audit'])assert.doesNotMatch(JSON.stringify(c('w','GET',path,o).body),/push\.example\.invalid|notificationLab/);
+ assert.deepEqual(c('w','PUT','notification-lab',a.token,{expectedRevision:1,enabled:false,endpoint:null}).body,{revision:2,enabled:false,expiresAt:null});
+ const again=c('w','PUT','notification-lab',a.token,{...packet,expectedRevision:2});assert.equal(again.body.revision,3);
+ const revoked=c('w','POST','revoke',o,{memberId:a.member.id});assert.ok(!revoked.state.members.find(m=>m.id===a.member.id).notificationLab);
+ assert.equal(c('w','GET','notification-lab',a.token).status,401);
+ assert.equal(c('w','PUT','notification-lab',b.token,packet).status,200);
+ const self=c('w','POST','session/revoke',b.token);assert.ok(!self.state.members.find(m=>m.id===b.member.id).notificationLab);
+ assert.equal(c('w','GET','notification-lab',b.token).status,401);
+ const code='b'.repeat(64);assert.equal(c('w','POST','owner/recovery',o,{expectedVersion:0,recoveryHash:code}).status,200);
+ assert.equal(c('w','PUT','notification-lab',o,packet).status,200);
+ const recovered=c('w','POST','recover',code);assert.equal(recovered.status,201);assert.ok(!recovered.state.members.some(m=>m.notificationLab));
+ assert.equal(c('w','GET','notification-lab',recovered.body.token).body.enabled,false);
+ f.clock(8*86400000);assert.equal(c('w','GET','notification-lab',recovered.body.token).status,401);
+});
