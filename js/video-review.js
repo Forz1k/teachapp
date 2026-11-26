@@ -58,3 +58,17 @@ export function videoLoopSeek(range,current,duration,{playing=false,ended=false}
  if(!range||!Number.isFinite(current)||!Number.isFinite(duration)||duration<=0||range.end>duration||(!playing&&!ended))return null;
  return current>=range.end||current<range.start?range.start:null;
 }
+
+/** Time navigation over the current filtered markers, never estimates an
+ * unlinked imported rally or wraps at the ends. Skip the current time
+ * within 50 ms to avoid reselecting it after browser seek rounding. */
+export function adjacentVideoMarker(markers,current,duration,direction){
+ if(!Array.isArray(markers)||!Number.isFinite(current)||!Number.isFinite(duration)||duration<=0||current<0||current>duration||![-1,1].includes(direction))return null;
+ let best=null;
+ for(const m of markers){
+  if(!m||m.outsideVideo||m.alignment==='unlinked'||!Number.isFinite(m.seconds)||m.seconds<0||m.seconds>duration||!Number.isSafeInteger(m.index)||m.index<1)continue;
+  if(direction*(m.seconds-current)<=.05)continue;
+  if(!best||direction*(m.seconds-best.seconds)<0||m.seconds===best.seconds&&m.index<best.index)best=m;
+ }
+ return best;
+}
