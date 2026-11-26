@@ -23,7 +23,7 @@ const PRECACHE = [
   './js/backup.js',
   './js/sync.js','./js/sync-pairing.js','./js/personal-sync.js','./js/device-invite.js','./js/auto-sync.js',
   './js/screens/sync.js',
-  './js/store.js',
+  './js/store.js','./js/journal-commands.js',
   './js/model.js',
   './js/health.js',
   './js/assessment.js','./js/attendance-index.js',

@@ -1,31 +1,29 @@
 /* Localhost-only writable synthetic UI; never opens native TeachApp DB. */
 import {vaultRouterLab,routedDataAccessLab} from '../vault-router-lab.mjs';
 import {routedVaultLifecycleLab} from '../vault-routed-lifecycle-lab.mjs';
-const demo='teachapp-writable-demo',gradeId='demo-mark',revisionId='demo-revision';
+import {journalMarkSnapshot,journalLessonSnapshot,writeJournalPaste} from '../../../js/journal-commands.js';
+import {lessonHistoryKey} from '../../../js/grade-history.js';
+const demo='teachapp-writable-demo',gradeId='demo-mark';
 const $=id=>document.getElementById(id);
 const ui=Object.fromEntries(['status','setup','new-demo','session','unlock','password','lock','lock-tabs','editor','record','edit','grade'].map(id=>[id,$(id)]));
 const message=text=>{ui.status.textContent=text;};
 const checked=(ok,text)=>{if(!ok)throw Error(text);};
 async function readRecord(access){
- return access.transaction(['marks','meta'],'readonly',async s=>{
-  const mark=await s.marks.get(gradeId),revision=await s.meta.get(revisionId);
-  checked(mark?.studentId==='demo-pupil'&&mark.lessonId==='demo-lesson'&&['2','3','4','5'].includes(mark.value)&&Number.isSafeInteger(revision?.value)&&revision.value>=1,'Демо-журнал повреждён');
-  return {grade:mark.value,revision:revision.value};
+ return access.transaction(['marks','students','lessons','topics','workRecords'],'readonly',async s=>{
+  const mark=await s.marks.get(gradeId),student=await s.students.get('demo-pupil'),lesson=await s.lessons.get('demo-lesson');
+  checked(mark?.studentId===student?.id&&mark?.lessonId===lesson?.id&&student?.classId===lesson?.classId&&['2','3','4','5'].includes(mark.value),'Демо-журнал повреждён');
+  const topic=lesson.topicId?await s.topics.get(lesson.topicId):null,hist=await s.workRecords.get(lessonHistoryKey(student.id,lesson.id));
+  return {grade:mark.value,revision:(hist?.events.length??0)+1,classId:student.classId,entry:{studentId:student.id,studentName:student.fullName,lessonId:lesson.id,date:lesson.date,slot:lesson.slot??null,time:lesson.time||'',expectedMark:journalMarkSnapshot(mark),expectedLesson:journalLessonSnapshot(lesson,topic),expectedHistoryId:hist?.events.at(-1)?.id??null}};
  });
 }
 async function writeRecord(access,expected,value){
  checked(['2','3','4','5'].includes(value),'Выберите оценку');
- return access.transaction(['marks','meta'],'readwrite',async s=>{
-  const mark=await s.marks.get(gradeId),revision=await s.meta.get(revisionId);
-  checked(mark?.studentId==='demo-pupil'&&mark.lessonId==='demo-lesson'&&mark.value===expected.grade&&revision?.value===expected.revision,'Демо-оценка изменилась; откройте журнал заново');
-  checked(Number.isSafeInteger(revision.value)&&revision.value<Number.MAX_SAFE_INTEGER,'Ревизия исчерпана');
-  await s.marks.put({...mark,value});await s.meta.put({...revision,value:revision.value+1});
-  return {grade:value,revision:revision.value+1};
- });
+ await writeJournalPaste(access,expected.classId,[{...expected.entry,value}],true,{replace:true,requireLessonSnapshot:true});
+ return readRecord(access);
 }
 function start(){
  if(!['localhost','127.0.0.1','[::1]'].includes(location.hostname)||!isSecureContext){message('LAB доступен только на localhost.');return;}
- const tag=new URLSearchParams(location.search).get('id')||'default-v1';
+ const tag=new URLSearchParams(location.search).get('id')||'default-v2';
  if(!/^[a-z0-9-]{1,32}$/.test(tag)){message('Некорректный ID демо-журнала.');return;}
  const id='ui-write-'+tag;let router,lifecycle;
  let access=null,shown=null,busy=false,active=false,epoch=0,disposed=false;
@@ -75,12 +73,11 @@ function start(){
   ui.setup.disabled=true;message('Создаётся синтетический журнал…');
   try{
    await router.initialize();const source=routedDataAccessLab(router,{expectedGeneration:1});
-   try{await source.transaction(['classes','students','lessons','marks','meta'],'readwrite',async s=>{
+   try{await source.transaction(['classes','students','lessons','marks'],'readwrite',async s=>{
     await s.classes.put({id:'demo-class',name:'Демо-класс',gradeLevel:7});
     await s.students.put({id:'demo-pupil',classId:'demo-class',fullName:'Демо-ученик',number:1,normGroup:'girls'});
     await s.lessons.put({id:'demo-lesson',classId:'demo-class',date:'2026-11-24',slot:1,time:'09:00'});
     await s.marks.put({id:gradeId,studentId:'demo-pupil',lessonId:'demo-lesson',value:'4',source:'manual'});
-    await s.meta.put({id:revisionId,value:1});
    });}finally{source.close();}
    await router.stage({password:demo});await router.activate({password:demo});await refresh();
   }catch{ui.setup.hidden=true;message('Создание не подтверждено. Создайте новый демо-журнал; существующие записи не перезаписываются.');}
