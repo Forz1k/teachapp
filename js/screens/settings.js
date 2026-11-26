@@ -235,7 +235,7 @@ export function renderSettings(root, ctx = {}) {
     if(password!==repeat){ui.toast('Пароли не совпадают');return;}
     try{await exporter.exportBackup(password);}catch(e){ui.toast(e.message);}finally{password=repeat=null;}
   }})]));
-  const restoreInput = el('input', { type: 'file', accept: '.json', style: 'display:none' });
+  const restoreInput = el('input', { type: 'file', accept: '.json', 'aria-label':'Файл для восстановления', style: 'display:none' });
   restoreInput.addEventListener('change', async () => {
     const file = restoreInput.files?.[0];
     if (!file) return;
@@ -272,7 +272,7 @@ export function renderSettings(root, ctx = {}) {
     el('div', { class: 'label', text: 'Восстановить из копии' }),
     el('button', { class: 'btn small', type: 'button', text: 'Выбрать файл', onclick: () => restoreInput.click() }),
   ]));
-  const verifyInput=el('input',{type:'file',accept:'.json,application/json',style:'display:none'});
+  const verifyInput=el('input',{type:'file',accept:'.json,application/json','aria-label':'Файл для проверки копии',style:'display:none'});
   const verifyStatus=el('p',{role:'status',text:'Проверка защищённой копии без восстановления.'});
   const verifyButton=el('button',{class:'btn wide',type:'button',text:'Проверить сохранённую защищённую копию',onclick:()=>verifyInput.click()});
   verifyInput.onchange=async()=>{
