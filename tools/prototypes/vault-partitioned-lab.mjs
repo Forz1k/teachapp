@@ -8,6 +8,7 @@ import {splitVaultScopesLab,joinVaultScopesLab,validateVaultScopeResultLab} from
 import {splitSchoolVaultLayoutLab,joinSchoolVaultLayoutLab,validateSchoolVaultLayoutResultLab} from './vault-school-layout-lab.mjs';
 import {sealPartitionScopeLab,openPartitionKeySessionLab,samePartitionCiphertextLab} from './local-vault.mjs';
 import {prepareSchemaSnapshotTransactionLab} from './vault-schema-adapter.mjs';
+import {partitionMigrationNameLab,partitionEncryptedVersionLab} from './vault-partition-migration-lab.mjs';
 import {validPartitionPasswordsLab as passwordsOK,independentPartitionPasswordsLab,createPartitionRecoveryCopyLab,openPartitionRecoveryCopyLab,sourceMatchesPartitionLab,samePartitionSnapshotLab} from './vault-partition-recovery-lab.mjs';
 const scopes=['school','coach','workspace'],stores=['state',...scopes];
 const check=(v,m)=>{if(!v)throw Error(m);};
@@ -17,12 +18,12 @@ const withMeta=(scope,bundleId,data)=>({...data,bundleMeta:[{id:'bundle',scope,b
 function validPointer(p){
  return p&&Object.keys(p).sort().join('|')==='bundleId|id|revisions'&&p.id==='active'&&typeof p.bundleId==='string'&&uuid.test(p.bundleId)&&p.revisions&&Object.keys(p.revisions).length===3&&scopes.every(s=>Object.hasOwn(p.revisions,s)&&typeof p.revisions[s]==='string'&&rev.test(p.revisions[s]));
 }
-function open(name){
+function open(name,{version=1,create=true}={}){
  return new Promise((resolve,reject)=>{
-  const request=indexedDB.open(name,1);let blocked=false;
+  const request=indexedDB.open(name,version);let blocked=false;
   request.onblocked=()=>{blocked=true;reject(Error('Закройте другие соединения LAB'));};
-  request.onupgradeneeded=()=>{if(blocked)request.transaction.abort();else for(const n of stores)request.result.createObjectStore(n,{keyPath:'id'});};
-  request.onerror=()=>reject(request.error);request.onsuccess=()=>{const db=request.result;if(blocked){db.close();return;}db.onversionchange=()=>db.close();resolve(db);};
+  request.onupgradeneeded=()=>{if(blocked||!create)request.transaction.abort();else for(const n of stores)request.result.createObjectStore(n,{keyPath:'id'});};
+  request.onerror=()=>reject(request.error);request.onsuccess=()=>{const db=request.result;if(blocked){db.close();return;}if(db.objectStoreNames.length!==stores.length||!stores.every(n=>db.objectStoreNames.contains(n))){db.close();reject(Error('Неверная схема шифрованной базы LAB'));return;}db.onversionchange=()=>db.close();resolve(db);};
  });
 }
 function readSlices(db,selected){
@@ -93,15 +94,16 @@ function commitRotation(db,expected,after){
  });
 }
 export function partitionedVaultLab(id,{layout='v1'}={}){
- check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id)&&['v1','school-v2'].includes(layout),'Некорректный ID или layout LAB');
+ check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id)&&['v1','school-v2','school-v2-migrated'].includes(layout),'Некорректный ID или layout LAB');
  // Explicit, incompatible synthetic layout uses a new database name. Never
  // reinterpret or implicitly migrate an existing ciphertext partition.
- const schoolLayout=layout==='school-v2',name=(schoolLayout?'teachapp-vault-mutable-school-lab-':'teachapp-vault-mutable-lab-')+id;
+ const migrated=layout==='school-v2-migrated',schoolLayout=layout!=='v1',name=migrated?partitionMigrationNameLab(id):(schoolLayout?'teachapp-vault-mutable-school-lab-':'teachapp-vault-mutable-lab-')+id;
  const split=schoolLayout?splitSchoolVaultLayoutLab:splitVaultScopesLab,join=schoolLayout?joinSchoolVaultLayoutLab:joinVaultScopesLab,validateResult=schoolLayout?validateSchoolVaultLayoutResultLab:validateVaultScopeResultLab;
  const blankParts=()=>split(empty()),fullPart=(scope,part)=>join({...blankParts(),[scope]:part});
- const using=async fn=>{const db=await open(name);try{return await fn(db);}finally{db.close();}};
+ const using=async fn=>{const db=await open(name,migrated?{version:partitionEncryptedVersionLab,create:false}:{});try{return await fn(db);}finally{db.close();}};
  const current=selected=>using(async db=>requireActive(await readSlices(db,selected),selected));
  const stage=async({data,passwords})=>{
+  check(!migrated,'Для этой схемы разрешён только явный перенос LAB');
   check(passwordsOK(passwords),'Требуются три независимых пароля LAB');
   const parts=split(data);
   // Deliberately refuse cross-scope-dependent records until shared metadata is designed.
