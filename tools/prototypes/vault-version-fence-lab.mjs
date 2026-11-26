@@ -12,7 +12,7 @@ const canonical=value=>{
  check([Object.prototype,null].includes(Object.getPrototypeOf(value)),'Non-JSON LAB object');
  return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonical(value[k])).join(',')+'}';
 };
-function snapshotIdentity(data){
+export function snapshotIdentity(data){
  check(data&&Object.keys(data).length===names.length&&names.every(n=>Array.isArray(data[n])),'Incomplete LAB snapshot');
  return canonical(Object.fromEntries(names.map(n=>[n,[...data[n]].sort((a,b)=>indexedDB.cmp(a.id,b.id))])));
 }
