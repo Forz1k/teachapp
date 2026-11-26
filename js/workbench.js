@@ -1,6 +1,6 @@
 import {validateMatchRegulation,writeMatchRegulation} from './match-rules.js';
 import {validateLessonAlternative,writeLessonAlternative,readLessonAlternatives} from './lesson-alternatives.js';
-import {validateKtpVersion} from './ktp-history.js';
+import {validateKtpVersion,writeKtpVersion,readKtpVersions,writeKtpVersionCopy,removeKtpVersion} from './ktp-history.js';
 import {validateNormRetake,writeNormRetake} from './norm-retakes.js';
 import {validateNewsDraft} from './public-media-drafts.js';
 import {validateSchoolCompetition,validateTeacherPortfolio,writeSchoolCompetition,writeAdvanceOlympiad,writeTeacherPortfolio} from './teacher-portfolio.js';
@@ -13,7 +13,7 @@ import * as nativeDb from './db.js';
 import {workRecordScope} from './work-scope.js';
 import {writeBoard} from './tactics.js';
 import {writeGoal} from './coach-goals.js';
-import {writeInventory,writeInventoryMovement} from './resources.js';
+import {writeInventory,writeInventoryMovement,writeAchievement} from './resources.js';
 import {writeMaterial,applyMaterial} from './library-materials.js';
 import {uid,exemptionCovers} from './model.js';
 import {validateGradeHistory} from './grade-history.js';
@@ -22,7 +22,7 @@ import {validateBoard} from './tactics.js';
 import {validateGoal} from './coach-goals.js';
 import {validateSeasonPlan,writeSeasonPlan,removeSeasonPlan} from './season-plan.js';
 import {validateRubric,validateNormAssignment,assignmentsOverlap} from './school-tools.js';
-import {validateTournament} from './tournaments.js';
+import {validateTournament,writeTournament,writeTournamentGame,writeGroupSeeds} from './tournaments.js';
 import {validateEvent} from './work-calendar.js';
 import {catalog,checkLessonRestrictions} from './health.js';
 export const exerciseCategories={warmup:'Разминка',athletics:'Лёгкая атлетика',gymnastics:'Гимнастика',volleyball:'Волейбол',games:'Игры',fitness:'ОФП / СФП',cooldown:'Заминка',other:'Другое'};
@@ -230,7 +230,7 @@ async function saveVideoReview(input,expected){
   return next;
  });
 }
-async function deleteWork(id,kind){if(scope&&kind==='seasonPlan')throw Error('Используйте удаление плана с проверкой ревизии');if(scope&&kind==='archive')throw Error('Архив недоступен в ограниченном сеансе');return db.transaction(kind==='archive'?['workRecords','students','lessons']:['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');allow(old);if(kind==='schoolCompetition')require(!(await s.workRecords.index('kind').getAll('schoolCompetition')).some(x=>x.previousStageId===id),'Сначала удалите связанный следующий этап');if(kind==='archive'){const pupils=new Set(old.snapshot.students.map(p=>p.id)),lessons=new Set(old.snapshot.lessons.map(l=>l.id));for(const p of await s.students.getAll())pupils.delete(p.id);for(const l of await s.lessons.getAll())lessons.delete(l.id);for(const r of await s.workRecords.index('kind').getAll('gradeHistory'))if(pupils.has(r.studentId)||lessons.has(r.lessonId))await s.workRecords.delete(r.id);}await s.workRecords.delete(id);});}
+async function deleteWork(id,kind){if(scope&&kind==='ktpVersion')throw Error('Подтвердите удаление версии КТП специальной командой');if(scope&&kind==='seasonPlan')throw Error('Используйте удаление плана с проверкой ревизии');if(scope&&kind==='archive')throw Error('Архив недоступен в ограниченном сеансе');return db.transaction(kind==='archive'?['workRecords','students','lessons']:['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');allow(old);if(kind==='schoolCompetition')require(!(await s.workRecords.index('kind').getAll('schoolCompetition')).some(x=>x.previousStageId===id),'Сначала удалите связанный следующий этап');if(kind==='archive'){const pupils=new Set(old.snapshot.students.map(p=>p.id)),lessons=new Set(old.snapshot.lessons.map(l=>l.id));for(const p of await s.students.getAll())pupils.delete(p.id);for(const l of await s.lessons.getAll())lessons.delete(l.id);for(const r of await s.workRecords.index('kind').getAll('gradeHistory'))if(pupils.has(r.studentId)||lessons.has(r.lessonId))await s.workRecords.delete(r.id);}await s.workRecords.delete(id);});}
 async function saveStationTemplate(input){
  const r=structuredClone({...input,kind:'stationTemplate',id:input.id||uid('stationTemplate'),revision:input.id?input.revision+1:0});validateStationTemplate(r);allow(r);
  return db.transaction(['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(r.id);require(input.id?old?.kind==='stationTemplate'&&old.revision===input.revision:!old,'Шаблон изменился. Откройте заново');await s.workRecords.put(r);return r;});
@@ -253,13 +253,13 @@ export function createWorkSession(access,scope){
   const result=await access.transaction(names,mode,fn);guard();return result;
  }});
  const core={...buildWorkCommands(db,scope),saveMaterial:r=>{require(workRecordScope(r)===scope,'Рабочая запись недоступна в этой области');return writeMaterial(db,r);}};
- if(scope==='school')Object.assign(core,{saveBriefing:(...args)=>writeBriefing(db,...args),saveGymBoard:input=>writeGymBoard(db,input),saveStudentGoal:input=>writeStudentGoal(db,input),saveSchoolCompetition:input=>writeSchoolCompetition(db,input),advanceOlympiad:input=>writeAdvanceOlympiad(db,input),saveTeacherPortfolio:input=>writeTeacherPortfolio(db,input),saveNormRetake:input=>writeNormRetake(db,input),saveLessonAlternative:(...args)=>writeLessonAlternative(db,...args),lessonAlternatives:id=>readLessonAlternatives(db,id)});
+ if(scope==='school')Object.assign(core,{saveBriefing:(...args)=>writeBriefing(db,...args),saveGymBoard:input=>writeGymBoard(db,input),saveStudentGoal:input=>writeStudentGoal(db,input),saveSchoolCompetition:input=>writeSchoolCompetition(db,input),advanceOlympiad:input=>writeAdvanceOlympiad(db,input),saveTeacherPortfolio:input=>writeTeacherPortfolio(db,input),saveNormRetake:input=>writeNormRetake(db,input),saveLessonAlternative:(...args)=>writeLessonAlternative(db,...args),lessonAlternatives:id=>readLessonAlternatives(db,id),saveKtpVersion:(...a)=>writeKtpVersion(db,...a),listKtpVersions:(...a)=>readKtpVersions(db,...a),restoreKtpVersionCopy:(...a)=>writeKtpVersionCopy(db,...a),deleteKtpVersion:(...a)=>removeKtpVersion(db,...a)});
  if(scope==='coach')Object.assign(core,{saveBoard:input=>writeBoard(db,input),saveGoal:input=>writeGoal(db,input),saveSeasonPlan:input=>writeSeasonPlan(db,input),deleteSeasonPlan:(...args)=>removeSeasonPlan(db,...args),saveMatchRegulation:input=>writeMatchRegulation(db,input)});
- if(scope!=='workspace')Object.assign(core,{instantiateMaterial:(r,options)=>{
+ if(scope!=='workspace')Object.assign(core,{saveAchievement:input=>writeAchievement(db,input,scope),instantiateMaterial:(r,options)=>{
   require(r?.kind===(scope==='school'?'ktpMaterial':'tacticMaterial'),'Материал недоступен в этой области защищённого сеанса');
   return applyMaterial(db,r,options);
  }});
- if(scope==='workspace')Object.assign(core,{saveInventory:input=>writeInventory(db,input),inventoryMovement:(...a)=>writeInventoryMovement(db,...a)});
+ if(scope==='workspace')Object.assign(core,{saveInventory:input=>writeInventory(db,input),inventoryMovement:(...a)=>writeInventoryMovement(db,...a),createTournament:input=>writeTournament(db,input),saveGame:(...a)=>writeTournamentGame(db,...a),saveGroupSeeds:(...a)=>writeGroupSeeds(db,...a)});
  const api={scope,close,isClosed:()=>closed};
  for(const [name,fn] of Object.entries(core)){
   api[name]=async(...args)=>{
