@@ -4,6 +4,7 @@ import {isEncryptedBackup,decryptBackup} from '../privacy.js';
 import {retentionPreview,purgeExpired} from '../retention.js';
 import { validateBackup } from '../backup.js';
 import {verifyProtectedBackup} from '../backup-verify.js';
+import {inspectLocalMigration} from '../migration-preflight.js';
 /* screens/settings.js — настройки, импорт, экспорт, резервные копии, управление классами. */
 
 import { APP_VERSION } from '../version.js';
@@ -304,6 +305,15 @@ export function renderSettings(root, ctx = {}) {
       diagnostics.textContent='Структура и связи корректны · записей '+Object.values(payload.data).reduce((n,a)=>n+a.length,0)+storage;
     }catch{diagnostics.textContent='Проверка не пройдена. Не удаляйте приложение и не очищайте хранилище. Сохраните защищённую копию для диагностики.';}finally{button.disabled=false;}
   }}),el('button',{class:'btn wide',type:'button',text:'Проверить и исправить КТП',onclick:openKtpDiagnostics})]));
+  const migrationStatus=el('p',{role:'status',text:'Предварительная локальная проверка. Не запускает шифрование, перенос или восстановление.'});
+  const migrationLabels={schema:'неполная схема',integrity:'нарушение связей','active-delta-migration':'незавершённый Delta-перенос','non-json':'неподдерживаемые значения','record-limit':'выше лимита записей LAB','byte-limit':'выше лимита размера LAB','crypto-unavailable':'Web Crypto недоступен','locks-unavailable':'Web Locks недоступен','device-checkpoints':'контрольные точки синхронизации требуют отдельного переноса','quota-unknown':'квота неизвестна','low-estimated-space':'мало оценочного свободного места'};
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Диагностика базы · подготовка миграции'}),migrationStatus,el('button',{class:'btn wide',type:'button',text:'Проверить условия переноса',onclick:async e=>{
+   const button=e.currentTarget;button.disabled=true;try{
+    const result=await inspectLocalMigration();if(!migrationStatus.isConnected||document.body.classList.contains('privacy-covered'))return;
+    const notes=[...result.blockers,...result.warnings].map(x=>migrationLabels[x]).filter(Boolean);
+    migrationStatus.textContent=(result.records===null?'Снимок не проверен.':'Записей: '+result.records+' · объём JSON строк: '+(result.bytes/1048576).toFixed(2)+' МБ. ')+(notes.length?'Замечания: '+notes.join('; ')+'. ':'Предварительных замечаний не найдено. ')+'Переключение недоступно; нужна независимая копия и приёмка.';
+   }catch{if(migrationStatus.isConnected)migrationStatus.textContent='Проверка недоступна. Данные не изменены.';}finally{button.disabled=false;}
+  }})]));
   const retention=el('input',{type:'number',min:0,max:3650,step:1,value:settings.retentionDays??0});
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Конфиденциальность и сроки хранения'}),
     el('p',{text:'Экранная ширма не заменяет пароль устройства. Данные IndexedDB не шифруются. Срок действует только для истёкших сведений об ограничениях и группах; 0 — срок не задан. Автоматического удаления нет.'}),
