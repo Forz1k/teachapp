@@ -73,7 +73,8 @@ export function makeTournament(input){
  for(const f of fixtures(t))t.games[f.id]={date:'',time:'',venue:'',result:null};
  return validateTournament(t);
 }
-export async function createTournament(input){const t=makeTournament(input);await db.transaction(['workRecords'],'readwrite',s=>s.workRecords.add(t));return t;}
+export async function createTournament(input){return writeTournament(db,input);}
+export async function writeTournament(access,input){const t=makeTournament(input);await access.transaction(['workRecords'],'readwrite',s=>s.workRecords.add(t));return t;}
 export function applyGame(t,id,patch){
  const next=structuredClone(t),g=gamesOf(next).find(g=>g.id===id);
  require(g&&Object.hasOwn(next.games,id)&&!g.bye,'Игра недоступна');
@@ -83,8 +84,9 @@ export function applyGame(t,id,patch){
  if(next.system==='groups'&&g.group&&Object.hasOwn(patch,'result')&&JSON.stringify(result)!==JSON.stringify(original.result)&&next.groupSeeds)delete next.groupSeeds[g.group];
  next.revision++;return validateTournament(next);
 }
-export async function saveGame(tournamentId,revision,gameId,patch){
- return db.transaction(['workRecords'],'readwrite',async s=>{
+export async function saveGame(tournamentId,revision,gameId,patch){return writeTournamentGame(db,tournamentId,revision,gameId,patch);}
+export async function writeTournamentGame(access,tournamentId,revision,gameId,patch){
+ return access.transaction(['workRecords'],'readwrite',async s=>{
   const t=await s.workRecords.get(tournamentId);require(t?.kind==='tournament'&&t.revision===revision,'Турнир изменился. Откройте его заново');
   const next=applyGame(t,gameId,patch);await s.workRecords.put(next);return next;
  });
@@ -137,7 +139,8 @@ export function applyGroupSeeds(t,group,ids){
  const g=groupStandings(t).find(x=>x.group===group);require(g.complete,'Сначала завершите игры группы');
  const next=structuredClone(t);next.groupSeeds={...next.groupSeeds,[group]:ids};next.revision++;return validateTournament(next);
 }
-export async function saveGroupSeeds(id,revision,group,ids){return db.transaction(['workRecords'],'readwrite',async s=>{const t=await s.workRecords.get(id);require(t?.revision===revision,'Турнир изменился. Откройте его заново');const next=applyGroupSeeds(t,group,ids);await s.workRecords.put(next);return next;});}
+export async function saveGroupSeeds(id,revision,group,ids){return writeGroupSeeds(db,id,revision,group,ids);}
+export async function writeGroupSeeds(access,id,revision,group,ids){return access.transaction(['workRecords'],'readwrite',async s=>{const t=await s.workRecords.get(id);require(t?.kind==='tournament'&&t.revision===revision,'Турнир изменился. Откройте его заново');const next=applyGroupSeeds(t,group,ids);await s.workRecords.put(next);return next;});}
 export function tournamentChampion(t){if(!['knockout','groups'].includes(t.system))return null;const final=gamesOf(t).at(-1);return final?.winner?t.teams.find(p=>p.id===final.winner)||null:null;}
 function csv(value){let s=String(value??'');if(/^[\s\uFEFF]*[=+\-@]|^[\t\r\n]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';}
 export function tournamentCsv(t,type='games'){

@@ -26,15 +26,17 @@ export async function recordKtpVersion(stores,plan,topics,options){
  await stores.workRecords.add(version);
  return version;
 }
-export async function saveKtpVersion(planId,label){
+export async function saveKtpVersion(planId,label){return writeKtpVersion(db,planId,label);}
+export async function writeKtpVersion(access,planId,label){
  check(text(label,200),'Укажите название версии (до 200 символов)');
- return db.transaction(['ktp','topics','workRecords'],'readwrite',async s=>{
+ return access.transaction(['ktp','topics','workRecords'],'readwrite',async s=>{
   const plan=await s.ktp.get(planId);check(plan,'КТП недоступно');
   return recordKtpVersion(s,plan,await s.topics.index('ktpId').getAll(planId),{label,reason:'manual'});
  });
 }
-export async function listKtpVersions(planId=null){
- const rows=await db.transaction(['workRecords'],'readonly',s=>s.workRecords.index('kind').getAll('ktpVersion'));
+export async function listKtpVersions(planId=null){return readKtpVersions(db,planId);}
+export async function readKtpVersions(access,planId=null){
+ const rows=await access.transaction(['workRecords'],'readonly',s=>s.workRecords.index('kind').getAll('ktpVersion'));
  return rows.filter(r=>planId===null||r.sourcePlanId===planId).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.id.localeCompare(a.id));
 }
 export function compareKtpVersion(r,plan,topics){
@@ -45,9 +47,10 @@ export function compareKtpVersion(r,plan,topics){
  for(const [id,t] of a)if(!b.has(id))removed.push(t);
  return {renamed:r.name!==plan.name,added,removed,changed};
 }
-export async function restoreKtpVersionCopy(id,{name,confirmed=false}={}){
+export async function restoreKtpVersionCopy(id,options){return writeKtpVersionCopy(db,id,options);}
+export async function writeKtpVersionCopy(access,id,{name,confirmed=false}={}){
  check(confirmed&&text(name,200),'Подтвердите создание копии и укажите название (до 200 символов)');
- return db.transaction(['ktp','topics','workRecords','activityCategories'],'readwrite',async s=>{
+ return access.transaction(['ktp','topics','workRecords','activityCategories'],'readwrite',async s=>{
   const r=validateKtpVersion(await s.workRecords.get(id)),valid=new Set([...catalog,...await s.activityCategories.getAll()].map(a=>a.id));
   const k={id:uid('ktp'),name:name.trim(),classIds:[],createdAt:new Date().toISOString()};
   let missingTags=0;
@@ -60,7 +63,8 @@ export async function restoreKtpVersionCopy(id,{name,confirmed=false}={}){
   return {plan:k,topics:r.topics.length,missingTags};
  });
 }
-export async function deleteKtpVersion(id,confirmed=false){
+export async function deleteKtpVersion(id,confirmed=false){return removeKtpVersion(db,id,confirmed);}
+export async function removeKtpVersion(access,id,confirmed=false){
  check(confirmed,'Подтвердите удаление сохранённой версии');
- return db.transaction(['workRecords'],'readwrite',async s=>{const row=await s.workRecords.get(id);validateKtpVersion(row);await s.workRecords.delete(id);return true;});
+ return access.transaction(['workRecords'],'readwrite',async s=>{const row=await s.workRecords.get(id);validateKtpVersion(row);await s.workRecords.delete(id);return true;});
 }
