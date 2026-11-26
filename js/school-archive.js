@@ -76,17 +76,26 @@ export async function readSchoolHistory(){
 /** Cohort-level comparison, not a claim about individual progress.
  * Grade mean is weighted by the actual mark weights, attendance by known opportunities.
  * Every school year retains its own denominator and cutoff. */
-export function schoolYearComparison(current,archives,{gradeLevel=null,today=M.todayIso()}={}){
+export function schoolYearComparison(current,archives,{gradeLevel=null,today=M.todayIso(),mode='full'}={}){
  require(gradeLevel===null||A.validGradeLevel(gradeLevel),'Выберите параллель');
+ require(['full','elapsed'].includes(mode),'Выберите режим сравнения');
+ // UTC calendar arithmetic avoids DST-dependent day counts. Keep the existing
+ // whole-year report as default; matched windows exclude later archived lessons.
+ const days=(from,to)=>Math.max(0,Math.round((Date.parse(to+'T00:00:00Z')-Date.parse(from+'T00:00:00Z'))/86400000)+1);
+ const currentYear=settingsOf(current).year;
+ const elapsed=mode==='elapsed'?days(currentYear.from,currentYear.to<today?currentYear.to:today):null;
+ require(mode==='full'||Number.isSafeInteger(elapsed)&&elapsed>0,'Текущий учебный год ещё не начался или даты некорректны');
  const sources=[{year:settingsOf(current).year,data:current,archived:false},...(archives||[]).map(a=>({year:a.year,data:a.snapshot,archived:true}))],years=new Map();
  for(const source of sources){const key=source.year.from+'|'+source.year.to;if(!years.has(key))years.set(key,[]);years.get(key).push(source);}
  const out=[];
  for(const [key,group] of years){
   const {year,data,archived}=group[0];
   if(group.length!==1){out.push({year,conflict:true,archived});continue;}
-  const cutoff=year.to<today?year.to:today,classes=data.classes.filter(c=>gradeLevel===null||A.gradeLevelOf(c)===gradeLevel),ids=new Set(classes.map(c=>c.id)),byClass=new Map(classes.map(c=>[c.id,{students:[],lessons:[]}]));
+  const availableEnd=year.to<today?year.to:today,windowEnd=mode==='elapsed'?M.addDays(year.from,elapsed-1):year.to;
+  const cutoff=availableEnd<windowEnd?availableEnd:windowEnd,lessonEnd=mode==='elapsed'?cutoff:year.to,windowDays=days(year.from,cutoff);
+  const classes=data.classes.filter(c=>gradeLevel===null||A.gradeLevelOf(c)===gradeLevel),ids=new Set(classes.map(c=>c.id)),byClass=new Map(classes.map(c=>[c.id,{students:[],lessons:[]}]));
   for(const p of data.students)if(ids.has(p.classId))byClass.get(p.classId).students.push(p);
-  for(const l of data.lessons)if(ids.has(l.classId)&&M.inRange(l.date,year.from,year.to))byClass.get(l.classId).lessons.push(l);
+  for(const l of data.lessons)if(ids.has(l.classId)&&M.inRange(l.date,year.from,lessonEnd))byClass.get(l.classId).lessons.push(l);
   const marks=data.marks||[],parts=data.participation||[],total={students:0,classes:classes.length,lessons:0,held:0,unknown:0,present:0,absent:0,unconfirmed:0,gradeCount:0,gradeWeight:0,gradeSum:0};
   const rows=[];
   for(const c of classes){const {students,lessons}=byClass.get(c.id),index=buildAttendanceIndex(lessons,lessons,marks,parts,cutoff),att=index.forStudents(students),pids=new Set(students.map(p=>p.id)),lids=new Set(lessons.filter(l=>l.date<=cutoff).map(l=>l.id));let gradeCount=0,gradeWeight=0,gradeSum=0;
@@ -94,7 +103,7 @@ export function schoolYearComparison(current,archives,{gradeLevel=null,today=M.t
    const row={className:c.name,students:students.length,lessons:lessons.length,held:att.held,unknown:att.unknown,present:att.present,absent:att.absent,unconfirmed:att.unconfirmed,gradeCount,gradeWeight,gradeSum,mean:gradeWeight?gradeSum/gradeWeight:null,pct:att.pct};rows.push(row);
    for(const k of ['students','lessons','held','unknown','present','absent','unconfirmed','gradeCount','gradeWeight','gradeSum'])total[k]+=row[k];
   }
-  out.push({year,archived,conflict:false,cutoff,...total,mean:total.gradeWeight?total.gradeSum/total.gradeWeight:null,pct:total.present+total.absent?Math.round(1000*total.present/(total.present+total.absent))/10:null,rows});
+  out.push({year,archived,conflict:false,cutoff,mode,windowDays,truncated:mode==='elapsed'&&windowDays<elapsed,...total,mean:total.gradeWeight?total.gradeSum/total.gradeWeight:null,pct:total.present+total.absent?Math.round(1000*total.present/(total.present+total.absent))/10:null,rows});
  }
  return out.sort((a,b)=>a.year.from.localeCompare(b.year.from));
 }
