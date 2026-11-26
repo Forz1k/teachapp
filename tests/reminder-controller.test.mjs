@@ -21,3 +21,24 @@ test('Revocation while awaiting permission/registration or source read never dis
  allowed=true;let finish;const d=reminderController({read:()=>settings,allowed:()=>allowed,now,load:()=>new Promise(resolve=>finish=resolve),prepare:async()=>()=>dispatched++});
  const second=d.poll();settings={...settings,enabled:false};d.invalidate();finish([event]);assert.equal(await second,0);assert.equal(dispatched,0);
 });
+
+import {installReminders} from '../js/reminder-controller.js';
+import {PRIVACY_VISIBILITY_EVENT} from '../js/privacy-shield.js';
+test('Reminder install fences pagehide, freeze and quick privacy cover/reveal while reading; cleans listeners',async()=>{
+ const doc=new EventTarget(),win=new EventTarget();let covered=false;
+ doc.visibilityState='visible';doc.body={classList:{contains:()=>covered}};
+ const pending=[],sent=[];let tick,cleared=false;
+ const drain=()=>new Promise(resolve=>setImmediate(resolve));
+ const stop=installReminders({documentTarget:doc,windowTarget:win,read:()=>({enabled:true,sources:['custom']}),permission:()=> 'granted',now,
+  load:()=>new Promise(resolve=>pending.push(resolve)),prepare:async()=>(title,opts)=>sent.push({title,...opts}),
+  setTimer:fn=>{tick=fn;return 1;},clearTimer:id=>{assert.equal(id,1);cleared=true;}});
+ assert.equal(pending.length,1);
+ win.dispatchEvent(new Event('pagehide'));pending.shift()([event]);await drain();assert.equal(sent.length,0);
+ tick();win.dispatchEvent(new Event('focus'));assert.equal(pending.length,0);
+ win.dispatchEvent(new Event('pageshow'));assert.equal(pending.length,1);
+ doc.dispatchEvent(new Event('freeze'));doc.dispatchEvent(new Event('resume'));pending.shift()([event]);await drain();assert.equal(sent.length,0);
+ tick();assert.equal(pending.length,1);covered=true;win.dispatchEvent(new Event(PRIVACY_VISIBILITY_EVENT));covered=false;win.dispatchEvent(new Event(PRIVACY_VISIBILITY_EVENT));
+ pending.shift()([event]);await drain();assert.equal(sent.length,0);
+ tick();pending.shift()([event]);await drain();assert.equal(sent.length,1);assert.doesNotMatch(JSON.stringify(sent),/PRIVATE|private-id/);
+ stop();assert.equal(cleared,true);win.dispatchEvent(new Event('pageshow'));doc.dispatchEvent(new Event('resume'));tick();assert.equal(pending.length,0);
+});
