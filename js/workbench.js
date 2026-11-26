@@ -4,7 +4,7 @@ import {validateKtpVersion} from './ktp-history.js';
 import {validateNormRetake} from './norm-retakes.js';
 import {validateNewsDraft} from './public-media-drafts.js';
 import {validateSchoolCompetition,validateTeacherPortfolio} from './teacher-portfolio.js';
-import {validateStudentGoal} from './student-goals.js';
+import {validateStudentGoal,writeStudentGoal} from './student-goals.js';
 import {validateMaterial,materialKinds} from './library-materials.js';
 import {validateOpponentNote} from './coach-opponents.js';
 import {validateVideoReview,videoMarkers,importedVideoMarkers} from './video-review.js';
@@ -14,7 +14,7 @@ import {workRecordScope} from './work-scope.js';
 import {writeBoard} from './tactics.js';
 import {writeGoal} from './coach-goals.js';
 import {writeInventory,writeInventoryMovement} from './resources.js';
-import {writeMaterial} from './library-materials.js';
+import {writeMaterial,applyMaterial} from './library-materials.js';
 import {uid,exemptionCovers} from './model.js';
 import {validateGradeHistory} from './grade-history.js';
 import {validateInventory,validateAchievement,equipmentStatus} from './resources.js';
@@ -247,14 +247,18 @@ export function createWorkSession(access,scope){
  let closed=false,tail=Promise.resolve();
  const guard=()=>require(!closed,'Рабочий сеанс заблокирован');
  const close=()=>{if(closed)return;closed=true;access.close();};
- const tables=new Set(['workRecords',...(scope==='school'?['classes','students','norms','meta']:scope==='coach'?['coachTeams','coachPlayers','coachMatches']:[])]);
+ const tables=new Set(['workRecords',...(scope==='school'?['classes','students','norms','meta','ktp','topics']:scope==='coach'?['coachTeams','coachPlayers','coachMatches']:[])]);
  const db=Object.freeze({async transaction(names,mode,fn){
   guard();require(Array.isArray(names)&&names.length&&names.every(n=>tables.has(n)),'Хранилище недоступно в этой области');
   const result=await access.transaction(names,mode,fn);guard();return result;
  }});
  const core={...buildWorkCommands(db,scope),saveMaterial:r=>{require(workRecordScope(r)===scope,'Рабочая запись недоступна в этой области');return writeMaterial(db,r);}};
- if(scope==='school')Object.assign(core,{saveBriefing:(...args)=>writeBriefing(db,...args),saveGymBoard:input=>writeGymBoard(db,input)});
+ if(scope==='school')Object.assign(core,{saveBriefing:(...args)=>writeBriefing(db,...args),saveGymBoard:input=>writeGymBoard(db,input),saveStudentGoal:input=>writeStudentGoal(db,input)});
  if(scope==='coach')Object.assign(core,{saveBoard:input=>writeBoard(db,input),saveGoal:input=>writeGoal(db,input)});
+ if(scope!=='workspace')Object.assign(core,{instantiateMaterial:(r,options)=>{
+  require(r?.kind===(scope==='school'?'ktpMaterial':'tacticMaterial'),'Материал недоступен в этой области защищённого сеанса');
+  return applyMaterial(db,r,options);
+ }});
  if(scope==='workspace')Object.assign(core,{saveInventory:input=>writeInventory(db,input),inventoryMovement:(...a)=>writeInventoryMovement(db,...a)});
  const api={scope,close,isClosed:()=>closed};
  for(const [name,fn] of Object.entries(core)){
