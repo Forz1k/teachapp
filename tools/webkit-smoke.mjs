@@ -159,6 +159,25 @@ try{
   }finally{school.close();}
  });assert.deepEqual(schoolLayout,{hidden:true,grade:'5',history:1,owner:'Synthetic owner only',theme:'dark',rule:true});
  console.log('WEBKIT SCHOOL PARTITION PASS: real school store and journal, isolated school settings, owner metadata preserved.');
+ const migrated=await writableTab.evaluate(async()=>{
+  const M=await import('/tools/prototypes/vault-partition-migration-lab.mjs'),P=await import('/tools/prototypes/vault-partitioned-lab.mjs'),S=await import('/js/store.js');
+  const id='webkit-atomic-migration',passwords={school:'synthetic-school-key',coach:'synthetic-coach-key',workspace:'synthetic-owner-key'},backupPasswords={school:'synthetic-backup-school',coach:'synthetic-backup-coach',workspace:'synthetic-backup-owner'};
+  const old=await M.openPartitionLegacyLab(id);
+  await new Promise((resolve,reject)=>{const tx=old.transaction(['classes','students'],'readwrite');tx.objectStore('classes').add({id:'c',name:'Synthetic class',gradeLevel:7});tx.objectStore('students').add({id:'p',classId:'c',fullName:'Synthetic pupil',number:1,normGroup:'girls'});tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});
+  const copy=await M.preparePartitionLegacyMigrationLab(id,{backupPasswords});
+  await M.migratePartitionLegacyLab(id,{passwords,backupPasswords,backupFile:copy.file,saved:true,confirmed:true});old.close();
+  let fenced=false;try{const bad=await M.openPartitionLegacyLab(id);bad.close();}catch(e){fenced=e.name==='VersionError';}
+  const lab=P.partitionedVaultLab(id,{layout:'school-v2-migrated'}),school=S.createSchoolSession(await lab.openScope({scope:'school',password:passwords.school}));
+  try{
+   await school.load();const l=await school.addLesson('c','2025-10-01',null,'',{slot:1,time:'09:00'});await school.setMark('p',l.id,{value:'5'});
+   const latest=await lab.prepareRecoveryCopy({passwords,backupPasswords}),recovered=await M.restorePartitionLegacyCopyLab('webkit-atomic-rollback',{file:latest.file,backupPasswords,confirmed:true});
+   const raw=await new Promise((resolve,reject)=>{const q=indexedDB.open(M.partitionMigrationNameLab(id),11);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+   const names=Array.from(raw.objectStoreNames).sort();raw.close();
+   return {fenced,grade:(await lab.snapshot({passwords})).marks[0].value,rollback:recovered.verified,names,private:!latest.file.includes('Synthetic pupil')};
+  }finally{school.close();}
+ });assert.deepEqual(migrated,{fenced:true,grade:'5',rollback:true,names:['coach','school','state','workspace'],private:true});
+ console.log('WEBKIT ATOMIC MIGRATION PASS: native schema upgrade, old-client version fence, encrypted journal write and independent legacy rollback.');
+
 
  }finally{await writableContext.close();await page.bringToFront();}
  const schemaVault=await page.evaluate(async()=>{
