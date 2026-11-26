@@ -27,13 +27,18 @@ function form(team,plan,back){
  openSheet(el('div',{class:'coach-form'},[el('h2',{text:'План подготовки сезона'}),field('Название',name),field('С',from),field('По',to),p('Этапы идут по датам без пересечений. Цели по тренировкам и минутам задаёт тренер.'),list,btn('+ Этап',()=>{if(phases.length>=24)return toast('До 24 этапов');const next=addDays(phases.at(-1).to||from.value,1);phases.push({name:'',kind:'technical',from:next,to:addDays(next,27),goal:'',sessions:0,minutes:0});draw();}),save,btn('Назад',back)]));
 }
 function summary(x){return 'Проведено '+x.held+' · в расписании '+x.scheduled+' · без подтверждения '+x.unconfirmed+' · впереди '+x.future+' · длительность проведённых по карточкам '+x.recordedMinutes+' мин · матчей '+x.matches;}
+function targetSummary(label,x,unit=''){
+ const suffix=unit?' '+unit:'';
+ return x.target===0?label+': цель не задана · факт '+x.actual+suffix:label+': '+x.actual+' / '+x.target+suffix+' · '+x.percent+'% · '+(x.over?'сверх цели '+x.over+suffix:'осталось '+x.remaining+suffix);
+}
+const phaseStatus={future:'Впереди',active:'Текущий этап',completed:'Завершён по календарю'};
 export async function openSeasonPlans(team){
  async function draw(){try{
   const plans=(await W.listWork('seasonPlan')).filter(r=>r.teamId===team.id),data=await C.loadCoach(),view=C.teamView(data,team.id);
   const body=el('div',{class:'coach-form'},[el('h2',{text:'Планирование сезона · '+team.name}),p('Факт: проведённые тренировки по отметке тренера; длительность из карточки тренировки, а не фактическая нагрузка спортсменки.'),team.archived?null:btn('+ План сезона',()=>form(team,null,draw),'primary')]);
   for(const plan of plans){
    const a=seasonPlanProgress(plan,view.trainings,view.matches);
-   body.append(card(plan.name,[p(fmtFull(plan.from)+' — '+fmtFull(plan.to)),p(summary(a.total)),...a.phases.map(x=>card(x.name,[p(phaseKinds[x.kind]+' · '+fmtFull(x.from)+' — '+fmtFull(x.to)),p(x.goal),p('Цель: '+x.sessions+' тренировок · '+x.minutes+' мин'),p(summary(x))])),el('details',{},[el('summary',{text:'Недельные циклы · '+a.weeks.length}),...a.weeks.map(x=>p(fmtFull(x.from)+' — '+fmtFull(x.to)+' · '+summary(x)))]),btn('Редактировать',()=>form(team,plan,draw)),btn('Удалить план',async()=>{if(!await confirmDialog({title:'Удалить план сезона?',text:'Тренировки и матчи сохранятся.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(plan.id,'seasonPlan');await draw();}catch(e){toast(e.message);}})]));
+   body.append(card(plan.name,[p(fmtFull(plan.from)+' — '+fmtFull(plan.to)),p(summary(a.total)),p('Цели относятся только к этапам, занятия вне этапов не засчитываются.'),p(targetSummary('Тренировки',a.sessionProgress)),p(targetSummary('Объём',a.minuteProgress,'мин')),...a.phases.map(x=>card(x.name,[p(phaseKinds[x.kind]+' · '+fmtFull(x.from)+' — '+fmtFull(x.to)),p(phaseStatus[x.status]),p(x.goal),p(targetSummary('Тренировки',x.sessionProgress)),p(targetSummary('Объём',x.minuteProgress,'мин')),p(summary(x))])),...(a.gaps.length?[card('Дни вне этапов',a.gaps.map(x=>p(fmtFull(x.from)+' — '+fmtFull(x.to)+' · '+summary(x))))]:[]),el('details',{},[el('summary',{text:'Недельные циклы · '+a.weeks.length}),...a.weeks.map(x=>p(fmtFull(x.from)+' — '+fmtFull(x.to)+' · '+summary(x)))]),btn('Редактировать',()=>form(team,plan,draw)),btn('Удалить план',async()=>{if(!await confirmDialog({title:'Удалить план сезона?',text:'Тренировки и матчи сохранятся.',ok:'Удалить',danger:true}))return;try{await W.deleteWork(plan.id,'seasonPlan');await draw();}catch(e){toast(e.message);}})]));
   }
   if(!plans.length)body.append(p('Нет планов сезона.'));
   body.append(btn('Закрыть',closeSheet));openSheet(body);

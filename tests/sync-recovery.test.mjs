@@ -130,3 +130,12 @@ test('An unconfirmed PUT result is explicitly marked without advancing local che
  await assert.rejects(executeSync({plan,choices:{},password,client,confirmed:true}),e=>e.remoteMayHaveCommitted===true);
  assert.deepEqual(await db.dumpAll(),before);
 });
+
+test('Invalid successful PUT response leaves the checkpoint intact and marks remote state uncertain; explicit rejection is not uncertain',async()=>{
+ const endpoint='https://synthetic.example.test',area='school',password='ack-response-test';
+ await db.replaceAll(Object.fromEntries(Object.keys(db.SCHEMA).map(n=>[n,[]])));await db.put('meta',defaultSettings());
+ let response=new Response('{}');const client=relayClient(endpoint,area,token,{fetcher:async(_url,opts)=>opts.method==='GET'?new Response(JSON.stringify({revision:0,envelope:null})):response});
+ const plan=await prepareSync({endpoint,area,password,client}),before=await db.dumpAll();
+ for(const res of [new Response('{}'),new Response('{}',{headers:{'content-length':'999999999'}}),new Response('{}',{status:500})]){response=res;await assert.rejects(executeSync({plan,choices:{},password,client,confirmed:true}),e=>e.remoteMayHaveCommitted===true);assert.deepEqual(await db.dumpAll(),before);}
+ response=new Response('{}',{status:409});await assert.rejects(executeSync({plan,choices:{},password,client,confirmed:true}),e=>e.remoteMayHaveCommitted===false);assert.deepEqual(await db.dumpAll(),before);
+});

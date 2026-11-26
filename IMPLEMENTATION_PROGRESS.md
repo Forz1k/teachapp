@@ -466,3 +466,7 @@ PR #94 не объединён, новый релиз не опубликова�
 
 ### Upgrade acceptance follow-up
 - Added pinned published 6.0.0 WebKit PWA upgrade alongside 5.1.1, including exact IndexedDB comparison, encrypted checkpoint preservation and no unnecessary write, old/new backup version fences, offline edit and independent restore. Added mobile Studio layer interactions to WebKit smoke.
+
+### Контрольный пакет: сезон и надёжность подтверждения синхронизации
+- План сезона: факт/цель, остаток и превышение, статус этапов, отдельные дни вне этапов; только подтверждённые тренировки, без вычисления нагрузки спортсменок по карточкам.
+- Обмен: любой неопределённый исход отправленного PUT маркируется как возможная запись на сервере; подтверждённые отклонения 401/403/409/413/423 не маркируются. Локальная ревизия не меняется до корректного подтверждения. Добавлены регрессии.

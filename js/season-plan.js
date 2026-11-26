@@ -33,10 +33,20 @@ export function seasonPlanProgress(plan,trainings,matches,today=todayIso()){
   const rows=sessions.filter(t=>inRange(t.date,from,to)),held=rows.filter(t=>t.held&&t.date<=today);
   return {scheduled:rows.length,held:held.length,unconfirmed:rows.filter(t=>!t.held&&t.date<today).length,future:rows.filter(t=>!t.held&&t.date>=today).length,recordedMinutes:held.reduce((n,t)=>n+t.minutes,0),matches:games.filter(m=>inRange(m.date,from,to)).length};
  };
- const phases=plan.phases.map(p=>({...p,...range(p.from,p.to)}));
+ const targetProgress=(actual,target)=>({target,actual,remaining:Math.max(0,target-actual),over:Math.max(0,actual-target),percent:target?Math.round(100*actual/target):null});
+ const phases=plan.phases.map(p=>{
+  const actual=range(p.from,p.to),status=today<p.from?'future':today>p.to?'completed':'active';
+  return {...p,...actual,status,sessionProgress:targetProgress(actual.held,p.sessions),minuteProgress:targetProgress(actual.recordedMinutes,p.minutes)};
+ });
+ const covered=phases.reduce((a,p)=>({held:a.held+p.held,recordedMinutes:a.recordedMinutes+p.recordedMinutes,scheduled:a.scheduled+p.scheduled,matches:a.matches+p.matches}),{held:0,recordedMinutes:0,scheduled:0,matches:0});
+ const total=range(plan.from,plan.to);
+ const targets={sessions:phases.reduce((n,p)=>n+p.sessions,0),minutes:phases.reduce((n,p)=>n+p.minutes,0)};
+ const gaps=[];let cursor=plan.from;
+ for(const phase of phases){if(cursor<phase.from){const to=addDays(phase.from,-1);gaps.push({from:cursor,to,...range(cursor,to)});}cursor=addDays(phase.to,1);}
+ if(cursor<=plan.to)gaps.push({from:cursor,to:plan.to,...range(cursor,plan.to)});
  const weeks=[];for(let from=plan.from;from<=plan.to;from=addDays(from,7)){
   const to=addDays(from,6)>plan.to?plan.to:addDays(from,6);
   weeks.push({from,to,...range(from,to)});
  }
- return {total:range(plan.from,plan.to),phases,weeks};
+ return {total,phases,weeks,gaps,targets,covered,sessionProgress:targetProgress(covered.held,targets.sessions),minuteProgress:targetProgress(covered.recordedMinutes,targets.minutes)};
 }

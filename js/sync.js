@@ -253,10 +253,10 @@ export function relayClient(endpoint,area,token,{fetcher=globalThis.fetch,timeou
     throw error;
    }
    if([408,502,503,504].includes(res.status))throw Object.assign(Error('Временная недоступность сервера синхронизации (HTTP '+res.status+')'),{retryable:true});
-   if(res.status===413)throw Object.assign(Error('Пакет превышает лимит выбранного сервера. Локальные данные сохранены. Откройте диагностику размера пакетов.'),{code:'packet-too-large'});
-   if(res.status===423)throw Object.assign(Error('Исходный сервер закрыт для записи на время переноса. Локальные данные сохранены.'),{code:'migration-frozen'});
-   if(res.status===409)throw Error('На сервере появилась новая ревизия. Повторите предварительный просмотр.');
-   if(res.status===401||res.status===403)throw Error('Сервер отказал в доступе. Проверьте ключ и область.');
+   if(res.status===413)throw Object.assign(Error('Пакет превышает лимит выбранного сервера. Локальные данные сохранены. Откройте диагностику размера пакетов.'),{code:'packet-too-large',remoteMayHaveCommitted:false});
+   if(res.status===423)throw Object.assign(Error('Исходный сервер закрыт для записи на время переноса. Локальные данные сохранены.'),{code:'migration-frozen',remoteMayHaveCommitted:false});
+   if(res.status===409)throw Object.assign(Error('На сервере появилась новая ревизия. Повторите предварительный просмотр.'),{remoteMayHaveCommitted:false});
+   if(res.status===401||res.status===403)throw Object.assign(Error('Сервер отказал в доступе. Проверьте ключ и область.'),{remoteMayHaveCommitted:false});
    check(res.ok,'Сервер синхронизации недоступен (HTTP '+res.status+')');
    let result;
    try{result=await readSyncResponse(res,snapshotLimit);}
@@ -979,7 +979,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
  guardSync(stillAllowed);
  if(!pullOnly){
   let committed;
-  try{committed=await client.put(plan.revision,envelope);}catch(e){guardSync(stillAllowed,true);if(e?.retryable||e instanceof SyntaxError||e instanceof TypeError)throw Object.assign(Error(e.message),{retryable:e.retryable===true,remoteMayHaveCommitted:true});throw e;}
+  try{committed=await client.put(plan.revision,envelope);}catch(e){const uncertain=e?.remoteMayHaveCommitted!==false;guardSync(stillAllowed,uncertain);if(uncertain)throw Object.assign(Error(e?.message||'Сервер не подтвердил запись'),{code:e?.code,retryable:e?.retryable===true,remoteMayHaveCommitted:true});throw e;}
   guardSync(stillAllowed,true);
   if(committed?.revision!==nextRevision||!same(committed.envelope,envelope))throw Object.assign(Error('Сервер не подтвердил запись ожидаемой ревизии'),{remoteMayHaveCommitted:true});
  }
