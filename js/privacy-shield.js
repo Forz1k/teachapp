@@ -1,5 +1,6 @@
 /* Device-only opt-in privacy screen. Does not encrypt data or authenticate users. */
 const KEY='teachapp.privacy-shield.v1',EVENT='teachapp:privacy-shield-preferences';
+export const PRIVACY_VISIBILITY_EVENT='teachapp:privacy-visibility';
 export const privacyIdleOptions=[0,1,3,5,10,15,30];
 const defaults=()=>({idleMinutes:0,hideOnBackground:false});
 export function validateShieldPreferences(value){
