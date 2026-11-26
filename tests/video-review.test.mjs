@@ -14,3 +14,17 @@ test('A/B playback loops only during play or at media end, and validates indepen
  assert.deepEqual(r,{start:5,end:15});assert.equal(videoLoopSeek(r,15,20,{playing:true}),5);assert.equal(videoLoopSeek(r,3,20,{playing:true}),5);assert.equal(videoLoopSeek(r,10,20,{playing:true}),null);assert.equal(videoLoopSeek(r,15,20),null);assert.equal(videoLoopSeek(r,20,20,{ended:true}),5);assert.equal(videoLoopSeek(null,20,20,{ended:true}),null);assert.equal(videoLoopSeek(r,15,12,{playing:true}),null);
  for(const args of [[0,.1,20],[0,121,130],[1,21,20],[-1,4,20],[0,5,NaN]])assert.throws(()=>videoLoopRange(...args));
 });
+
+test('Adjacent marker navigation uses filtered valid timestamps, skips current marker and does not wrap',async()=>{
+ const {adjacentVideoMarker}=await import('../js/video-review.js');
+ const markers=[{index:7,seconds:15,alignment:'interpolated'},{index:2,seconds:5,alignment:'manual'},{index:3,seconds:null,alignment:'unlinked'},{index:4,seconds:10,alignment:'manual'},{index:5,seconds:10,alignment:'manual'},{index:8,seconds:30,alignment:'manual',outsideVideo:true},{index:9,seconds:12,alignment:'unlinked'}];
+ assert.equal(adjacentVideoMarker(markers,0,20,1).index,2);
+ assert.equal(adjacentVideoMarker(markers,5.01,20,1).index,4);
+ assert.equal(adjacentVideoMarker(markers,15,20,-1).index,4);
+ assert.equal(adjacentVideoMarker(markers,10,20,-1).index,2);
+ assert.equal(adjacentVideoMarker(markers,15,20,1),null);
+ assert.equal(adjacentVideoMarker(markers,0,20,-1),null);
+ assert.equal(adjacentVideoMarker(markers,0,NaN,1),null);
+ assert.equal(adjacentVideoMarker(markers,0,20,0),null);
+ assert.equal(adjacentVideoMarker(markers.filter(m=>m.index===7),0,20,1).index,7);
+});
