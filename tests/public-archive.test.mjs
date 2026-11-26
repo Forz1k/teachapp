@@ -121,3 +121,33 @@ test('Route mode preserves old URLs across date corrections, never leaks stale V
  const frozen=await resolveArchiveRoute(address,{fetcher:async()=>new Response(JSON.stringify({phase:'frozen',generation:1}))});assert.throws(()=>requireWritableArchive(frozen),/перенос/);await assert.rejects(routedArchiveVersion(frozen,a,async()=>{throw Error('must not call');}),/перенос/);
  assert.ok(calls.every(x=>!x.url.includes('/publicMatchArchive/')));
 });
+
+import {captureFrozenArchiveV3Backup,verifyFrozenArchiveV3Backup} from '../js/public-archive.js';
+test('Frozen V3 backup covers both complete paths, verifies offline and rejects altered scores',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,source=Array.from({length:45},(_,i)=>row(i)),destination=source.slice(0,40);
+ const fetcher=async(url,opt)=>{
+  assert.ok(!opt.method||opt.method==='GET');
+  if(new URL(url).pathname.includes('/archiveMigration/'))return new Response(JSON.stringify({phase:'frozen',generation:3}));
+  return migrationFetcher(source,destination)(url,opt);
+ };
+ const backup=await captureFrozenArchiveV3Backup(address,{fetcher});
+ assert.equal(backup.source.length,45);assert.equal(backup.destination.length,40);assert.match(backup.sha256,/^[a-f0-9]{64}$/);
+ const report=await verifyFrozenArchiveV3Backup(JSON.parse(JSON.stringify(backup)));
+ assert.equal(report.generation,3);assert.equal(report.ready.length,5);assert.equal(report.identical.length,40);assert.equal(report.requiresReview,false);
+ const altered=structuredClone(backup);altered.source[0].opponent='Changed';
+ await assert.rejects(verifyFrozenArchiveV3Backup(altered),/сумма/);
+ const nested=structuredClone(backup);nested.source[0].sets[0].private='not-public';
+ await assert.rejects(verifyFrozenArchiveV3Backup(nested),/Некорректная запись/);
+ const reordered=structuredClone(backup);reordered.source.reverse();
+ await assert.rejects(verifyFrozenArchiveV3Backup(reordered),/порядок/);
+});
+test('Frozen archive backup refuses non-frozen state, changed generation and unknown nested remote fields',async()=>{
+ const address=viewerTarget('https://example.com/live/').address;
+ await assert.rejects(captureFrozenArchiveV3Backup(address,{fetcher:async()=>new Response(JSON.stringify({phase:'legacy',generation:1}))}),/замороженный/);
+ let controls=0;
+ const changed=async(url,opt)=>new URL(url).pathname.includes('/archiveMigration/')?new Response(JSON.stringify({phase:'frozen',generation:++controls})):migrationFetcher([row(1)],[])(url,opt);
+ await assert.rejects(captureFrozenArchiveV3Backup(address,{fetcher:changed}),/Поколение/);
+ const a=archiveProjection(row(1));a.sets[0].private='not-public';
+ const bad=async()=>new Response(JSON.stringify({[archiveKey(a)]:a}));
+ await assert.rejects(inspectArchiveV3Migration(address,{fetcher:bad}),/Некорректная запись/);
+});
