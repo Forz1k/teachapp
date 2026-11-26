@@ -58,18 +58,24 @@ export async function stageSchemaMigrationLab(source,vault,{password}){
  check(same(before,after)&&same(before,encrypted),'Исходник или снимок LAB изменился; переключение запрещено');
  return {verified:true,...report(after)};
 }
-function writeEmptyRollback(db,data){
+function writeEmptyRollback(db,data,{resume=false}={}){
  assertPlain(db,'rollback');
  return new Promise((resolve,reject)=>{
-  const tx=db.transaction(names,'readwrite');let remaining=names.length,failure=null;
+  const tx=db.transaction(names,'readwrite');let remaining=names.length,failure=null;const existing={};
   tx.oncomplete=()=>resolve();tx.onabort=()=>reject(failure||tx.error||Error('Восстановление LAB отменено'));
   for(const n of names){
-   const req=tx.objectStore(n).count();
+   const req=tx.objectStore(n).getAll();
    req.onsuccess=()=>{
     if(failure)return;
-    if(req.result){failure=Error('База восстановления LAB не пуста; перезапись запрещена');tx.abort();return;}
+    existing[n]=req.result;
     if(--remaining)return;
-    try{for(const name of names)for(const row of data[name])tx.objectStore(name).add(row);}
+    try{
+     if(names.some(name=>existing[name].length)){
+      if(resume&&same(existing,data))return;
+      throw Error('База восстановления LAB не пуста или изменилась; перезапись запрещена');
+     }
+     for(const name of names)for(const row of data[name])tx.objectStore(name).add(row);
+    }
     catch(e){failure=e;tx.abort();}
    };
   }
@@ -77,11 +83,11 @@ function writeEmptyRollback(db,data){
 }
 /** Restores a verified snapshot into a separate EMPTY plaintext LAB database.
  * Never deletes or overwrites the original source or the encrypted vault. */
-export async function restoreSchemaMigrationLab(vault,destination,{password}){
+export async function restoreSchemaMigrationLab(vault,destination,{password,resume=false}){
  assertPlain(destination,'rollback');
  const data=await readEncrypted(vault,password);
  validateBackup({app:'teachapp',version:BACKUP_VERSION,data});
- await writeEmptyRollback(destination,data);
+ await writeEmptyRollback(destination,data,{resume:resume===true});
  check(same(await readPlainSchemaLab(destination),data),'Проверка восстановленной базы LAB не прошла');
  return {verified:true,...report(data)};
 }
