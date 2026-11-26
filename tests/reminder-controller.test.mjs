@@ -56,3 +56,19 @@ test('Preference refresh coalesces concurrent changes, rechecks consent immediat
  const final=c.poll();c.refresh();settings={enabled:false,sources:['school']};c.refresh();pending.shift()([event]);await final;await drain();assert.equal(pending.length,0);
  settings={enabled:true,sources:['custom']};const stopped=c.poll();c.refresh();c.stop();pending.shift()([event]);await stopped;await drain();assert.equal(pending.length,0);assert.equal(sent.length,1);
 });
+
+import {enableReminderPermission,REMINDER_EVENT,REMINDER_SHEET_EVENT} from '../js/reminder-controller.js';
+test('Permission grant cannot recreate revoked consent or survive changed source, sheet or privacy context',async()=>{
+ const win=new EventTarget(),doc=new EventTarget(),source=new EventTarget();
+ let prefs={enabled:false,sources:['custom']},active=true,resolve,writes=0;
+ const start=()=>enableReminderPermission({sources:['custom'],read:()=>prefs,save:p=>{writes++;prefs=p;},active:()=>active,request:()=>new Promise(r=>resolve=r),windowTarget:win,documentTarget:doc,sourceTarget:source});
+ for(const [target,event] of [[win,REMINDER_EVENT],[win,REMINDER_SHEET_EVENT],[win,PRIVACY_VISIBILITY_EVENT],[win,'pagehide'],[doc,'freeze'],[doc,'visibilitychange'],[source,'change']]){
+  const work=start();target.dispatchEvent(new Event(event));resolve('granted');assert.equal(await work,'stale');assert.equal(writes,0);
+ }
+ const changed=start();prefs={enabled:false,sources:['school']};resolve('granted');assert.equal(await changed,'stale');prefs={enabled:false,sources:['custom']};
+ const storage=start(),e=new Event('storage');Object.defineProperty(e,'key',{value:REMINDER_KEY});win.dispatchEvent(e);resolve('granted');assert.equal(await storage,'stale');
+ const hidden=start();active=false;resolve('granted');assert.equal(await hidden,'stale');active=true;
+ const denied=start();resolve('denied');assert.equal(await denied,'denied');assert.equal(writes,0);
+ const granted=start();resolve('granted');assert.equal(await granted,'enabled');assert.equal(writes,1);assert.deepEqual(prefs,{enabled:true,sources:['custom']});
+ assert.equal(await start(),'stale');assert.equal(writes,1);
+});
