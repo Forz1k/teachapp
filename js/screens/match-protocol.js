@@ -4,7 +4,7 @@ import {listWork,deleteWork} from '../workbench.js';
 import {captureModes,touchActions,touchQuality,touchResults,captureSummary,captureZoneSummary} from '../match-capture.js';
 import {animateOnce,scoreChanges,recentRallies,rallyStreak,capturePositions,animatePositions} from '../motion.js';
 import * as C from '../coach.js';
-import {rehearsalStore} from '../volleyball.js';
+import {rehearsalStore,rememberLive,clearLiveResume} from '../volleyball.js';
 import * as V from '../match-protocol.js';
 import {matchTactics,rotationPerformance,recordedConnections,substitutionWindows} from '../match-tactics.js';
 import * as Portal from '../public-publisher.js';
@@ -117,7 +117,10 @@ export function openDetailedSetup(team,players,back,refresh,preset=null,{matches
    if(!opp.value.trim())throw Error('Укажите соперника');
    if(!V.validBoardColors(colors.get()))throw Error('Выберите два разных цвета команд');
    const rules=currentRules();if(!validMatchFormat(rules)||!V.validMatchLimits(rules.limits))throw Error('Проверьте формат и пользовательский регламент');
-   if(!await ui.confirmDialog({title:'Начать матч?',text:'Подтвердите фактические составы и выбранный регламент.',ok:'Начать'}))return;
+   await C.probeLiveStorage();
+   const readiness=Portal.portalInfo(team.id),existing=(await C.listLiveMatches()).filter(x=>x.teamId===team.id);
+   const check='Локальная запись проверена. Заявка: '+eligible.length+' · старт: 6 · соперник: '+(awayPlayers.length||'без состава')+' · '+(navigator.onLine===false?'нет сети, счёт доступен офлайн':'сеть доступна по данным браузера')+'. '+(readiness.data.enabled?(readiness.conflict||readiness.data.publisherPaused?'Публичная отправка требует разрешения конфликта или возобновления.':readiness.connected?'Публичная страница подключена; отправка зависит от сети.':'Для публикации нужно войти в Firebase.'):'Публичная страница выключена.')+(existing.length?' Внимание: уже есть черновики ('+existing.length+').':'');
+   if(!await ui.confirmDialog({title:'Начать матч?',text:check+' Подтвердите фактические составы и регламент.',ok:'Начать'}))return;
    const d=await C.startDetailedMatch({teamId:team.id,teamName:team.name,opponent:opp.value,date:date.value,competition:comp.value,venue:venue.value,
      roster:eligible.map(p=>p.id),ourPlayers:eligible,awayPlayers,awayLineup:away,lineup:line,libero:libero.value||null,libero2:libero2.value||null,...rules,firstServe:serve.value,scheme:scheme.value,boardColors:colors.get(),boardLogos:colors.getLogos()});
    openDetailedMatch(d,back,refresh);
@@ -177,7 +180,7 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
  if(initial.teamId==='test-rehearsal'&&!rehearsal)throw Error('Откройте матч в тестовом режиме');
  let d=initial,busy=false,selected=null,pointDraft=null,section='match',nextDraft=null,quick=false,captureMode='standard',swapped=false,scoutOpen=false,scoutSide='theirs',scoutKind='all',scoutSet=0,scoutEntry=false,historySet=0,historyEdit=null,historyLimit=80,detailOpen=false,observationOpen=false;
  const body=el('div',{class:'vp-stack vp-live'});
- const wake=matchWakeLock();let observer=null,spectator=null,clockState=null;
+ const wake=matchWakeLock();let observer=null,spectator=null,clockState=null,marker=null,renderEpoch=0,lastQuickAt=-Infinity,blocked=false;
  const tickClock=()=>{if(!clockState||!body.isConnected)return;const t=V.courtTime(clockState,Date.now());for(const n of body.querySelectorAll('[data-court-time]')){const id=n.dataset.courtTime,side=n.dataset.courtSide||'ours',set=n.dataset.courtSet?t.sets[Number(n.dataset.courtSet)-1]:null;n.textContent=courtTimeLabel(set?(set.started?(id?set.players[side][id]||0:set.elapsedMs):null):id?(t.measured?t.players[side][id]||0:null):(t.measured?t.elapsedMs:null));}};
  const clockTicker=window.setInterval(tickClock,1000);
  const publish=(options={})=>{if(rehearsal)return false;try{return Portal.syncPortalMatch(d,options);}catch(e){toast('Публикация: '+e.message);return false;}};
@@ -185,34 +188,41 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
  const unwatch=rehearsal?()=>{}:Portal.watchPortal(d.teamId,()=>{for(const n of body.querySelectorAll('.vp-portal-live-status'))n.textContent=Portal.portalInfo(d.teamId).status;});
  let saving=false,saveFailure='';
  const updateSaveStatus=()=>{
-  const n=body.querySelector('[data-live-save-status]');if(n)n.textContent=saving?'Сохранение события…':saveFailure?'Запись не подтверждена: '+saveFailure:'Сохранено на устройстве · событий '+d.events.length;
+  const n=body.querySelector('[data-live-save-status]');if(n)n.textContent=saving?'Сохранение события…':saveFailure?(blocked?'Запись не подтверждена; ввод остановлен: ':'Действие отклонено: ')+saveFailure:'Сохранено на устройстве · событий '+d.events.length+' · рев. '+d.revision;
   const recovery=body.querySelector('[data-live-recovery]');if(recovery)recovery.hidden=!saveFailure;
   const net=body.querySelector('[data-live-network]');if(net)net.textContent=navigator.onLine===false?'Нет сети по данным браузера · локальная запись доступна':'Сеть доступна по данным браузера';
  };
  const refreshNetwork=()=>updateSaveStatus();
- window.addEventListener('online',refreshNetwork);window.addEventListener('offline',refreshNetwork);
+ const online=()=>{refreshNetwork();if(!rehearsal&&!stopped&&!blocked)Portal.heartbeatPortal(d.teamId,d.id);};
+ window.addEventListener('online',online);window.addEventListener('offline',refreshNetwork);
  const liberoChange=async event=>{if(busy)return;const s=V.replayDetailed(d);if(V.liberoIntervalPending(d,s)){const reason=await ui.promptDialog({title:'Судейское исключение?',text:'Между записанными сменами либеро ещё не было розыгрыша. Только по фактическому решению судьи укажите причину (до 200 символов).',ok:'Записать исключение'});if(!reason)return;event={...event,exception:reason.trim()};}await perform(event,()=>selected=null);};
  const spectatorUpdate=(s,connected=true)=>{try{if(spectator&&!spectator.closed)renderSpectatorBoard(spectator.document,V.spectatorSnapshot(d,s),connected);else spectator=null;}catch{spectator=null;}};
  const spectatorOpen=()=>{try{if(!spectator||spectator.closed)spectator=window.open('','teachapp-score-'+d.id,'popup,width=1000,height=600');if(!spectator)return toast('Разрешите открытие отдельного окна');spectatorUpdate(V.replayDetailed(d));spectator?.focus?.();}catch{toast('Отдельное окно недоступно');}};
  let stopped=false;
- const stop=()=>{if(stopped)return;stopped=true;window.clearInterval(heartbeat);window.clearInterval(clockTicker);unwatch();if(spectator&&!spectator.closed)spectatorUpdate(V.replayDetailed(d),false);spectator=null;wake.stop();observer?.disconnect();window.removeEventListener('pagehide',stop);window.removeEventListener('online',refreshNetwork);window.removeEventListener('offline',refreshNetwork);};
- window.addEventListener('pagehide',stop);
+ const stop=(preserve=false)=>{if(stopped)return;stopped=true;if(!preserve)clearLiveResume(marker);window.clearInterval(heartbeat);window.clearInterval(clockTicker);unwatch();if(spectator&&!spectator.closed)spectatorUpdate(V.replayDetailed(d),false);spectator=null;wake.stop();observer?.disconnect();window.removeEventListener('pagehide',pagehide);window.removeEventListener('online',online);window.removeEventListener('offline',refreshNetwork);};
+ const pagehide=()=>stop(true);window.addEventListener('pagehide',pagehide);
+ const readCurrent=async()=>rehearsal?rehearsal.read():C.readLiveMatch(d.id);
+ const recover=async()=>{if(busy||stopped)return;busy=true;try{const current=await readCurrent();if(!current||current.id!==d.id){stop();await back();toast('Черновик отсутствует: возможно, матч уже завершён на другом экране.');return;}V.replayDetailed(current);d=current;blocked=false;saveFailure='';pointDraft=null;selected=null;nextDraft=null;historyEdit=null;section='match';publish();draw();toast('Восстановлена сохранённая ревизия '+d.revision);}catch(e){blocked=true;saveFailure=e.message||'Не удалось прочитать черновик';updateSaveStatus();toast(saveFailure);}finally{busy=false;}};
  const perform=async(event,after)=>{
-  if(busy||stopped)return;busy=true;saving=true;saveFailure='';updateSaveStatus();
+  if(busy||stopped||blocked)return;busy=true;saving=true;saveFailure='';updateSaveStatus();
   const buttons=[...body.querySelectorAll('button')].filter(x=>!x.disabled);buttons.forEach(x=>x.disabled=true);
-  try{d=await (rehearsal?rehearsal.change(d.id,d.revision,event):C.changeLiveMatch(d.id,d.revision,event));saving=false;if(event?.type!=='clock')publish();after?.();draw();}
-  catch(e){saving=false;saveFailure=e.message||'Неизвестная ошибка';updateSaveStatus();toast(saveFailure);}finally{busy=false;buttons.forEach(x=>x.disabled=false);updateSaveStatus();}
+  try{
+   let next;try{next=await (rehearsal?rehearsal.change(d.id,d.revision,event):C.changeLiveMatch(d.id,d.revision,event));}
+   catch(e){saveFailure=e.message||'Неизвестная ошибка';try{const current=await readCurrent();blocked=!current||current.id!==d.id||current.revision!==d.revision;}catch{blocked=true;}toast(saveFailure);return;}
+   d=next;saving=false;if(stopped)return;
+   try{if(event?.type!=='clock')publish();after?.();draw();}catch(e){blocked=true;saveFailure='Событие сохранено (рев. '+d.revision+'), но экран не обновился: '+e.message;toast(saveFailure);}
+  }finally{saving=false;busy=false;buttons.forEach(x=>x.disabled=false);updateSaveStatus();}
  };
  let previousBoard=null,previousOverlay='';
  function draw(){
-  const oldPositions=capturePositions(body),s=V.replayDetailed(d),last=s.timeline.at(-1),won=s.sets.filter(x=>x.ours>x.theirs).length;
+  const drawEpoch=++renderEpoch,oldPositions=capturePositions(body),s=V.replayDetailed(d),last=s.timeline.at(-1),won=s.sets.filter(x=>x.ours>x.theirs).length;
   spectatorUpdate(s);clockState=s;
   const set=s.setEnded?s.sets.length:s.sets.length+1;
   const displaySwapped=Boolean(s.endsSwapped)!==swapped,snapshot={id:d.id,set,score:{...s.score},ended:s.setEnded,finished:s.finished,order:displaySwapped,section};
   const changes=scoreChanges(previousBoard,snapshot),newSetEnd=previousBoard&&(!previousBoard.ended&&s.setEnded||!previousBoard.finished&&s.finished),rotation=previousBoard&&previousBoard.set===set&&previousBoard.order===displaySwapped&&previousBoard.section==='match'&&section==='match'&&Object.keys(changes).length>0;
   previousBoard=snapshot;
   const pre=pointDraft?.editing&&last?.before;
-  const begin=(side,editing=false)=>{pointDraft={side,editing,kind:null};selected=null;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;};
+  const begin=(side,editing=false)=>{if(busy||stopped||blocked||drawEpoch!==renderEpoch)return;pointDraft={side,editing,kind:null};selected=null;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;};
   const cancel=()=>{pointDraft=null;selected=null;scoutOpen=false;draw();};
   const courtState=pre?last.before.lineups:shown(d,s),serve=pre?last.before.serve:s.serve;
   const active=section==='match'&&!s.setEnded&&!s.finished;
@@ -243,7 +253,7 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
   const liveStatus=el('div',{class:'vp-stack','aria-label':'Состояние записи матча'},[
    el('small',{'data-live-save-status':'',role:'status'}),el('small',{'data-live-network':''}),
    !rehearsal&&Portal.portalInfo(d.teamId).data.enabled?el('small',{class:'vp-portal-live-status',role:'status',text:Portal.portalInfo(d.teamId).status}):null,
-   el('button',{type:'button',class:'btn wide','data-live-recovery':'',hidden:true,text:'Проверить сохранённый черновик',onclick:async()=>{if(busy)return;if(pointDraft&&!await ui.confirmDialog({title:'Проверить черновик?',text:'Незаписанное уточнение очка будет закрыто. Сохранённые события останутся.',ok:'Открыть центр матчей'}))return;stop();back();}})
+   el('button',{type:'button',class:'btn wide','data-live-recovery':'',hidden:true,text:'Восстановить сохранённый черновик',onclick:async()=>{if(busy)return;if(pointDraft&&!await ui.confirmDialog({title:'Восстановить черновик?',text:'Незаписанное уточнение очка будет закрыто. Сохранённые события останутся.',ok:'Восстановить'}))return;await recover();}})
   ]);body.insertBefore(liveStatus,body.children[1]);updateSaveStatus();
   for(const [side,kind] of Object.entries(changes)){const n=displayScore.querySelector('[data-score-side="'+side+'"]');if(n){animateOnce(n,kind,{duration:280});if(kind==='score')animateOnce(n.parentElement,'pulse',{duration:210});}}
   if(rotation&&!pointDraft&&!scoutOpen)animatePositions(displayScore,oldPositions);
@@ -319,8 +329,8 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
     area.append(btn('Отмена',cancel,'wide'));showOverlay(area);
    }else if(s.finished){
     body.append(p('Матч завершён'),btn(rehearsal?'Открыть тестовый протокол':'Сохранить матч и открыть протокол',async()=>{
-     if(busy||!await ui.confirmDialog({title:'Завершить матч?',text:rehearsal?'Тестовый протокол не попадёт в историю реальных матчей.':'События, счёт и статистика сохранятся в истории.',ok:'Сохранить'}))return;
-     busy=true;try{const m=await (rehearsal?rehearsal.finish(d.id,d.revision):C.finishLiveMatch(d.id,d.revision));publish({finish:true});stop();await refresh();openMatchReport(m,back,!!rehearsal);}catch(e){toast(e.message);}finally{busy=false;}
+     if(busy||blocked||stopped||!await ui.confirmDialog({title:'Завершить матч?',text:rehearsal?'Тестовый протокол не попадёт в историю реальных матчей.':'События, счёт и статистика сохранятся в истории.',ok:'Сохранить'}))return;
+     if(busy||blocked||stopped)return;busy=true;try{const m=await (rehearsal?rehearsal.finish(d.id,d.revision):C.finishLiveMatch(d.id,d.revision));publish({finish:true});stop();await refresh();openMatchReport(m,back,!!rehearsal);}catch(e){toast(e.message);}finally{busy=false;}
     },'primary wide'));
    }else if(s.setEnded){
     body.append(btn('◎ Тактическая разведка',()=>{scoutOpen=true;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;},'wide vp-scout-open'));
@@ -334,7 +344,7 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
     const {own,away,first}=nextDraft;
     body.append(el('h3',{text:'Старт следующей партии'}),p('Старт предыдущей партии скопирован. Измените нужные зоны или очистите расстановку.'),p(d.teamName),own.node,...(d.awayPlayers.length?[p(d.opponent),away.node]:[]),field('Первая подача',first),btn('Начать партию',()=>perform({type:'next',lineup:own.get(),awayLineup:d.awayPlayers.length?away.get():[],serve:first.value},()=>{selected=null;nextDraft=null;}),'primary wide'));
    }else{
-    const add=side=>{detailOpen=false;observationOpen=false;return quick?perform({type:'rally',side,kind:'point',player:null,captureMode:'quick'},()=>{selected=null;}):begin(side);};
+    const add=side=>{if(busy||stopped||blocked||drawEpoch!==renderEpoch)return;detailOpen=false;observationOpen=false;if(!quick)return begin(side);const now=performance.now();if(now-lastQuickAt<350)return;lastQuickAt=now;return perform({type:'rally',side,kind:'point',player:null,captureMode:'quick'},()=>{selected=null;});};
     const pointButton=side=>el('button',{type:'button',class:'btn '+(side==='ours'?'vp-ours':'vp-theirs'),onclick:()=>add(side),'aria-label':'Очко '+sideName(d,side)},[el('strong',{text:'+1'}),el('span',{text:sideName(d,side)})]);
     const undo=el('button',{type:'button',class:'btn vp-undo',text:'↶','aria-label':'Отменить последнее событие',disabled:!d.events.length,onclick:()=>perform(null,()=>{selected=null;pointDraft=null;})});
     const points=el('div',{class:'vp-actions vp-points vp-board-points'},[pointButton(order[0]),undo,pointButton(order[1])]);
@@ -381,7 +391,7 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
   const undo=btn('Отменить последнее событие',()=>{if(d.events.length)perform(null,()=>{selected=null;pointDraft=null;});},'wide');undo.disabled=!d.events.length;
   if(!active){if(section==='match')body.querySelector('.vp-match-head').append(undo);else body.append(undo);}
   const liveColors=colorFields(palette,d.boardLogos);
-  const saveColors=btn('Сохранить оформление',async()=>{if(busy)return;busy=true;saveColors.disabled=true;try{d=await (rehearsal?rehearsal.colors(d.id,d.revision,liveColors.get(),liveColors.getLogos()):C.changeLiveColors(d.id,d.revision,liveColors.get(),liveColors.getLogos()));publish();draw();}catch(e){toast(e.message);}finally{busy=false;saveColors.disabled=false;}},'wide');
+  const saveColors=btn('Сохранить оформление',async()=>{if(busy||blocked||stopped)return;busy=true;saveColors.disabled=true;try{d=await (rehearsal?rehearsal.colors(d.id,d.revision,liveColors.get(),liveColors.getLogos()):C.changeLiveColors(d.id,d.revision,liveColors.get(),liveColors.getLogos()));publish();draw();}catch(e){toast(e.message);}finally{busy=false;saveColors.disabled=false;}},'wide');
   const wakeBtn=btn(wake.enabled?'Экран: не выключать':'Экран: обычный режим',async()=>{if(busy)return;wakeBtn.disabled=true;const requested=!wake.enabled;const enabled=await wake.toggle();wakeBtn.textContent=enabled?'Экран: не выключать':'Экран: обычный режим';wakeBtn.setAttribute('aria-pressed',String(enabled));wakeBtn.disabled=false;if(requested&&!enabled)toast('Не удалось удерживать экран. Проверьте настройки браузера или энергосбережение.');},'wide');wakeBtn.setAttribute('aria-pressed',String(wake.enabled));
   const publicInfo=rehearsal?{data:{enabled:false}}:Portal.portalInfo(d.teamId),paused=publicInfo.data.publisherPaused||publicInfo.conflict,publicActive=!paused&&publicInfo.data.activeId===d.id;
   const menu=el('details',{class:'vp-match-more'},[el('summary',{text:'Управление матчем · черновик сохранён'}),
@@ -389,10 +399,10 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
    wake.supported?wakeBtn:p('Удержание экрана недоступно в этом браузере.'),btn('Зрительское табло · отдельное окно',spectatorOpen,'wide'),p('Только счёт и команды. На ПК можно захватить окно в OBS. При выходе показывается последний счёт.'),liveColors.node,saveColors,
    p('Замены: '+(d.substitutionMode==='paired'?'парные':'упрощённые')+' · Событий: '+d.events.length),
    btn('Выйти · черновик сохранён',async()=>{if(busy)return;if(s.courtClock.running&&!await ui.confirmDialog({title:'Учёт времени продолжается',text:'Время продолжит начисляться текущему составу и после выхода. Чтобы остановить его, вернитесь и нажмите «Пауза времени».',ok:'Выйти'}))return;stop();back();},'wide'),
-   btn('Удалить черновик',async()=>{if(busy||!await ui.confirmDialog({title:'Удалить черновик?',text:'Вся история этого матча будет удалена.',ok:'Удалить',danger:true}))return;busy=true;try{await (rehearsal?rehearsal.discard(d.id,d.revision):C.discardLiveMatch(d.id,d.revision));publish({discard:true});stop();back();}catch(e){toast(e.message);}finally{busy=false;}},'wide')]);
+   btn('Удалить черновик',async()=>{if(busy||blocked||stopped||!await ui.confirmDialog({title:'Удалить черновик?',text:'Вся история этого матча будет удалена.',ok:'Удалить',danger:true}))return;if(busy||blocked||stopped)return;busy=true;try{await (rehearsal?rehearsal.discard(d.id,d.revision):C.discardLiveMatch(d.id,d.revision));publish({discard:true});stop();back();}catch(e){toast(e.message);}finally{busy=false;}},'wide')]);
   body.append(menu);
  }
- draw();const sheet=openSheet(body,{fullHeight:true,match:true,onClose:stop});
+ draw();const sheet=openSheet(body,{fullHeight:true,match:true,onClose:()=>stop()});marker=rememberLive(d,!!rehearsal);
  if(typeof MutationObserver==='function'){observer=new MutationObserver(()=>{if(!body.isConnected||!sheet.classList.contains('show'))stop();});observer.observe(sheet,{childList:true,attributes:true,attributeFilter:['class']});}
 }
 function table(headers,rows){

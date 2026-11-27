@@ -172,3 +172,20 @@ test('all archive mutations share one in-tab lock, cancellation and failure rele
   assert.equal(await P.publishExtendedResult(id,row,{fetcher,confirm:()=>false}),false);
  }finally{P.disconnectPortal(id);if(previous)Object.defineProperty(globalThis,'localStorage',previous);else delete globalThis.localStorage;}
 });
+
+test('LIVE retries a lost acknowledged PUT without conflict or extra point, then respects pause',async()=>{
+ server=null;const map=new Map();globalThis.localStorage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};
+ const id='lost-live-ack',start=new Date('2026-11-27T12:00:00Z').getTime(),players=Array.from({length:6},(_,i)=>({id:'a'+i,number:i+1,name:'Player '+i}));
+ let lose=false;const flaky=async(url,opts={})=>{const response=await fake(url,opts);if(lose&&opts.method==='PUT'){lose=false;throw Error('connection dropped after commit');}return response;};
+ try{
+  await P.connectPortal(id,{origin,apiKey,email:'trainer@example.org',password:'password',slug:'lost',team:'Команда'},flaky);P.setPortalEnabled(id,true,'Команда');await wait(()=>server?.team==='Команда'&&!P.portalInfo(id).dirty&&!P.portalInfo(id).data.pendingWrite);
+  let d={id:'live-loss',teamId:id,date:localDay(start),mode:'dual',teamName:'Команда',opponent:'Гости',competition:'',venue:'',startedAt:new Date(start).toISOString(),ourPlayers:players,awayPlayers:[],roster:players.map(p=>p.id),lineup:players.map(p=>p.id),awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours',events:[]};
+  P.syncPortalMatch(d,{start:true});await wait(()=>server?.match?.score.ours===0&&!P.portalInfo(id).data.pendingWrite);
+  const {detailEvent}=await import('../js/match-protocol.js');d=detailEvent(d,{type:'rally',side:'ours',kind:'point'});lose=true;P.syncPortalMatch(d);
+  await wait(()=>server?.match?.score.ours===1&&P.portalInfo(id).dirty&&P.portalInfo(id).data.pendingWrite);
+  assert.equal(P.heartbeatPortal(id,d.id),true);
+  await wait(()=>!P.portalInfo(id).dirty&&!P.portalInfo(id).data.pendingWrite);
+  assert.equal(server.match.score.ours,1);assert.equal(server.match.events.length,1);assert.equal(P.portalInfo(id).conflict,false);
+  P.pausePortalPublisher(id);const n=calls.length;assert.equal(P.heartbeatPortal(id,d.id),false);assert.equal(calls.length,n);
+ }finally{P.disconnectPortal(id);}
+});

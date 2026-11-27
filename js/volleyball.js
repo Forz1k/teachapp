@@ -106,3 +106,9 @@ export function rehearsalStore(storage=globalThis.localStorage,locks=globalThis.
   finish:(id,revision)=>locked(()=>{const d=current(id,revision),state=replayDetailed(d);assert(state.finished,'Сначала завершите матч по партиям');return {id:d.id,teamId:d.teamId,date:d.date,opponent:d.opponent,competition:d.competition,sets:state.sets,roster:d.roster,stats:state.stats,detail:d};})
  };
 }
+
+// Only the current tab's navigation hint; the event log remains authoritative.
+export const liveResumeKey='teachapp.live.resume.v1';
+export function readLiveResume(storage){try{const v=JSON.parse((storage??globalThis.sessionStorage).getItem(liveResumeKey)||'null');return v&&typeof v.id==='string'&&v.id.length<=200&&typeof v.teamId==='string'&&v.teamId.length<=200&&typeof v.token==='string'&&v.token.length<=200&&typeof v.rehearsal==='boolean'&&v.rehearsal===(v.teamId==='test-rehearsal')?v:null;}catch{return null;}}
+export function rememberLive(d,rehearsal,storage){try{const v={id:d.id,teamId:d.teamId,rehearsal:!!rehearsal,token:globalThis.crypto.randomUUID()};(storage??globalThis.sessionStorage).setItem(liveResumeKey,JSON.stringify(v));return v;}catch{return null;}}
+export function clearLiveResume(marker,storage){if(!marker)return;try{const s=storage??globalThis.sessionStorage;if(readLiveResume(s)?.token===marker.token)s.removeItem(liveResumeKey);}catch{}}

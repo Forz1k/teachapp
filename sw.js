@@ -1,4 +1,4 @@
-const VERSION = 'v6.0.4';
+const VERSION = 'v6.0.5';
 const PREFIX = `teachapp:${self.registration.scope}:`;
 const CACHE = PREFIX + VERSION;
 

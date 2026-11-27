@@ -65,6 +65,10 @@ export function validateCoachData(data){
   validateCoachTests(data);
   return data;
 }
+export async function readLiveMatch(id){const d=await db.get('coachLive',id);if(d)replay(d);return d||null;}
+export async function listLiveMatches(){return db.getAll('coachLive');}
+// One atomic write/delete probe. No committed dummy record or change to real data.
+export async function probeLiveStorage(){const id=uid('live-probe');await db.transaction(['coachLive'],'readwrite',async s=>{await s.coachLive.add({id});await s.coachLive.delete(id);});return true;}
 export async function loadCoach(){
   return db.readSnapshot(coachStores);
 }

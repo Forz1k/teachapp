@@ -17,6 +17,7 @@ import { renderSettings, applyTheme, openExportSheet } from './screens/settings.
 import {openWorkspaceSearch} from './screens/search.js';
 import {openStudentSheet} from './screens/journal.js';
 import * as C from './coach.js';
+import {readLiveResume,clearLiveResume,rehearsalStore} from './volleyball.js';
 import {openCoachSearchResult} from './screens/coach.js';
 import {readNavigation,saveNavigation,coachRoutes,schoolRoutes} from './design.js';
 import {animateOnce} from './motion.js';
@@ -292,8 +293,9 @@ async function boot() {
   });
   try{syncSession=await openSyncSession();}catch{/* Manual sync remains available. */}
   await store.load();
-  await maybeAutoSync(true);
-  const shortcut=location.hash.slice(1);
+  const shortcut=location.hash.slice(1),resume=shortcut?null:readLiveResume();
+  // Never run startup sync before restoring an interrupted LIVE screen.
+  if(!resume)await maybeAutoSync(true);
   if(shortcut==='coach')navigation=saveNavigation({...navigation,workspace:'coach'});
   else if(shortcut==='journal'||shortcut==='quick')navigation=saveNavigation({...navigation,workspace:'school',school:shortcut==='journal'?'journal':'today'});
   if(['coach','journal','quick'].includes(shortcut))history.replaceState(null,'',location.pathname+location.search);
@@ -305,6 +307,16 @@ async function boot() {
     else render();
   });
   render();
+  if(resume){
+   const restore=async()=>{if(document.body.classList.contains('privacy-covered'))return;window.removeEventListener('teachapp:privacy-visibility',restore);try{
+    if(readLiveResume()?.token!==resume.token||ui.isSheetOpen())return;
+    if(resume.rehearsal){const test=rehearsalStore(),draft=test.read();if(!draft||draft.id!==resume.id){clearLiveResume(resume);return;}const M=await import('./screens/match-protocol.js');if(document.body.classList.contains('privacy-covered'))return;M.openDetailedMatch(draft,M.openRehearsal,()=>{},test);}
+    else{const draft=await C.readLiveMatch(resume.id);if(!draft||draft.teamId!==resume.teamId||draft.mode!=='dual'){clearLiveResume(resume);return;}const {data}=await C.loadCoachForView(resume.teamId,{archived:true}),team=data.coachTeams.find(t=>t.id===resume.teamId);if(!team){clearLiveResume(resume);return;}const M=await import('./screens/match-protocol.js'),V=await import('./screens/volleyball.js');if(document.body.classList.contains('privacy-covered')||ui.isSheetOpen())return;setCoachSection('matches');M.openDetailedMatch(draft,()=>V.openMatchCenter(team,render),render);}
+    ui.toast('LIVE восстановлен из сохранённого черновика. Проверьте фактический счёт.');
+   }catch(e){clearLiveResume(resume);ui.toast('Автовосстановление не выполнено: '+e.message+'. Откройте сохранённые матчи.');}};
+   if(document.body.classList.contains('privacy-covered'))window.addEventListener('teachapp:privacy-visibility',restore);else await restore();
+  }
+  window.addEventListener('pageshow',e=>{if(e.persisted&&readLiveResume())location.reload();});
   installPrivacyShield({cover:()=>ui.coverPrivacy()});
   window.addEventListener('storage',e=>{if(e.key==='teachapp.screen-lock.v1'&&screenLockEnabled())ui.coverPrivacy();});
   window.addEventListener('online',()=>{clearAutoRetry(true);autoAttempt=0;syncHint='';updateSyncIndicator();void maybeAutoSync();});

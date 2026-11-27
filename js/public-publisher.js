@@ -56,7 +56,7 @@ async function flush(e){
      // Keep the exact outgoing projection before network I/O. If the tab
      // closes before acknowledgement, reconnect can recognize this write.
      const prior=e.data.pendingWrite;
-     if(prior&&prior.expected===expected&&!samePortalContent(prior.data,desired)){
+     if(prior&&prior.expected===expected){
       const version=await client.readVersion();
       if(e.epoch!==epoch||isPaused(e))return;
       if(samePortalContent(version.data,prior.data)){e.data.confirmedEtag=version.etag;e.data.pendingWrite=null;}
@@ -186,7 +186,7 @@ export function syncPortalMatch(match,{start=false,finish=false,discard=false}={
  }
  save(e);enqueue(e);return true;
 }
-export function heartbeatPortal(id,matchId){const e=entry(id);if(!isPaused(e)&&e.data.enabled&&e.data.activeId===matchId&&e.data.match&&['live','break'].includes(e.data.match.status))enqueue(e);}
+export function heartbeatPortal(id,matchId){const e=entry(id);if(!isPaused(e)&&!e.conflict&&e.data.enabled&&e.data.activeId===matchId&&e.data.match&&['live','break'].includes(e.data.match.status)){enqueue(e);return true;}return false;}
 export function setPublicTeamName(id,team){const e=entry(id);ensurePublishingAllowed(e);const name=String(team).trim().slice(0,100);if(!name)throw Error('Укажите публичное название');e.data.team=name;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
 export function stopPortalMatch(id){const e=entry(id);ensurePublishingAllowed(e);e.data.activeId=null;e.data.match=null;e.data.settings.auto=false;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
 

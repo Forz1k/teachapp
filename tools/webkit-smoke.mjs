@@ -325,7 +325,7 @@ try{
   assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events[0].assist),'test-a-2');
   await rehearsalContext.setOffline(false);
   await rp.reload();await rp.locator('.workspace-nav').waitFor();
-  await open();await rp.getByRole('button',{name:'Продолжить / открыть тест',exact:true}).click();
+  await rp.locator('.vp-board-points').waitFor(); // same-tab automatic recovery
   await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
   assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events[0].assist),'test-a-2');
   await rp.locator('.vp-undo').click();await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='0');
