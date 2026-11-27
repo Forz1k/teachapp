@@ -1362,6 +1362,8 @@ return {get state(){return state;},revoke,
 }
 
 const native=buildSchoolStore(nativeDb,{allowFullBackup:true});
+// Terminal for this document only. A reload starts with a new store instance.
+export const revokeNativeView=()=>native.revoke();
 export const {state,
   subscribe,notify,load,studentsOfClass,lessonsOfClass,lessonsInRange,trimester,
   currentTrimester,actualSchoolPeriod,refreshSchoolPeriod,selectSchoolPeriod,markMap,exemptionsOfStudent,activeExemption,

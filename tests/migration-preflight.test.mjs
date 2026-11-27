@@ -44,7 +44,7 @@ test('Native migration screening rejects changed store/index definitions and fai
   req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
  });
  try{const tx=db.transaction(Object.keys(SCHEMA),'readonly');assert.throws(()=>assertMigrationSchema(tx),{name:'MigrationSchemaError'});}finally{db.close();}
- for(const name of ['VersionError','NotFoundError','MigrationSchemaError']){
+ for(const name of ['VersionError','NotFoundError','MigrationSchemaError','NativeStorageFencedError']){
   const res=await inspectLocalMigration({readBounded:async()=>{throw new DOMException('PRIVATE',name);},secure:true,webLocks:true});
   assert.deepEqual(res,{records:null,bytes:null,checkpoints:null,blockers:['schema'],warnings:[],activationAllowed:false});
  }

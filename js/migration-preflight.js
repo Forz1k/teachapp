@@ -49,7 +49,7 @@ export function inspectMigrationSnapshot(raw,{estimate=null,secure=false,webLock
 export async function inspectLocalMigration({load,readBounded=readBoundedSnapshot,storage=globalThis.navigator?.storage,secure=!!globalThis.crypto?.subtle,webLocks=typeof globalThis.navigator?.locks?.request==='function'}={}){
  let snapshot;
  try{snapshot=load?{data:await load()}:await readBounded(migrationLabLimits.records);}
- catch(e){if(['MigrationSchemaError','NotFoundError','VersionError'].includes(e?.name))return {records:null,bytes:null,checkpoints:null,blockers:['schema'],warnings:[],activationAllowed:false};throw e;}
+ catch(e){if(['MigrationSchemaError','NotFoundError','VersionError','NativeStorageFencedError'].includes(e?.name))return {records:null,bytes:null,checkpoints:null,blockers:['schema'],warnings:[],activationAllowed:false};throw e;}
  if(snapshot.data===null){
   const blockers=['record-limit'];if(!secure)blockers.push('crypto-unavailable');if(!webLocks)blockers.push('locks-unavailable');
   return {records:snapshot.records,bytes:null,checkpoints:null,blockers,warnings:['snapshot-not-loaded'],activationAllowed:false};

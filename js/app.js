@@ -1,6 +1,8 @@
 /* app.js — точка входа: маршрутизация между табами, инициализация, service worker. */
 
 import * as store from './store.js';
+import {NATIVE_STORAGE_FENCED_EVENT} from './db.js';
+import {scrubPrivateDocument} from './vault-owner-lifecycle.js';
 import {displayClassName} from './model.js';
 import * as ui from './ui.js';
 import { renderAnalytics } from './screens/analytics.js';
@@ -39,6 +41,10 @@ const TABS = [
 
 const appRoot = document.getElementById('app');
 let tabbarEl = null;
+let storageRevoked=false;
+window.addEventListener(NATIVE_STORAGE_FENCED_EVENT,()=>{
+ if(storageRevoked)return;storageRevoked=true;store.revokeNativeView();scrubPrivateDocument();location.reload();
+});
 let syncSession=null,autoBusy=false,autoAttempt=0;
 let syncHint='',autoRetryTimer=null,autoRetryCount=0;
 function clearAutoRetry(reset=false){if(autoRetryTimer!==null)clearTimeout(autoRetryTimer);autoRetryTimer=null;if(reset)autoRetryCount=0;}
@@ -84,6 +90,7 @@ const routeKey = () => [store.state.currentTab,store.state.currentTab==='coach'?
 
 /** Перерисовка текущего таба. Вызывается на любое изменение состояния. */
 function render() {
+ if(storageRevoked)return;
   if (!store.state.ready) return;
 
   const route = routeKey();
@@ -280,7 +287,7 @@ async function boot() {
     const meta = await db.get('meta', 'settings');
     applyTheme(meta?.theme || 'auto');
   } catch (error) {
-    if (error?.name === 'DatabaseBlockedError') throw error;
+    if (['DatabaseBlockedError','NativeStorageFencedError'].includes(error?.name)) throw error;
     applyTheme('auto');
   }
 
@@ -388,7 +395,9 @@ function registerServiceWorker() {
 
 boot().catch((err) => {
   console.error('[teachapp] ошибка запуска');
-  const message = err?.name === 'DatabaseBlockedError'
+  const message = err?.name === 'NativeStorageFencedError'
+    ? 'Версия локального хранилища изменилась. Эта сборка не открывает новую или зашифрованную базу. Не очищайте данные браузера; используйте совместимую версию и проверенную копию.'
+    : err?.name === 'DatabaseBlockedError'
     ? 'Обновление локальной базы заблокировано. Закройте другие вкладки и окна TeachApp, затем перезагрузите страницу. Не очищайте данные браузера.'
     : 'Не удалось запустить приложение. Попробуйте перезагрузить страницу. Не очищайте данные браузера без резервной копии.';
   appRoot.replaceChildren(el('div',{class:'empty',role:'alert'},[el('p',{text:message}),el('button',{class:'btn',type:'button',text:'Перезагрузить',onclick:()=>location.reload()})]));

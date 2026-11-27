@@ -98,9 +98,13 @@ const migrations = {
 
 let _db = null;
 let _opening = null;
+let nativeFenced = false;
+export const NATIVE_STORAGE_FENCED_EVENT='teachapp:native-storage-fenced';
+const fencedError=()=>new DOMException('Версия локального хранилища изменилась. Повторный доступ в этом документе запрещён.','NativeStorageFencedError');
 
 /** Открывает базу. Параллельные обращения используют один запрос IndexedDB. */
 export function open() {
+  if(nativeFenced)return Promise.reject(fencedError());
   if (_db) return Promise.resolve(_db);
   if (_opening) return _opening;
   const pending = new Promise((resolve, reject) => {
@@ -123,16 +127,23 @@ export function open() {
       const connection = req.result;
       if (blocked) { connection.close(); return; }
       _db = connection;
-      connection.onversionchange = () => {
+      connection.onversionchange = event => {
         connection.close();
         if (_db === connection) _db = null;
+        if(event?.newVersion===null||event?.newVersion>DB_VERSION){
+          nativeFenced=true;
+          globalThis.window?.dispatchEvent(new Event(NATIVE_STORAGE_FENCED_EVENT));
+        }
       };
       connection.onclose = () => {
         if (_db === connection) _db = null;
       };
       resolve(connection);
     };
-    req.onerror = () => reject(req.error);
+    req.onerror = () => {
+      if(req.error?.name==='VersionError'){nativeFenced=true;reject(fencedError());}
+      else reject(req.error);
+    };
   });
   _opening = pending.finally(() => { _opening = null; });
   return _opening;

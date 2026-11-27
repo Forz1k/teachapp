@@ -77,3 +77,5 @@ RC3: отдельный device-local LAB v3 репетирует сохране�
 RC3: общая команда синхронизации проверена с фиксированным backend device-local LAB; production auto-sync/UI и независимая эксплуатационная приёмка остаются открытыми.
 
 RC3: WebKit репетирует штатный экран журнала и тренерскую команду через all-key device-local LAB без native fallback; проверка не закрывает production UI bootstrap, отзыв уже отданных данных и физические акты.
+
+RC3: явный owner login и terminal key lifecycle в изолированной WebKit репетиции; native версия v10 fail-closed при новой схеме. Это не активация реальной миграции и не закрытие ручных актов.

@@ -135,13 +135,15 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
   const normalized=normalizeEndpoint(endpoint),host=new URL(normalized).hostname;
   check(host.endsWith('.invalid')||['localhost','127.0.0.1','[::1]'].includes(host),'Разрешён только синтетический адрес LAB');return normalized;
  };
- const deviceAccess=(passwords,stillAllowed,{allowCheckpointWrite=true}={})=>{
+ const deviceAccess=(passwords,stillAllowed,{allowCheckpointWrite=true,read=null,seal=null}={})=>{
   check(deviceLocal&&typeof stillAllowed==='function','Требуется device-local LAB');
   const guard=()=>check(stillAllowed(),'Сеанс синхронизации LAB заблокирован');
+  const readCurrent=read||(()=>authenticate(passwords,guard));
+  const sealCurrent=seal||((parts,bundleId,selected)=>sealAll(parts,bundleId,passwords,selected));
   return Object.freeze({
-   async dumpAll(){return (await authenticate(passwords,guard)).data;},
+   async dumpAll(){guard();const {data}=await readCurrent();guard();return data;},
    async transaction(names,mode,fn){
-    guard();const {snapshot,parts,device,data}=await authenticate(passwords,guard);
+    guard();const {snapshot,parts,device,data}=await readCurrent();
     const prepared=await prepareSchemaSnapshotTransactionLab(data,names,mode,fn,{guard,isOpen:stillAllowed,deviceLocal:true});guard();
     if(mode==='readwrite'){
      const separated=splitDeviceSnapshot(prepared.data),next=split(separated.portable);
@@ -150,7 +152,7 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
      const previous={...parts,workspace:{...parts.workspace,deviceMeta:device}};
      next.workspace={...next.workspace,deviceMeta:separated.device};
      const selected=scopes.filter(s=>!samePartitionSnapshotLab(next[s],previous[s]));
-     const after=await sealAll(next,snapshot.pointer.bundleId,passwords,selected);guard();
+     const after=await sealCurrent(next,snapshot.pointer.bundleId,selected);guard();
      await using(db=>commitRotation(db,snapshot,after,selected,guard));guard();
     }
     return prepared.result;
@@ -164,11 +166,39 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
   // the shipped db.js, no raw open(), no general mutation of checkpoint state.
   async openOwnerAppRehearsal({passwords,synthetic=false,stillAllowed=()=>true}){
    check(deviceLocal&&synthetic===true&&passwordsOK(passwords)&&typeof stillAllowed==='function','Требуется синтетическая репетиция владельца');
-   const secrets={...passwords};let closed=false;
-   const permitted=()=>!closed&&stillAllowed(),backend=deviceAccess(secrets,permitted,{allowCheckpointWrite:false});
-   const close=()=>{closed=true;for(const s of scopes)secrets[s]=undefined;};
+   let closed=false;const keys={};
+   const permitted=()=>!closed&&stillAllowed();
+   const guard=()=>check(permitted(),'Сеанс приложения LAB закрыт');
+   const close=()=>{closed=true;for(const s of scopes){keys[s]?.close();delete keys[s];}};
+   let bundleId;
+   try{
+    guard();const initial=await current(scopes);bundleId=initial.pointer.bundleId;
+    // Keep only non-exportable password-equivalent WebCrypto handles, not
+    // the entered password strings. Each operation rechecks fresh ciphertext.
+    for(const scope of scopes){
+     const key=await openPartitionKeySessionLab({scope,bundleId,password:passwords[scope],rows:initial.rows[scope],assertActive:guard});
+     try{guard();keys[scope]=key;}catch(e){key.close();throw e;}
+    }
+   }catch(e){close();throw e;}finally{passwords=undefined;}
+   const read=async()=>{
+    try{
+     guard();const snapshot=await current(scopes),parts={};let device=[];
+     check(snapshot.pointer.bundleId===bundleId,'Набор LAB изменился');
+     for(const scope of scopes){
+      guard();const opened=unpack(await keys[scope].read(snapshot.rows[scope]),scope);parts[scope]=opened.part;if(scope==='workspace')device=opened.device;
+     }
+     const data=joinDeviceSnapshot(join(parts),device);guard();return {snapshot,parts,device,data};
+    }catch(e){close();throw e;}
+   };
+   const seal=async(parts,id,selected)=>{
+    try{guard();check(id===bundleId,'Набор LAB изменился');const rows={};
+     for(const scope of selected){guard();rows[scope]=await keys[scope].seal(withMeta(scope,bundleId,parts[scope]));}
+     guard();return rows;
+    }catch(e){close();throw e;}
+   };
+   const backend=deviceAccess(undefined,permitted,{allowCheckpointWrite:false,read,seal});
    try{await backend.dumpAll();}catch(e){close();throw e;}
-   const access=createDataAccess(async(names,mode,fn)=>{check(permitted(),'Сеанс приложения LAB закрыт');return backend.transaction(names,mode,fn);});
+   const access=createDataAccess(async(names,mode,fn)=>{guard();return backend.transaction(names,mode,fn);});
    return Object.freeze({...access,close,isClosed:()=>closed,
     async readBoundedSnapshot(limit){
      check(Number.isSafeInteger(limit)&&limit>=0,'Некорректный лимит');

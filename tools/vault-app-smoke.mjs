@@ -26,17 +26,42 @@ try{
  const dbPath=origin+'/js/db.js';
  // Query-qualified real module exports schema/contract only. The app and all
  // its dependencies import this intercepted module at the canonical URL.
+ const channelName='teachapp-owner-app-lab-'+id;
  const bridge=`
- import {SCHEMA,createDataAccess,assertMigrationSchema} from './db.js?native-schema';
- export {SCHEMA,createDataAccess,assertMigrationSchema};
- let closed=false,pending;
- const session=()=>{if(closed)throw Error('LAB backend closed');return pending??=import('/tools/prototypes/vault-partitioned-lab.mjs').then(({partitionedVaultLab})=>partitionedVaultLab(${JSON.stringify(id)},{layout:'school-v3-device-migrated'}).openOwnerAppRehearsal({passwords:${JSON.stringify(passwords)},synthetic:true,stillAllowed:()=>!closed}));};
- export function closeLabBackend(){closed=true;pending?.then(a=>a.close()).catch(()=>{});}
- window.addEventListener('pagehide',closeLabBackend);
+ import {SCHEMA,createDataAccess,assertMigrationSchema,NATIVE_STORAGE_FENCED_EVENT} from './db.js?native-schema';
+ import {createOwnerSessionLifecycle,scrubPrivateDocument} from './vault-owner-lifecycle.js';
+ export {SCHEMA,createDataAccess,assertMigrationSchema,NATIVE_STORAGE_FENCED_EVENT};
+ const gate=createOwnerSessionLifecycle({channelName:${JSON.stringify(channelName)},openSession:async({passwords,stillAllowed})=>{
+   const {partitionedVaultLab}=await import('/tools/prototypes/vault-partitioned-lab.mjs');
+   return partitionedVaultLab(${JSON.stringify(id)},{layout:'school-v3-device-migrated'}).openOwnerAppRehearsal({passwords,synthetic:true,stillAllowed});
+ },onLock:reason=>{
+   scrubPrivateDocument();
+   if(!['pagehide','freeze','dispose'].includes(reason))location.reload();
+ }});
+ export const unlockLabBackend=passwords=>gate.unlock(passwords);
+ export const closeLabBackend=()=>gate.lockEveryTab();
  export async function open(){throw Error('Raw native DB access forbidden in LAB');}
- export async function readBoundedSnapshot(limit){return (await session()).readBoundedSnapshot(limit);}
- export const {bulkPut,get,getAll,put,del,clear,count,byIndex,transaction,clearAll,dumpAll,readSnapshot,replaceAll}=createDataAccess(async(...args)=>(await session()).transaction(...args));
+ export async function readBoundedSnapshot(limit){const names=Object.keys(SCHEMA);return gate.transaction(names,'readonly',async s=>{const records=(await Promise.all(names.map(n=>s[n].count()))).reduce((a,b)=>a+b,0);return {records,data:records>limit?null:Object.fromEntries(await Promise.all(names.map(async n=>[n,await s[n].getAll()])))}});}
+ export const {bulkPut,get,getAll,put,del,clear,count,byIndex,transaction,clearAll,dumpAll,readSnapshot,replaceAll}=createDataAccess((...args)=>gate.transaction(...args));
  `;
+ const loginScript=`
+ import {unlockLabBackend,closeLabBackend} from '/js/db.js';
+ const app=document.getElementById('app');
+ app.innerHTML='<form id="lab-login"><h1>Вход в защищённый TeachApp LAB</h1><label>Школа<input name="school" type="password" autocomplete="off" required></label><label>Тренер<input name="coach" type="password" autocomplete="off" required></label><label>Владелец<input name="workspace" type="password" autocomplete="off" required></label><button type="submit">Войти</button><p role="status"></p></form>';
+ const form=app.querySelector('form'),status=form.querySelector('[role=status]'),submit=form.querySelector('button');
+ form.addEventListener('submit',async e=>{
+  e.preventDefault();if(submit.disabled)return;submit.disabled=true;
+  const inputs=[...form.querySelectorAll('input')],passwords=Object.fromEntries(inputs.map(i=>[i.name,i.value]));inputs.forEach(i=>{i.value='';});
+  try{await unlockLabBackend(passwords);}catch{status.textContent='Не удалось открыть защищённый сеанс';submit.disabled=false;return;}
+  finally{for(const k of Object.keys(passwords))passwords[k]=undefined;}
+  app.replaceChildren();await import('/js/app.js');
+  const lock=document.createElement('button');lock.id='lab-lock';lock.textContent='Заблокировать все вкладки';lock.onclick=closeLabBackend;document.body.append(lock);
+ });
+ window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
+ `;
+ const appHtml=(await readFile(resolve(root,'index.html'),'utf8')).replace('<script type="module" src="./js/app.js"></script>','<script type="module" src="/owner-lab-login.js"></script>');
+ await context.route(origin+'/index.html',route=>route.fulfill({status:200,contentType:'text/html; charset=utf-8',body:appHtml}));
+ await context.route(origin+'/owner-lab-login.js',route=>route.fulfill({status:200,contentType:'text/javascript; charset=utf-8',body:loginScript}));
  await context.route(dbPath,route=>route.fulfill({status:200,contentType:'text/javascript; charset=utf-8',body:bridge}));
  const setup=origin+'/vault-app-setup.html';
  await context.route(setup,route=>route.fulfill({status:200,contentType:'text/html; charset=utf-8',body:'<!doctype html><title>Synthetic setup</title>'}));
@@ -57,7 +82,13 @@ try{
   await L.migratePartitionLegacyLab(id,{passwords,backupPasswords,backupFile:copy.file,saved:true,confirmed:true,deviceLocal:true});
   localStorage.setItem('teachapp.journal.view','table');
  },{id,passwords,backupPasswords});
- await page.goto(origin+'/index.html#journal');await page.locator('.workspace-nav').waitFor({timeout:90000});
+ const unlock=async(values=passwords)=>{for(const key of Object.keys(values))await page.locator('#lab-login input[name='+key+']').fill(values[key]);await page.locator('#lab-login button').click();};
+ await page.goto(origin+'/index.html#journal');await page.locator('#lab-login').waitFor();
+ assert.equal(await page.locator('.workspace-nav').count(),0);
+ assert.equal(await page.evaluate(async()=>{try{await (await import('/js/db.js')).getAll('classes');return false;}catch{return true;}}),true);
+ await unlock({...passwords,coach:'incorrect-password'});await page.getByText('Не удалось открыть защищённый сеанс').waitFor({timeout:90000});
+ assert.deepEqual(await page.locator('#lab-login input').evaluateAll(inputs=>inputs.map(i=>i.value)),['','','']);
+ await unlock();await page.locator('.workspace-nav').waitFor({timeout:90000});
  const cell=page.locator('[data-student="p"][data-lesson="l"]');
  await cell.waitFor({timeout:90000});await cell.click();
  await page.locator('.sheet.show').getByRole('button',{name:'5',exact:true}).click();
@@ -72,12 +103,20 @@ try{
   // Abort a would-be creation, rather than creating or deleting a live DB.
   const nativeAbsent=await new Promise((resolve,reject)=>{let absent=false;const q=indexedDB.open('teachapp',10);q.onupgradeneeded=()=>{absent=true;q.transaction.abort();};q.onerror=()=>absent?resolve(true):reject(q.error);q.onsuccess=()=>{q.result.close();resolve(false);};});
   const after=await lab.snapshot({passwords});
-  D.closeLabBackend();let closed=false;try{await D.getAll('classes');}catch{closed=true;}
-  return {grade:all.marks[0]?.value,history:all.workRecords.some(r=>r.kind==='gradeHistory'),team:all.coachTeams[0].name,checkpoint:after.meta.find(r=>r.id==='sync-checkpoint-school')?.revision,noCheckpoint,refused,rawDenied,nativeAbsent,closed};
+  return {grade:all.marks[0]?.value,history:all.workRecords.some(r=>r.kind==='gradeHistory'),team:all.coachTeams[0].name,checkpoint:after.meta.find(r=>r.id==='sync-checkpoint-school')?.revision,noCheckpoint,refused,rawDenied,nativeAbsent};
  },{id,passwords});
- assert.deepEqual(stored,{grade:'5',history:true,team:'Демо команда 2',checkpoint:1,noCheckpoint:true,refused:true,rawDenied:true,nativeAbsent:true,closed:true});
- await page.reload();await page.locator('.workspace-nav').waitFor({timeout:90000});
+ assert.deepEqual(stored,{grade:'5',history:true,team:'Демо команда 2',checkpoint:1,noCheckpoint:true,refused:true,rawDenied:true,nativeAbsent:true});
+ await page.locator('#lab-lock').click();await page.locator('#lab-login').waitFor({timeout:90000});
+ assert.equal(await page.locator('.workspace-nav').count(),0);assert.doesNotMatch(await page.locator('body').innerText(),/Демо Ученик/);
+ await unlock();await page.locator('.workspace-nav').waitFor({timeout:90000});
  await page.waitForFunction(()=>document.querySelector('[data-student="p"][data-lesson="l"]')?.textContent.trim()==='5',{},{timeout:90000});
+ // Broadcast a lock from an isolated same-origin peer. No passwords shared.
+ const peer=await context.newPage();try{await peer.goto(setup);await page.bringToFront();
+  // Opening the peer may already hide/lock this document. Re-authenticate if needed.
+  if(await page.locator('#lab-login').count()){await unlock();await page.locator('.workspace-nav').waitFor({timeout:90000});}
+  await peer.evaluate(name=>{const channel=new BroadcastChannel(name);channel.postMessage({kind:'lock-owner',version:1});setTimeout(()=>channel.close(),100);},channelName);
+  await page.locator('#lab-login').waitFor({timeout:90000});assert.equal(await page.locator('.workspace-nav').count(),0);
+ }finally{await peer.close();}
  assert.deepEqual(errors,[]);
  console.log('WEBKIT OWNER APP LAB PASS: actual app journal UI and coach command via encrypted backend, persisted grade/history, checkpoint isolation, denied raw/native DB and closed-session access. Not production routing.');
  await context.close();
