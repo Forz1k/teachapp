@@ -97,3 +97,7 @@ RC4: медиацентр — точный предпросмотр замены
 RC4 media draft lifecycle: explicit unread/local/published/edited status; public actions disabled until confirmed server version, duplicate publication suppressed, active sheet controls locked during operations, real Chromium local draft editor and persistence regression. This does not deploy the candidate rules or replace physical acceptance.
 
 RC4 media recovery: owner-visible public-only JSON snapshot, portal binding and SHA-256 integrity; additive recovery preview with exact ETag, no overwrites, deletion, automatic retry or truncation. Hidden portal can export but not restore until explicitly published. Checksum is not a signature. Physical acceptance remains open.
+
+## RC4: комплексный контроль кандидата
+
+`node tools/release-candidate-review.mjs SHA` — отдельный read-only снимок PR #116: проверяет draft, repository/head/base, все 12 последних push/PR запусков шести закреплённых workflow, сверяет повторное чтение CI и PR. Для успешного основного push требует три неистёкших артефакта с точным SHA, ID run, размером и SHA-256 GitHub. `automaticReviewReady` и код 0 означают только автоматические условия для review; `releaseAuthorized` всегда false, 18 ручных актов остаются pending. Код 2 — незавершённый CI, код 1 — несогласованные метаданные, отсутствующие артефакты или изменение состояния. Это проверка происхождения метаданных, не содержимого ZIP; манифест и распакованный пакет всё равно сверяются отдельно. Не публиковать артефакты в production и не выдавать снимок за разрешение владельца.
