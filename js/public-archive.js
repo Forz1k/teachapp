@@ -295,3 +295,25 @@ export async function routedArchiveWrite(route,row,value,token,etag,fetcher=fetc
  requireWritableArchive(route);
  return route.version===3?writeArchiveV3Record(route.target,row.id,value,token,etag,fetcher):writeArchiveRecord(route.target,archiveKey(row),value,token,etag,fetcher);
 }
+
+/** Read-only preflight for an operator-selected portal and a saved frozen
+ * backup. A resumed copy may have added exact records, but neither the source
+ * nor previously backed up destination records may have changed or vanished.
+ * This is not a lease: a later writer must enforce the generation on-server. */
+export async function prepareFrozenArchiveV3Copy(address,backup,{fetcher=fetch,maxRecords=5000}={}){
+ const saved=await verifyFrozenArchiveV3Backup(backup);
+ const canonical=archiveTarget(address).replace('/publicMatchArchive/','/publicTeams/');
+ if(saved.address!==canonical)throw Error('Резервная копия принадлежит другому порталу');
+ if(saved.requiresReview)throw Error('В резервной копии есть конфликты миграции');
+ const current=await captureFrozenArchiveV3Backup(canonical,{fetcher,maxRecords});
+ if(current.generation!==saved.generation)throw Error('Поколение миграции изменилось');
+ // Compare canonical verified records, not untrusted property ordering.
+ if(JSON.stringify(backupRows(backup.source))!==JSON.stringify(current.source))throw Error('Исходный архив изменился после резервирования');
+ const report=await verifyFrozenArchiveV3Backup(current);
+ if(report.requiresReview)throw Error('Обнаружены конфликты миграции');
+ const byId=new Map(current.destination.map(r=>[r.id,r]));
+ for(const previous of backupRows(backup.destination,{uniqueIds:true})){
+  if(!byId.has(previous.id)||!equalArchiveResult(previous,byId.get(previous.id)))throw Error('Целевой архив изменился после резервирования');
+ }
+ return {address:canonical,generation:current.generation,backupSha256:backup.sha256,currentSha256:current.sha256,sourceCount:report.sourceCount,destinationCount:report.destinationCount,ready:report.ready,identical:report.identical,complete:report.ready.length===0&&report.sourceCount===report.destinationCount};
+}
