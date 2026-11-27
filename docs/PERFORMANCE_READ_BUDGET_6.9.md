@@ -9,3 +9,7 @@
 ## RC5 preparation — seasonal training history index
 
 Seasonal training comparison builds a fresh method/period/player-scoped index once instead of scanning the complete training archive for each athlete. Selected sessions are sorted once by date and ID. Excluded/archived players, unknown results, adaptation and separate methods retain their former semantics; no persistent cache and no schema change. The deterministic CI fixture uses 8,000 training sessions, 80 athletes and 14 results per session, checks equality to the original per-player lookup and counts result-map enumerations (one per selected session). Milliseconds remain diagnostic synthetic measurements, not physical device acceptance.
+
+## RC5 preparation — scoped seasonal match comparison
+
+Seasonal comparisons select eligible athletes once and exclude matches with no eligible roster member before constructing indexes, reading assist events, or replaying detailed matches. Period and source filters and per-athlete result semantics remain unchanged; archived athletes are included only when requested. The deterministic regression includes 2,000 irrelevant roster records and asserts zero detailed-log accesses across the selected-position comparison. No persisted cache, storage schema change or physical-device acceptance is implied.

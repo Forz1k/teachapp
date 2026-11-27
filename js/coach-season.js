@@ -23,10 +23,15 @@ export function eligiblePlayers(players,filter={}){
 }
 export function matchComparison(view,metric,filter={}){
  if(!Object.hasOwn(matchMetrics,metric))throw Error('Неизвестный показатель');
- const matches=filteredMatches(view.matches,filter),rosters=indexPlayerRecords(matches);
+ const players=eligiblePlayers(view.players,filter);
+ if(!players.length)return [];
+ const selected=new Set(players.map(p=>p.id));
+ // A match without an eligible roster member cannot contribute to any row.
+ // Exclude it before building indexes or replaying potentially large logs.
+ const matches=filteredMatches(view.matches,filter).filter(m=>m.roster.some(id=>selected.has(id))),rosters=indexPlayerRecords(matches);
  if(metric==='pointsPer10'){
   const data=new Map(matches.filter(m=>m.detail).map(m=>[m,timedMatchPlayers(replayDetailed(m.detail))]));
-  return eligiblePlayers(view.players,filter).map(player=>{
+  return players.map(player=>{
    const roster=(rosters.get(player.id)||[]),history=[],sum={ms:0,rallies:0,points:0};let recorded=0;
    for(const m of roster){const a=data.get(m)?.get(player.id);if(!a||a.ms<=0)continue;sum.ms+=a.ms;sum.rallies+=a.rallies;sum.points+=a.points;recorded+=Number(a.rallies>0);const value=timedRate(a);if(value!==null)history.push({date:m.date,label:m.opponent,value});}
    const value=timedRate(sum);
@@ -35,11 +40,11 @@ export function matchComparison(view,metric,filter={}){
  }
  if(['setPositiveRate','setErrorRate'].includes(metric)){
   const positive=metric==='setPositiveRate',data=new Map(matches.filter(m=>m.detail?.mode==='dual').map(m=>[m,new Map(setterAnalysis([replayDetailed(m.detail).timeline]).rows.map(r=>[r.id,r]))]));
-  return eligiblePlayers(view.players,filter).map(player=>{const roster=rosters.get(player.id)||[],history=[];let attempts=0,success=0;for(const m of roster){const r=data.get(m)?.get(player.id);if(!r?.attempts||positive&&r.qualityKnown!==r.attempts)continue;const n=positive?r.positive:r.errors;attempts+=r.attempts;success+=n;history.push({date:m.date,label:m.opponent,value:100*n/r.attempts,attempts:r.attempts,success:n});}const value=percent(success,attempts);return {player,value,recorded:history.length,total:roster.length,attempts,success,eligible:attempts>=30&&history.length>=2,history:history.sort((a,b)=>a.date.localeCompare(b.date)),lower:!positive,unit:'%',sample:success+'/'+attempts+' · матчей '+history.length+'/'+roster.length};});
+  return players.map(player=>{const roster=rosters.get(player.id)||[],history=[];let attempts=0,success=0;for(const m of roster){const r=data.get(m)?.get(player.id);if(!r?.attempts||positive&&r.qualityKnown!==r.attempts)continue;const n=positive?r.positive:r.errors;attempts+=r.attempts;success+=n;history.push({date:m.date,label:m.opponent,value:100*n/r.attempts,attempts:r.attempts,success:n});}const value=percent(success,attempts);return {player,value,recorded:history.length,total:roster.length,attempts,success,eligible:attempts>=30&&history.length>=2,history:history.sort((a,b)=>a.date.localeCompare(b.date)),lower:!positive,unit:'%',sample:success+'/'+attempts+' · матчей '+history.length+'/'+roster.length};});
  }
  const assistByMatch=metric==='assists'||metric==='contribution'?new Map(matches.map(m=>[m,matchAssistCounts(m)])):null;
  const pair={serveRate:['serves','serveErrors',true],receiveRate:['receptions','receptionGood',false],attackRate:['attacks','attackKills',false]}[metric];
- return eligiblePlayers(view.players,filter).map(player=>{
+ return players.map(player=>{
   const roster=(rosters.get(player.id)||[]);
   const rows=[];let attempts=0,success=0;
   for(const m of roster){

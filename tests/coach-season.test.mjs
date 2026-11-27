@@ -81,3 +81,23 @@ test('Seasonal history index enumerates each selected session result only once, 
  const indexed=indexTestHistory(sessions,players,key,{from:'2026-09-01'});
  assert.equal(scans,40);assert.equal(indexed.get('p0').length,40);assert.equal(indexed.get('p79').length,0);
 });
+
+test('Seasonal match comparison does not read detailed logs for excluded rosters',()=>{
+ const selected=m('2026-09-02',{a:{aces:3,points:5,serves:20,serveErrors:2}},{roster:['a']});
+ let detailReads=0;
+ const excluded=m('2026-09-02',{b:{points:8},c:{points:10}},{roster:['b','c']});
+ Object.defineProperty(excluded,'detail',{get(){detailReads++;return null;}});
+ const archive=Array.from({length:2000},()=>excluded);
+ const input={...view,matches:[...archive,selected]};
+ const filter={position:'setter',from:'2026-09-01'};
+ for(const metric of ['aces','points','assists','contribution','serveRate','pointsPer10','setPositiveRate','setErrorRate']){
+  assert.deepEqual(matchComparison(input,metric,filter),matchComparison({...input,matches:[selected]},metric,filter),metric);
+ }
+ assert.equal(detailReads,0,'no log reads for archived or position-excluded rosters');
+ assert.deepEqual(matchComparison(input,'pointsPer10',{position:'missing'}),[]);
+ assert.equal(detailReads,0);
+ // Including archived athletes brings their matches back into the calculation.
+ const included=matchComparison(input,'points',{...filter,archived:true});
+ assert.equal(included.find(r=>r.player.id==='c').total,archive.length);
+ assert.equal(included.find(r=>r.player.id==='c').value,20000);
+});
