@@ -87,7 +87,7 @@ async function loadCoachForView(teamId,{archived=false}={}){
 
 // Explicit team and purpose; no fallback to a different team, no full archive scan.
 async function loadCoachTeamScope(teamId,scope){
- const scopes={center:['coachPlayers','coachLive','coachLineups'],setup:['coachPlayers','coachMatches','coachLineups'],dossier:['coachPlayers','coachTrainings','coachMatches','coachTests']};
+ const scopes={center:['coachPlayers','coachLive','coachLineups'],setup:['coachPlayers','coachMatches','coachLineups'],dossier:['coachPlayers','coachTrainings','coachMatches','coachTests'],season:['coachTrainings','coachMatches']};
  if(!str(teamId)||!Object.hasOwn(scopes,scope))throw Error('Выберите команду и область чтения');
  const names=scopes[scope];
  return db.transaction(['coachTeams',...names],'readonly',async s=>{

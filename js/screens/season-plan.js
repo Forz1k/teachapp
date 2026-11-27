@@ -35,7 +35,7 @@ function balanceSummary(label,x,unit=''){const suffix=unit?' '+unit:'';return la
 const phaseStatus={future:'Впереди',active:'Текущий этап',completed:'Завершён по календарю'};
 export async function openSeasonPlans(team){
  async function draw(){try{
-  const plans=(await W.listWork('seasonPlan')).filter(r=>r.teamId===team.id),data=await C.loadCoach(),view=C.teamView(data,team.id);
+  const plans=(await W.listWork('seasonPlan')).filter(r=>r.teamId===team.id),{data}=await C.loadCoachTeamScope(team.id,'season'),view=C.teamView(data,team.id);
   const body=el('div',{class:'coach-form'},[el('h2',{text:'Планирование сезона · '+team.name}),p('Факт: проведённые тренировки по отметке тренера; длительность из карточки тренировки, а не фактическая нагрузка спортсменки.'),team.archived?null:btn('+ План сезона',()=>form(team,null,draw),'primary')]);
   for(const plan of plans){
    const a=seasonPlanProgress(plan,view.trainings,view.matches);
