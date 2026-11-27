@@ -66,6 +66,17 @@ export function legalSubstitutions(d,s,side,out){
  return roster.filter(p=>!line.includes(p.id)&&(side!=='ours'||!liberoIds(d).includes(p.id))&&(d.substitutionMode!=='paired'||allowedPair(s.substitutionState[side],out,p.id)));
 }
 export function liberoIntervalPending(d,s){return regulationOf(d).liberoInterval==='oneRally'&&s.lastLiberoRally===s.rallyCount;}
+// Legal libero controls use the same restrictions as replay; exceptions require
+// a separate explicit referee confirmation, never an inferred authorization.
+export function legalLiberoActions(d,s){
+ if(s.finished||s.setEnded||!liberoIds(d).length)return [];
+ const exception=liberoIntervalPending(d,s),actions=[];
+ if(s.liberoFor!==null){
+  actions.push({event:{type:'libero',for:null},zone:s.lineup.indexOf(s.liberoFor)+1,exception});
+  for(const id of liberoIds(d).filter(id=>id!==s.liberoId))actions.push({event:{type:'libero',for:s.liberoFor,player:id},zone:s.lineup.indexOf(s.liberoFor)+1,exception});
+ }else for(const [i,id] of s.lineup.entries())if([1,5,6].includes(i+1)&&!(i===0&&s.serve==='ours'))for(const player of liberoIds(d))actions.push({event:{type:'libero',for:id,player},zone:i+1,exception});
+ return actions;
+}
 export function replayDetailed(d,{capturePlayer=null}={}){
  fail(d.mode==='dual'&&text(d.teamName)&&text(d.opponent)&&typeof d.competition==='string'&&d.competition.length<=200&&typeof d.venue==='string'&&d.venue.length<=200&&
    timestamp(d.startedAt)&&validRoster(d.ourPlayers)&&validRoster(d.awayPlayers)&&Array.isArray(d.roster)&&uniq(d.roster)&&
@@ -212,7 +223,26 @@ export function replayDetailed(d,{capturePlayer=null}={}){
  for(const side of sides)for(const [id,n] of assistCounts[side]){const row=s.sides[side].stats[id]??={};row.assists=n;}
  return {...s,ours:s.score.ours,theirs:s.score.theirs,stats,subs:s.subCounts.ours,courtClock:clock};
 }
+// A score correction changes exactly one recorded rally. The old attribution
+// is intentionally discarded: it must not be assigned to the other team.
+export function previewRallyCorrection(d,index,side){
+ fail(integer(index,0,d.events.length-1)&&d.events[index]?.type==='rally','Выберите розыгрыш в журнале');
+ const old=d.events[index];fail(sides.includes(side)&&side!==old.side,'Выберите другую команду, получившую очко');
+ const before=replayDetailed(d),events=[...d.events];
+ events[index]={type:'rally',at:old.at,side,kind:'point',player:null,...(old.captureMode?{captureMode:old.captureMode}:{})};
+ const next={...d,events};let after;
+ try{
+  after=replayDetailed(next);
+  const a=before.timeline.filter(e=>e.type==='rally'),b=after.timeline.filter(e=>e.type==='rally');
+  for(let i=0;i<b.length;i++){
+   if(captureIssue(b[i])&&!captureIssue(a[i]))throw Error('Последующее касание противоречит новой последовательности');
+   if(a[i].kind==='receiveError'&&a[i].side===a[i].before.serve&&b[i].side!==b[i].before.serve)throw Error('Последующая ошибка приёма противоречит новой подаче');
+  }
+ }catch(e){throw Error('Исправление несовместимо с последующими событиями: '+e.message+'. Исходный журнал не изменён. Уточните зависимые действия или отмените их последовательно.');}
+ return {draft:next,before,after};
+}
 export function detailEvent(d,event,now=new Date().toISOString()){
+ if(event?.type==='correctRally')return previewRallyCorrection(d,event.index,event.side).draft;
  if(event===null)return {...d,events:d.events.slice(0,-1)};
  let events=[...d.events];
  if(event.type==='editRally'){

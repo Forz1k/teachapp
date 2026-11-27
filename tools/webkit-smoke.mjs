@@ -331,7 +331,26 @@ try{
   await rp.locator('.vp-undo').click();await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='0');
   assert.equal(await rp.evaluate(async()=>JSON.stringify(await (await import('./js/coach.js')).loadCoach())),before);
   assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length),0);
+  // Rehearsal exercise for the new mobile bench, libero and historical score editor.
+  await rp.locator('.vp-bench-open').click();await rp.locator('[data-sub-out="test-a-1"]').click();
+  await rp.locator('[data-sub-in="test-a-7"]').click();await rp.waitForFunction(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events[0]?.in==='test-a-7');
+  await rp.locator('.vp-bench-open').click();await rp.locator('[data-sub-out="test-a-7"]').click();await rp.locator('[data-sub-in="test-a-1"]').click();
+  await rp.waitForFunction(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length===2);
+  await rp.locator('.vp-bench-open').click();await rp.locator('[data-libero-action="test-a-9"][data-libero-for="test-a-5"]').click();
+  await rp.waitForFunction(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length===3);
+  await rp.getByRole('button',{name:'Быстрый',exact:true}).click();
+  await rp.locator('.vp-points .vp-ours').click();await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
+  await rp.locator('.vp-bench-open').click();await rp.locator('[data-libero-action="return"]').click();
+  await rp.waitForFunction(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length===5);
+  await rp.getByRole('button',{name:'События',exact:true}).click();await rp.locator('[data-event-index="3"] button').click();
+  await rp.getByText('Исправить команду, получившую очко',{exact:true}).click();
+  await rp.getByRole('button',{name:/Предпросмотр: очко/}).click();
+  await rp.getByRole('button',{name:'Подтвердить исправление счёта',exact:true}).click();
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.theirs strong')?.textContent==='1');
+  assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length),5);
+  assert.equal(await rp.evaluate(async()=>JSON.stringify(await (await import('./js/coach.js')).loadCoach())),before);
   assert.deepEqual(requests,[]);
+  console.log('WEBKIT LIVE CONTROLS PASS: paired substitute and return, libero entry/return, historical score correction, no real records.');
   // Use real IndexedDB in the isolated test browser. A concurrent writer must not
   // be overwritten by the old screen. Recovery reopens the latest persisted score.
   await rp.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});

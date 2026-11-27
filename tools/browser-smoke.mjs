@@ -112,6 +112,7 @@ try{
  assert.equal(await evalJs('document.querySelector(".vp-board-score .vp-score-side").classList.contains("theirs")'),true);
  await clickText('.sheet button','↔ Сменить стороны');
  await click('.vp-score-side.ours .vp-mini-player');await ready('.vp-player-overlay');await clickText('.sheet button','Отмена');await ready('.vp-board-points');
+ await click('.vp-bench-open');await ready('[data-sub-out]');await capture('390-live-bench');await click('[data-sub-out]');await ready('[data-sub-in]');await capture('390-live-substitute');await clickText('.sheet button','Отмена');await ready('.vp-board-points');
  await click('.vp-points .vp-ours');await ready('.match-attribution');
  assert.equal(await evalJs('document.querySelector(".vp-score-side.ours strong").textContent'),'0');
  await capture('390-live-reasons');await clickText('.sheet button','Отмена');await ready('.vp-points');
