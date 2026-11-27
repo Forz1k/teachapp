@@ -97,3 +97,11 @@ export function planMediaTournament(value,tournament){
  const current=readMediaWire(value),item=readPublicTournament(tournament);
  return {previous:current.tournament||null,item,next:mediaProjection({...current,tournament:item}),changed:JSON.stringify(current.tournament||null)!==JSON.stringify(item)};
 }
+
+/** The local draft is never sent automatically; unread is not unpublished. */
+export function newsDraftStatus(draft,version){
+ const item=newsProjection(draft);
+ if(!version)return 'unknown';
+ const old=readMediaWire(version.value).news.find(n=>n.publicId===item.publicId);
+ return !old?'local':JSON.stringify(old)===JSON.stringify(item)?'published':'changed';
+}

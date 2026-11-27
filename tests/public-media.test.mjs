@@ -50,3 +50,15 @@ test('tournament preview preserves news and identifies unchanged publication',()
  assert.equal(planMediaTournament(current,t).changed,false);
  const plan=planMediaTournament(current,{...t,name:'Final'});assert.equal(plan.previous.name,'Cup');assert.equal(plan.item.name,'Final');assert.deepEqual(plan.next.news,[wireNews]);assert.equal(current.tournament.name,'Cup');
 });
+
+import {newsDraftStatus} from '../js/public-media.js';
+test('media draft statuses distinguish unread, unpublished, identical and edited projections',()=>{
+ const version={etag:'base',exists:true,value:mediaProjection({news:[wireNews]})};
+ const draft={...wireNews,id:'local',teamId:'private',kind:'publicNewsDraft'};
+ assert.equal(newsDraftStatus(draft,null),'unknown');
+ assert.equal(newsDraftStatus(draft,{etag:'empty',exists:false,value:mediaProjection(null)}),'local');
+ assert.equal(newsDraftStatus(draft,version),'published');
+ assert.equal(newsDraftStatus({...draft,title:'Edited'},version),'changed');
+ assert.equal(newsDraftStatus({...draft,publicId:'b'},version),'local');
+ assert.throws(()=>newsDraftStatus(draft,{value:{schema:2}}));
+});

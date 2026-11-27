@@ -93,3 +93,5 @@ RC4: ручное подключение нового Delta v3 контура в
 RC4: HTTPS source fence и pinned v3 destination gate, атомарный переключатель v11, блокировка до отдельной активации, finalize и signed rollback до активации. Физическая инвентаризация, эксплуатационная конфигурация и реальный cutover открыты.
 
 RC4: медиацентр — точный предпросмотр замены новости, сравнение с текущей публикацией, полный список игр турнира с датой и временем, привязка подтверждения к исходной версии, отсутствие повторной записи неизменённой публикации. Production и ручная приёмка открыты.
+
+RC4 media draft lifecycle: explicit unread/local/published/edited status; public actions disabled until confirmed server version, duplicate publication suppressed, active sheet controls locked during operations, real Chromium local draft editor and persistence regression. This does not deploy the candidate rules or replace physical acceptance.

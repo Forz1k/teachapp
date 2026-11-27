@@ -106,6 +106,15 @@ try{
  await clickText('button','Тактическая доска');await ready('.tactic-board');await capture('390-tactics');await closeSheet();
  await nav('Тренировки');await clickText('button','План сезона и недельные циклы');await ready('.sheet.show');await clickText('.sheet button','+ План сезона');await clickText('.sheet button','Сохранить план');await wait(()=>evalJs('document.querySelector(".sheet.show")?.textContent.includes("Недельные циклы")'),'season saved');await capture('390-season-plan');await closeSheet();
  await nav('Команда');await ready('.player-directory-row');await click('.player-directory-row');await ready('.player-profile');await sleep(320);await capture('390-player');await closeSheet();
+ // Media center: real local editor; public actions are disabled until a server version is available.
+ await evalJs('(async()=>{const C=await import("./js/coach.js"),M=await import("./js/screens/public-media.js");await M.openMediaCenter((await C.loadCoach()).coachTeams[0],()=>{});return true})()');
+ await wait(()=>evalJs('document.querySelector(".sheet.show")?.textContent.includes("Медиацентр команды")'),'media center');
+ await clickText('.sheet button','+ Новость');await ready('[aria-label="Заголовок новости"]');
+ await evalJs(`(()=>{document.querySelector('[aria-label="Заголовок новости"]').value='Демо-новость';document.querySelector('[aria-label="Текст новости"]').value='Публичный тестовый текст';return true})()`);
+ await clickText('.sheet button','Сохранить локально');await wait(()=>evalJs('document.querySelector(".sheet.show")?.textContent.includes("Демо-новость")'),'saved media draft');
+ assert.equal(await evalJs('Array.from(document.querySelectorAll(".sheet button")).find(b=>b.textContent==="Предпросмотр и публикация").disabled'),true);
+ assert.equal(await evalJs('(async()=>{const W=await import("./js/workbench.js");return (await W.listWork("publicNewsDraft")).some(x=>x.title==="Демо-новость")})()'),true);
+ await capture('390-media-draft');await closeSheet();
  await nav('Матчи');await ready('.match-history');await capture('390-match-history');
  // The test match uses the production screen/engine but must not alter production IndexedDB or publish.
  const coachBefore=await evalJs('(async()=>{const C=await import("./js/coach.js");return JSON.stringify(await C.loadCoach())})()');
