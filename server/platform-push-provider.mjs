@@ -66,7 +66,9 @@ export async function deliverProviderPush({subscription,policy,keyPair,contact,n
  const ttl=Math.min(86400,Math.floor((expiry-t)/1000));if(ttl<1)return invalid();
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),Math.min(timeoutMs,Math.max(1,sendBefore-t)));
  try{
-  const response=await fetcher(sub.endpoint,{method:'POST',headers:{Authorization:authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:String(ttl),Urgency:'normal',Topic:'teachapp-workspace-update'},body,redirect:'error',signal:controller.signal});
+  const response=await fetcher(sub.endpoint,{method:'POST',headers:{Authorization:authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:String(ttl),Urgency:'normal',Topic:'teachapp-workspace-update'},body,redirect:'manual',signal:controller.signal});
+  // workerd only supports manual/follow; never forward subscription credentials to Location.
+  if(response?.status>=300&&response.status<400)return {outcome:'rejected',retryAfter:null};
   const after=clock();
   return classifyPushResponseLab(response,{now:Math.floor((after??t)/1000),ttl:after===null?0:Math.max(0,Math.floor((expiry-after)/1000))});
  }catch(e){
