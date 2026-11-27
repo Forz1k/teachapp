@@ -35,3 +35,11 @@ test('season rankings count explicit assists only and contribution never becomes
  assert.equal(ranked(matchComparison(view,'contribution'))[0].value,4);
  assert.equal(assistTotals([old],'test-a-2').assists,null);
 });
+
+test('legacy result keys and order remain identical with or without assists',()=>{
+ let d=appendEvent(fixture(),point);
+ d=appendEvent(d,{type:'rally',side:'ours',kind:'kill',player:'test-a-3'});
+ d=appendEvent(d,{type:'rally',side:'ours',kind:'kill',player:'test-a-2'});
+ const legacy={...d,events:d.events.map(({assist,...event})=>event)};
+ assert.equal(JSON.stringify(replay(d).stats),JSON.stringify(replay(legacy).stats));
+});

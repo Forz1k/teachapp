@@ -75,7 +75,7 @@ export function replayDetailed(d,{capturePlayer=null}={}){
    (d.libero2==null||d.libero&&d.libero2!==d.libero&&d.ourPlayers.some(p=>p.id===d.libero2)&&!d.lineup.includes(d.libero2))&&
    validMatchFormat(d)&&sides.includes(d.firstServe)&&
    (d.limits===undefined||validMatchLimits(d.limits))&&(d.boardColors===undefined||validBoardColors(d.boardColors))&&(d.boardLogos===undefined||validBoardLogos(d.boardLogos))&&['5-1','4-2','free'].includes(d.scheme)&&(d.substitutionMode===undefined||['simple','paired'].includes(d.substitutionMode))&&Array.isArray(d.events)&&d.events.length<=5000,'Проверьте параметры матча');
- const rosters={ours:d.ourPlayers,theirs:d.awayPlayers};
+ const rosters={ours:d.ourPlayers,theirs:d.awayPlayers},assistCounts={ours:new Map(),theirs:new Map()};
  const s={lineup:[...d.lineup],awayLineup:[...d.awayLineup],liberoFor:null,liberoId:null,serve:d.firstServe,score:{ours:0,theirs:0},sets:[],setDetails:[],timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(d.lineup,d.awayLineup),rotations:{ours:0,theirs:0},sides:{ours:sideData(),theirs:sideData()},timeline:[],setEnded:false,finished:false,endsSwapped:false,endsAtBreak:false,deciderEndsChanged:false,rallyCount:0,lastLiberoRally:null,changeDue:false};
  let setStarted=d.startedAt,lastAt=d.startedAt;
  const clock=createCourtClock(d.startedAt,{capturePlayer});
@@ -169,7 +169,7 @@ export function replayDetailed(d,{capturePlayer=null}={}){
   if(keys[ev.kind])stat(actor,player,keys[ev.kind]);
   if(ev.assist!=null){
    fail(canAssist(ev.kind)&&player!==null&&typeof ev.assist==='string'&&ev.assist!==player&&visible(winner).includes(ev.assist),'Ассист: другой игрок победившей команды на площадке до атаки');
-   stat(winner,ev.assist,['assists']);
+   const counts=assistCounts[winner];counts.set(ev.assist,(counts.get(ev.assist)||0)+1);
   }
   if(ev.secondary!=null){
    fail(ev.secondary&&typeof ev.secondary==='object'&&secondaryKind(ev.kind)!==null&&ev.secondary.kind===secondaryKind(ev.kind)&&typeof ev.secondary.player==='string','Дополнительная ошибка: приём для эйса, защита для атаки или скидки');
@@ -205,10 +205,11 @@ export function replayDetailed(d,{capturePlayer=null}={}){
  const rule=regulationOf(d);s.changeDue=!s.finished&&(rule.ends!=='manual'&&s.setEnded&&!s.endsAtBreak||rule.ends==='betweenSetsDecider'&&!s.setEnded&&d.bestOf>1&&s.sets.length===d.bestOf-1&&!s.deciderEndsChanged&&Math.max(s.score.ours,s.score.theirs)>=rule.deciderSwitchAt);
  const stats={};
  for(const [id,r] of Object.entries(s.sides.ours.stats)){
-   if(Object.keys(r).every(k=>k==='assists'))continue;
    const allowed=['serves','serveErrors','aces','receptions','receptionGood','attacks','attackKills','blocks','points'];
    stats[id]=Object.fromEntries(Object.entries(r).filter(([k])=>allowed.includes(k)));
  }
+ // Preserve legacy stats and their insertion order, including for old devices.
+ for(const side of sides)for(const [id,n] of assistCounts[side]){const row=s.sides[side].stats[id]??={};row.assists=n;}
  return {...s,ours:s.score.ours,theirs:s.score.theirs,stats,subs:s.subCounts.ours,courtClock:clock};
 }
 export function detailEvent(d,event,now=new Date().toISOString()){
