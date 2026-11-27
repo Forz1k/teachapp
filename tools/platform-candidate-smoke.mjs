@@ -6,6 +6,7 @@ import {readdir,readFile,mkdtemp,rm} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {setTimeout as sleep} from 'node:timers/promises';
+import {DatabaseSync} from 'node:sqlite';
 import {digestToken} from '../server/cloudflare-protocol.mjs';
 const [bundle]=process.argv.slice(2),entries=(await readdir(bundle)).filter(n=>/\.(m?js)$/.test(n));assert.equal(entries.length,1);
 const script=await readFile(resolve(bundle,entries[0]),'utf8'),dir=await mkdtemp(join(tmpdir(),'teachapp-platform-candidate-'));
@@ -38,16 +39,22 @@ try{
  assert.equal((await call('w','identity/bind',ownerJwt,'POST',{credential:owner.token})).status,401);
  assert.equal((await call('w','teams',owner.token,'POST',{id:'t',name:'Team',players:[{id:'p',name:'Player',number:1}]})).status,201);
  const invite=await call('w','invite',owner.token,'POST',{role:'athlete',teamId:'t',athleteId:'p',matchId:null});assert.equal(invite.status,201);
- const member=await call('w','identity/redeem',athleteJwt,'POST',{credential:invite.invite});assert.equal(member.status,201);assert.equal(member.member.role,'athlete');
+ let member=await call('w','identity/redeem',athleteJwt,'POST',{credential:invite.invite});assert.equal(member.status,201);assert.equal(member.member.role,'athlete');
  assert.equal((await call('w','members',member.token)).status,403);assert.equal((await call('other','identity/session',athleteJwt,'POST',{})).status,401);
  assert.equal((await call('w','notification-lab',member.token)).status,404);
  const state=await call('w','notification/provider',member.token);assert.equal(state.status,200);assert.equal(state.enabled,false);
  const receiver=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},false,['deriveBits']),sub={endpoint,p256dh:b64(await crypto.subtle.exportKey('raw',receiver.publicKey)),auth:b64(crypto.getRandomValues(new Uint8Array(16))),expirationTime:null};
  assert.equal((await call('w','notification/provider',member.token,'PUT',{expectedRevision:0,subscription:{...sub,endpoint:'https://other.invalid/synthetic'}})).status,400);
  const enabled=await call('w','notification/provider',member.token,'PUT',{expectedRevision:0,subscription:sub});assert.equal(enabled.status,200);assert.equal(enabled.enabled,true);
+ const refreshed=await call('w','identity/session',await token('athlete'),'POST',{});assert.equal(refreshed.status,200);assert.equal((await call('w','me',member.token)).status,401);member=refreshed;assert.equal((await call('w','notification/provider',member.token)).enabled,true);
  const profile={expectedRevision:0,goals:[{id:'g',name:'Synthetic goal',status:'active',to:'2026-12-01'}],assignments:[],schedule:[]};
  assert.equal((await call('w','teams/t/athletes/p',owner.token,'PUT',profile)).status,200);
+ const queued=await call('w','notification/provider/inbox',member.token);assert.equal(queued.pending,true,'Profile write must enqueue a notice');
  for(let i=0;i<100&&!sent.length;i++)await sleep(200);
+ if(!sent.length){
+  // Only synthetic status is printed, never ciphertext, endpoint, identity or credentials.
+  for(const file of await readdir(dir,{recursive:true})){if(!file.endsWith('.sqlite'))continue;let db;try{db=new DatabaseSync(resolve(dir,file),{readOnly:true});const row=db.prepare('SELECT body FROM workspace_state WHERE id=1').get();const state=JSON.parse(row.body);console.log('Synthetic delivery diagnostic:',state.members.filter(m=>m.role==='athlete').map(m=>({pending:m.notificationLab?.notice?.pending,phase:m.notificationLab?.notice?.delivery?.phase??'ready',attempt:m.notificationLab?.notice?.delivery?.attempt??0})));}catch{}finally{db?.close();}}
+ }
  assert.equal(sent.length,1,'Expected one background provider attempt');assert.equal(sent[0].url,endpoint);assert.equal(sent[0].method,'POST');assert.equal(sent[0].encoding,'aes128gcm');assert.match(sent[0].authorization,/^vapid t=/);assert.ok(sent[0].bytes.length>86);assert.ok(!Buffer.from(sent[0].bytes).includes(Buffer.from('Synthetic goal')));
  const inbox=await call('w','notification/provider/inbox',member.token);assert.equal(inbox.pending,true);
  assert.equal((await call('w','notification/provider/ack',member.token,'POST',{expectedRevision:inbox.revision,sequence:inbox.sequence})).pending,false);

@@ -114,6 +114,10 @@ RC5 preparation (still rc.4): scoped seasonal match analytics avoids unrelated r
 
 Scope of RC5 is frozen for candidate review: the earlier RC5 preparation checkpoints plus view-local video marker projection, provenance/notes filters and per-set coverage; transient Studio layer alignment and optional pointer movement; indexed season ranges and exact-team reads. No new persisted schema or server switch. Existing skill coverage and periodization remain available; physical playback/clip, skill/season, Studio export and large-archive performance acceptance are not closed. Further decomposition is a remaining engineering task, not a claim that every large module has been split. Version is synchronized across package, lock, service worker and app. RC5 is a candidate for isolated review, not stable release authorization. RC6 proposed scope: production identity, authorization, operational rate-limit/recovery and background push; subsequent migration and acceptance gates remain mandatory. OBS remains excluded.
 
+## RC6 — Platform HTTPS-кандидат
+
+Включены код проверки подписанной identity, серверное членство и короткие сессии, атомарная ротация, отдельная конфигурация с edge binding и постоянным ingress-лимитом, зашифрованные резервные копии и восстановление в новое пространство, согласие и фоновая очередь Push. Конкретные IdP, HTTPS-маршруты, секреты, проверка доставки на физических устройствах и независимый аудит остаются открытыми. По умолчанию отдельный кандидат выключен, LAB локален, main не меняется. Подробности — [PLATFORM_7.md](PLATFORM_7.md). Не считать автоматический тест актом production-приёмки.
+
 ## RC7 — миграции, совместимость и восстановление
 
 Кандидат 8.0.0-rc.7. Стабильный исходник 6.0.7 закреплён по SHA `1017f187a3cc8c26b46e4936f9c60773b4512783`. Перенос новых LIVE-событий и шаблонов сохраняет прежние документы; WebKit репетирует фактическое обновление и обратное обновление v10, включая последующие записи и независимое восстановление. Нельзя возвращать старую версию поверх уже активированного v11/Delta v3. RC7 собирается отдельным stacked PR к RC6; до подтверждения итогового RC6 не сливать.

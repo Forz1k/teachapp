@@ -1,7 +1,8 @@
 import {platformClient,platformIdentityClient,platformCandidateClient,platformCandidateIdentityClient,isLocalPlatformPage} from '../js/platform-client.js';
 import {candidateConfig} from '../platform-candidate/config.js';
 import {inspectProviderPush,enableProviderPush,disableProviderPush} from '../platform-candidate/push-client.js';
-const candidatePage=location.protocol==='https:'&&location.origin===candidateConfig?.origin&&/\/platform-candidate\/(?:index\.html)?$/.test(location.pathname)&&!location.search&&!location.hash;
+const candidatePath=/\/platform-candidate\/(?:index\.html)?$/.test(location.pathname);
+const candidatePage=location.protocol==='https:'&&location.origin===candidateConfig?.origin&&candidatePath&&!location.search&&!location.hash;
 const ordinaryClient=(address,workspace,secret)=>candidatePage?platformCandidateClient(candidateConfig,workspace,secret):platformClient(address,workspace,secret);
 const identityClient=(address,workspace,assertion)=>candidatePage?platformCandidateIdentityClient(candidateConfig,workspace,assertion):platformIdentityClient(address,workspace,assertion);
 const root=document.querySelector('#app'),roles={owner:'Владелец',coach:'Тренер',assistant:'Помощник',athlete:'Спортсменка'};
@@ -21,7 +22,7 @@ function close(){serial++;stopTimer();connecting?.close();connecting=null;api?.c
 function status(text,error=false){const n=root.querySelector('#status');if(n){n.textContent=text;n.className=error?'status error':'status';}}
 async function run(fn){if(busy)return;busy=true;const epoch=serial;try{await fn(epoch);if(epoch===serial)status('Готово');}catch(err){if(epoch===serial){status(err.message,true);if(err.status===401&&api){close();status('Сессия недействительна или отозвана. Войдите заново.',true);}}}finally{if(epoch===serial)busy=false;}}
 function login(){
- if(!candidatePage&&!isLocalPlatformPage()){root.replaceChildren(box('Недоступно',p('Кабинеты LAB запускаются только локально. Рабочие данные не принимаются.')));return;}
+ if(!candidatePage&&(candidatePath||!isLocalPlatformPage())){root.replaceChildren(box('Недоступно',p('Кабинеты LAB запускаются только локально. Рабочие данные не принимаются.')));return;}
  const endpoint=input('Адрес тестового Worker','http://127.0.0.1:8788'),workspace=input('ID пространства','demo'),secret=input('Секретный код','','password'),name=input('Название пространства','Синтетическая команда');
  if(candidatePage){endpoint.value=candidateConfig.apiOrigin;endpoint.readOnly=true;}
  const assertion=input(candidatePage?'Подписанный access-токен':'Подписанный access-токен LAB','','password');

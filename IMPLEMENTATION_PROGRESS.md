@@ -558,3 +558,8 @@ Verified code backup refs created before changes. Static manifest and integrity 
 ### RC4 — gated migration candidate
 
 HTTPS source fence, fixed target gate, v11 checkpoint/binding transaction, manual activation/finalize and rollback with signed receipt. Test-only; production not deployed.
+
+
+## 8.0.0-rc.6 — контрольный код Platform
+
+Отдельный HTTPS-кандидат, проверка подписанной identity, ролевые короткие сессии, edge/ingress rate limit, шифрованный backup/restore и фоновый Push. Автоматическая проверка на синтетическом workerd с перехватом провайдера; фактические HTTPS-маршруты, IdP, ключи, физические устройства и аудит — отдельные обязательные условия. Не production deploy.
