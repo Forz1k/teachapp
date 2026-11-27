@@ -2,14 +2,45 @@
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';import {once} from 'node:events';import {mkdtemp,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {createServer} from 'node:net';import {createServer as httpServer} from 'node:http';import {readFile} from 'node:fs/promises';import {resolve,sep,extname} from 'node:path';import {chromium} from 'playwright';import {spawnSync} from 'node:child_process';import {setTimeout as sleep} from 'node:timers/promises';import {digestToken} from '../server/cloudflare-protocol.mjs';
 const root='a'.repeat(64),webRoot=process.cwd(),site=httpServer(async(req,res)=>{try{const u=new URL(req.url,'http://127.0.0.1'),path=resolve(webRoot,'.'+decodeURIComponent(u.pathname));if(!path.startsWith(webRoot+sep))throw Error();const bytes=await readFile(path);res.writeHead(200,{'Content-Type':{'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'}[extname(path)]||'application/octet-stream','Cache-Control':'no-store'});res.end(bytes);}catch{if(!res.headersSent)res.writeHead(404);res.end();}});await new Promise(r=>site.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+site.address().port,state=await mkdtemp(join(tmpdir(),'teachapp-platform-')),socket=createServer();await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address().port;await new Promise(r=>socket.close(r));const base='http://127.0.0.1:'+port;let proc,output='';
-async function start({configuredOrigin=origin,enabled=true}={}){proc=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.platform-dev.jsonc','--local','--ip','127.0.0.1','--port',String(port),'--persist-to',state,'--var','TEACHAPP_PLATFORM_SYNTHETIC:true','--var','TEACHAPP_PLATFORM_ORIGIN:'+configuredOrigin,'--var','TEACHAPP_PLATFORM_ROOT_HASH:'+await digestToken(root)],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});proc.stdout.on('data',x=>output=(output+x).slice(-8000));proc.stderr.on('data',x=>output=(output+x).slice(-8000));for(let i=0;i<150;i++){if(proc.exitCode!==null)throw Error(output);try{const response=await fetch(base+'/healthz',{signal:AbortSignal.timeout(1000)});if(enabled?response.status===200:response.status===503&&(await response.json()).status==='disabled')return;}catch{}await sleep(500);}throw Error('Startup timeout '+output);}
+const signing=await crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']);
+const exported=await crypto.subtle.exportKey('jwk',signing.publicKey),identitySettings={issuer:'https://identity.example.invalid/',audience:'teachapp-platform',clientId:'lab',key:{kty:'RSA',kid:'lab',n:exported.n,e:exported.e,alg:'RS256',use:'sig'}};
+async function identityToken(sub,claims={}){
+ const now=Math.floor(Date.now()/1000),b64=x=>Buffer.from(JSON.stringify(x)).toString('base64url');
+ const unsigned=b64({alg:'RS256',kid:'lab',typ:'at+jwt'})+'.'+b64({iss:identitySettings.issuer,aud:identitySettings.audience,client_id:identitySettings.clientId,sub,jti:crypto.randomUUID(),iat:now,exp:now+300,...claims});
+ return unsigned+'.'+Buffer.from(await crypto.subtle.sign('RSASSA-PKCS1-v1_5',signing.privateKey,new TextEncoder().encode(unsigned))).toString('base64url');
+}
+async function start({configuredOrigin=origin,enabled=true,limit=1200,identity=true}={}){proc=spawn('npx',['--yes','wrangler@4.161.0','dev','--config','wrangler.platform-dev.jsonc','--local','--ip','127.0.0.1','--port',String(port),'--persist-to',state,'--var','TEACHAPP_PLATFORM_SYNTHETIC:true','--var','TEACHAPP_PLATFORM_ORIGIN:'+configuredOrigin,'--var','TEACHAPP_PLATFORM_ROOT_HASH:'+await digestToken(root),'--var','TEACHAPP_PLATFORM_INGRESS_LIMIT:'+limit,...(identity?['--var','TEACHAPP_PLATFORM_IDENTITY:'+JSON.stringify(identitySettings)]:[])],{env:{...process.env,CI:'true',WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe'],detached:true});proc.stdout.on('data',x=>output=(output+x).slice(-8000));proc.stderr.on('data',x=>output=(output+x).slice(-8000));for(let i=0;i<150;i++){if(proc.exitCode!==null)throw Error(output);try{const response=await fetch(base+'/healthz',{signal:AbortSignal.timeout(1000)});if(enabled?response.status===200:response.status===503&&(await response.json()).status==='disabled')return;}catch{}await sleep(500);}throw Error('Startup timeout '+output);}
 async function stop(){const p=proc;proc=null;if(!p||p.exitCode!==null)return;const exit=once(p,'exit');try{process.kill(-p.pid,'SIGTERM');}catch(e){if(e.code!=='ESRCH')throw e;}await Promise.race([exit,sleep(5000)]);if(p.exitCode===null&&p.signalCode===null){process.kill(-p.pid,'SIGKILL');await exit;}}
 async function call(w,path,token,method='GET',body){const r=await fetch(base+'/v1/workspaces/'+w+'/'+path,{method,headers:{Authorization:'Bearer '+token,Origin:origin,...(body!==undefined?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});return {status:r.status,...await r.json()};}
 try{await start({configuredOrigin:'https://example.invalid',enabled:false});
 assert.equal((await call('disabled','bootstrap',root,'POST',{name:'Synthetic blocked'})).status,503);
+await stop();await start({limit:3,identity:false});
+assert.equal((await call('unknown','identity/session',await identityToken('unknown'),'POST',{})).status,503);
+assert.equal((await call('unknown1','me','f'.repeat(64))).status,401);
+assert.equal((await call('unknown2','me','e'.repeat(64))).status,401);
+const ingressLimited=await fetch(base+'/v1/workspaces/another/me',{headers:{Authorization:'Bearer '+'a'.repeat(64),Origin:origin,'CF-Connecting-IP':'192.0.2.1'}});
+assert.equal(ingressLimited.status,429);assert.ok(Number(ingressLimited.headers.get('Retry-After'))>=1);
+await stop();await start({limit:3,identity:false});
+assert.equal((await call('unknown3','me','f'.repeat(64))).status,429);
 await stop();await start();
+console.log('PLATFORM INGRESS PASS: anonymous cross-workspace budget, spoofed header ignored, durable restart, no identity config fallback.');
 console.log('PLATFORM CONFIG PASS: non-loopback origin disables real worker and bootstrap.');
 const a=await call('alpha','bootstrap',root,'POST',{name:'Synthetic Alpha'}),b=await call('beta','bootstrap',root,'POST',{name:'Synthetic Beta'});assert.equal(a.status,201);assert.equal(b.status,201);const owner=a.token;assert.equal((await call('beta','me',owner)).status,401);assert.equal((await call('alpha','bootstrap',root,'POST',{name:'Duplicate'})).status,409);
+const identityOwner=await call('identity-lab','bootstrap',root,'POST',{name:'Identity synthetic'});
+assert.equal(identityOwner.status,201);
+assert.equal((await call('identity-lab','teams',identityOwner.token,'POST',{id:'t',name:'Team',players:[{id:'p',name:'P',number:1}]})).status,201);
+const identityInvite=await call('identity-lab','invite',identityOwner.token,'POST',{role:'athlete',teamId:'t',athleteId:'p',matchId:null});
+const signed=await identityToken('athlete',{role:'owner',workspaceId:'beta'});
+assert.equal((await call('identity-lab','identity/redeem',await identityToken('athlete',{aud:'wrong'}),'POST',{credential:identityInvite.invite})).status,401);
+const signedMember=await call('identity-lab','identity/redeem',signed,'POST',{credential:identityInvite.invite});
+assert.equal(signedMember.status,201);assert.equal(signedMember.member.role,'athlete');assert.equal(signedMember.member.identityHash,undefined);
+assert.equal((await call('beta','identity/session',signed,'POST',{})).status,401);
+assert.equal((await call('identity-lab','members',signedMember.token)).status,403);
+const signedAgain=await call('identity-lab','identity/session',await identityToken('athlete'),'POST',{});
+assert.equal(signedAgain.status,200);assert.equal((await call('identity-lab','me',signedMember.token)).status,401);
+assert.equal((await call('identity-lab','revoke',identityOwner.token,'POST',{memberId:signedAgain.member.id})).status,200);
+assert.equal((await call('identity-lab','identity/session',signed,'POST',{})).status,401);
+console.log('PLATFORM IDENTITY PASS: pinned access token, signed subject, single-use invite, isolation, rotation and revocation.');
 const flood=await call('rate-lab','bootstrap',root,'POST',{name:'Rate synthetic'});assert.equal(flood.status,201);
 for(let i=0;i<24;i++)assert.equal((await call('rate-lab','revoke',flood.token,'POST',{memberId:'missing'})).status,404);
 const limited=await fetch(base+'/v1/workspaces/rate-lab/revoke',{method:'POST',headers:{Authorization:'Bearer '+flood.token,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({memberId:'missing'})});assert.equal(limited.status,429);assert.ok(Number(limited.headers.get('Retry-After'))>=1);assert.equal((await call('rate-lab','me',flood.token)).status,200);assert.equal((await call('beta','me',b.token)).status,200);
