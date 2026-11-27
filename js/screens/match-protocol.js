@@ -6,7 +6,7 @@ import {animateOnce,scoreChanges,recentRallies,rallyStreak,capturePositions,anim
 import * as C from '../coach.js';
 import {rehearsalStore,rememberLive,clearLiveResume} from '../volleyball.js';
 import * as V from '../match-protocol.js';
-import {matchTactics,rotationPerformance,recordedConnections,substitutionWindows} from '../match-tactics.js';
+import {matchTactics,rotationPerformance,recordedConnections,substitutionWindows,setterAnalysis,orderedLineups,rallyStreaks} from '../match-tactics.js';
 import * as Portal from '../public-publisher.js';
 import {todayIso,uid} from '../model.js';
 import * as ui from '../ui.js';
@@ -555,7 +555,13 @@ function liveAnalysis(d,s){
     table(['Передающая','Атакующая','Попытки','Очки','Ошибки','Эфф.'],links.rows.slice(0,30).map(x=>[name(d,side,x.setter),name(d,side,x.attacker),x.attempts,x.points,x.errors,x.eligible?Math.round(x.efficiency)+'%':'Мало данных'])),!links.rows.length?p('Нет подходящих полных записей действий.'):null);
   const subCard=section('До и после замен',p('До 5 розыгрышей с каждой стороны события, только в той же партии; окна могут пересекаться. Разница не доказывает вклад заменённого игрока.'),
     table(['Сет · счёт','Команда','Ушла / вышла','До','После','Разница'],subs.map(x=>[x.set+' · '+x.score,sideName(d,x.side),name(d,x.side,x.out)+' / '+name(d,x.side,x.in),x.before.won+'/'+x.before.total,x.after.won+'/'+x.after.total,x.delta===null?'Неполное окно':Math.round(x.delta)+' п.п.'])),!subs.length?p('Замен в выбранном периоде нет.'):null);
-  output.replaceChildren(...rows,heat,...rotationRows,connectionCard,subCard,combo('Сочетания двух игроков',tactical.pairs),combo('Фактические шестёрки',tactical.six));
+  const passing=setterAnalysis([s.timeline],{side,set,min:Number(sample.value)}),lineups=orderedLineups([s.timeline],{side,set,min:Number(sample.value)}),min=Number(sample.value);
+  const rate=(x,eligible)=>x==null?'—':eligible?Math.round(x*10)/10+'%':'Мало данных';
+  const setterCard=section('Связующие · '+sideName(d,side),p('Отмеченные ассисты: '+passing.assists+' из '+passing.kills+' результативных атак и скидок; с автором атаки '+passing.attributed+'. Это полнота регистрации, не эффективность передачи.'),p('Попытки и проценты — только из полных непротиворечивых записей PRO ('+passing.complete+'/'+passing.rallies+' розыгрышей). Прочерк — нет данных.'),
+   table(['Игрок','Ассисты','Передачи PRO','Ошибки PRO','Положительные PRO'],passing.rows.map(x=>[name(d,side,x.id),x.assists||'—',x.attempts||'—',rate(x.errorRate,x.eligible),rate(x.positiveRate,x.positiveEligible)])),!passing.rows.length?p('Нет зарегистрированных передач.'):null,
+   section('Результативные связки (ассисты)',table(['Связующая','Нападающая','Ассисты'],passing.pairs.slice(0,30).map(x=>[name(d,side,x.setter),name(d,side,x.attacker),x.assists])),!passing.pairs.length?p('Укажите автора передачи в обычном LIVE, чтобы появилась связка.'):null));
+  const ordered=section('Фактический порядок P1–P6 · '+sideName(d,side),p('Игроки до розыгрыша, включая либеро. Доля побед и фазы только при минимуме '+min+' розыгрышей в соответствующей выборке.'),table(['P1–P6','Розыгрыши','+/−','Победы','Подача','Приём'],lineups.slice(0,20).map(x=>[x.players.map((id,i)=>'P'+(i+1)+' '+name(d,side,id)).join(' · '),x.rallies,x.plusMinus,phaseRate(x.won,x.rallies,x.eligible),phaseRate(x.serveWon,x.serve,x.serveEligible),phaseRate(x.receiveWon,x.receive,x.receiveEligible)])),!lineups.length?p('Нет записанных составов.'):null);
+  output.replaceChildren(...rows,setterCard,heat,...rotationRows,ordered,connectionCard,subCard,combo('Сочетания двух игроков',tactical.pairs),combo('Фактические шестёрки',tactical.six));
  }
  playerOptions();sidePicker.addEventListener('change',()=>{playerOptions();draw();});for(const control of [period,mode,player,sample])control.addEventListener('change',draw);draw();
  return section('Аналитика розыгрышей',field('Период',period),field('Команда для карты',sidePicker),field('Вид завершения',mode),field('Игрок для карты',player),field('Минимум выборки для сравнения',sample),output);
@@ -570,10 +576,10 @@ function momentumBlock(d,s){
   const plot=svg('svg',{viewBox:'0 0 320 150',role:'img','aria-label':'График набранных очков по розыгрышам',class:'vp-momentum-chart'});
   for(let i=0;i<=4;i++){const y=10+i*30;plot.append(svg('line',{x1:22,y1:y,x2:308,y2:y,stroke:'currentColor','stroke-opacity':.15}));}
   for(const side of sides){const coords=a.points.map((x,i)=>(22+286*i/Math.max(1,a.points.length-1))+','+(130-120*x[side]/max)).join(' ');plot.append(svg('polyline',{points:coords,fill:'none',stroke:V.boardPalette[(d.boardColors||V.defaultBoardColors)[side]].start,'stroke-width':3,'stroke-linejoin':'round','stroke-linecap':'round'}));}
-  const end=a.points.at(-1);
+  const end=a.points.at(-1),runs=rallyStreaks(s.timeline,{set:Number(picker.value)}),maxRun=Math.max(1,runs.summary.ours.max,runs.summary.theirs.max);
   chart.replaceChildren(el('div',{class:'vp-momentum-legend'},[el('span',{class:'ours',style:'color:'+V.boardPalette[(d.boardColors||V.defaultBoardColors).ours].start,text:d.teamName+' · '+end.ours}),el('span',{class:'theirs',style:'color:'+V.boardPalette[(d.boardColors||V.defaultBoardColors).theirs].start,text:d.opponent+' · '+end.theirs})]),plot,
    p('Розыгрышей: '+(a.points.length-1)+' · смен лидера: '+a.changes+' · равный счёт: '+a.ties),
-   table(['Показатель',d.teamName,d.opponent],[['Макс. серия',a.maxRun.ours,a.maxRun.theirs],['Макс. преимущество',a.maxLead.ours,a.maxLead.theirs]]));
+   table(['Показатель',d.teamName,d.opponent],[['Макс. серия',a.maxRun.ours,a.maxRun.theirs],['Серии от 3 очков',runs.summary.ours.long,runs.summary.theirs.long],['Макс. преимущество',a.maxLead.ours,a.maxLead.theirs]]),section('Серии набранных и потерянных очков',p('От начала к концу партии. Серия не переносится в следующую партию.'),el('div',{class:'vp-streak-bars'},runs.rows.slice(-40).map(r=>el('div',{class:'vp-streak-row'},[el('span',{text:r.start+' → '+r.end}),el('div',{class:'vp-streak-track'},[el('span',{class:r.side,style:'width:'+100*r.length/maxRun+'%'})]),el('strong',{text:r.length+' · '+sideName(d,r.side)})]))),runs.rows.length>40?p('Последние 40 серий; сводка учитывает всю партию.'):null,!runs.rows.length?p('Розыгрышей пока нет.'):null));
  }
  picker.addEventListener('change',draw);draw();return section('Ход партии',field('Партия',picker),chart);
 }
@@ -606,7 +612,7 @@ export function buildMatchReport(m){
   section('Смена сторон',table(['Сет','Счёт','Действие'],s.timeline.filter(x=>x.type==='changeEnds').map(x=>[x.set,x.score,eventText(d,x)]))),
   section('Судейские санкции (записанные решения)',table(['Сет','Счёт','Санкция'],s.timeline.filter(x=>x.type==='sanction').map(x=>[x.set,x.score,eventText(d,x)]))),
   section('Тайм-ауты',table(['Сет','Счёт','Команда','№'],s.timeline.filter(x=>x.type==='timeout').map(x=>[x.set,x.score,sideName(d,x.side),x.number]))),
-  courtTimeBlock(d,s),...summaryBlocks(d,s),captureBlock(d,s),
+  courtTimeBlock(d,s),...summaryBlocks(d,s),...sides.map(side=>{const a=setterAnalysis([s.timeline],{side});return section('Результативные связки (ассисты) · '+sideName(d,side),p('Отмечено '+a.assists+' из '+a.kills+' результативных атак и скидок. Не процент эффективности.'),table(['Связующая','Нападающая','Ассисты'],a.pairs.map(x=>[name(d,side,x.setter),name(d,side,x.attacker),x.assists])));}),captureBlock(d,s),
   section('Детали очка',table(['Сет','Счёт','Команда','Причина','Автор','Ассист','Зона','Доп. ошибка'],s.timeline.filter(x=>x.type==='rally').map(x=>[x.set,x.score,sideName(d,x.side),V.reasons[x.kind],name(d,x.actor,x.player),x.assist?name(d,x.side,x.assist):'—',x.placement??'—',x.secondary?V.reasons[x.secondary.kind]+' · '+name(d,x.side==='ours'?'theirs':'ours',x.secondary.player):'—']))),
   section('Подписи',p('Первый судья __________________________'),p('Капитан '+d.teamName+' __________________________'),p('Капитан '+d.opponent+' __________________________'))]);
 }

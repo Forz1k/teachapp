@@ -125,6 +125,7 @@ try{
  await clickText('.vp-tabs button','Статистика');await ready('.vp-heat-grid');
  assert.equal(await evalJs('Array.from(document.querySelectorAll(".vp-heat-cell")).some(n=>n.getAttribute("aria-label")==="Зона 4: 1")'),true);
  assert.ok(await evalJs('document.querySelector(".sheet.show")?.textContent.includes("Связка передачи и атаки")&&document.querySelector(".sheet.show")?.textContent.includes("До и после замен")&&document.querySelector(".sheet.show")?.textContent.includes("На приёме")'));
+ assert.ok(await evalJs('document.querySelector(".sheet.show")?.textContent.includes("Результативные связки (ассисты)")&&document.querySelector(".sheet.show")?.textContent.includes("Фактический порядок P1–P6")&&document.querySelector(".sheet.show")?.textContent.includes("Серии набранных и потерянных очков")'));
  await capture('390-live-analytics');
  await clickText('.vp-tabs button','События');await clickText('.vp-history-row button','Уточнить');await ready('.vp-report-section');await clickText('.sheet button','Сохранить уточнение');await ready('.vp-history-row');
  await clickText('.vp-tabs button','Матч');await ready('.vp-undo');

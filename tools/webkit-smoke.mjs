@@ -323,6 +323,12 @@ try{
   await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
   assert.match(await rp.locator('[data-live-save-status]').textContent(),/Сохранено/);
   assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events[0].assist),'test-a-2');
+  await rp.getByRole('button',{name:'Статистика',exact:true}).click();
+  await rp.getByRole('heading',{name:'Результативные связки (ассисты)',exact:true}).waitFor();
+  assert.match(await rp.locator('.sheet.show').textContent(),/Отмеченные ассисты: 1 из 1/);
+  await rp.getByRole('heading',{name:/Фактический порядок P1–P6/}).waitFor();
+  await rp.getByRole('heading',{name:'Серии набранных и потерянных очков',exact:true}).waitFor();
+  await rp.getByRole('button',{name:'Матч',exact:true}).click();
   await rehearsalContext.setOffline(false);
   await rp.reload();await rp.locator('.workspace-nav').waitFor();
   await rp.locator('.vp-board-points').waitFor(); // same-tab automatic recovery
