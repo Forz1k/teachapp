@@ -1,4 +1,9 @@
-import {platformClient,platformIdentityClient,isLocalPlatformPage} from '../js/platform-client.js';
+import {platformClient,platformIdentityClient,platformCandidateClient,platformCandidateIdentityClient,isLocalPlatformPage} from '../js/platform-client.js';
+import {candidateConfig} from '../platform-candidate/config.js';
+import {inspectProviderPush,enableProviderPush,disableProviderPush} from '../platform-candidate/push-client.js';
+const candidatePage=location.protocol==='https:'&&location.origin===candidateConfig?.origin&&/\/platform-candidate\/(?:index\.html)?$/.test(location.pathname)&&!location.search&&!location.hash;
+const ordinaryClient=(address,workspace,secret)=>candidatePage?platformCandidateClient(candidateConfig,workspace,secret):platformClient(address,workspace,secret);
+const identityClient=(address,workspace,assertion)=>candidatePage?platformCandidateIdentityClient(candidateConfig,workspace,assertion):platformIdentityClient(address,workspace,assertion);
 const root=document.querySelector('#app'),roles={owner:'Владелец',coach:'Тренер',assistant:'Помощник',athlete:'Спортсменка'};
 const e=(tag,text='',attrs={},children=[])=>{const n=document.createElement(tag);n.textContent=text;for(const [k,v] of Object.entries(attrs)){if(k==='class')n.className=v;else if(k==='type')n.type=v;else n.setAttribute(k,String(v));}for(const child of children)if(child)n.append(child);return n;};
 const p=(text,cls='muted')=>e('p',text,{class:cls});
@@ -16,20 +21,21 @@ function close(){serial++;stopTimer();connecting?.close();connecting=null;api?.c
 function status(text,error=false){const n=root.querySelector('#status');if(n){n.textContent=text;n.className=error?'status error':'status';}}
 async function run(fn){if(busy)return;busy=true;const epoch=serial;try{await fn(epoch);if(epoch===serial)status('Готово');}catch(err){if(epoch===serial){status(err.message,true);if(err.status===401&&api){close();status('Сессия недействительна или отозвана. Войдите заново.',true);}}}finally{if(epoch===serial)busy=false;}}
 function login(){
- if(!isLocalPlatformPage()){root.replaceChildren(box('Недоступно',p('Кабинеты LAB запускаются только локально. Рабочие данные не принимаются.')));return;}
+ if(!candidatePage&&!isLocalPlatformPage()){root.replaceChildren(box('Недоступно',p('Кабинеты LAB запускаются только локально. Рабочие данные не принимаются.')));return;}
  const endpoint=input('Адрес тестового Worker','http://127.0.0.1:8788'),workspace=input('ID пространства','demo'),secret=input('Секретный код','','password'),name=input('Название пространства','Синтетическая команда');
- const assertion=input('Подписанный access-токен LAB','','password');
- const form=box('Подключение',p('Секрет хранится только до выхода, закрытия или приостановки страницы. Не вводите реальные ключи и персональные данные.'),e('div','',{class:'fields'},[field('Worker',endpoint),field('Пространство',workspace),field('Секрет / приглашение',secret),field('Название (для первого запуска)',name),button('Войти',()=>connect('login'),true),button('Активировать приглашение',()=>connect('redeem')),button('Восстановить владельца',()=>connect('recover')),button('Создать тестовое пространство',()=>connect('bootstrap'))]),p('Внешняя identity · только синтетический подписанный access-токен. Код приглашения или текущей сессии нужен для первой привязки.'),field('Access-токен',assertion),row(button('Войти через identity',()=>connect('identity/session')),button('Привязать текущую сессию',()=>connect('identity/bind')),button('Принять приглашение через identity',()=>connect('identity/redeem'))));
+ if(candidatePage){endpoint.value=candidateConfig.apiOrigin;endpoint.readOnly=true;}
+ const assertion=input(candidatePage?'Подписанный access-токен':'Подписанный access-токен LAB','','password');
+ const form=candidatePage?box('Подключение',p('Отдельный HTTPS-кандидат. Вход только с подписанным токеном утверждённого поставщика. До приёмки — только синтетические данные.'),field('API',endpoint),field('Пространство',workspace),field('Код приглашения / восстановления / оператора',secret),field('Название (первый запуск)',name),field('Access-токен',assertion),row(button('Войти через identity',()=>connect('identity/session'),true),button('Принять приглашение через identity',()=>connect('identity/redeem')),button('Создать пространство',()=>connect('identity/bootstrap')),button('Восстановить владельца',()=>connect('identity/recover')))):box('Подключение',p('Секрет хранится только до выхода, закрытия или приостановки страницы. Не вводите реальные ключи и персональные данные.'),e('div','',{class:'fields'},[field('Worker',endpoint),field('Пространство',workspace),field('Секрет / приглашение',secret),field('Название (для первого запуска)',name),button('Войти',()=>connect('login'),true),button('Активировать приглашение',()=>connect('redeem')),button('Восстановить владельца',()=>connect('recover')),button('Создать тестовое пространство',()=>connect('bootstrap'))]),p('Внешняя identity · только синтетический подписанный access-токен. Код приглашения или текущей сессии нужен для первой привязки.'),field('Access-токен',assertion),row(button('Войти через identity',()=>connect('identity/session')),button('Привязать текущую сессию',()=>connect('identity/bind')),button('Принять приглашение через identity',()=>connect('identity/redeem'))));
  root.replaceChildren(form,e('p','',{id:'status',role:'status',class:'status'}));
  async function connect(mode){await run(async(epoch)=>{
   const address=endpoint.value,space=workspace.value,workspaceName=name.value.trim();
   const identity=mode.startsWith('identity/'),credential=secret.value,signed=assertion.value;
   secret.value='';assertion.value='';
-  const temp=identity?platformIdentityClient(address,space,signed):platformClient(address,space,credential);connecting=temp;
+  const temp=identity?identityClient(address,space,signed):ordinaryClient(address,space,credential);connecting=temp;
   let result,issued=null;try{
    if(mode==='login'){result=await temp.request('me');if(epoch!==serial){temp.close();return;}api=temp;}
-   else{issued=await temp.request(mode,'POST',mode==='bootstrap'?{name:workspaceName}:['identity/bind','identity/redeem'].includes(mode)?{credential}:{});temp.close();if(epoch!==serial)return;api=platformClient(address,space,issued.token);result=await api.request('me');}
-   if(epoch!==serial)return;member=result.member;sessionAddress=address;sessionSpace=space;await render(result.name,issued?.token);
+   else{issued=await temp.request(mode,'POST',mode==='bootstrap'?{name:workspaceName}:mode==='identity/bootstrap'?{credential,name:workspaceName}:['identity/bind','identity/redeem','identity/recover'].includes(mode)?{credential}:{});temp.close();if(epoch!==serial)return;api=ordinaryClient(address,space,issued.token);result=await api.request('me');}
+   if(epoch!==serial)return;member=result.member;sessionAddress=address;sessionSpace=space;await render(result.name,candidatePage?null:issued?.token);
   }catch(err){temp.close();if(epoch===serial){api?.close();api=null;member=null;}throw err;}
   finally{if(connecting===temp)connecting=null;}
  });}
@@ -44,9 +50,9 @@ async function rotateSession(epoch,name){
   const rotated=await old.request('session/rotate','POST',{});
   if(epoch!==serial||api!==old)return;
   if(rotated.workspaceId!==space||rotated.member?.id!==expected.id||rotated.member?.role!==expected.role||rotated.member?.expiresAt!==expected.expiresAt)throw Error('Неожиданный ответ сервера');
-  const replacement=platformClient(address,space,rotated.token);
+  const replacement=ordinaryClient(address,space,rotated.token);
   old.close();api=replacement;member=rotated.member;active=null;pending=null;
-  await render(name,rotated.token);
+  await render(name,candidatePage?null:rotated.token);
  }catch(err){
   if(epoch!==serial||api!==old)return;
   // An ambiguous response may have committed rotation. Never replay it.
@@ -57,7 +63,8 @@ async function rotateSession(epoch,name){
 async function render(name,issued){
  stopTimer();root.replaceChildren(box(name,p(roles[member.role]||member.role),button('Выйти',close),button('Сменить код сессии',()=>run(epoch=>rotateSession(epoch,name))),button('Отозвать эту сессию',()=>run(async()=>{if(!confirm('Отозвать код этой сессии на сервере? Для нового входа понадобится приглашение или код восстановления владельца.'))return;await api.request('session/revoke','POST',{});close();status('Сессия отозвана на сервере.');}))),e('p','',{id:'status',role:'status',class:'status'}));
  if(issued)root.append(showSecret('Код новой сессии',issued));
- if(['owner','coach','athlete'].includes(member.role))root.append(notificationCard());
+ if(candidatePage&&member.role==='athlete')root.append(providerPushCard());
+ if(!candidatePage&&['owner','coach','athlete'].includes(member.role))root.append(notificationCard());
  if(member.role==='athlete'){const section=box('Мой кабинет',p('Доступ только к собственным заданиям и расписанию.'));root.append(inboxCard(),section);await athlete(section);return;}
  const grid=e('div','',{class:'grid'});root.append(grid);
  if(member.role==='owner'){grid.append(ownerTeams(),ownerInvites(),ownerRecovery());}
@@ -122,6 +129,15 @@ function ownerRecovery(){
  return box('Восстановление владельца · LAB',p('Сохраните случайный код отдельно до активации. Не отправляйте его третьим лицам. Восстановление отзывает прежние сессии владельца и неиспользованные приглашения. Не использовать рабочие данные.'),state,button('Проверить статус',()=>run(refresh)),generate,key,copy,save);
 }
 
+function providerPushCard(){
+ const info=p('Проверьте состояние устройства и сервера. Разрешение не запрашивается автоматически.');
+ const perform=(operation)=>run(async(epoch)=>{
+  const session=api,active=()=>epoch===serial&&api===session&&info.isConnected;
+  try{await operation(session,active);if(!active())return;const v=await inspectProviderPush(session);if(active())info.textContent='Сервер: '+(v.server.enabled?'включён':'выключен')+' · браузер: '+(v.subscribed?'подписан':'не подписан')+' · локальное согласие: '+(v.local?'да':'нет');}
+  catch(err){if(active())info.textContent='Требуется проверка состояния. '+err.message;throw err;}
+ });
+ return box('Фоновые уведомления · кандидат',p('Общий сигнал без данных спортсменки. Разрешение требуется явно. Выход из кабинета не отменяет подписку; для отмены используйте кнопку ниже.'),info,button('Проверить подписку',()=>perform(async()=>{})),button('Включить push на этом устройстве',()=>{if(confirm('Разрешить общие фоновые уведомления на этом устройстве?'))void perform((session,active)=>enableProviderPush(session,{active}));}),button('Отключить push на этом устройстве',()=>{if(confirm('Отключить подписку и локальное согласие?'))void perform((session,active)=>disableProviderPush(session,{active}));}));
+}
 function notificationCard(){
  const info=p('Загрузите состояние подписки. Реальные уведомления не отправляются.');
  let state=null;const enable=button('Включить тестовую подписку',()=>run(()=>change(true))),disable=button('Отключить тестовую подписку',()=>run(()=>change(false)));
@@ -148,15 +164,15 @@ function inboxCard(){
   info.textContent=result.pending?'В личном кабинете есть обновления.':'Новых сигналов нет.';
  };
  const refresh=button('Проверить новые сигналы',()=>run(async(epoch)=>{
-  const session=api;clear();const res=await session.request('notification-lab/inbox');
+  const session=api;clear();const res=await session.request(candidatePage?'notification/provider/inbox':'notification-lab/inbox');
   if(epoch===serial&&api===session&&info.isConnected)show(res);
  }));
  const ack=button('Подтвердить просмотр сигнала',()=>run(async(epoch)=>{
   if(!state?.pending)return;
   const session=api,{revision,sequence}=state;clear();
-  try{const res=await session.request('notification-lab/ack','POST',{expectedRevision:revision,sequence});if(epoch===serial&&api===session&&info.isConnected)show(res);}
+  try{const res=await session.request(candidatePage?'notification/provider/ack':'notification-lab/ack','POST',{expectedRevision:revision,sequence});if(epoch===serial&&api===session&&info.isConnected)show(res);}
   catch(err){if(epoch===serial&&api===session&&info.isConnected&&err.status===409)info.textContent='Сигнал изменился или истёк. Проверьте снова.';throw err;}
  }));
  ack.disabled=true;
- return box('Входящие сигналы · LAB',p('Ручная проверка и подтверждение общего сигнала. Не означает, что задания выполнены или прочитаны. Нет фоновой доставки.'),info,row(refresh,ack));
+ return box(candidatePage?'Входящие сигналы':'Входящие сигналы · LAB',p(candidatePage?'Ручное подтверждение общего сигнала отдельно от доставки и выполнения задания.':'Ручная проверка и подтверждение общего сигнала. Не означает, что задания выполнены или прочитаны. Нет фоновой доставки.'),info,row(refresh,ack));
 }
