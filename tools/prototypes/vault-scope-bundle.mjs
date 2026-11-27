@@ -5,6 +5,9 @@ import {BACKUP_VERSION,validateBackup} from '../../js/backup.js';
 import {stageVaultLab,readVaultLab} from './local-vault.mjs';
 const scopes=['school','coach','workspace'],names=Object.keys(SCHEMA),check=(ok,msg)=>{if(!ok)throw Error(msg);};
 import {workRecordScope as workScope} from '../../js/work-scope.js';
+import {splitVaultScopes as splitVaultScopesLab,joinVaultScopes as joinVaultScopesLab} from '../../js/vault-layout.js';
+export {splitVaultScopesLab,joinVaultScopesLab};
+// Legacy LAB per-scope validation retains its existing contract.
 const tableScope=n=>n==='meta'?'workspace':n.startsWith('coach')?'coach':'school';
 const keysFor=scope=>[...names.filter(n=>n!=='workRecords'&&tableScope(n)===scope),'workRecords'];
 const full=data=>{
@@ -12,26 +15,11 @@ const full=data=>{
  check(data.meta.every(r=>typeof r.id==='string'&&!r.id.startsWith('sync-checkpoint-')),'Контрольные точки sync не переносятся в LAB');
  return validateBackup({app:'teachapp',version:BACKUP_VERSION,data});
 };
-export function splitVaultScopesLab(data){
- const checked=full(structuredClone(data)),out=Object.fromEntries(scopes.map(s=>[s,Object.fromEntries(keysFor(s).map(n=>[n,[]]))]));
- for(const n of names){
-  if(n==='workRecords'){for(const r of checked[n])out[workScope(r)][n].push(r);}
-  else out[tableScope(n)][n]=checked[n];
- }
- return out;
-}
 function checkPart(data,scope){
  check(scopes.includes(scope)&&data&&Object.keys(data).length===keysFor(scope).length&&keysFor(scope).every(n=>Array.isArray(data[n])),'Неверный состав области LAB');
  check(data.workRecords.every(r=>workScope(r)===scope),'Запись другой области LAB');
  if(scope==='workspace')check(data.meta.every(r=>typeof r.id==='string'&&!r.id.startsWith('sync-checkpoint-')),'Контрольные точки sync не переносятся в LAB');
  return data;
-}
-export function joinVaultScopesLab(parts){
- check(parts&&Object.keys(parts).length===scopes.length&&scopes.every(s=>Object.hasOwn(parts,s)),'Требуются все области LAB');
- const data=Object.fromEntries(names.map(n=>[n,[]]));
- for(const s of scopes){const part=checkPart(parts[s],s);for(const n of keysFor(s))data[n].push(...part[n]);}
- // Cross-scope duplicated IDs, broken relationships and unknown types fail.
- return full(data);
 }
 function databases(dbs){
  check(dbs&&Object.keys(dbs).length===scopes.length&&scopes.every(s=>/^teachapp-vault-lab-[a-z0-9-]{1,80}$/.test(dbs[s]?.name)&&dbs[s].objectStoreNames.contains('sealed'))&&new Set(scopes.map(s=>dbs[s].name)).size===scopes.length,'Требуются три разные базы LAB');

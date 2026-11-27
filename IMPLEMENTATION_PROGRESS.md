@@ -526,3 +526,7 @@ Merge parents: roadmap 6f6d083 and LIVE candidate d513984 (main 6.0.6 ancestor).
 ## 8.0.0-rc.2 — release package and reversible stable-format rehearsal
 
 Verified code backup refs created before changes. Static manifest and integrity check, package-based PWA upgrade, synthetic rollback from candidate to 6.0.6 preserving latest edits and independent recovery. No production cutover; manual acceptance stays pending. Exact SHA CI required.
+
+### 8.0.0-rc.3 — Security 6.1, контрольная точка подготовки
+
+Общий чистый layout для диагностики живой схемы и LAB, проверка roundtrip без потерь, точная native-схема и явный отказ при неперенесённых sync checkpoints. Регрессии добавлены; статус CI сверять по точному SHA. Рабочая БД остаётся native v10, production не переключается. Полная интеграция и физическая приёмка открыты.

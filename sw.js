@@ -1,4 +1,4 @@
-const VERSION = 'v8.0.0-rc.2';
+const VERSION = 'v8.0.0-rc.3';
 const PREFIX = `teachapp:${self.registration.scope}:`;
 const CACHE = PREFIX + VERSION;
 
@@ -69,7 +69,7 @@ const PRECACHE = [
   './js/screens/match-protocol.js',
   './js/screens/lineup-picker.js',
   './js/screens/volleyball.js',
-  './js/privacy.js','./js/backup-verify.js','./js/migration-preflight.js',
+  './js/privacy.js','./js/backup-verify.js','./js/migration-preflight.js','./js/vault-layout.js',
   './js/retention.js',
   './js/analytics.js','./js/school-review.js',
   './js/screens/analytics.js','./js/screens/school-review.js',

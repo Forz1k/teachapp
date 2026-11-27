@@ -250,10 +250,28 @@ export const {bulkPut,get,getAll,put,del,clear,count,byIndex,transaction,clearAl
 /** Count before materializing a full snapshot. Both operations use the same
  * readonly transaction, so a concurrent writer cannot bypass the row cap.
  * If above limit, return counts only: no getAll, cursor or data export. */
+/** Exact native schema guard for migration diagnostics. Does not upgrade or
+ * repair stores/indexes; unexpected definitions must block a migration. */
+export function assertMigrationSchema(t){
+ const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ const fail=()=>{throw new DOMException('Неожиданная схема базы для переноса','MigrationSchemaError');};
+ const names=Object.keys(STORES);
+ if(t.db.version!==DB_VERSION||t.db.objectStoreNames.length!==names.length||names.some(n=>!t.db.objectStoreNames.contains(n)))fail();
+ for(const [name,def] of Object.entries(STORES)){
+  const s=t.objectStore(name);
+  if(!same(s.keyPath,def.keyPath)||s.autoIncrement||s.indexNames.length!==def.indexes.length)fail();
+  for(const [index,keyPath,options] of def.indexes){
+   if(!s.indexNames.contains(index))fail();
+   const actual=s.index(index);
+   if(!same(actual.keyPath,keyPath)||actual.unique!==!!options?.unique||actual.multiEntry!==!!options?.multiEntry)fail();
+  }
+ }
+}
 export function readBoundedSnapshot(limit){
  if(!Number.isSafeInteger(limit)||limit<0)throw Error('Некорректный лимит снимка');
  const names=Object.keys(STORES);
- return tx(names,'readonly',async stores=>{
+ return tx(names,'readonly',async (stores,t)=>{
+  assertMigrationSchema(t);
   const records=(await Promise.all(names.map(name=>stores[name].count()))).reduce((a,b)=>a+b,0);
   if(records>limit)return {records,data:null};
   const data=Object.fromEntries(await Promise.all(names.map(async name=>[name,await stores[name].getAll()])));
