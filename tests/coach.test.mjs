@@ -83,3 +83,12 @@ test('Coach training flags descendant restrictions on broad exercise separately 
 });
 
 test('Player season keeps PRO data separate from incomplete and manual records',()=>{const s=C.playerSeasonStats([{date:'2026-11-25',roster:['p'],stats:{p:{attacks:10,attackKills:8}}}],'p');assert.equal(s.capture.complete,0);assert.equal(s.capture.attackEfficiency.value,null);assert.equal(s.rates.attack.total,10);});
+
+
+test('Coach analytics is a storage-free module and legacy facade preserves exports',async()=>{
+ const analytics=await import('../js/coach-analytics.js');
+ for(const name of ["metrics","attendanceLabels","indexPlayerRecords","trainingWarnings","matchScore","playerAttendance","matchAssistCounts","assistTotals","summarizeStats","timedMatchPlayers","timedRate","playerSeasonStats","teamView","coachCsv","attendanceCsv","playerTrainingLoad"])assert.equal(C[name],analytics[name],name);
+ const stats=analytics.summarizeStats([{stats:{a:{points:5,aces:2}}}],['a']);
+ assert.equal(stats.sums.points,5);assert.equal(stats.sums.attacks,null);
+ assert.equal(analytics.indexPlayerRecords([{roster:['a','a','b']}]).get('a').length,1);
+});

@@ -13,3 +13,7 @@ Seasonal training comparison builds a fresh method/period/player-scoped index on
 ## RC5 preparation — scoped seasonal match comparison
 
 Seasonal comparisons select eligible athletes once and exclude matches with no eligible roster member before constructing indexes, reading assist events, or replaying detailed matches. Period and source filters and per-athlete result semantics remain unchanged; archived athletes are included only when requested. The deterministic regression includes 2,000 irrelevant roster records and asserts zero detailed-log accesses across the selected-position comparison. No persisted cache, storage schema change or physical-device acceptance is implied.
+
+## RC5 preparation — pure coach analytics decomposition
+
+The calculation and CSV functions live in `js/coach-analytics.js`, with the existing `coach.js` exports retained as a compatibility facade. Seasonal ranking uses the pure module directly. Player cards reuse their existing court-time snapshot instead of calculating it again. The new module is explicitly precached and packaged for offline PWA review. Native and encrypted coach commands, data schemas and version remain unchanged. Existing regressions and an export-identity test guard compatibility; physical-device timing and memory acceptance remains open.

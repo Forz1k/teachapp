@@ -107,3 +107,5 @@ RC5 preparation (still rc.4): local video review summary and full filtered CSV, 
 RC5 preparation (still rc.4): Studio custom cover positioning and editable ellipse layer. Portable numeric-only photo coordinates, old style compatibility and transient layer exclusion from match kit. Physical export acceptance remains open.
 
 RC5 preparation (still rc.4): seasonal training history indexed by selected method, period and eligible athlete, equality with previous individual scan and deterministic enumeration budget. Physical device timing/memory acceptance remains open.
+
+RC5 preparation (still rc.4): scoped seasonal match analytics avoids unrelated roster logs; pure coach calculations and CSV serialization extracted behind compatibility facade, reused player court-time snapshot and new precache entry. Physical-device timing/memory acceptance and further decomposition remain open.

@@ -1,4 +1,4 @@
-import {timedMatchPlayers,timedRate,indexPlayerRecords,matchAssistCounts} from './coach.js';
+import {timedMatchPlayers,timedRate,indexPlayerRecords,matchAssistCounts} from './coach-analytics.js';
 import {replayDetailed} from './match-protocol.js';
 import {setterAnalysis} from './match-tactics.js';
 import {definitionKey,testHistory,indexTestHistory,summarizeTests} from './coach-tests.js';
