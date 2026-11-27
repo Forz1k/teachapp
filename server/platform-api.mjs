@@ -41,7 +41,7 @@ export function workspaceRatePolicy(s,{auth,rootHash,method,path,now}){
  if(method==='POST'&&path==='recover'&&hash(s.recoveryHash)&&auth===s.recoveryHash&&auth!==rootHash)return {key:'recovery',limit:6};
  if(method==='POST'&&path==='redeem'&&s.invites.some(i=>i.hash===auth&&i.usedAt===null&&i.expiresAt>now))return {key:'redeem',limit:64};
  const actor=memberByHash(s,auth,now);if(!actor)return null;
- const kind=method==='GET'?'read':/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/revoke|notification-lab|notification-lab\/ack|notification-lab\/delivery\/(?:claim|finish|check))$/.test(path)?'access':'write';
+ const kind=method==='GET'?'read':/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/(?:revoke|rotate)|notification-lab|notification-lab\/ack|notification-lab\/delivery\/(?:claim|finish|check))$/.test(path)?'access':'write';
  return {key:'member:'+actor.id+':'+kind,limit:kind==='read'?240:kind==='access'?24:180};
 }
 /** Rolling fixed-minute windows, bounded retry interval; a clock regression
@@ -141,6 +141,23 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
     return ok({configured:true,version:s.recoveryVersion},200,true);
    }
    if(method==='GET'&&path==='members'){owner();return ok({members:s.members.map(publicMember)});}
+   if(method==='POST'&&path==='session/rotate'){
+    require(exact(body,[]),400,'packet');
+    // The existing session must still be valid. Rotation neither changes its
+    // scope nor extends its absolute expiry. The server generates the secret.
+    require(actor.role!=='owner'||hash(s.recoveryHash),409,'recovery-required');
+    require(hash(issued?.hash)&&hash(issued?.secret)&&issued.hash!==rootHash&&issued.hash!==s.recoveryHash&&!s.members.some(m=>m.tokenHash===issued.hash)&&!s.invites.some(i=>i.hash===issued.hash),409,'collision');
+    if(actor.notificationLab){
+     const revision=actor.notificationLab.revision+1;
+     require(int(revision,1),409,'revision');
+     actor.notificationLab={revision,endpoint:null};
+    }
+    actor.tokenHash=issued.hash;
+    s.invites=s.invites.filter(i=>i.issuerId!==actor.id);
+    releaseMemberLeases(s,new Set([actor.id]));
+    audit(s,actor,'session.rotate',actor.id,now);
+    return ok({workspaceId:s.id,member:publicMember(actor),token:issued.secret},200,true);
+   }
    if(method==='POST'&&path==='session/revoke'){
     require(exact(body,[]),400,'packet');
     // An owner may end the server session only with an independent recovery code configured.
