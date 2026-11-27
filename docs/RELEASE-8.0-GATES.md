@@ -75,3 +75,5 @@ Native диагностика использует общий school-v2 layout �
 RC3: отдельный device-local LAB v3 репетирует сохранение обычных checkpoint/status при атомарной миграции, записи, ротации и откате. Production blocker сохраняется до интеграции рабочего sync и проверки вложенных пакетов/ревизий на устройствах. Delta binding запрещён.
 
 RC3: общая команда синхронизации проверена с фиксированным backend device-local LAB; production auto-sync/UI и независимая эксплуатационная приёмка остаются открытыми.
+
+RC3: WebKit репетирует штатный экран журнала и тренерскую команду через all-key device-local LAB без native fallback; проверка не закрывает production UI bootstrap, отзыв уже отданных данных и физические акты.

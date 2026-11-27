@@ -20,6 +20,8 @@ jobs:
       - run: npm install --no-save --package-lock=false playwright@1.65.1
       - run: npx playwright install --with-deps webkit
       - run: node tools/webkit-smoke.mjs
+      - name: Rehearse actual application against isolated encrypted owner backend
+        run: node tools/vault-app-smoke.mjs
       - name: Build verified static candidate for actual update and rollback
         run: |
           node tools/build-static-release.mjs "$RUNNER_TEMP/teachapp-candidate"

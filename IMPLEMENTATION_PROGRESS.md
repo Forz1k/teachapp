@@ -538,3 +538,7 @@ Verified code backup refs created before changes. Static manifest and integrity 
 ### RC3 — общий исполнитель синхронизации
 
 Фиксированный backend LAB запускает существующую команду обмена с полным CAS шифротекстов, сохранением других областей, без native fallback. Синтетическая гонка после PUT и повтор без PUT покрыты тестами. Не переключает production auto-sync/UI.
+
+### RC3 — репетиция настоящего интерфейса
+
+Отдельный WebKit профиль, реальный index.html и неизменённые экраны с явно фиксированным owner backend; проверка оценки, истории, тренерской команды, сохранности после reload, запрет raw DB и изменения checkpoint через общий UI. Результаты — по CI точного SHA; не production маршрутизация.

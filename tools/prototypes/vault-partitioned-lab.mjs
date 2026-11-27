@@ -135,7 +135,7 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
   const normalized=normalizeEndpoint(endpoint),host=new URL(normalized).hostname;
   check(host.endsWith('.invalid')||['localhost','127.0.0.1','[::1]'].includes(host),'Разрешён только синтетический адрес LAB');return normalized;
  };
- const deviceAccess=(passwords,stillAllowed)=>{
+ const deviceAccess=(passwords,stillAllowed,{allowCheckpointWrite=true}={})=>{
   check(deviceLocal&&typeof stillAllowed==='function','Требуется device-local LAB');
   const guard=()=>check(stillAllowed(),'Сеанс синхронизации LAB заблокирован');
   return Object.freeze({
@@ -145,6 +145,7 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
     const prepared=await prepareSchemaSnapshotTransactionLab(data,names,mode,fn,{guard,isOpen:stillAllowed,deviceLocal:true});guard();
     if(mode==='readwrite'){
      const separated=splitDeviceSnapshot(prepared.data),next=split(separated.portable);
+     if(!allowCheckpointWrite)check(samePartitionSnapshotLab({device:separated.device},{device}),'Изменение контрольных точек через общий UI запрещено');
      for(const scope of scopes)fullPart(scope,next[scope]);
      const previous={...parts,workspace:{...parts.workspace,deviceMeta:device}};
      next.workspace={...next.workspace,deviceMeta:separated.device};
@@ -158,6 +159,27 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
  };
  return Object.freeze({
   stage,
+  // Entire existing application under an explicit all-key owner rehearsal.
+  // Only the local synthetic harness may use this API. No routing switch in
+  // the shipped db.js, no raw open(), no general mutation of checkpoint state.
+  async openOwnerAppRehearsal({passwords,synthetic=false,stillAllowed=()=>true}){
+   check(deviceLocal&&synthetic===true&&passwordsOK(passwords)&&typeof stillAllowed==='function','Требуется синтетическая репетиция владельца');
+   const secrets={...passwords};let closed=false;
+   const permitted=()=>!closed&&stillAllowed(),backend=deviceAccess(secrets,permitted,{allowCheckpointWrite:false});
+   const close=()=>{closed=true;for(const s of scopes)secrets[s]=undefined;};
+   try{await backend.dumpAll();}catch(e){close();throw e;}
+   const access=createDataAccess(async(names,mode,fn)=>{check(permitted(),'Сеанс приложения LAB закрыт');return backend.transaction(names,mode,fn);});
+   return Object.freeze({...access,close,isClosed:()=>closed,
+    async readBoundedSnapshot(limit){
+     check(Number.isSafeInteger(limit)&&limit>=0,'Некорректный лимит');
+     const names=Object.keys(SCHEMA);
+     return access.transaction(names,'readonly',async s=>{
+      const records=(await Promise.all(names.map(n=>s[n].count()))).reduce((a,b)=>a+b,0);
+      return {records,data:records>limit?null:Object.fromEntries(await Promise.all(names.map(async n=>[n,await s[n].getAll()])))};
+     });
+    }
+   });
+  },
   async prepareDeviceSync({passwords,area,endpoint,password,client,stillAllowed=()=>true}){
    const access=deviceAccess(passwords,stillAllowed),data=await access.dumpAll();
    const plan=await prepareSync({area,endpoint:syntheticEndpoint(endpoint),password,client,data});
