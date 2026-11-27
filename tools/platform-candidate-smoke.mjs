@@ -1,7 +1,7 @@
 /* Exact bundled HTTPS candidate in local workerd. All provider requests
  * intercepted; no cloud configuration, actual identity provider or real data. */
 import assert from 'node:assert/strict';
-import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
+import {Miniflare,Response,convertV4MiniflareOptions} from 'miniflare';
 import {readdir,readFile,mkdtemp,rm} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
