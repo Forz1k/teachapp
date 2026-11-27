@@ -306,6 +306,33 @@ try{
  await shown.getByRole('button',{name:'Возобновить время',exact:true}).waitFor();assert.equal(await shown.locator('.court-time-panel [data-court-time]').first().textContent(),(await page.evaluate(async id=>{const C=await import('./js/coach.js'),V=await import('./js/match-protocol.js'),T=await import('./js/court-time.js');return T.courtTimeLabel(V.courtTime(V.replayDetailed((await C.loadCoach()).coachLive.find(x=>x.id===id))).elapsedMs);},timedId)));
  await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
  console.log('WEBKIT COURT TIME PASS: live tick, timeout pause, explicit resume, persisted exact clock and six players, reopen and mobile stats.');
+ // Isolated rehearsal: no real coach records or public publishing, even when offline.
+ const rehearsalContext=await browser.newContext({...devices['iPhone 13'],locale:'ru-RU',serviceWorkers:'allow'});
+ try{
+  const rp=await rehearsalContext.newPage(),requests=[];
+  rp.on('request',req=>{if(!req.url().startsWith(origin+'/'))requests.push(req.url());});
+  await rp.goto(origin+'/index.html');await rp.locator('.workspace-nav').waitFor();
+  const before=await rp.evaluate(async()=>JSON.stringify(await (await import('./js/coach.js')).loadCoach()));
+  const open=()=>rp.evaluate(async()=>{(await import('./js/screens/match-protocol.js')).openRehearsal();});
+  await open();await rp.getByRole('button',{name:'Быстрый тест · до 5 очков',exact:true}).click();
+  await rp.locator('.vp-board-points').waitFor();
+  assert.match(await rp.locator('.match-live-label').textContent(),/ТЕСТ/);
+  assert.equal(await rp.locator('.vp-mini-player').count(),12);
+  await rehearsalContext.setOffline(true);
+  await rp.locator('.vp-points .vp-ours').click();await rp.locator('[data-reason="tip"]').click();await rp.locator('.vp-author-grid [data-player]').first().click();
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
+  assert.match(await rp.locator('[data-live-save-status]').textContent(),/Сохранено/);
+  await rehearsalContext.setOffline(false);
+  await rp.reload();await rp.locator('.workspace-nav').waitFor();
+  await open();await rp.getByRole('button',{name:'Продолжить / открыть тест',exact:true}).click();
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
+  await rp.locator('.vp-undo').click();await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='0');
+  assert.equal(await rp.evaluate(async()=>JSON.stringify(await (await import('./js/coach.js')).loadCoach())),before);
+  assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length),0);
+  assert.deepEqual(requests,[]);
+ }finally{await rehearsalContext.close();}
+ console.log('WEBKIT LIVE REHEARSAL PASS: offline score, reload, undo, untouched coach data and no external requests.');
+
  const vpFixture=await page.evaluate(async rows=>{const C=await import('./js/coach.js'),V=await import('./js/volleypoint-import.js'),U=await import('./js/screens/volleypoint-import.js');const report=V.parseVolleyRows(rows),team=await C.saveTeam({name:'История VolleyPoint'}),mapping={};for(const p of report.teams[0].players){const r=await C.savePlayer({teamId:team.id,name:p.name,number:p.number,position:'universal'});mapping[p.number]=r.id;}const input={...V.buildVolleyImport(report,0,mapping),teamId:team.id};delete input.imported.timing;input.opponent='Старое имя соперника';const m=await C.saveVolleyImport(input),view=C.teamView(await C.loadCoach(),team.id);U.openImportedReport(m,view,()=>U.openVolleyImport(team,view,async()=>{},{matchId:m.id}));return {teamId:team.id,matchId:m.id,playerId:mapping[1]};},timingRows);
  await shown.getByRole('heading',{name:'Игровое время по PDF',exact:true}).waitFor();await shown.getByRole('button',{name:'Дополнить из исходного PDF',exact:true}).click();
  await shown.getByLabel('PDF VolleyPoint',{exact:true}).setInputFiles({name:'synthetic-volley.pdf',mimeType:'application/pdf',buffer:timingPdf()});

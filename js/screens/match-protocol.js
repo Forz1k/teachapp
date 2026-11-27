@@ -4,6 +4,7 @@ import {listWork,deleteWork} from '../workbench.js';
 import {captureModes,touchActions,touchQuality,touchResults,captureSummary,captureZoneSummary} from '../match-capture.js';
 import {animateOnce,scoreChanges,recentRallies,rallyStreak,capturePositions,animatePositions} from '../motion.js';
 import * as C from '../coach.js';
+import {rehearsalStore} from '../volleyball.js';
 import * as V from '../match-protocol.js';
 import {matchTactics,rotationPerformance,recordedConnections,substitutionWindows} from '../match-tactics.js';
 import * as Portal from '../public-publisher.js';
@@ -153,26 +154,54 @@ export function renderSpectatorBoard(doc,snapshot,connected=true){
  main.append(boards);const sets=make('div','set-list');snapshot.sets.forEach((s,i)=>sets.append(make('span','',(i+1)+' · '+s.ours+' : '+s.theirs)));main.append(sets,make('footer','','TeachApp · Зрительское табло'));doc.body.replaceChildren(main);
 }
 
-export function openDetailedMatch(initial,back,refresh){
+export function openRehearsal(){
+ try{
+  const store=rehearsalStore(),draft=store.read();
+  const body=el('div',{class:'vp-stack'},[el('h2',{text:'Тестовый LIVE-матч'}),p('ТЕСТ · Только на этом устройстве. Вымышленные команды: по 10 игроков, готовые шестёрки, запасные и два наших либеро. Реальные команды, история, синхронизация и публичная страница не изменяются.')]);
+  let busy=false;
+  const run=async fn=>{if(busy)return;busy=true;try{await fn();}catch(e){toast(e.message);}finally{busy=false;}};
+  const enter=d=>openDetailedMatch(d,openRehearsal,()=>{},store);
+  if(draft){
+   const state=V.replayDetailed(draft);
+   body.append(p((state.finished?'Тест завершён':'Тестовый черновик')+' · '+state.score.ours+':'+state.score.theirs+' · событий '+draft.events.length),
+    btn('Продолжить / открыть тест',()=>enter(draft),'primary wide'),
+    btn('Удалить тест и начать заново',()=>run(async()=>{if(!await ui.confirmDialog({title:'Удалить тест?',text:'Удалится только тренировочный матч.',ok:'Удалить',danger:true}))return;await store.discard(draft.id,draft.revision);openRehearsal();}),'wide'));
+  }else{
+   body.append(btn('Начать тест · до 25 очков',()=>run(async()=>enter(await store.start({short:false}))),'primary wide'),
+    btn('Быстрый тест · до 5 очков',()=>run(async()=>enter(await store.start({short:true}))),'wide'));
+  }
+  body.append(btn('Закрыть',ui.closeSheet,'wide'));openSheet(body);
+ }catch(e){toast(e.message);}
+}
+export function openDetailedMatch(initial,back,refresh,rehearsal=null){
+ if(initial.teamId==='test-rehearsal'&&!rehearsal)throw Error('Откройте матч в тестовом режиме');
  let d=initial,busy=false,selected=null,pointDraft=null,section='match',nextDraft=null,quick=false,captureMode='standard',swapped=false,scoutOpen=false,scoutSide='theirs',scoutKind='all',scoutSet=0,scoutEntry=false,historySet=0,historyEdit=null,historyLimit=80,detailOpen=false,observationOpen=false;
  const body=el('div',{class:'vp-stack vp-live'});
  const wake=matchWakeLock();let observer=null,spectator=null,clockState=null;
  const tickClock=()=>{if(!clockState||!body.isConnected)return;const t=V.courtTime(clockState,Date.now());for(const n of body.querySelectorAll('[data-court-time]')){const id=n.dataset.courtTime,side=n.dataset.courtSide||'ours',set=n.dataset.courtSet?t.sets[Number(n.dataset.courtSet)-1]:null;n.textContent=courtTimeLabel(set?(set.started?(id?set.players[side][id]||0:set.elapsedMs):null):id?(t.measured?t.players[side][id]||0:null):(t.measured?t.elapsedMs:null));}};
  const clockTicker=window.setInterval(tickClock,1000);
- const publish=(options={})=>{try{return Portal.syncPortalMatch(d,options);}catch(e){toast('Публикация: '+e.message);return false;}};
- publish();const heartbeat=window.setInterval(()=>Portal.heartbeatPortal(d.teamId,d.id),30000);
- const unwatch=Portal.watchPortal(d.teamId,()=>{const n=body.querySelector('.vp-portal-live-status');if(n)n.textContent=Portal.portalInfo(d.teamId).status;});
+ const publish=(options={})=>{if(rehearsal)return false;try{return Portal.syncPortalMatch(d,options);}catch(e){toast('Публикация: '+e.message);return false;}};
+ publish();const heartbeat=rehearsal?null:window.setInterval(()=>Portal.heartbeatPortal(d.teamId,d.id),30000);
+ const unwatch=rehearsal?()=>{}:Portal.watchPortal(d.teamId,()=>{for(const n of body.querySelectorAll('.vp-portal-live-status'))n.textContent=Portal.portalInfo(d.teamId).status;});
+ let saving=false,saveFailure='';
+ const updateSaveStatus=()=>{
+  const n=body.querySelector('[data-live-save-status]');if(n)n.textContent=saving?'Сохранение события…':saveFailure?'Запись не подтверждена: '+saveFailure:'Сохранено на устройстве · событий '+d.events.length;
+  const recovery=body.querySelector('[data-live-recovery]');if(recovery)recovery.hidden=!saveFailure;
+  const net=body.querySelector('[data-live-network]');if(net)net.textContent=navigator.onLine===false?'Нет сети по данным браузера · локальная запись доступна':'Сеть доступна по данным браузера';
+ };
+ const refreshNetwork=()=>updateSaveStatus();
+ window.addEventListener('online',refreshNetwork);window.addEventListener('offline',refreshNetwork);
  const liberoChange=async event=>{if(busy)return;const s=V.replayDetailed(d);if(V.liberoIntervalPending(d,s)){const reason=await ui.promptDialog({title:'Судейское исключение?',text:'Между записанными сменами либеро ещё не было розыгрыша. Только по фактическому решению судьи укажите причину (до 200 символов).',ok:'Записать исключение'});if(!reason)return;event={...event,exception:reason.trim()};}await perform(event,()=>selected=null);};
  const spectatorUpdate=(s,connected=true)=>{try{if(spectator&&!spectator.closed)renderSpectatorBoard(spectator.document,V.spectatorSnapshot(d,s),connected);else spectator=null;}catch{spectator=null;}};
  const spectatorOpen=()=>{try{if(!spectator||spectator.closed)spectator=window.open('','teachapp-score-'+d.id,'popup,width=1000,height=600');if(!spectator)return toast('Разрешите открытие отдельного окна');spectatorUpdate(V.replayDetailed(d));spectator?.focus?.();}catch{toast('Отдельное окно недоступно');}};
  let stopped=false;
- const stop=()=>{if(stopped)return;stopped=true;window.clearInterval(heartbeat);window.clearInterval(clockTicker);unwatch();if(spectator&&!spectator.closed)spectatorUpdate(V.replayDetailed(d),false);spectator=null;wake.stop();observer?.disconnect();window.removeEventListener('pagehide',stop);};
+ const stop=()=>{if(stopped)return;stopped=true;window.clearInterval(heartbeat);window.clearInterval(clockTicker);unwatch();if(spectator&&!spectator.closed)spectatorUpdate(V.replayDetailed(d),false);spectator=null;wake.stop();observer?.disconnect();window.removeEventListener('pagehide',stop);window.removeEventListener('online',refreshNetwork);window.removeEventListener('offline',refreshNetwork);};
  window.addEventListener('pagehide',stop);
  const perform=async(event,after)=>{
-  if(busy)return;busy=true;
+  if(busy||stopped)return;busy=true;saving=true;saveFailure='';updateSaveStatus();
   const buttons=[...body.querySelectorAll('button')].filter(x=>!x.disabled);buttons.forEach(x=>x.disabled=true);
-  try{d=await C.changeLiveMatch(d.id,d.revision,event);if(event?.type!=='clock')publish();after?.();draw();}
-  catch(e){toast(e.message);}finally{busy=false;buttons.forEach(x=>x.disabled=false);}
+  try{d=await (rehearsal?rehearsal.change(d.id,d.revision,event):C.changeLiveMatch(d.id,d.revision,event));saving=false;if(event?.type!=='clock')publish();after?.();draw();}
+  catch(e){saving=false;saveFailure=e.message||'Неизвестная ошибка';updateSaveStatus();toast(saveFailure);}finally{busy=false;buttons.forEach(x=>x.disabled=false);updateSaveStatus();}
  };
  let previousBoard=null,previousOverlay='';
  function draw(){
@@ -209,8 +238,13 @@ export function openDetailedMatch(initial,back,refresh){
      el('button',{type:'button',class:'vp-timeout-button',disabled:s.timeouts[side]>=V.matchLimits(d).timeouts||!!pointDraft,onclick:()=>perform({type:'timeout',side},()=>{selected=null;}),'aria-label':'Тайм-аут '+sideName(d,side)},[el('span',{text:'Тайм-аут'}),...Array.from({length:V.matchLimits(d).timeouts},(_,i)=>el('i',{class:i<s.timeouts[side]?'used':''}))]),
      el('small',{class:'vp-board-serving',text:serving?'● Подаёт '+(player?.number!=null?'№'+player.number:player?.name||'команда'):'Приём'})]):null]);
   }));
-  body.replaceChildren(el('div',{class:'vp-match-head'},[el('div',{class:'vp-match-title'},[el('span',{class:'match-live-label',text:s.finished?'ЗАВЕРШЁН':s.setEnded?'ПЕРЕРЫВ':'● LIVE'}),el('strong',{text:'Партия '+set})]),displayScore,el('div',{class:'match-sets'},s.sets.length?s.sets.map((x,i)=>el('span',{class:'match-set',text:(i+1)+' · '+score(x)})):[el('span',{text:'Первая партия'})])]),
+  body.replaceChildren(el('div',{class:'vp-match-head'},[el('div',{class:'vp-match-title'},[el('span',{class:'match-live-label',text:(rehearsal?'ТЕСТ · ':'')+(s.finished?'ЗАВЕРШЁН':s.setEnded?'ПЕРЕРЫВ':'● LIVE')}),el('strong',{text:'Партия '+set})]),displayScore,el('div',{class:'match-sets'},s.sets.length?s.sets.map((x,i)=>el('span',{class:'match-set',text:(i+1)+' · '+score(x)})):[el('span',{text:'Первая партия'})])]),
    el('div',{class:'vp-tabs',role:'group','aria-label':'Раздел матча'},[['match','Матч'],['stats','Статистика'],['events','События']].map(([id,t])=>btn(t,()=>{section=id;historyEdit=null;draw();},section===id?'primary':''))));
+  const liveStatus=el('div',{class:'vp-stack','aria-label':'Состояние записи матча'},[
+   el('small',{'data-live-save-status':'',role:'status'}),el('small',{'data-live-network':''}),
+   !rehearsal&&Portal.portalInfo(d.teamId).data.enabled?el('small',{class:'vp-portal-live-status',role:'status',text:Portal.portalInfo(d.teamId).status}):null,
+   el('button',{type:'button',class:'btn wide','data-live-recovery':'',hidden:true,text:'Проверить сохранённый черновик',onclick:async()=>{if(busy)return;if(pointDraft&&!await ui.confirmDialog({title:'Проверить черновик?',text:'Незаписанное уточнение очка будет закрыто. Сохранённые события останутся.',ok:'Открыть центр матчей'}))return;stop();back();}})
+  ]);body.insertBefore(liveStatus,body.children[1]);updateSaveStatus();
   for(const [side,kind] of Object.entries(changes)){const n=displayScore.querySelector('[data-score-side="'+side+'"]');if(n){animateOnce(n,kind,{duration:280});if(kind==='score')animateOnce(n.parentElement,'pulse',{duration:210});}}
   if(rotation&&!pointDraft&&!scoutOpen)animatePositions(displayScore,oldPositions);
   if(newSetEnd)animateOnce(body.querySelector('.vp-match-title'),'enter',{duration:360});
@@ -278,9 +312,9 @@ export function openDetailedMatch(initial,back,refresh){
     }
     area.append(btn('Отмена',cancel,'wide'));showOverlay(area);
    }else if(s.finished){
-    body.append(p('Матч завершён'),btn('Сохранить матч и открыть протокол',async()=>{
-     if(busy||!await ui.confirmDialog({title:'Завершить матч?',text:'События, счёт и статистика сохранятся в истории.',ok:'Сохранить'}))return;
-     busy=true;try{const m=await C.finishLiveMatch(d.id,d.revision);publish({finish:true});stop();await refresh();openMatchReport(m,back);}catch(e){toast(e.message);}finally{busy=false;}
+    body.append(p('Матч завершён'),btn(rehearsal?'Открыть тестовый протокол':'Сохранить матч и открыть протокол',async()=>{
+     if(busy||!await ui.confirmDialog({title:'Завершить матч?',text:rehearsal?'Тестовый протокол не попадёт в историю реальных матчей.':'События, счёт и статистика сохранятся в истории.',ok:'Сохранить'}))return;
+     busy=true;try{const m=await (rehearsal?rehearsal.finish(d.id,d.revision):C.finishLiveMatch(d.id,d.revision));publish({finish:true});stop();await refresh();openMatchReport(m,back,!!rehearsal);}catch(e){toast(e.message);}finally{busy=false;}
     },'primary wide'));
    }else if(s.setEnded){
     body.append(btn('◎ Тактическая разведка',()=>{scoutOpen=true;draw();if(body.closest('.sheet'))body.closest('.sheet').scrollTop=0;},'wide vp-scout-open'));
@@ -337,15 +371,15 @@ export function openDetailedMatch(initial,back,refresh){
   const undo=btn('Отменить последнее событие',()=>{if(d.events.length)perform(null,()=>{selected=null;pointDraft=null;});},'wide');undo.disabled=!d.events.length;
   if(!active){if(section==='match')body.querySelector('.vp-match-head').append(undo);else body.append(undo);}
   const liveColors=colorFields(palette,d.boardLogos);
-  const saveColors=btn('Сохранить оформление',async()=>{if(busy)return;busy=true;saveColors.disabled=true;try{d=await C.changeLiveColors(d.id,d.revision,liveColors.get(),liveColors.getLogos());publish();draw();}catch(e){toast(e.message);}finally{busy=false;saveColors.disabled=false;}},'wide');
+  const saveColors=btn('Сохранить оформление',async()=>{if(busy)return;busy=true;saveColors.disabled=true;try{d=await (rehearsal?rehearsal.colors(d.id,d.revision,liveColors.get(),liveColors.getLogos()):C.changeLiveColors(d.id,d.revision,liveColors.get(),liveColors.getLogos()));publish();draw();}catch(e){toast(e.message);}finally{busy=false;saveColors.disabled=false;}},'wide');
   const wakeBtn=btn(wake.enabled?'Экран: не выключать':'Экран: обычный режим',async()=>{if(busy)return;wakeBtn.disabled=true;const requested=!wake.enabled;const enabled=await wake.toggle();wakeBtn.textContent=enabled?'Экран: не выключать':'Экран: обычный режим';wakeBtn.setAttribute('aria-pressed',String(enabled));wakeBtn.disabled=false;if(requested&&!enabled)toast('Не удалось удерживать экран. Проверьте настройки браузера или энергосбережение.');},'wide');wakeBtn.setAttribute('aria-pressed',String(wake.enabled));
-  const publicInfo=Portal.portalInfo(d.teamId),paused=publicInfo.data.publisherPaused||publicInfo.conflict,publicActive=!paused&&publicInfo.data.activeId===d.id;
+  const publicInfo=rehearsal?{data:{enabled:false}}:Portal.portalInfo(d.teamId),paused=publicInfo.data.publisherPaused||publicInfo.conflict,publicActive=!paused&&publicInfo.data.activeId===d.id;
   const menu=el('details',{class:'vp-match-more'},[el('summary',{text:'Управление матчем · черновик сохранён'}),
-   publicInfo.data.enabled?el('div',{class:'vb-stack'},[p(paused?'Отправка счёта остановлена или конфликтует':publicActive?'Трансляция этого матча включена':'Этот матч не опубликован'),el('p',{class:'vp-portal-live-status',role:'status',text:publicInfo.status}),paused?btn('Принять управление LIVE',async()=>{if(busy)return;busy=true;try{const preview=await Portal.previewPortalHandoff(d.teamId,d);if(!await ui.confirmDialog({title:'Продолжить LIVE на этом устройстве?',text:preview.opponent+' · партия '+preview.set+' · '+preview.score.ours+':'+preview.score.theirs+'. Совпадает публичный счёт и доступные '+preview.events+' розыгрышей. Убедитесь, что предыдущее устройство остановило отправку, другие вкладки закрыты и у вас полный локальный черновик. Это не блокировка другого устройства.',ok:'Принять'}))return;await Portal.continuePortalHandoff(d.teamId,d,preview.etag,{confirmed:true});draw();}catch(e){toast(e.message);}finally{busy=false;}},'primary wide'):btn(publicActive?'Остановить публичную трансляцию':'Начать публичную трансляцию',async()=>{if(busy)return;if(!await ui.confirmDialog({title:publicActive?'Остановить трансляцию?':'Начать публичную трансляцию?',text:publicActive?'Счёт останется в локальном журнале.':'Публичная страница покажет счёт и разрешённые события этого матча.',ok:publicActive?'Остановить':'Начать'}))return;try{if(publicActive)Portal.stopPortalMatch(d.teamId);else publish({start:true});draw();}catch(e){toast(e.message);}},'wide'),publicActive?btn('Передать управление · остановить отправку',async()=>{if(busy)return;if(!await ui.confirmDialog({title:'Приостановить отправку счёта?',text:'Последний счёт останется на сайте. На этом устройстве все публичные записи будут заблокированы до явного возобновления. Локальный матч сохранится. Закройте другие вкладки TeachApp на этом устройстве. На другом устройстве требуется тот же полный черновик.',ok:'Остановить отправку'}))return;try{Portal.pausePortalPublisher(d.teamId);draw();}catch(e){toast(e.message);}},'wide'):null]):p('Публичная страница выключена. Настройте её в центре матчей.'),
+   publicInfo.data.enabled?el('div',{class:'vb-stack'},[p(paused?'Отправка счёта остановлена или конфликтует':publicActive?'Трансляция этого матча включена':'Этот матч не опубликован'),el('p',{class:'vp-portal-live-status',role:'status',text:publicInfo.status}),paused?btn('Принять управление LIVE',async()=>{if(busy)return;busy=true;try{const preview=await Portal.previewPortalHandoff(d.teamId,d);if(!await ui.confirmDialog({title:'Продолжить LIVE на этом устройстве?',text:preview.opponent+' · партия '+preview.set+' · '+preview.score.ours+':'+preview.score.theirs+'. Совпадает публичный счёт и доступные '+preview.events+' розыгрышей. Убедитесь, что предыдущее устройство остановило отправку, другие вкладки закрыты и у вас полный локальный черновик. Это не блокировка другого устройства.',ok:'Принять'}))return;await Portal.continuePortalHandoff(d.teamId,d,preview.etag,{confirmed:true});draw();}catch(e){toast(e.message);}finally{busy=false;}},'primary wide'):btn(publicActive?'Остановить публичную трансляцию':'Начать публичную трансляцию',async()=>{if(busy)return;if(!await ui.confirmDialog({title:publicActive?'Остановить трансляцию?':'Начать публичную трансляцию?',text:publicActive?'Счёт останется в локальном журнале.':'Публичная страница покажет счёт и разрешённые события этого матча.',ok:publicActive?'Остановить':'Начать'}))return;try{if(publicActive)Portal.stopPortalMatch(d.teamId);else publish({start:true});draw();}catch(e){toast(e.message);}},'wide'),publicActive?btn('Передать управление · остановить отправку',async()=>{if(busy)return;if(!await ui.confirmDialog({title:'Приостановить отправку счёта?',text:'Последний счёт останется на сайте. На этом устройстве все публичные записи будут заблокированы до явного возобновления. Локальный матч сохранится. Закройте другие вкладки TeachApp на этом устройстве. На другом устройстве требуется тот же полный черновик.',ok:'Остановить отправку'}))return;try{Portal.pausePortalPublisher(d.teamId);draw();}catch(e){toast(e.message);}},'wide'):null]):p(rehearsal?'ТЕСТ: публичная отправка полностью отключена. Отдельное локальное табло доступно.':'Публичная страница выключена. Настройте её в центре матчей.'),
    wake.supported?wakeBtn:p('Удержание экрана недоступно в этом браузере.'),btn('Зрительское табло · отдельное окно',spectatorOpen,'wide'),p('Только счёт и команды. На ПК можно захватить окно в OBS. При выходе показывается последний счёт.'),liveColors.node,saveColors,
    p('Замены: '+(d.substitutionMode==='paired'?'парные':'упрощённые')+' · Событий: '+d.events.length),
    btn('Выйти · черновик сохранён',async()=>{if(busy)return;if(s.courtClock.running&&!await ui.confirmDialog({title:'Учёт времени продолжается',text:'Время продолжит начисляться текущему составу и после выхода. Чтобы остановить его, вернитесь и нажмите «Пауза времени».',ok:'Выйти'}))return;stop();back();},'wide'),
-   btn('Удалить черновик',async()=>{if(busy||!await ui.confirmDialog({title:'Удалить черновик?',text:'Вся история этого матча будет удалена.',ok:'Удалить',danger:true}))return;busy=true;try{await C.discardLiveMatch(d.id,d.revision);publish({discard:true});stop();back();}catch(e){toast(e.message);}finally{busy=false;}},'wide')]);
+   btn('Удалить черновик',async()=>{if(busy||!await ui.confirmDialog({title:'Удалить черновик?',text:'Вся история этого матча будет удалена.',ok:'Удалить',danger:true}))return;busy=true;try{await (rehearsal?rehearsal.discard(d.id,d.revision):C.discardLiveMatch(d.id,d.revision));publish({discard:true});stop();back();}catch(e){toast(e.message);}finally{busy=false;}},'wide')]);
   body.append(menu);
  }
  draw();const sheet=openSheet(body,{fullHeight:true,match:true,onClose:stop});
@@ -536,7 +570,7 @@ export function buildMatchReport(m){
   section('Подписи',p('Первый судья __________________________'),p('Капитан '+d.teamName+' __________________________'),p('Капитан '+d.opponent+' __________________________'))]);
 }
 import {openMatchTactics} from './match-tactics.js';
-export function openMatchReport(m,back){
+export function openMatchReport(m,back,rehearsal=false){
  try{
   const report=buildMatchReport(m);
   openSheet(el('div',{class:'vp-stack'},[btn('Печать / сохранить PDF',()=>{
@@ -544,6 +578,6 @@ export function openMatchReport(m,back){
    const node=el('div',{id:'teachapp-print-report'},[buildMatchReport(m)]);document.body.append(node);
    const cleanup=()=>node.remove();window.addEventListener('afterprint',cleanup,{once:true});
    try{window.print();}catch{cleanup();toast('Печать недоступна');}
-  },'primary wide'),btn('Тактический разбор',()=>openMatchTactics(m,()=>openMatchReport(m,back)),'wide'),report,btn('Назад',back||ui.closeSheet,'wide')]));
+  },'primary wide'),rehearsal?p('ТЕСТ · Этот протокол не сохраняется в истории и не участвует в аналитике.'):btn('Тактический разбор',()=>openMatchTactics(m,()=>openMatchReport(m,back)),'wide'),report,btn('Назад',back||ui.closeSheet,'wide')]));
  }catch(e){toast(e.message);}
 }

@@ -11,7 +11,7 @@
 
   <br>
 
-  <img alt="Версия" src="https://img.shields.io/badge/version-6.0.2-5145CD">
+  <img alt="Версия" src="https://img.shields.io/badge/version-6.0.3-5145CD">
   <img alt="PWA" src="https://img.shields.io/badge/PWA-offline--first-2563EB">
   <img alt="JavaScript" src="https://img.shields.io/badge/JavaScript-ES_modules-F7DF1E?logo=javascript&logoColor=black">
   <a href="https://github.com/Forz1k/teachapp/actions/workflows/check.yml"><img alt="CI" src="https://github.com/Forz1k/teachapp/actions/workflows/check.yml/badge.svg"></a>
@@ -24,7 +24,7 @@
 
 ## О проекте
 
-> **TeachApp 6.0.2** — промежуточный персональный выпуск улучшений 6.1–6.9, без включения новых production-миграций и 7.x. Статус публикации подтверждается main и GitHub Pages. Перед обновлением сохраните защищённую копию каждого устройства, закройте другие вкладки и обновите все синхронизируемые устройства. Не очищайте данные сайта. IndexedDB v10, копии v22. [Приёмка и ограничения](docs/RELEASE-6.0.2-ACCEPTANCE.md).
+> **TeachApp 6.0.3** — тестовые LIVE-матчи и индикация надёжности записи. Тренировка: Тренер → Матчи → Тестовый LIVE-матч; обычный или быстрый режим. Тест не изменяет реальные данные и не публикуется. Перед обновлением сохраните независимую защищённую копию каждого устройства, закройте другие вкладки; не очищайте данные сайта. IndexedDB v10, копии v22. [История изменений](CHANGELOG.md).
 
 **TeachApp** — специализированное веб-приложение для ежедневной работы учителя физкультуры и тренера по волейболу. Оно объединяет электронный журнал, календарно-тематическое планирование (КТП), нормативы, учёт ограничений физической нагрузки, управление командой, проведение матчей и аналитику.
 

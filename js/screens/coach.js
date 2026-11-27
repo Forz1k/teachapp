@@ -12,6 +12,7 @@ import {catalog} from '../health.js';
 import {todayIso,fmtFull} from '../model.js';
 import * as ui from '../ui.js';
 import {openMatchCenter} from './volleyball.js';
+import {openRehearsal} from './match-protocol.js';
 import {openPublicResult} from './public-portal.js';
 import {competitionCard} from './competition-center.js';
 import {historyPanel} from './match-history.js';
@@ -271,6 +272,7 @@ export async function renderCoach(root,ctx={}){
       const archived=el('input',{type:'checkbox'});archived.checked=showArchived;archived.onchange=()=>{showArchived=archived.checked;refresh();};
       body.append(card('Команды',[teams.length?field('Команда',picker):p('Добавьте первую волейбольную команду.'),field('Показать архивные команды',archived),btn('+ Команда',()=>teamForm(null,refresh),'primary wide')]));
       body.append(btn('Организация соревнований',openTournaments,'wide'));
+      if(['home','matches'].includes(selectedSection))body.append(btn('Тестовый LIVE-матч',openRehearsal,'wide'));
       const team=teams.find(t=>t.id===selectedTeam);if(!team)return;
       const view=C.teamView(data,team.id);
       body.append(el('div',{class:'coach-actions'},[btn('Название',()=>teamForm(team,refresh)),btn(team.archived?'Восстановить команду':'Архивировать',()=>confirm('Изменить статус команды?','Данные сохранятся.',()=>C.saveTeam({...team,archived:!team.archived}),refresh))]));
