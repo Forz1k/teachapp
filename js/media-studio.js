@@ -4,11 +4,11 @@ export const templates=Object.freeze({matchday:'День матча',next:'Сл�
 export const formats=Object.freeze({square:[1080,1080],story:[1080,1920],wide:[1920,1080]});
 export const studioLayouts=Object.freeze({classic:'Классика',arena:'Арена',editorial:'Редакционный'});
 export const studioLogoPositions=Object.freeze({right:'Справа',left:'Слева',none:'Скрыть'});
-export const studioFocus=Object.freeze({center:'Центр',top:'Верх',bottom:'Низ',left:'Слева',right:'Справа'});
+export const studioFocus=Object.freeze({center:'Центр',top:'Верх',bottom:'Низ',left:'Слева',right:'Справа',custom:'Точная настройка'});
 const clean=(v,n)=>String(v??'').replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,n);
 const color=(v,f)=>typeof v==='string'&&/^#[a-fA-F0-9]{6}$/.test(v)?v:f;
 export function studioStyle(raw={}){
- return {accent:color(raw?.accent,'#61e5b0'),background:color(raw?.background,'#101b31'),footer:clean(raw?.footer??'TeachApp · Волейбол',100),format:Object.hasOwn(formats,raw?.format)?raw.format:'square',layout:Object.hasOwn(studioLayouts,raw?.layout)?raw.layout:'classic',focus:Object.hasOwn(studioFocus,raw?.focus)?raw.focus:'center',logoPosition:Object.hasOwn(studioLogoPositions,raw?.logoPosition)?raw.logoPosition:'right',photoOpacity:Number.isFinite(raw?.photoOpacity)?Math.max(0,Math.min(100,Math.round(raw.photoOpacity))):70,photoZoom:clamp(raw?.photoZoom,100,200,100)};
+ return {accent:color(raw?.accent,'#61e5b0'),background:color(raw?.background,'#101b31'),footer:clean(raw?.footer??'TeachApp · Волейбол',100),format:Object.hasOwn(formats,raw?.format)?raw.format:'square',layout:Object.hasOwn(studioLayouts,raw?.layout)?raw.layout:'classic',focus:Object.hasOwn(studioFocus,raw?.focus)?raw.focus:'center',logoPosition:Object.hasOwn(studioLogoPositions,raw?.logoPosition)?raw.logoPosition:'right',photoOpacity:Number.isFinite(raw?.photoOpacity)?Math.max(0,Math.min(100,Math.round(raw.photoOpacity))):70,photoZoom:clamp(raw?.photoZoom,100,200,100),photoX:clamp(raw?.photoX,0,100,50),photoY:clamp(raw?.photoY,0,100,50)};
 }
 const styleKey=scope=>'teachapp:studio-style:v1:'+encodeURIComponent(String(scope||'default').slice(0,200));
 export function readStudioStyle(scope,storage=localStorage){
@@ -37,19 +37,20 @@ export function parseStudioStyleFile(text){
  if(typeof text!=='string'||text.length>4096)throw Error('Некорректный файл оформления');
  let value;try{value=JSON.parse(text);}catch{throw Error('Не удалось прочитать JSON оформления');}
  if(!value||value.schema!==1||value.kind!=='teachapp-studio-style'||!value.style||typeof value.style!=='object'||Array.isArray(value.style))throw Error('Неподдерживаемый формат оформления');
- const s=value.style,allowed=['accent','background','footer','format','layout','focus','logoPosition','photoOpacity','photoZoom'];
+ const s=value.style,allowed=['accent','background','footer','format','layout','focus','logoPosition','photoOpacity','photoZoom','photoX','photoY'];
  if(Object.keys(value).some(k=>!['schema','kind','style'].includes(k))||Object.keys(s).some(k=>!allowed.includes(k)))throw Error('Файл содержит посторонние поля');
- if(!/^#[a-fA-F0-9]{6}$/.test(s.accent)||!/^#[a-fA-F0-9]{6}$/.test(s.background)||typeof s.footer!=='string'||s.footer.length>100||!Object.hasOwn(formats,s.format)||!Object.hasOwn(studioLayouts,s.layout)||!Object.hasOwn(studioFocus,s.focus)||(Object.hasOwn(s,'logoPosition')&&!Object.hasOwn(studioLogoPositions,s.logoPosition))||(Object.hasOwn(s,'photoOpacity')&&(!Number.isInteger(s.photoOpacity)||s.photoOpacity<0||s.photoOpacity>100))||(Object.hasOwn(s,'photoZoom')&&(!Number.isInteger(s.photoZoom)||s.photoZoom<100||s.photoZoom>200)))throw Error('Некорректные параметры оформления');
+ if(!/^#[a-fA-F0-9]{6}$/.test(s.accent)||!/^#[a-fA-F0-9]{6}$/.test(s.background)||typeof s.footer!=='string'||s.footer.length>100||!Object.hasOwn(formats,s.format)||!Object.hasOwn(studioLayouts,s.layout)||!Object.hasOwn(studioFocus,s.focus)||(Object.hasOwn(s,'logoPosition')&&!Object.hasOwn(studioLogoPositions,s.logoPosition))||(Object.hasOwn(s,'photoOpacity')&&(!Number.isInteger(s.photoOpacity)||s.photoOpacity<0||s.photoOpacity>100))||(Object.hasOwn(s,'photoZoom')&&(!Number.isInteger(s.photoZoom)||s.photoZoom<100||s.photoZoom>200))||['photoX','photoY'].some(k=>Object.hasOwn(s,k)&&(!Number.isInteger(s[k])||s[k]<0||s[k]>100)))throw Error('Некорректные параметры оформления');
  return studioStyle(s);
 }
 export function studioInk(background){
  const luminance=c=>{const x=c.slice(1).match(/../g).map(v=>parseInt(v,16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return .2126*x[0]+.7152*x[1]+.0722*x[2];};
  const bg=luminance(color(background,'#101b31'));return (bg+.05)/.05>=1.05/(bg+.05)?'#000000':'#ffffff';
 }
-export function studioCrop(width,height,w,h,focus='center',zoom=100){
+export function studioCrop(width,height,w,h,focus='center',zoom=100,photoX=50,photoY=50){
  if(![width,height,w,h].every(x=>Number.isFinite(x)&&x>0))throw Error('Некорректные размеры фотографии');
  if(!Number.isFinite(zoom)||zoom<100||zoom>200)throw Error('Масштаб фотографии должен быть от 100 до 200%');
- const k=Math.max(w/width,h/height)*zoom/100,x=focus==='left'?0:focus==='right'?1:.5,y=focus==='top'?0:focus==='bottom'?1:.5;
+ if(focus==='custom'&&(![photoX,photoY].every(v=>Number.isFinite(v)&&v>=0&&v<=100)))throw Error('Положение фотографии должно быть от 0 до 100%');
+ const k=Math.max(w/width,h/height)*zoom/100,x=focus==='custom'?photoX/100:focus==='left'?0:focus==='right'?1:.5,y=focus==='custom'?photoY/100:focus==='top'?0:focus==='bottom'?1:.5;
  return {x:(w-width*k)*x||0,y:(h-height*k)*y||0,width:width*k,height:height*k};
 }
 const clamp=(value,min,max,fallback)=>Number.isFinite(value)?Math.min(max,Math.max(min,Math.round(value))):fallback;
@@ -58,7 +59,7 @@ export const studioLayerAlign=Object.freeze({left:'Слева',center:'По це
 export const studioLayerVertical=Object.freeze({top:'Сверху',middle:'По центру',bottom:'Снизу'});
 export function studioLayers(raw){
  if(!Array.isArray(raw))return [];
- return raw.slice(0,studioLayerLimit).filter(l=>l&&['text','rect'].includes(l.kind)).map(l=>{
+ return raw.slice(0,studioLayerLimit).filter(l=>l&&['text','rect','ellipse'].includes(l.kind)).map(l=>{
   const x=clamp(l.x,0,95,10),y=clamp(l.y,0,95,70),width=clamp(l.width,5,100-x,40),height=clamp(l.height,5,100-y,12);
   return {kind:l.kind,x,y,width:Math.min(width,100-x),height:Math.min(height,100-y),color:color(l.color,'#ffffff'),opacity:clamp(l.opacity,0,100,100),...(l.kind==='text'?{text:clean(l.text,160),size:clamp(l.size,1,12,4),align:Object.hasOwn(studioLayerAlign,l.align)?l.align:'left',vertical:Object.hasOwn(studioLayerVertical,l.vertical)?l.vertical:'top'}:{})};
  });
@@ -81,6 +82,7 @@ export function paintStudioLayers(ctx,layers,w,h){
    ctx.globalAlpha=l.opacity/100;ctx.fillStyle=l.color;
    ctx.beginPath();ctx.rect(x,y,width,height);ctx.clip();
    if(l.kind==='rect'){ctx.fillRect(x,y,width,height);continue;}
+   if(l.kind==='ellipse'){ctx.beginPath();ctx.ellipse(x+width/2,y+height/2,width/2,height/2,0,0,2*Math.PI);ctx.fill();continue;}
    const size=Math.max(1,Math.round(Math.min(w,h)*l.size/100)),lineHeight=size*1.16;
    ctx.font='700 '+size+'px system-ui, sans-serif';ctx.textAlign=l.align;ctx.textBaseline='top';
    const maxLines=Math.floor(height/lineHeight);if(!maxLines)continue;
@@ -113,7 +115,7 @@ export function paintStudio(canvas,raw,{logo=null,backgroundImage=null}={}){
  const x=canvas.getContext('2d');if(!x)throw Error('Canvas недоступен');
  const scale=Math.min(w,h),margin=w*.075,max=w-2*margin;
  x.fillStyle=d.background;x.fillRect(0,0,w,h);
- if(backgroundImage){const crop=studioCrop(backgroundImage.width,backgroundImage.height,w,h,d.focus,d.photoZoom);x.globalAlpha=d.photoOpacity/100;x.drawImage(backgroundImage,crop.x,crop.y,crop.width,crop.height);x.globalAlpha=1;}
+ if(backgroundImage){const crop=studioCrop(backgroundImage.width,backgroundImage.height,w,h,d.focus,d.photoZoom,d.photoX,d.photoY);x.globalAlpha=d.photoOpacity/100;x.drawImage(backgroundImage,crop.x,crop.y,crop.width,crop.height);x.globalAlpha=1;}
  // Opaque backing under text guarantees contrast while leaving the rest of a photo visible.
  const ink=studioInk(d.background),accentInk=studioInk(d.accent);
  x.fillStyle=d.accent;

@@ -710,6 +710,13 @@ try{
  assert.equal(await page.getByLabel('Масштаб фотографии',{exact:true}).inputValue(),'150');
  await page.getByRole('button',{name:'Сохранить фирменный стиль',exact:true}).click();
  assert.equal(await page.evaluate(async()=> (await import('./js/media-studio.js')).readStudioStyle('test').photoZoom),150);
+ await page.getByLabel('Положение фотографии',{exact:true}).selectOption('custom');
+ await page.getByLabel('Горизонтальное положение фото',{exact:true}).fill('25');await page.getByLabel('Вертикальное положение фото',{exact:true}).fill('75');
+ await page.getByRole('button',{name:'Сохранить фирменный стиль',exact:true}).click();
+ assert.deepEqual(await page.evaluate(async()=>{const d=(await import('./js/media-studio.js')).readStudioStyle('test');return [d.focus,d.photoX,d.photoY];}),['custom',25,75]);
+ await page.getByLabel('Положение фотографии',{exact:true}).selectOption('center');
+ assert.equal(await page.getByLabel('Горизонтальное положение фото',{exact:true}).isVisible(),false);
+ await page.getByLabel('Положение фотографии',{exact:true}).selectOption('custom');assert.equal(await page.getByLabel('Горизонтальное положение фото',{exact:true}).inputValue(),'25');
  await page.getByRole('button',{name:'+ Текстовый слой',exact:true}).click();
  await page.getByLabel('Текст слоя 1',{exact:true}).fill('Синтетический слой');
  await page.getByLabel('Выравнивание текста слоя 1',{exact:true}).selectOption('center');
@@ -728,6 +735,11 @@ try{
  assert.doesNotMatch(await page.getByLabel('Текст публикации',{exact:true}).inputValue(),/Синтетический слой/);
  await page.locator('.studio-editor fieldset').getByRole('button',{name:'Удалить слой',exact:true}).first().click();
  assert.equal(await page.getByLabel('Текст слоя 1',{exact:true}).inputValue(),'Синтетический слой');
+ await page.getByRole('button',{name:'+ Эллипс',exact:true}).click();
+ await page.locator('.studio-editor fieldset').getByRole('heading',{name:'2 · Эллипс',exact:true}).waitFor();
+ await page.getByLabel('Непрозрачность (%) слоя 2',{exact:true}).fill('40');await page.getByLabel('Непрозрачность (%) слоя 2',{exact:true}).press('Tab');
+ assert.equal(await page.getByLabel('Непрозрачность (%) слоя 2',{exact:true}).inputValue(),'40');
+ await page.locator('.studio-editor fieldset').getByRole('button',{name:'Удалить слой',exact:true}).last().click();
  const kitFiles=await page.evaluate(async()=>{const m=await import('./js/media-studio.js'),b=await m.studioMatchPackage(document.createElement('canvas'),{team:'Демо',opponent:'Гости',score:'2:1'},['square'],{eventDetails:'Зал',includeText:true});const v=new DataView(await b.arrayBuffer());return v.getUint16(v.byteLength-12,true);});assert.equal(kitFiles,4);
  const studioBatch=await page.evaluate(async()=>{const m=await import('./js/media-studio.js'),b=await m.studioBatch(document.createElement('canvas'),{team:'Демо'},['square','story','wide'],{text:'Демо'});const v=new DataView(await b.arrayBuffer());return {signature:v.getUint32(0,true),count:v.getUint16(v.byteLength-12,true)};});assert.deepEqual(studioBatch,{signature:0x04034b50,count:4});
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'studio overflow');await page.locator('.studio-editor').getByRole('button',{name:'Назад',exact:true}).click();
