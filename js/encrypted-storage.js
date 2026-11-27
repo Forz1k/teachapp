@@ -148,6 +148,10 @@ async function readRecovery(file,password){
  check(typeof file==='string'&&file.length<=migrationFileLimit,'Некорректный размер копии');
  const copy=await decryptBackup(JSON.parse(file),password);check(exact(copy,['app','version','data'])&&copy.app==='teachapp-native-encryption-recovery'&&copy.version===1,'Неверный формат независимой копии');checkSource(copy.data);return copy.data;
 }
+export async function verifyCurrentEncryptedRecoveryCopy({data,file,backupPassword}){
+ check(typeof backupPassword==='string'&&backupPassword.length>=12&&backupPassword.length<=1024,'Независимый пароль копии от 12 символов');
+ const actual=await readRecovery(file,backupPassword);check(snapshotIdentity(actual)===snapshotIdentity(data),'Независимая копия устройства устарела. Создайте новую.');return true;
+}
 /** Recover only into a genuinely absent database in a new browser profile.
  * Never delete/overwrite an existing v10, v11 or unknown database. */
 export async function recoverIntoEmptyEncryptedStorage({passwords,backupPassword,file,checkpointPasswords={},confirmed=false,stillAllowed=()=>true}){

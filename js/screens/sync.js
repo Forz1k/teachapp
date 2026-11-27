@@ -324,18 +324,18 @@ function openDeltaCandidateDevice(){
  if(!db.isEncryptedStorage()||readSyncIdentity()){toast('Требуется защищённый тестовый v11 профиль без сохранённого обычного кода. Контрольные точки не удаляйте.');return;}
  const root=el('div',{class:'coach-form'}),area=el('select',{},Object.entries(syncAreas).map(([value,text])=>el('option',{value,text}))),version=el('select',{},[el('option',{value:'1',text:'v1'}),el('option',{value:'2',text:'v2'})]),action=el('select',{},[el('option',{value:'cutover',text:'Переключить устройство (назначение ещё закрыто)'}),el('option',{value:'finalize',text:'Завершить переключение после активации'}),el('option',{value:'rollback',text:'Вернуть устройство после необратимого закрытия назначения'})]);
  const input=(type='password')=>el('input',{type,autocomplete:'off',spellcheck:'false',maxlength:1024});
- const sourceEndpoint=input('url'),destinationEndpoint=input('url'),sourceToken=input(),destinationToken=input(),sourcePassword=input(),destinationPassword=input(),backupPassword=input(),file=el('input',{type:'file',accept:'.json,application/json'}),status=el('p',{role:'status'});
- const fields={sourceEndpoint,destinationEndpoint,sourceToken,destinationToken,sourcePassword,destinationPassword,backupPassword};
+ const sourceEndpoint=input('url'),destinationEndpoint=input('url'),sourceToken=input(),destinationToken=input(),sourcePassword=input(),destinationPassword=input(),backupPassword=input(),deviceBackupPassword=input(),file=el('input',{type:'file',accept:'.json,application/json'}),deviceBackup=el('input',{type:'file',accept:'.json,application/json'}),status=el('p',{role:'status'});
+ const fields={sourceEndpoint,destinationEndpoint,sourceToken,destinationToken,sourcePassword,destinationPassword,backupPassword,deviceBackupPassword};
  let closed=false,busy=false;
  const allowed=()=>!closed&&root.isConnected&&db.encryptedStorageAllowed()&&document.visibilityState==='visible'&&navigator.onLine!==false&&!readSyncIdentity();
- const clear=()=>{for(const key of ['sourceToken','destinationToken','sourcePassword','destinationPassword','backupPassword'])fields[key].value='';};
+ const clear=()=>{for(const key of ['sourceToken','destinationToken','sourcePassword','destinationPassword','backupPassword','deviceBackupPassword'])fields[key].value='';};
  const run=btn('Проверить файл и выполнить выбранное действие',async()=>{
   if(busy||!allowed())return;
-  if(!file.files[0]||file.files[0].size>90*1024*1024){status.textContent='Выберите проверенный файл переноса.';return;}
+  if(!file.files[0]||file.files[0].size>90*1024*1024||!deviceBackup.files[0]||deviceBackup.files[0].size>90*1024*1024){status.textContent='Выберите файл переноса и актуальную независимую копию v11 из настроек.';return;}
   const fn={cutover:cutoverDeltaCandidateDevice,finalize:finalizeDeltaCandidateDevice,rollback:rollbackDeltaCandidateDevice}[action.value];
   busy=true;run.disabled=true;const args={candidate:true,area:area.value,protocolVersion:Number(version.value),...Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,v.value])),stillAllowed:allowed};clear();
   try{
-   args.file=JSON.parse(await file.files[0].text());if(!allowed())return;
+   args.file=JSON.parse(await file.files[0].text());args.deviceBackupFile=await deviceBackup.files[0].text();if(!allowed())return;
    const result=await withSyncSession(()=>fn(args));if(!result)throw Error('Закройте другие вкладки.');
    if(!allowed())return;status.textContent='Контур: '+syncAreas[result.area]+', исходная ревизия '+result.sourceRevision+', ID '+result.migrationId;
    if(!await confirmDialog({title:'Подтвердить точный результат проверки?',text:status.textContent+'. Независимая актуальная копия устройства сохранена вне браузера. Это тестовый контур; действие не заменяет записи пользователя.',ok:'Подтвердить',danger:true}))return;
@@ -345,6 +345,6 @@ function openDeltaCandidateDevice(){
   }catch(e){if(allowed())status.textContent=e.message;}
   finally{for(const k of Object.keys(args))args[k]=undefined;busy=false;run.disabled=false;}
  },'primary');
- root.append(el('h2',{text:'Перенос устройства · Delta v3'}),p('Только синтетические данные. Администратор отдельно готовит проверенный файл, фиксирует источник и назначение. Не вводите административные ключи. Не удаляйте контрольные точки. После переноса сначала дождитесь активации всех устройств; возврат разрешён только после необратимого закрытия назначения.'),field('Действие',action),field('Контур',area),field('Исходный протокол',version),field('HTTPS источник',sourceEndpoint),field('HTTPS назначение',destinationEndpoint),field('Ключ устройства источника',sourceToken),field('Ключ устройства назначения',destinationToken),field('Пароль исходного контура',sourcePassword),field('Пароль назначения',destinationPassword),field('Независимый пароль файла переноса',backupPassword),field('Проверенный файл переноса',file),status,run,btn('Закрыть',()=>openSync()));
+ root.append(el('h2',{text:'Перенос устройства · Delta v3'}),p('Только синтетические данные. Администратор отдельно готовит проверенный файл, фиксирует источник и назначение. Не вводите административные ключи. Не удаляйте контрольные точки. После переноса сначала дождитесь активации всех устройств; возврат разрешён только после необратимого закрытия назначения.'),field('Действие',action),field('Контур',area),field('Исходный протокол',version),field('HTTPS источник',sourceEndpoint),field('HTTPS назначение',destinationEndpoint),field('Ключ устройства источника',sourceToken),field('Ключ устройства назначения',destinationToken),field('Пароль исходного контура',sourcePassword),field('Пароль назначения',destinationPassword),field('Независимый пароль файла переноса',backupPassword),field('Проверенный файл переноса',file),field('Независимая актуальная копия v11',deviceBackup),field('Отдельный пароль копии устройства',deviceBackupPassword),status,run,btn('Закрыть',()=>openSync()));
  openSheet(root,{fullHeight:true,onClose:()=>{closed=true;clear();}});
 }

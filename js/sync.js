@@ -984,7 +984,7 @@ function deltaSyncAdapter({endpoint,area,token,password,readData,synthetic=false
     check(packet.workspaceId===cp.workspaceId,'Неверная общая ревизия');
     checkpoint={revision:cp.revision,workspaceId:cp.workspaceId,snapshot:packet.snapshot};
    }
-   if(mode==='candidate'){const state=await client.migrationStatus();check(!state.gate||state.gate.active&&!state.seal,'Назначение ожидает подтверждения переноса v3');}
+   if(mode==='candidate'){const state=await client.migrationStatus();check(!state.seal&&(!state.gate||state.gate.active),'Назначение ожидает подтверждения переноса v3');}
    const remote=await readDeltaLab({client,area,password,current,checkpoint});
    check(!remote.compactedPastCheckpoint||acceptCompactedHistory,'История уплотнена после локальной ревизии. Нужно явное согласование с проверенным снимком.');
    const envelope=!remote.revision?null:checkpoint?.revision===remote.revision?cp.envelope:
@@ -1201,10 +1201,12 @@ function candidateCheckpoint(p){return {id:keyOf(p.area),endpoint:p.destination,
 function sourceCheckpoint(p){return {id:keyOf(p.area),endpoint:p.source,workspaceId:p.sourceWorkspaceId,revision:p.sourceRevision,envelope:p.sourceEnvelope};}
 function candidateDeviceArgs(args){check(args.candidate===true&&args.synthetic!==true&&db.isEncryptedStorage()&&args.sourceFenceToken===undefined&&args.destinationSealToken===undefined,'Перенос v3 требует защищённый v11 и только ключи устройства');}
 function confirmCandidate(args,p){check(args.backupVerified===true&&args.expectedMigrationId===p.workspaceId&&args.expectedSourceRevision===p.sourceRevision,'Подтвердите проверенную копию и точную ревизию');}
-async function candidateLocalTransaction(p,current,cp,binding,local,apply,stillAllowed){
- guardSync(stillAllowed);await db.syncTransaction(names,'readwrite',async stores=>{
+async function candidateLocalTransaction(p,current,cp,binding,local,apply,stillAllowed,args){
+ guardSync(stillAllowed);
+ check(typeof args.deviceBackupPassword==='string'&&![args.sourcePassword,args.destinationPassword,args.backupPassword].includes(args.deviceBackupPassword),'Требуется отдельный пароль независимой копии устройства');
+ await (await import('./encrypted-storage.js')).verifyCurrentEncryptedRecoveryCopy({data:current,file:args.deviceBackupFile,backupPassword:args.deviceBackupPassword});guardSync(stillAllowed);await db.syncTransaction(names,'readwrite',async stores=>{
   guardSync(stillAllowed);const latest=Object.fromEntries(await Promise.all(names.map(async n=>[n,await stores[n].getAll()])));
-  check(same(getCheckpoint(latest,p.area),cp)&&same(migrationBinding(latest,p.area),binding)&&same(projectScope(latest,p.area),local),'Локальные данные изменились; повторите предпросмотр');
+  check(names.every(n=>same(sorted(latest[n]),sorted(current[n])))&&same(getCheckpoint(latest,p.area),cp)&&same(migrationBinding(latest,p.area),binding)&&same(projectScope(latest,p.area),local),'Локальные данные изменились; создайте новую независимую копию и повторите предпросмотр');
   await apply(stores.meta);guardSync(stillAllowed);
  });
 }
@@ -1218,7 +1220,7 @@ export async function cutoverDeltaCandidateDevice(args){
  const gate=await target.migrationStatus();check(gate.seal===null&&gate.revision===1,'Назначение закрыто или изменилось');guardSync(stillAllowed);
  const result={area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision,destinationRevision:1,replayed:replay};
  if(args.confirmed!==true)return {...result,status:'cutover-preview'};
- confirmCandidate(args,p);if(!replay)await candidateLocalTransaction(p,current,cp,binding,local,async meta=>{await meta.put(next);await meta.put(expected);await meta.delete(statusKey(p.area));},stillAllowed);
+ confirmCandidate(args,p);if(!replay)await candidateLocalTransaction(p,current,cp,binding,local,async meta=>{await meta.put(next);await meta.put(expected);await meta.delete(statusKey(p.area));},stillAllowed,args);
  return {...result,status:'cutover-completed'};
 }
 /** Freeze only after the saved file and separately pinned destination are verified. */
@@ -1249,7 +1251,7 @@ export async function finalizeDeltaCandidateDevice(args){
  const head=await target.head();check(head.anchorRevision===1,'История уже уплотнена; требуется отдельное согласование');
  const row=await target.getRevision(1);check(row.kind==='anchor'&&same(row.envelope,p.envelope),'Якорь назначения подменён');
  if(args.confirmed!==true)return {status:'finalize-preview',area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision};
- confirmCandidate(args,p);await candidateLocalTransaction(p,current,cp,binding,local,meta=>meta.delete(binding.id),stillAllowed);
+ confirmCandidate(args,p);await candidateLocalTransaction(p,current,cp,binding,local,meta=>meta.delete(binding.id),stillAllowed,args);
  return {status:'finalize-completed',area:p.area,migrationId:p.workspaceId};
 }
 export async function rollbackDeltaCandidateDevice(args){
@@ -1259,6 +1261,6 @@ export async function rollbackDeltaCandidateDevice(args){
  check(replay||same(binding,candidateBinding(p))&&same(cp,candidateCheckpoint(p)),'Контрольная точка изменилась; возврат запрещён');check(same(local,p.snapshot),'Есть несогласованные локальные изменения');
  await verifyRollbackSource(p,args,sourceRead);await verifyCandidateGate(p,target,false);await verifyRollbackDestination(p,target,true);
  if(args.confirmed!==true)return {status:'rollback-preview',area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision};
- confirmCandidate(args,p);if(!replay)await candidateLocalTransaction(p,current,cp,binding,local,async meta=>{await meta.put(next);await meta.delete(binding.id);await meta.delete(statusKey(p.area));},stillAllowed);
+ confirmCandidate(args,p);if(!replay)await candidateLocalTransaction(p,current,cp,binding,local,async meta=>{await meta.put(next);await meta.delete(binding.id);await meta.delete(statusKey(p.area));},stillAllowed,args);
  return {status:'rollback-completed',area:p.area,migrationId:p.workspaceId,replayed:replay};
 }
