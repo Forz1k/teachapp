@@ -290,18 +290,18 @@ try{
  await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
  console.log('WEBKIT SCHOOL NEXT PASS: linked olympiad and deadline, persisted lesson task, targeted norm criteria and saved/reused station, no viewport overflow.');
  // Actual mobile live clock, persistence, pause/resume and private player-time view.
- const timedId=await page.evaluate(async()=>{const C=await import('./js/coach.js'),M=await import('./js/model.js'),team=await C.saveTeam({name:'Тест времени'}),players=[];for(let i=0;i<7;i++)players.push(await C.savePlayer({teamId:team.id,name:'Спортсменка '+i,number:i,position:'universal'}));const ids=players.map(p=>p.id),d=await C.startDetailedMatch({teamId:team.id,date:M.todayIso(),teamName:team.name,opponent:'Гости',competition:'',venue:'',roster:ids,ourPlayers:players,awayPlayers:[],lineup:ids.slice(0,6),awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours'});(await import('./js/screens/match-protocol.js')).openDetailedMatch(d,()=>{},async()=>{});return d.id;});
- await shown.getByRole('button',{name:'Запустить время',exact:true}).click();
+ const timedId=await page.evaluate(async()=>{const C=await import('./js/coach.js'),M=await import('./js/model.js'),team=await C.saveTeam({name:'Тест времени'}),players=[];for(let i=0;i<7;i++)players.push(await C.savePlayer({teamId:team.id,name:'Спортсменка '+i,number:i,position:'universal'}));const ids=players.map(p=>p.id),d=await C.startDetailedMatch({teamId:team.id,date:M.todayIso(),teamName:team.name,opponent:'Гости',competition:'',venue:'',roster:ids,ourPlayers:players,awayPlayers:[],lineup:ids.slice(0,6),awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours',ourSide:'right',liveTiming:true});(await import('./js/screens/match-protocol.js')).openDetailedMatch(d,()=>{},async()=>{});return d.id;});
+ assert.equal(await shown.locator('.vp-board-score .vp-score-side').first().evaluate(n=>n.classList.contains('theirs')),true);
  await shown.getByRole('button',{name:'Пауза времени',exact:true}).waitFor();
  await page.waitForFunction(()=>document.querySelector('.court-time-panel [data-court-time]')?.textContent==='0:01'||Number(document.querySelector('.court-time-panel [data-court-time]')?.textContent.split(':').at(-1))>=2);
  await shown.getByRole('button',{name:'Тайм-аут Тест времени',exact:true}).click();
- await shown.getByRole('button',{name:'Возобновить время',exact:true}).waitFor();
+ await shown.locator('[data-timeout-remaining]').waitFor();assert.equal(await shown.locator('.vp-points .vp-ours').isDisabled(),true);
  const beforeClock=await shown.locator('.court-time-panel [data-court-time]').first().textContent();await page.waitForTimeout(1100);assert.equal(await shown.locator('.court-time-panel [data-court-time]').first().textContent(),beforeClock);
- await shown.getByRole('button',{name:'Возобновить время',exact:true}).click();await shown.getByRole('button',{name:'Пауза времени',exact:true}).waitFor();
+ await shown.getByRole('button',{name:'Закончить тайм-аут',exact:true}).click();await shown.getByRole('button',{name:'Пауза времени',exact:true}).waitFor();
  await shown.getByRole('button',{name:'Пауза времени',exact:true}).click();await shown.getByRole('button',{name:'Возобновить время',exact:true}).waitFor();
  await shown.getByRole('button',{name:'Статистика',exact:true}).click();await shown.getByRole('heading',{name:'Игровое время',exact:true}).waitFor();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'court time overflow');
  const persistedClock=await page.evaluate(async id=>{const C=await import('./js/coach.js'),V=await import('./js/match-protocol.js'),d=(await C.loadCoach()).coachLive.find(x=>x.id===id),t=V.courtTime(V.replayDetailed(d));return {running:t.running,measured:t.measured,elapsed:t.elapsedMs,events:d.events.map(e=>e.type),players:Object.keys(t.players.ours).length};},timedId);
- assert.equal(persistedClock.running,false);assert.equal(persistedClock.measured,true);assert.ok(persistedClock.elapsed>=1000);assert.equal(persistedClock.players,6);assert.deepEqual(persistedClock.events,['clock','timeout','clock','clock']);
+ assert.equal(persistedClock.running,false);assert.equal(persistedClock.measured,true);assert.ok(persistedClock.elapsed>=1000);assert.equal(persistedClock.players,6);assert.deepEqual(persistedClock.events,['timeout','timeoutEnd','clock']);
  await page.evaluate(async id=>{const C=await import('./js/coach.js'),d=(await C.loadCoach()).coachLive.find(x=>x.id===id);(await import('./js/screens/match-protocol.js')).openDetailedMatch(d,()=>{},async()=>{});},timedId);
  await shown.getByRole('button',{name:'Возобновить время',exact:true}).waitFor();assert.equal(await shown.locator('.court-time-panel [data-court-time]').first().textContent(),(await page.evaluate(async id=>{const C=await import('./js/coach.js'),V=await import('./js/match-protocol.js'),T=await import('./js/court-time.js');return T.courtTimeLabel(V.courtTime(V.replayDetailed((await C.loadCoach()).coachLive.find(x=>x.id===id))).elapsedMs);},timedId)));
  await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
@@ -319,7 +319,7 @@ try{
   assert.match(await rp.locator('.match-live-label').textContent(),/ТЕСТ/);
   assert.equal(await rp.locator('.vp-mini-player').count(),12);
   await rehearsalContext.setOffline(true);
-  await rp.locator('.vp-points .vp-ours').click();await rp.locator('[data-reason="tip"]').click();await rp.getByLabel('Автор результативной передачи',{exact:true}).selectOption('test-a-2');await rp.locator('.vp-author-grid [data-player]').first().click();
+  await rp.locator('.vp-points .vp-ours').click();await rp.locator('[data-reason="tip"]').click();await rp.locator('.vp-author-grid [data-player]').first().click();await rp.locator('[data-assist-player="test-a-2"]').click();
   await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
   assert.match(await rp.locator('[data-live-save-status]').textContent(),/Сохранено/);
   assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events[0].assist),'test-a-2');
