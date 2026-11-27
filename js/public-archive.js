@@ -353,3 +353,40 @@ export async function executeFrozenArchiveV3Copy(address,backup,{confirmed=false
  if(plan.ready.slice(0,batchLimit).some(r=>pending.has(r.id)))throw Error('Не удалось подтвердить копирование результатов');
  return {address:plan.address,generation:plan.generation,copied,remaining,complete:after.complete,sourceCount:after.sourceCount,destinationCount:after.destinationCount};
 }
+
+/** Authenticated, fail-closed migration control read. Unlike viewer routing,
+ * permission errors are not treated as legacy. */
+async function readMigrationControl(address,getToken,fetcher){
+ if(typeof getToken!=='function')throw Error('Требуется авторизация владельца');
+ const url=new URL(archiveRouteTarget(address)),token=await getToken();
+ if(typeof token!=='string'||!token)throw Error('Требуется авторизация владельца');
+ url.searchParams.set('auth',token);
+ const {value,etag}=await request(url.href,{headers:{'X-Firebase-ETag':'true'}},fetcher);
+ if(!etag||value!==null&&(!exactArchiveFields(value,['phase','generation'])||!['legacy','frozen','v3'].includes(value.phase)||!validMigrationGeneration(value.generation)))throw Error('Некорректное состояние миграции');
+ return {state:value||{phase:'legacy',generation:0},etag};
+}
+export async function inspectArchiveV3Control(address,{getToken,fetcher=fetch}={}){
+ return (await readMigrationControl(address,getToken,fetcher)).state;
+}
+/** One explicit CAS transition; activation additionally requires the
+ * independent frozen backup and fresh full equality. No automatic retry. */
+export async function transitionArchiveV3(address,action,{expected,backup,confirmed=false,getToken,fetcher=fetch,maxRecords=5000}={}){
+ if(confirmed!==true||!['freeze','thaw','activate'].includes(action)||!exactArchiveFields(expected,['phase','generation'])||!Number.isInteger(expected.generation)||expected.generation<0||expected.generation>=1000000||!['legacy','frozen'].includes(expected.phase))throw Error('Требуется подтверждение и актуальное состояние миграции');
+ const nextPhase={freeze:'frozen',thaw:'legacy',activate:'v3'}[action];
+ if(expected.phase!==(action==='freeze'?'legacy':'frozen'))throw Error('Недопустимый переход миграции');
+ const canonical=archiveTarget(address).replace('/publicMatchArchive/','/publicTeams/');
+ const current=await readMigrationControl(canonical,getToken,fetcher);
+ if(current.state.phase!==expected.phase||current.state.generation!==expected.generation)throw Error('Поколение миграции изменилось');
+ if(action==='activate'){
+  const plan=await prepareFrozenArchiveV3Copy(canonical,backup,{fetcher,maxRecords});
+  if(plan.generation!==expected.generation||!plan.complete)throw Error('Архивы не совпадают полностью; активация запрещена');
+ }
+ const next={phase:nextPhase,generation:expected.generation+1};
+ const url=new URL(archiveRouteTarget(canonical)),token=await getToken();
+ if(typeof token!=='string'||!token)throw Error('Требуется авторизация владельца');
+ url.searchParams.set('auth',token);
+ await request(url.href,{method:'PUT',headers:{'If-Match':current.etag,'Content-Type':'application/json'},body:JSON.stringify(next)},fetcher);
+ const after=await readMigrationControl(canonical,getToken,fetcher);
+ if(after.state.phase!==next.phase||after.state.generation!==next.generation)throw Error('Не удалось подтвердить переход миграции');
+ return after.state;
+}

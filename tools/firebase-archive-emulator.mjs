@@ -1,6 +1,6 @@
 import './firebase-portal-emulator.mjs';
 import assert from 'node:assert/strict';
-import {captureFrozenArchiveV3Backup,executeFrozenArchiveV3Copy} from '../js/public-archive.js';
+import {captureFrozenArchiveV3Backup,executeFrozenArchiveV3Copy,inspectArchiveV3Control,transitionArchiveV3} from '../js/public-archive.js';
 const user=async()=>{const r=await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:crypto.randomUUID()+'@example.test',password:crypto.randomUUID(),returnSecureToken:true})});assert.equal(r.status,200);return r.json();};
 const owner=await user(),other=await user(),page='publicTeams/'+owner.localId+'/team',archive='publicMatchArchive/'+owner.localId+'/team';
 async function call(method,path,value,token,expected,params={},headers={}){const u=new URL('http://127.0.0.1:9000/'+(path?path+'.json':'.json'));u.searchParams.set('ns','demo-teachapp-default-rtdb');for(const [k,v] of Object.entries(params))u.searchParams.set(k,v);if(token&&token!=='owner')u.searchParams.set('auth',token);const r=await fetch(u,{method,headers:{...headers,...(token==='owner'?{Authorization:'Bearer owner'}:{})},...(value===undefined?{}:{body:JSON.stringify(value)})});const data=await r.json();assert.equal(r.status,expected,method+' '+path+' '+JSON.stringify(data).slice(0,200));return {data,etag:r.headers.get('ETag')};}
@@ -40,7 +40,13 @@ await call('PUT',parent,{schema:1,team:'Synthetic Migration',updatedAt:1},owner.
 for(let i=0;i<45;i++)await call('PUT',oldPath+'/'+key(i),row(i),owner.idToken,200);
 await call('GET',control,undefined,null,200);await call('PUT',control,{phase:'frozen',generation:1},other.idToken,401);await call('PUT',control,{phase:'v3',generation:1},owner.idToken,401);
 const initial=await call('GET',control,undefined,owner.idToken,200,{}, {'X-Firebase-ETag':'true'});assert.equal(initial.data,null);assert.ok(initial.etag);
-await call('PUT',control,{phase:'frozen',generation:1},owner.idToken,200,{}, {'If-Match':initial.etag});
+await call('PATCH','',{[control]:{phase:'frozen',generation:1},[oldPath+'/'+key(0)]:{...row(0),opponent:'Changed'}},owner.idToken,401);
+await call('PATCH','',{[control]:{phase:'frozen',generation:1},[newPath+'/r0']:v3row(row(0))},owner.idToken,401);
+const address='https://demo-teachapp-default-rtdb.firebaseio.com/'+parent+'.json';
+const adapter=(url,opts)=>{const u=new URL(url),local=new URL('http://127.0.0.1:9000'+u.pathname+u.search);local.searchParams.set('ns','demo-teachapp-default-rtdb');return fetch(local,opts);};
+const controlOpts={confirmed:true,getToken:async()=>owner.idToken,fetcher:adapter};
+const initialState=await inspectArchiveV3Control(address,controlOpts);assert.deepEqual(initialState,{phase:'legacy',generation:0});
+assert.deepEqual(await transitionArchiveV3(address,'freeze',{...controlOpts,expected:initialState}),{phase:'frozen',generation:1});
 await call('PUT',oldPath+'/'+key(1),{...row(1),opponent:'Changed'},owner.idToken,401);
 await call('DELETE',oldPath+'/'+key(2),undefined,owner.idToken,401);
 const marked=(i,generation)=>({...v3row(row(i)),migrationGeneration:generation});
@@ -57,14 +63,14 @@ await call('DELETE',newPath+'/r1',undefined,owner.idToken,401);
 await call('DELETE',control,undefined,owner.idToken,401);
 await call('PUT',control,{phase:'legacy',generation:1},owner.idToken,401);
 const frozen=await call('GET',control,undefined,owner.idToken,200,{}, {'X-Firebase-ETag':'true'});
-await call('PUT',control,{phase:'legacy',generation:2},owner.idToken,200,{}, {'If-Match':frozen.etag});
+assert.ok(frozen.etag);assert.deepEqual(await transitionArchiveV3(address,'thaw',{...controlOpts,expected:{phase:'frozen',generation:1}}),{phase:'legacy',generation:2});
 await call('PUT',newPath+'/r2',marked(2,1),owner.idToken,401);
 await call('PUT',oldPath+'/'+key(0),row(0),owner.idToken,200);
-await call('PUT',control,{phase:'frozen',generation:3},owner.idToken,200);
+assert.deepEqual(await transitionArchiveV3(address,'freeze',{...controlOpts,expected:{phase:'legacy',generation:2}}),{phase:'frozen',generation:3});
 await call('PUT',newPath+'/r2',marked(2,1),owner.idToken,401);
-const address='https://demo-teachapp-default-rtdb.firebaseio.com/'+parent+'.json';
-const adapter=(url,opts)=>{const u=new URL(url),local=new URL('http://127.0.0.1:9000'+u.pathname+u.search);local.searchParams.set('ns','demo-teachapp-default-rtdb');return fetch(local,opts);};
 const backup=await captureFrozenArchiveV3Backup(address,{fetcher:adapter});
+await assert.rejects(transitionArchiveV3(address,'activate',{...controlOpts,expected:{phase:'frozen',generation:3},backup}),/не совпадают/);
+assert.deepEqual(await inspectArchiveV3Control(address,controlOpts),{phase:'frozen',generation:3});
 assert.equal(backup.source.length,45);assert.equal(backup.destination.length,1);
 const opts={confirmed:true,getToken:async()=>owner.idToken,fetcher:adapter,batchLimit:20};
 const firstCopy=await executeFrozenArchiveV3Copy(address,backup,opts);assert.equal(firstCopy.copied,20);assert.equal(firstCopy.remaining,24);
@@ -73,7 +79,8 @@ const retryCopy=await executeFrozenArchiveV3Copy(address,backup,opts);assert.equ
 const migrated=[];let cursor=null;
 for(;;){const page=(await call('GET',newPath,undefined,null,200,{orderBy:'"sortKey"',limitToLast:cursor?'41':'40',...(cursor?{endAt:JSON.stringify(cursor)}:{})})).data;const rows=Object.values(page||{}).sort((a,b)=>b.sortKey.localeCompare(a.sortKey));if(cursor)assert.equal(rows.shift()?.sortKey,cursor);migrated.push(...rows);if(rows.length<40)break;cursor=rows.at(-1).sortKey;}
 assert.equal(migrated.length,45);for(const v of migrated){const i=Number(v.id.slice(1));assert.deepEqual(v,marked(i,i===1?1:3));}
-const ready=await call('GET',control,undefined,owner.idToken,200,{}, {'X-Firebase-ETag':'true'});await call('PUT',control,{phase:'v3',generation:4},owner.idToken,200,{}, {'If-Match':ready.etag});
+await assert.rejects(transitionArchiveV3(address,'activate',{...controlOpts,expected:{phase:'frozen',generation:1},backup}),/Поколение/);
+assert.deepEqual(await transitionArchiveV3(address,'activate',{...controlOpts,expected:{phase:'frozen',generation:3},backup}),{phase:'v3',generation:4});
 await call('PUT',oldPath+'/'+key(0),row(0),owner.idToken,401);await call('PUT',control,{phase:'legacy',generation:5},owner.idToken,401);
 await call('PUT',newPath+'/r999',marked(999,3),owner.idToken,401);
 await call('PUT',newPath+'/r1',v3row({...row(1),opponent:'Corrected'}),owner.idToken,200);

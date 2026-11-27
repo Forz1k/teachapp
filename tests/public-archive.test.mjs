@@ -227,3 +227,34 @@ test('V3 backup permits only known valid remote generation marker, never embeds 
  const backup=await captureFrozenArchiveV3Backup(address,{fetcher});assert.deepEqual(backup.destination,[a]);assert.equal((await verifyFrozenArchiveV3Backup(backup)).requiresReview,false);
  for(const invalid of [0,1.5,'1',1000001]){marker=invalid;await assert.rejects(captureFrozenArchiveV3Backup(address,{fetcher}),/Некорректная запись/);}
 });
+
+import {inspectArchiveV3Control,transitionArchiveV3} from '../js/public-archive.js';
+test('V3 activation requires exact complete frozen backup and control CAS, never retries stale transition',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,source=[row(1),row(2)];let dest=[row(1)],state={phase:'frozen',generation:3},writes=0,calls=0,conflict=false;
+ const fetcher=async(url,opt)=>{
+  calls++;const u=new URL(url);
+  if(u.pathname.includes('/archiveMigration/')){
+   if(opt.method==='PUT'){
+    writes++;assert.equal(opt.headers['If-Match'],'control-3');assert.equal(u.searchParams.get('auth'),'synthetic');
+    if(conflict)return new Response('{}',{status:412});state=JSON.parse(opt.body);
+   }
+   return new Response(JSON.stringify(state),{headers:{ETag:'control-'+state.generation}});
+  }
+  return migrationFetcher(source,dest)(url,opt);
+ };
+ const backup=await captureFrozenArchiveV3Backup(address,{fetcher}),expected={...state},opts={confirmed:true,getToken:async()=> 'synthetic',fetcher,expected,backup};
+ const before=calls;await assert.rejects(transitionArchiveV3(address,'activate',{...opts,confirmed:false}),/подтверждение/);assert.equal(calls,before);
+ await assert.rejects(transitionArchiveV3(address,'activate',opts),/не совпадают/);assert.equal(writes,0);
+ dest=source.slice();conflict=true;await assert.rejects(transitionArchiveV3(address,'activate',opts),e=>e.status===412);assert.equal(writes,1);
+ conflict=false;assert.deepEqual(await transitionArchiveV3(address,'activate',opts),{phase:'v3',generation:4});assert.equal(writes,2);
+ await assert.rejects(transitionArchiveV3(address,'activate',opts),/Поколение/);assert.equal(writes,2);
+ await assert.rejects(inspectArchiveV3Control(address,{...opts,fetcher:async()=>new Response('{}',{status:401})}),e=>e.status===401);
+});
+test('V3 control freeze and thaw are explicit monotonic transitions using authenticated ETag',async()=>{
+ const address=viewerTarget('https://example.com/live/').address;let state=null,writes=0;
+ const fetcher=async(url,opt)=>{assert.equal(new URL(url).searchParams.get('auth'),'synthetic');if(opt.method==='PUT'){assert.equal(opt.headers['If-Match'],'tag');state=JSON.parse(opt.body);writes++;}return new Response(JSON.stringify(state),{headers:{ETag:'tag'}});};
+ const opts={confirmed:true,getToken:async()=> 'synthetic',fetcher},initial=await inspectArchiveV3Control(address,opts);assert.deepEqual(initial,{phase:'legacy',generation:0});
+ const frozen=await transitionArchiveV3(address,'freeze',{...opts,expected:initial});assert.deepEqual(frozen,{phase:'frozen',generation:1});
+ await assert.rejects(transitionArchiveV3(address,'freeze',{...opts,expected:initial}),/Поколение/);
+ assert.deepEqual(await transitionArchiveV3(address,'thaw',{...opts,expected:frozen}),{phase:'legacy',generation:2});assert.equal(writes,2);
+});

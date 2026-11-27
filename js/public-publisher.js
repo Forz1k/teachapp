@@ -1,5 +1,5 @@
 import {mediaTarget,readMediaVersion,writePublicMedia,mediaProjection} from './public-media.js';
-import {archiveTarget,archiveKey,equalArchiveResult,queueArchiveResult,archiveProjection,resolveArchiveRoute,routedArchivePage,routedArchiveVersion,routedArchiveFind,routedArchiveWrite,requireWritableArchive} from './public-archive.js';
+import {archiveTarget,archiveKey,equalArchiveResult,queueArchiveResult,archiveProjection,resolveArchiveRoute,routedArchivePage,routedArchiveVersion,routedArchiveFind,routedArchiveWrite,requireWritableArchive,inspectArchiveV3Control,transitionArchiveV3,captureFrozenArchiveV3Backup,prepareFrozenArchiveV3Copy,executeFrozenArchiveV3Copy} from './public-archive.js';
 /* Team portal state is separate from school/coach records. Opt-in publishing only. */
 import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures,checkHandoffMatch} from './public-portal.js';
 import {firebaseSignIn,firebasePublisher,samePortalContent} from './firebase-portal.js';
@@ -318,4 +318,21 @@ async function sendPendingArchiveCore(id,{confirm,fetcher=fetch}={}){
   }
   return report;
  }
+}
+
+/** Device-local operator operations share the same mutation lock as publishing. */
+function migrationAccess(id,fetcher){
+ const a=archiveSession(id);
+ return {portal:a.portal,opts:{fetcher:async(url,options)=>{a.stillAllowed();const result=await fetcher(url,options);a.stillAllowed();return result;},getToken:async()=>{a.stillAllowed();const token=await a.session.getToken();a.stillAllowed();return token;}}};
+}
+export function archiveMigrationOperation(id,operation,{expected,backup,confirmed=false,fetcher=fetch}={}){
+ return withArchiveMutation(id,async()=>{
+  const {portal,opts}=migrationAccess(id,fetcher);
+  if(operation==='inspect')return inspectArchiveV3Control(portal,opts);
+  if(operation==='backup')return captureFrozenArchiveV3Backup(portal,opts);
+  if(operation==='verify')return prepareFrozenArchiveV3Copy(portal,backup,opts);
+  if(operation==='copy')return executeFrozenArchiveV3Copy(portal,backup,{...opts,confirmed});
+  if(['freeze','thaw','activate'].includes(operation))return transitionArchiveV3(portal,operation,{...opts,expected,backup,confirmed});
+  throw Error('Неизвестная операция миграции');
+ });
 }
