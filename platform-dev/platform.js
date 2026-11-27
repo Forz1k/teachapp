@@ -1,4 +1,4 @@
-import {platformClient,isLocalPlatformPage} from '../js/platform-client.js';
+import {platformClient,platformIdentityClient,isLocalPlatformPage} from '../js/platform-client.js';
 const root=document.querySelector('#app'),roles={owner:'Владелец',coach:'Тренер',assistant:'Помощник',athlete:'Спортсменка'};
 const e=(tag,text='',attrs={},children=[])=>{const n=document.createElement(tag);n.textContent=text;for(const [k,v] of Object.entries(attrs)){if(k==='class')n.className=v;else if(k==='type')n.type=v;else n.setAttribute(k,String(v));}for(const child of children)if(child)n.append(child);return n;};
 const p=(text,cls='muted')=>e('p',text,{class:cls});
@@ -18,14 +18,17 @@ async function run(fn){if(busy)return;busy=true;const epoch=serial;try{await fn(
 function login(){
  if(!isLocalPlatformPage()){root.replaceChildren(box('Недоступно',p('Кабинеты LAB запускаются только локально. Рабочие данные не принимаются.')));return;}
  const endpoint=input('Адрес тестового Worker','http://127.0.0.1:8788'),workspace=input('ID пространства','demo'),secret=input('Секретный код','','password'),name=input('Название пространства','Синтетическая команда');
- const form=box('Подключение',p('Секрет хранится только до выхода, закрытия или приостановки страницы. Не вводите реальные ключи и персональные данные.'),e('div','',{class:'fields'},[field('Worker',endpoint),field('Пространство',workspace),field('Секрет / приглашение',secret),field('Название (для первого запуска)',name),button('Войти',()=>connect('login'),true),button('Активировать приглашение',()=>connect('redeem')),button('Восстановить владельца',()=>connect('recover')),button('Создать тестовое пространство',()=>connect('bootstrap'))]));
+ const assertion=input('Подписанный access-токен LAB','','password');
+ const form=box('Подключение',p('Секрет хранится только до выхода, закрытия или приостановки страницы. Не вводите реальные ключи и персональные данные.'),e('div','',{class:'fields'},[field('Worker',endpoint),field('Пространство',workspace),field('Секрет / приглашение',secret),field('Название (для первого запуска)',name),button('Войти',()=>connect('login'),true),button('Активировать приглашение',()=>connect('redeem')),button('Восстановить владельца',()=>connect('recover')),button('Создать тестовое пространство',()=>connect('bootstrap'))]),p('Внешняя identity · только синтетический подписанный access-токен. Код приглашения или текущей сессии нужен для первой привязки.'),field('Access-токен',assertion),row(button('Войти через identity',()=>connect('identity/session')),button('Привязать текущую сессию',()=>connect('identity/bind')),button('Принять приглашение через identity',()=>connect('identity/redeem'))));
  root.replaceChildren(form,e('p','',{id:'status',role:'status',class:'status'}));
  async function connect(mode){await run(async(epoch)=>{
   const address=endpoint.value,space=workspace.value,workspaceName=name.value.trim();
-  const temp=platformClient(address,space,secret.value);connecting=temp;secret.value='';
+  const identity=mode.startsWith('identity/'),credential=secret.value,signed=assertion.value;
+  secret.value='';assertion.value='';
+  const temp=identity?platformIdentityClient(address,space,signed):platformClient(address,space,credential);connecting=temp;
   let result,issued=null;try{
    if(mode==='login'){result=await temp.request('me');if(epoch!==serial){temp.close();return;}api=temp;}
-   else{issued=await temp.request(mode,'POST',mode==='bootstrap'?{name:workspaceName}:{});temp.close();if(epoch!==serial)return;api=platformClient(address,space,issued.token);result=await api.request('me');}
+   else{issued=await temp.request(mode,'POST',mode==='bootstrap'?{name:workspaceName}:['identity/bind','identity/redeem'].includes(mode)?{credential}:{});temp.close();if(epoch!==serial)return;api=platformClient(address,space,issued.token);result=await api.request('me');}
    if(epoch!==serial)return;member=result.member;sessionAddress=address;sessionSpace=space;await render(result.name,issued?.token);
   }catch(err){temp.close();if(epoch===serial){api?.close();api=null;member=null;}throw err;}
   finally{if(connecting===temp)connecting=null;}
@@ -47,7 +50,7 @@ async function rotateSession(epoch,name){
  }catch(err){
   if(epoch!==serial||api!==old)return;
   // An ambiguous response may have committed rotation. Never replay it.
-  if(err.status===409||err.status===429){await render(name);throw err;}
+  if(err.status===409||err.status===429){active=null;pending=null;await render(name);throw err;}
   close();status('Результат смены кода неизвестен или сессия недействительна. Восстановите владельца или запросите новое приглашение.',true);
  }
 }
