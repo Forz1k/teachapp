@@ -83,6 +83,19 @@ const binary=['google-chrome','google-chrome-stable','chromium','chromium-browse
  await page.getByRole('heading',{name:'Подключение',exact:true}).waitFor();
  assert.equal(await page.getByText('STALE',{exact:true}).count(),0);
  assert.equal(await page.getByLabel('Секретный код',{exact:true}).inputValue(),'');
+ // Use an isolated workspace for rotation UI (alpha is used by later tests).
+ const rotatePage=await ownerContext.newPage();await rotatePage.goto(origin+'/platform-dev/index.html');
+ await rotatePage.getByLabel('Адрес тестового Worker',{exact:true}).fill(base);await rotatePage.getByLabel('ID пространства',{exact:true}).fill('rotation-lab');
+ // Existing access bucket is deliberately exhausted; create a fresh workspace.
+ const uiOwner=await call('rotation-ui','bootstrap',root,'POST',{name:'Rotation UI'});
+ assert.equal((await call('rotation-ui','owner/recovery',uiOwner.token,'POST',{recoveryHash:await digestToken('e'.repeat(64)),expectedVersion:0})).status,200);
+ await rotatePage.getByLabel('ID пространства',{exact:true}).fill('rotation-ui');await rotatePage.getByLabel('Секретный код',{exact:true}).fill(uiOwner.token);
+ await rotatePage.getByRole('button',{name:'Войти',exact:true}).click();await rotatePage.getByRole('heading',{name:'Rotation UI',exact:true}).waitFor();
+ rotatePage.once('dialog',d=>d.accept());await rotatePage.getByRole('button',{name:'Сменить код сессии',exact:true}).click();
+ const code=rotatePage.getByLabel('Код новой сессии',{exact:true});await code.waitFor();const newToken=await code.inputValue();
+ assert.notEqual(newToken,uiOwner.token);assert.equal((await call('rotation-ui','me',uiOwner.token)).status,401);assert.equal((await call('rotation-ui','me',newToken)).status,200);
+ assert.equal(await rotatePage.evaluate(()=>localStorage.length),0);
+ await rotatePage.evaluate(()=>window.dispatchEvent(new Event('pagehide')));await rotatePage.getByRole('heading',{name:'Подключение',exact:true}).waitFor();assert.equal(await code.count(),0);
  await ownerContext.close();await athleteContext.close();console.log('PLATFORM BROWSER PASS: real server, role-specific owner/athlete screens, athlete response, LIVE lease/scoring, mobile overflow, no stored credentials');
  }finally{await browser.close();}
 const syntheticEndpoint='https://push.example.invalid/sub/00000000-0000-4000-8000-000000000001';
