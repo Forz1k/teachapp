@@ -56,12 +56,13 @@ export async function enableProviderPush(api,{active,notification=globalThis.Not
 }
 export async function disableProviderPush(api,{active,sw=navigator.serviceWorker}={}){
  check(active);
- const reg=await registration(sw,false);check(active);
+ let server,readError;try{server=await api.request('notification/provider');}catch(e){readError=e;}
+ check(active);const reg=await registration(sw,false);check(active);
  if(reg){
   if(await localConsent(reg,'disable')!==false)throw Error('Локальное разрешение не отключено');
   const sub=await reg.pushManager.getSubscription();if(sub)await sub.unsubscribe();
   if(await reg.pushManager.getSubscription())throw Error('Браузерная подписка ещё существует');
  }
- check(active);const server=await api.request('notification/provider');check(active);
+ check(active);if(readError)throw readError;
  const result=await api.request('notification/provider','PUT',{expectedRevision:server.revision,subscription:null});check(active);return result;
 }
