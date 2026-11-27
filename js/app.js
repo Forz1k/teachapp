@@ -45,7 +45,7 @@ let storageRevoked=false;
 window.addEventListener(NATIVE_STORAGE_FENCED_EVENT,()=>{
  if(storageRevoked)return;storageRevoked=true;store.revokeNativeView();scrubPrivateDocument();location.reload();
 });
-window.addEventListener('teachapp:encrypted-locked',()=>{storageRevoked=true;store.revokeNativeView();});
+window.addEventListener('teachapp:encrypted-locked',()=>{storageRevoked=true;clearAutoRetry(true);store.revokeNativeView();});
 let syncSession=null,autoBusy=false,autoAttempt=0;
 let syncHint='',autoRetryTimer=null,autoRetryCount=0;
 function clearAutoRetry(reset=false){if(autoRetryTimer!==null)clearTimeout(autoRetryTimer);autoRetryTimer=null;if(reset)autoRetryCount=0;}
@@ -110,7 +110,7 @@ function render() {
   const switcher=el('div',{class:'workspace-switch',role:'group','aria-label':'Рабочее пространство'},[
     ...[['school','Учитель'],['coach','Тренер']].map(([id,label])=>el('button',{type:'button',class:'workspace-option'+(workspace===id?' selected':''),'aria-pressed':String(workspace===id),text:label,onclick:()=>switchWorkspace(id)}))
   ]);
-  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('img',{class:'brand-mark',src:'./icons/brand.svg',alt:'',width:32,height:32}),el('span',{text:'TeachApp'})]),switcher,readSyncIdentity()?el('button',{class:'icon-btn plain personal-sync-action',type:'button','aria-label':'Синхронизировать сейчас',onclick:()=>void maybeAutoSync(false,true)},[icon('refresh')]):null,el('button',{class:'icon-btn plain search-action',type:'button','aria-label':'Поиск',title:'Поиск',onclick:()=>openSearch(workspace)},[icon('search')]),el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':'Скрыть данные',title:'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
+  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('img',{class:'brand-mark',src:'./icons/brand.svg',alt:'',width:32,height:32}),el('span',{text:'TeachApp'})]),switcher,readSyncIdentity()?el('button',{class:'icon-btn plain personal-sync-action',type:'button','aria-label':'Синхронизировать сейчас',onclick:()=>void maybeAutoSync(false,true)},[icon('refresh')]):null,el('button',{class:'icon-btn plain search-action',type:'button','aria-label':'Поиск',title:'Поиск',onclick:()=>openSearch(workspace)},[icon('search')]),el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':isEncryptedStorage()?'Заблокировать защищённый сеанс':'Скрыть данные',title:isEncryptedStorage()?'Заблокировать защищённый сеанс':'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
 
   updateSyncIndicator();
   const tab = store.state.currentTab;
@@ -281,7 +281,7 @@ function openClassPicker() {
 /* ---------- инициализация ---------- */
 
 async function boot() {
-  if(screenLockEnabled())ui.coverPrivacy();
+  if(screenLockEnabled()&&!isEncryptedStorage())ui.coverPrivacy();
   // Тема — до первой отрисовки, чтобы не было вспышки белого
   try {
     const db = await import('./db.js');

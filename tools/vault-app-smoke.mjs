@@ -28,9 +28,9 @@ try{
  // its dependencies import this intercepted module at the canonical URL.
  const channelName='teachapp-owner-app-lab-'+id;
  const bridge=`
- import {SCHEMA,createDataAccess,assertMigrationSchema,NATIVE_STORAGE_FENCED_EVENT,configureEncryptedStorage,isEncryptedStorage,encryptedStorageAllowed} from './db.js?native-schema';
+ import {SCHEMA,createDataAccess,assertMigrationSchema,NATIVE_STORAGE_FENCED_EVENT,ENCRYPTED_STORAGE_MARKER,configureEncryptedStorage,isEncryptedStorage,encryptedStorageAllowed} from './db.js?native-schema';
  import {createOwnerSessionLifecycle,scrubPrivateDocument} from './vault-owner-lifecycle.js';
- export {SCHEMA,createDataAccess,assertMigrationSchema,NATIVE_STORAGE_FENCED_EVENT,configureEncryptedStorage,isEncryptedStorage,encryptedStorageAllowed};
+ export {SCHEMA,createDataAccess,assertMigrationSchema,NATIVE_STORAGE_FENCED_EVENT,ENCRYPTED_STORAGE_MARKER,configureEncryptedStorage,isEncryptedStorage,encryptedStorageAllowed};
  export const syncTransaction=(n,m,fn)=>gate.transaction(n,m,fn);
  const gate=createOwnerSessionLifecycle({channelName:${JSON.stringify(channelName)},openSession:async({passwords,stillAllowed})=>{
    const {partitionedVaultLab}=await import('/tools/prototypes/vault-partitioned-lab.mjs');

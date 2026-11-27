@@ -1,5 +1,6 @@
 import {screenLockEnabled,verifyScreenLock,PRIVACY_VISIBILITY_EVENT} from './privacy-shield.js';
 import {animateOnce} from './motion.js';
+import {isEncryptedStorage} from './db.js';
 /* ui.js — мелкие строительные блоки интерфейса: иконки, шторка, тост, диалог, haptic.
    Никаких зависимостей. Только DOM. */
 
@@ -346,6 +347,7 @@ export function setUnderlyingInert(node,inert){
  else node.inert=inert;
 }
 export function coverPrivacy(){
+  if(isEncryptedStorage()){window.dispatchEvent(new Event('teachapp:lock-encrypted'));return;}
   if(document.body.classList.contains('privacy-covered'))return;
   const before=document.activeElement;
   before?.blur?.();

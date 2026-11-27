@@ -81,3 +81,5 @@ RC3: WebKit репетирует штатный экран журнала и т�
 RC3: явный owner login и terminal key lifecycle в изолированной WebKit репетиции; native версия v10 fail-closed при новой схеме. Это не активация реальной миграции и не закрытие ручных актов.
 
 RC3: штатная v11 интеграция, явный перенос, login/lock, recovery в пустой профиль и ротация с независимой актуальной копией реализованы в candidate; обычный sync executor обновляет зашифрованные checkpoint, ключи подключения session-only. Не активировать на рабочих данных до независимого аудита, оценки производительности и физических актов. Production deploy не выполняется.
+
+RC3 hardening: отказ native при маркере v11, штатная кнопка защиты блокирует ключи, stale copy/quota/score regression; Delta LAB device rebind/cutover/rollback не выполняются на v11 до RC4. Production всё ещё не развёрнут.

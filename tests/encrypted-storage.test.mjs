@@ -7,7 +7,8 @@ import {probeStorageMode,prepareNativeEncryptionCopy,activateNativeEncryption,op
 import {createVaultCipher,storageCipher} from '../js/vault-cipher.js';
 import {BACKUP_VERSION} from '../js/backup.js';
 import {encryptBackup} from '../js/privacy.js';
-import {projectScope,prepareSync,executeSync,localSyncState} from '../js/sync.js';
+import {projectScope,prepareSync,executeSync,localSyncState,rebindDeltaDevice,cutoverDeltaMigrationDevice,rollbackDeltaMigrationDevice} from '../js/sync.js';
+import * as C from '../js/coach.js';
 import {createPersonalCode,savePersonalCode,readPersonalCode} from '../js/personal-sync.js';
 import {clearSessionSyncCredentials} from '../js/sync-credential-storage.js';
 const passwords={school:'synthetic-school-key',coach:'synthetic-coach-key',workspace:'synthetic-owner-key'},next={school:'synthetic-school-next',coach:'synthetic-coach-next',workspace:'synthetic-owner-next'},backupPassword='independent-copy-password',syncPassword='synthetic-sync-password';
@@ -30,6 +31,7 @@ async function fixture(){
  data.meta=[{id:'sync-checkpoint-school',endpoint,workspaceId,revision:1,envelope}];return data;
 }
 const read=(a,n)=>a.transaction(n,'readonly',s=>s[n].getAll());
+async function editNativeClass(row){const q=indexedDB.open('teachapp',10),db=await new Promise((resolve,reject)=>{q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});try{await new Promise((resolve,reject)=>{const tx=db.transaction('classes','readwrite');tx.objectStore('classes').put(row);tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});}finally{db.close();}}
 test('Shared codec rejects cross-domain ciphertext even with the same scope, bundle and password',async()=>{
  const bundleId=workspaceId,data={bundleMeta:[{id:'bundle',scope:area,bundleId}],classes:[{id:'c',name:'Synthetic'}]};
  const lab=createVaultCipher('teachapp-vault-lab'),rows=await lab.sealPartitionScope({scope:area,bundleId,password:passwords.school,data});
@@ -42,13 +44,23 @@ test('Actual v10 → v11 requires verified independent file and checkpoint passw
  const args={passwords,backupPassword,file,checkpointPasswords:{school:syncPassword},confirmed:true};
  await assert.rejects(activateNativeEncryption({...args,checkpointPasswords:{school:'wrong-password'}}),/аутентификацию/);assert.equal(await probeStorageMode(),'native');
  await assert.rejects(activateNativeEncryption({...args,confirmed:false}),/подтверждение/);
+ await editNativeClass({...data.classes[0],name:'Changed after copy'});await assert.rejects(activateNativeEncryption(args),/не соответствует/);assert.equal(await probeStorageMode(),'native');await editNativeClass(data.classes[0]);
+ const add=IDBObjectStore.prototype.add;let injected=false;
+ IDBObjectStore.prototype.add=function(...values){if(this.transaction.mode==='versionchange'&&this.name==='school'){injected=true;throw new DOMException('Synthetic quota','QuotaExceededError');}return add.apply(this,values);};
+ try{await assert.rejects(activateNativeEncryption(args),{name:'QuotaExceededError'});}finally{IDBObjectStore.prototype.add=add;}
+ assert.equal(injected,true);assert.equal(await probeStorageMode(),'native');
  await activateNativeEncryption(args);assert.equal(await probeStorageMode(),'encrypted');
  await assert.rejects(openEncryptedStorage({passwords:{...passwords,coach:'incorrect-password'}}),/не удалось открыть/i);
  const access=await openEncryptedStorage({passwords});let active=true;D.configureEncryptedStorage({...access,isUnlocked:()=>active&&!access.isClosed()});
  assert.equal(D.isEncryptedStorage(),true);await assert.rejects(D.open(),{name:'NativeStorageFencedError'});
+ for(const fn of [rebindDeltaDevice,cutoverDeltaMigrationDevice,rollbackDeltaMigrationDevice])await assert.rejects(fn({}),/Delta LAB/);
  assert.deepEqual(await D.getAll('students'),data.students);
  await assert.rejects(D.del('meta','sync-checkpoint-school'),/контрольных точек/);
  await D.put('classes',{id:'c',name:'Edited class',gradeLevel:7});
+ const players=[];for(let i=0;i<6;i++)players.push(await C.savePlayer({teamId:'t',name:'Synthetic '+i,number:i+1,position:i===0?'setter':'outside'}));
+ const roster=players.map(p=>p.id),live=await C.startLiveMatch({teamId:'t',date:'2025-09-01',opponent:'Synthetic LIVE',competition:'Cup',scheme:'5-1',roster,lineup:roster,bestOf:3,target:15,decider:15,firstServe:'ours'});
+ await C.probeLiveStorage();const scored=await C.changeLiveMatch(live.id,0,{type:'rally',side:'ours',kind:'point'});assert.equal(scored.revision,1);
+ await assert.rejects(C.changeLiveMatch(live.id,0,null),/изменился/);assert.equal((await C.readLiveMatch(live.id)).revision,1);
  const code=createPersonalCode(endpoint);savePersonalCode(code);assert.equal(readPersonalCode(),code);assert.equal(localStorage.getItem('teachapp.personal-sync.v1'),null);
  let remote={revision:1,envelope:data.meta[0].envelope};const client={get:async()=>structuredClone(remote),put:async(expected,envelope)=>{assert.equal(expected,remote.revision);return remote={revision:expected+1,envelope};}};
  const plan=await prepareSync({area,endpoint,password:syncPassword,client});await executeSync({plan,choices:{},password:syncPassword,client,confirmed:true});
@@ -61,7 +73,8 @@ test('Actual v10 → v11 requires verified independent file and checkpoint passw
  await assert.rejects(recoverIntoEmptyEncryptedStorage({...args,file:latest}),/зашифрованная|native fallback|заменена|существует/i);
  const original=indexedDB;newAccess.close();globalThis.indexedDB=new IDBFactory();globalThis.localStorage=storage();
  assert.equal(await probeStorageMode(),'empty');await recoverIntoEmptyEncryptedStorage({...args,file:latest,passwords:next});
- const recovered=await openEncryptedStorage({passwords:next});assert.equal((await read(recovered,'classes'))[0].name,'Edited class');assert.equal((await read(recovered,'meta')).find(r=>r.id==='sync-checkpoint-school').revision,2);recovered.close();
+ const recovered=await openEncryptedStorage({passwords:next});assert.equal((await read(recovered,'classes'))[0].name,'Edited class');assert.equal((await read(recovered,'meta')).find(r=>r.id==='sync-checkpoint-school').revision,2);assert.equal((await read(recovered,'coachLive'))[0].revision,1);recovered.close();
  globalThis.indexedDB=original;assert.equal(await probeStorageMode(),'encrypted');
  globalThis.indexedDB=new IDBFactory();await assert.rejects(probeStorageMode(),/fallback/);
+ const freshModule=await import('../js/db.js?lost-vault-marker');await assert.rejects(freshModule.open(),{name:'NativeStorageFencedError'});
 });

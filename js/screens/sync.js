@@ -217,7 +217,7 @@ export function openSync(){
    const value=await promptDialog({title:'Код подключения',text:'Введите одноразовый код TAC1 с телефона.',password:true,ok:'Продолжить'});
    if(value===null||!active())return;
    const invite=parseInvite(value);
-   if(!await confirmDialog({title:'Подключить и синхронизировать?',text:'Сервер: '+invite.endpoint+'. Личный ключ сохранится на этом устройстве. Будет выполнена первая проверка школы и тренера без перезаписи отличающейся базы. Используйте только личное защищённое устройство и тестовые данные.',ok:'Подключить'}))return;
+   if(!await confirmDialog({title:'Подключить и синхронизировать?',text:'Сервер: '+invite.endpoint+'. '+(db.isEncryptedStorage()?'Личный ключ будет храниться только до закрытия сеанса.':'Личный ключ сохранится на этом устройстве.')+' Будет выполнена первая проверка школы и тренера без перезаписи отличающейся базы. Используйте только личное защищённое устройство и тестовые данные.',ok:'Подключить'}))return;
    const code=await redeemDeviceInvite(value);
    if(await saveConnection(code))await exchangeBoth();
   }catch(e){toast(e.message,null,8000);}finally{busy=false;controls(false);}
@@ -250,7 +250,7 @@ export function openSync(){
     if(cp&&cp.endpoint!==parsed.endpoint)throw Error('Есть подключение к другому серверу. Сначала согласуйте данные и отключите старый контур.');
    }
    if(!active())return;
-   if(!await confirmDialog({title:'Сохранить личный код?',text:'Сервер: '+parsed.endpoint+'. Код будет храниться в браузере этого устройства без дополнительного пароля. Любой, кто имеет доступ к профилю браузера, может получить код. Только на личном защищённом устройстве. Пока данные не отправляются.',ok:'Сохранить'}))return;
+   if(!await confirmDialog({title:'Сохранить личный код?',text:'Сервер: '+parsed.endpoint+'. '+(db.isEncryptedStorage()?'Код будет действовать только до блокировки защищённого сеанса; после входа его нужно ввести заново.':'Код будет храниться в браузере этого устройства без дополнительного пароля. Любой, кто имеет доступ к профилю браузера, может получить код.')+' Только на личном защищённом устройстве. Пока данные не отправляются.',ok:'Сохранить'}))return;
    if(!active())return;
    if(await saveConnection(parsed.code))toast('Код сохранён. Нажмите «Создать код для компьютера».');
   }catch(e){if(active())toast(e.message,null,8000);}

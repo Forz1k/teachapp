@@ -42,7 +42,7 @@ try{
   const all=await D.dumpAll();return {grade:all.marks[0]?.value,team:all.coachTeams[0].name,raw,denied,secretInStorage:localStorage.getItem('teachapp.personal-sync.v1')!==null};
  });
  assert.deepEqual(verified,{grade:'5',team:'Демо команда 2',raw:{version:11,names:['coach','school','state','workspace']},denied:true,secretInStorage:false});
- await page.evaluate(()=>window.dispatchEvent(new Event('teachapp:lock-encrypted')));await page.getByRole('heading',{name:'Защищённый TeachApp'}).waitFor({timeout:90000});
+ await page.locator('.privacy-action').click();await page.getByRole('heading',{name:'Защищённый TeachApp'}).waitFor({timeout:90000});
  assert.equal(await page.locator('.workspace-nav').count(),0);assert.doesNotMatch(await page.locator('body').innerText(),/Демо Ученик/);
  await login();await page.locator('.workspace-nav').waitFor({timeout:90000});
  await page.waitForFunction(()=>document.querySelector('[data-student="p"][data-lesson="l"]')?.textContent.trim()==='5',{},{timeout:90000});

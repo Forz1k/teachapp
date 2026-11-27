@@ -105,12 +105,14 @@ export function configureEncryptedStorage(route){
  if(nativeStarted||nativeFenced||encryptedRoute||!route||typeof route.transaction!=='function'||typeof route.syncTransaction!=='function'||typeof route.isUnlocked!=='function')throw Error('Маршрут хранилища уже выбран или некорректен');
  encryptedRoute=Object.freeze(route);
 }
+export const ENCRYPTED_STORAGE_MARKER='teachapp.encrypted-storage.v11';
 export const NATIVE_STORAGE_FENCED_EVENT='teachapp:native-storage-fenced';
 const fencedError=()=>new DOMException('Версия локального хранилища изменилась. Повторный доступ в этом документе запрещён.','NativeStorageFencedError');
 
 /** Открывает базу. Параллельные обращения используют один запрос IndexedDB. */
 export function open() {
   if(nativeFenced||encryptedRoute)return Promise.reject(fencedError());
+  try{if(globalThis.localStorage?.getItem(ENCRYPTED_STORAGE_MARKER)!=null){nativeFenced=true;return Promise.reject(fencedError());}}catch{nativeFenced=true;return Promise.reject(fencedError());}
   nativeStarted=true;
   if (_db) return Promise.resolve(_db);
   if (_opening) return _opening;

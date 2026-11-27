@@ -1,10 +1,10 @@
 /* Fixed TeachApp v11 candidate. No native fallback or implicit migration. */
-import {SCHEMA,assertMigrationSchema} from './db.js';
+import {SCHEMA,assertMigrationSchema,ENCRYPTED_STORAGE_MARKER} from './db.js';
 import {splitSchoolVaultLayout,joinSchoolVaultLayout,verifyVaultLayoutRoundtrip} from './vault-layout.js';
 import {splitDeviceSnapshot,joinDeviceSnapshot,validateDeviceCheckpoints} from './device-checkpoint-migration.js';
 import {storageCipher as cipher} from './vault-cipher.js';
 import {prepareSchemaSnapshotTransaction} from './vault-snapshot-transaction.js';
-import {encryptBackup,decryptBackup} from './privacy.js';
+import {encryptBackup,decryptBackup,encryptedEnvelopeBytes} from './privacy.js';
 import {localSyncState} from './sync.js';
 import {inspectMigrationSnapshot,migrationLabLimits} from './migration-preflight.js';
 const DB='teachapp',LEGACY=10,VERSION=11,names=Object.keys(SCHEMA);
@@ -48,7 +48,7 @@ const validPasswords=p=>exact(p,scopes)&&scopes.every(s=>typeof p[s]==='string'&
 const independent=(p,backup)=>validPasswords(p)&&typeof backup==='string'&&backup.length>=12&&backup.length<=1024&&!scopes.some(s=>p[s]===backup);
 const samePart=(a,b)=>canonical(Object.fromEntries(Object.entries(a).map(([n,rows])=>[n,[...rows].sort((x,y)=>indexedDB.cmp(x.id,y.id))])))===canonical(Object.fromEntries(Object.entries(b).map(([n,rows])=>[n,[...rows].sort((x,y)=>indexedDB.cmp(x.id,y.id))])));
 const samePartitionCiphertextLab=cipher.samePartitionCiphertext;
-const storageMarker='teachapp.encrypted-storage.v11';
+const storageMarker=ENCRYPTED_STORAGE_MARKER;
 function assertNoLostEncryptedSource(){check(globalThis.localStorage.getItem(storageMarker)===null,'Зашифрованная база отсутствует или заменена; native fallback запрещён');}
 function markEncrypted(){globalThis.localStorage.setItem(storageMarker,'active');check(globalThis.localStorage.getItem(storageMarker)==='active','Не удалось сохранить защитный маркер');}
 const schema=(db,list)=>db.objectStoreNames.length===list.length&&list.every(n=>db.objectStoreNames.contains(n));
@@ -107,15 +107,19 @@ async function sourceData(){
   tx.oncomplete=()=>resolve(Object.fromEntries(names.map((n,i)=>[n,reads[i].result])));tx.onabort=()=>reject(failure||tx.error||storageError());
  }));
 }
-function checkSource(data){
- const report=inspectMigrationSnapshot(data,{secure:!!globalThis.crypto?.subtle,webLocks:typeof globalThis.navigator?.locks?.request==='function'});
- check(!report.blockers.some(b=>b!=='unmigrated-device-checkpoints'),'Источник не соответствует условиям безопасного переноса');
- partsFor(data);return snapshotIdentity(data);
+function checkRecoverable(data,requireCapabilities=false){
+ const report=inspectMigrationSnapshot(data,{secure:!requireCapabilities||!!globalThis.crypto?.subtle,webLocks:!requireCapabilities||typeof globalThis.navigator?.locks?.request==='function'});
+ check(!report.blockers.some(b=>b!=='unmigrated-device-checkpoints'),'Снимок не соответствует условиям безопасного восстановления');
+ // Ensure every committed snapshot can still fit the independent copy format,
+ // including JSON wrapper overhead, not just the sum of individual rows.
+ check(encryptedEnvelopeBytes({app:'teachapp-native-encryption-recovery',version:1,data})<=migrationFileLimit,'Достигнут предел размера независимой копии');
 }
+function checkSource(data){checkRecoverable(data,true);partsFor(data);return snapshotIdentity(data);}
 export const migrationFileLimit=90*1024*1024;
-function noPersistentSyncCredentials(){
- for(const k of ['teachapp.personal-sync.v1','teachapp.trusted-device.v2'])check(globalThis.localStorage.getItem(k)===null,'Сначала отключите сохранённый код/профиль синхронизации без удаления контрольных точек.');
-}
+export const legacySyncCredentialKeys=Object.freeze(['teachapp.personal-sync.v1','teachapp.trusted-device.v2']);
+export const hasPersistentSyncCredentials=()=>legacySyncCredentialKeys.some(k=>globalThis.localStorage.getItem(k)!==null);
+function noPersistentSyncCredentials(){check(!hasPersistentSyncCredentials(),'Сначала отключите сохранённый код/профиль синхронизации без удаления контрольных точек.');}
+export function forgetLegacySyncCredentials(confirmed=false){check(confirmed===true,'Подтвердите удаление старых локальных кодов');for(const k of legacySyncCredentialKeys)globalThis.localStorage.removeItem(k);noPersistentSyncCredentials();}
 async function checkCheckpoints(data,passwords){
  const {device}=splitDeviceSnapshot(data);
  for(const area of ['school','coach']){
@@ -198,7 +202,7 @@ export async function activateNativeEncryption({passwords,backupPassword,file,ch
  });
 }
 export async function openEncryptedStorage({passwords,stillAllowed=()=>true}){
- check(validPasswords(passwords),'Требуются три независимых пароля от 12 символов');
+ check(validPasswords(passwords),'Требуются три независимых пароля от 12 символов');noPersistentSyncCredentials();
  let closed=false,bundleId;const keys={};
  const allowed=()=>!closed&&stillAllowed(),guard=()=>check(allowed(),'Защищённый сеанс закрыт'),close=()=>{closed=true;for(const s of scopes){keys[s]?.close();delete keys[s];}};
  try{guard();const initial=await current();bundleId=initial.pointer.bundleId;
@@ -213,6 +217,7 @@ export async function openEncryptedStorage({passwords,stillAllowed=()=>true}){
  async function run(names,mode,fn,sync=false){
   guard();const {snapshot,parts,data}=await read(),prepared=await prepareSchemaSnapshotTransaction(data,names,mode,fn,{guard,isOpen:allowed,deviceLocal:true});guard();
   if(mode==='readwrite'){
+   checkRecoverable(prepared.data);
    const next=partsFor(prepared.data);
    if(!sync)check(samePart({device:next.workspace.deviceMeta},{device:parts.workspace.deviceMeta}),'Изменение контрольных точек через общий интерфейс запрещено');
    const selected=scopes.filter(s=>!samePart(next[s],parts[s])),after={};

@@ -644,6 +644,7 @@ export async function openDeltaDeviceRecovery({endpoint,area,file,devicePassword
 // Rebind only the encrypted local ancestor, never the local business records
 // or the remote head. An explicitly reviewed normal three-way merge follows.
 export async function rebindDeltaDevice({endpoint,area,file,devicePassword,oldPassword,synthetic=false,confirmed=false,expectedRemoteRevision,expectedLocalRevision,acceptHistoricalBase=false,fetcher}){
+ check(!db.isEncryptedStorage(),'Delta LAB не подключён к рабочему v11; операция остановлена до сетевого запроса');
  const p=await openDeltaDeviceRecovery({endpoint,area,file,devicePassword,synthetic}),current=await db.dumpAll(),cp=getCheckpoint(current,area);
  check(cp&&cp.endpoint===p.endpoint&&cp.workspaceId===p.workspaceId&&revision(cp.revision)&&cp.revision<p.anchorRevision,'Нет подходящей прежней контрольной точки; не заменяйте локальные данные');
  check(typeof oldPassword==='string'&&oldPassword!==p.password,'Нужен прежний пароль контрольной точки');
@@ -831,6 +832,7 @@ export async function migrationBindingStatus(area,data){
  return {area,status:bindingMatches(binding,cp,area)?'lab-bound':'review',revision:revision(cp?.revision)?cp.revision:null};
 }
 export async function cutoverDeltaMigrationDevice(args){
+ check(!db.isEncryptedStorage(),'Delta LAB не подключён к рабочему v11; операция остановлена до сетевого запроса');
  check(args.synthetic===true,'Переключение доступно только для Delta LAB');
  check(args.sourceFenceToken===undefined,'Не передавайте административный ключ устройству');
  const current=await db.dumpAll(),p=await openDeltaMigration({...args,current}),{sourceRead,target}=migrationClients(args);
@@ -902,6 +904,7 @@ export async function sealDeltaMigrationRollback(args){
  return {area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision,destinationRevision:1,replayed:before.seal!==null,status:'rollback-sealed'};
 }
 export async function rollbackDeltaMigrationDevice(args){
+ check(!db.isEncryptedStorage(),'Delta LAB не подключён к рабочему v11; операция остановлена до сетевого запроса');
  check(args.synthetic===true&&args.sourceFenceToken===undefined&&args.destinationSealToken===undefined,'Возврат устройства только в LAB, без административных ключей');
  const current=await db.dumpAll(),p=await openDeltaMigration({...args,current}),{sourceRead,target}=migrationClients(args);
  const cp=getCheckpoint(current,p.area),local=projectScope(current,p.area),bindingId=migrationBindingKey(p.area);

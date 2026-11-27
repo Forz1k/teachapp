@@ -1,6 +1,6 @@
 /* Determine the real storage mode before the normal application starts. */
 import {configureEncryptedStorage} from './db.js';
-import {probeStorageMode,openEncryptedStorage,prepareNativeEncryptionCopy,activateNativeEncryption,recoverIntoEmptyEncryptedStorage,migrationFileLimit} from './encrypted-storage.js';
+import {probeStorageMode,openEncryptedStorage,prepareNativeEncryptionCopy,activateNativeEncryption,recoverIntoEmptyEncryptedStorage,migrationFileLimit,legacySyncCredentialKeys,hasPersistentSyncCredentials,forgetLegacySyncCredentials} from './encrypted-storage.js';
 import {createOwnerSessionLifecycle,scrubPrivateDocument} from './vault-owner-lifecycle.js';
 import {clearSessionSyncCredentials} from './sync-credential-storage.js';
 const root=document.getElementById('app');
@@ -39,6 +39,9 @@ function migrationScreen(recovery=false){
 }
 async function encryptedScreen(){
  const n=panel('Защищённый TeachApp','Введите три независимых пароля. Ключи не сохраняются. При скрытии страницы потребуется повторный вход.');
+ if(hasPersistentSyncCredentials()){
+  n.append(el('p','Обнаружены прежние незашифрованные коды синхронизации. Сохраните код отдельно, затем явно забудьте его на этом устройстве. Контрольные точки и записи останутся.'),button('Забыть прежние локальные коды',()=>{if(window.confirm('Удалить только сохранённые коды синхронизации? Данные и ревизии останутся.')){forgetLegacySyncCredentials(true);location.reload();}}));return;
+ }
  const form=el('form'),fields=Object.fromEntries(scopes.map(([k,label])=>[k,secret(form,label,k)])),status=el('p','',{role:'status'}),submit=el('button','Войти',{type:'submit',class:'btn primary wide'});form.append(status,submit);n.append(form,el('p','Если пароли утеряны, сохраните существующий профиль и восстановите независимую копию в новом профиле через ?secure-recovery=1.'));
  const gate=createOwnerSessionLifecycle({channelName:'teachapp-encrypted-owner-v11',openSession:openEncryptedStorage,onLock:reason=>{
   clearSessionSyncCredentials();window.dispatchEvent(new Event('teachapp:encrypted-locked'));scrubPrivateDocument();
@@ -46,6 +49,7 @@ async function encryptedScreen(){
  }});
  configureEncryptedStorage(gate);
  window.addEventListener('teachapp:lock-encrypted',()=>gate.lockEveryTab());
+ window.addEventListener('storage',e=>{if((legacySyncCredentialKeys.includes(e.key)||e.key===null)&&hasPersistentSyncCredentials())gate.lockEveryTab();});
  window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
  form.addEventListener('submit',async e=>{
   e.preventDefault();if(submit.disabled)return;submit.disabled=true;const passwords=values(fields);
