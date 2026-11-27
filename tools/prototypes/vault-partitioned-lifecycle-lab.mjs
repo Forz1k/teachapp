@@ -3,7 +3,7 @@
 import {createDataAccess} from '../../js/db.js';
 const scopes=['school','coach','workspace'],check=(v,m)=>{if(!v)throw Error(m);};
 export function partitionedVaultLifecycleLab(vault,{id,layout='school-v2',document:doc=globalThis.document,window:win=globalThis.window,Channel=globalThis.BroadcastChannel,idleMs=5*60*1000,now=()=>performance.now(),onLock=()=>{}}={}){
- check(typeof vault?.openScope==='function'&&typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id)&&['v1','school-v2','school-v2-migrated'].includes(layout),'Некорректный набор LAB');
+ check(typeof vault?.openScope==='function'&&typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id)&&['v1','school-v2','school-v2-migrated','school-v3-device-migrated'].includes(layout),'Некорректный набор LAB');
  check(typeof doc?.addEventListener==='function'&&typeof doc.visibilityState==='string'&&typeof win?.addEventListener==='function'&&typeof Channel==='function','Требуется браузерный lifecycle и BroadcastChannel LAB');
  check(Number.isSafeInteger(idleMs)&&idleMs>0&&idleMs<=30*60*1000&&typeof now==='function'&&typeof onLock==='function','Некорректный тайм-аут LAB');
  const channel=new Channel('teachapp-vault-partition-lock-lab-'+layout+'-'+id),cells=new Map(scopes.map(s=>[s,null]));

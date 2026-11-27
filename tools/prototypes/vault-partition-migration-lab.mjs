@@ -2,7 +2,8 @@
  * A verified independent copy is mandatory; the versionchange transaction
  * rechecks every legacy record before deleting plaintext and installing the
  * active encrypted partitions. No live names, no implicit fallback. */
-import {SCHEMA} from '../../js/db.js';
+import {SCHEMA,assertMigrationSchema} from '../../js/db.js';
+import {splitDeviceSnapshot} from '../../js/device-checkpoint-migration.js';
 import {snapshotIdentity} from './vault-version-fence-lab.mjs';
 import {splitSchoolVaultLayoutLab,validateSchoolVaultLayoutResultLab} from './vault-school-layout-lab.mjs';
 import {sealPartitionScopeLab} from './local-vault.mjs';
@@ -10,9 +11,9 @@ import {validPartitionPasswordsLab,independentPartitionPasswordsLab,createPartit
 const names=Object.keys(SCHEMA),scopes=['school','coach','workspace'],encryptedStores=['state',...scopes];
 export const partitionLegacyVersionLab=10,partitionEncryptedVersionLab=11;
 const check=(v,m)=>{if(!v)throw Error(m);};
-export function partitionMigrationNameLab(id){
+export function partitionMigrationNameLab(id,{deviceLocal=false}={}){
  check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id),'Некорректный ID миграции LAB');
- return 'teachapp-partition-migration-lab-'+id;
+ return (deviceLocal?'teachapp-partition-device-migration-lab-':'teachapp-partition-migration-lab-')+id;
 }
 const hasLegacy=db=>db.objectStoreNames.length===names.length&&names.every(n=>db.objectStoreNames.contains(n));
 function openLegacyName(name,create){
@@ -27,39 +28,42 @@ function openLegacyName(name,create){
   req.onsuccess=()=>{const db=req.result;if(blocked||!hasLegacy(db)){db.close();reject(Error('Неверная исходная схема LAB'));return;}db.onversionchange=()=>db.close();resolve(db);};
  });
 }
-export function openPartitionLegacyLab(id){return openLegacyName(partitionMigrationNameLab(id),true);}
+export function openPartitionLegacyLab(id,{deviceLocal=false}={}){return openLegacyName(partitionMigrationNameLab(id,{deviceLocal}),true);}
 function readLegacy(db){
  return new Promise((resolve,reject)=>{
-  const tx=db.transaction(names,'readonly'),requests=names.map(n=>[n,tx.objectStore(n).getAll()]);
+  const tx=db.transaction(names,'readonly');assertMigrationSchema(tx);
+  const requests=names.map(n=>[n,tx.objectStore(n).getAll()]);
   tx.oncomplete=()=>resolve(Object.fromEntries(requests.map(([n,q])=>[n,q.result])));tx.onabort=()=>reject(tx.error||Error('Чтение исходника LAB отменено'));
  });
 }
-async function sourceData(id){
- const db=await openLegacyName(partitionMigrationNameLab(id),false);
+async function sourceData(id,deviceLocal){
+ const db=await openLegacyName(partitionMigrationNameLab(id,{deviceLocal}),false);
  try{return await readLegacy(db);}finally{db.close();}
 }
 const hex=b=>Array.from(new Uint8Array(b),x=>x.toString(16).padStart(2,'0')).join('');
 const digest=async s=>hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)));
-async function sourcePointer(id,identity){
- const hash=await digest(partitionMigrationNameLab(id)),bundleId=hash.slice(0,8)+'-'+hash.slice(8,12)+'-'+hash.slice(12,16)+'-'+hash.slice(16,20)+'-'+hash.slice(20,32);
+async function sourcePointer(id,identity,deviceLocal){
+ const hash=await digest(partitionMigrationNameLab(id,{deviceLocal})),bundleId=hash.slice(0,8)+'-'+hash.slice(8,12)+'-'+hash.slice(12,16)+'-'+hash.slice(16,20)+'-'+hash.slice(20,32);
  const contentHash=await digest(identity),revisions={};
  for(const s of scopes)revisions[s]=(await digest(hash+':'+contentHash+':'+s)).slice(0,32);
  return {id:'active',bundleId,revisions};
 }
-function checkedParts(data){
- const parts=splitSchoolVaultLayoutLab(data),bundleId=crypto.randomUUID();
+function checkedParts(data,deviceLocal){
+ const separated=deviceLocal?splitDeviceSnapshot(data):{portable:data,device:[]};
+ const parts=splitSchoolVaultLayoutLab(separated.portable),bundleId=crypto.randomUUID();
  for(const scope of scopes)validateSchoolVaultLayoutResultLab({scope,data:{...parts[scope],bundleMeta:[{id:'bundle',scope,bundleId}]}},scope);
+ if(deviceLocal)parts.workspace.deviceMeta=separated.device;
  return parts;
 }
-export async function preparePartitionLegacyMigrationLab(id,{backupPasswords}){
+export async function preparePartitionLegacyMigrationLab(id,{backupPasswords,deviceLocal=false}){
  check(validPartitionPasswordsLab(backupPasswords),'Требуются три независимых пароля копии LAB');
- const data=await sourceData(id),identity=snapshotIdentity(data);checkedParts(data);
- const pointer=await sourcePointer(id,identity);
- return createPartitionRecoveryCopyLab({data,pointer,passwords:backupPasswords});
+ const data=await sourceData(id,deviceLocal),identity=snapshotIdentity(data);checkedParts(data,deviceLocal);
+ const pointer=await sourcePointer(id,identity,deviceLocal);
+ return createPartitionRecoveryCopyLab({data,pointer,passwords:backupPasswords,deviceLocal});
 }
-function atomicUpgrade(id,identity,pointer,rows){
+function atomicUpgrade(id,identity,pointer,rows,deviceLocal){
  return new Promise((resolve,reject)=>{
-  const req=indexedDB.open(partitionMigrationNameLab(id),partitionEncryptedVersionLab);let blocked=false,failure=null,upgraded=false;
+  const req=indexedDB.open(partitionMigrationNameLab(id,{deviceLocal}),partitionEncryptedVersionLab);let blocked=false,failure=null,upgraded=false;
   req.onblocked=()=>{blocked=true;reject(Error('Старое соединение LAB не закрыто; перенос отменён'));};
   req.onupgradeneeded=e=>{
    const db=req.result,tx=req.transaction;
@@ -85,22 +89,22 @@ function atomicUpgrade(id,identity,pointer,rows){
   req.onsuccess=()=>{const db=req.result,correct=db.objectStoreNames.length===encryptedStores.length&&encryptedStores.every(n=>db.objectStoreNames.contains(n));db.close();if(blocked||!upgraded||!correct){reject(Error('Набор уже перенесён или неверная схема LAB'));return;}resolve(pointer);};
  });
 }
-export async function migratePartitionLegacyLab(id,{passwords,backupPasswords,backupFile,saved=false,confirmed=false}){
+export async function migratePartitionLegacyLab(id,{passwords,backupPasswords,backupFile,saved=false,confirmed=false,deviceLocal=false}){
  check(saved===true&&confirmed===true&&independentPartitionPasswordsLab(passwords,backupPasswords),'Подтвердите перенос и сохранённую независимую копию LAB');
- const data=await sourceData(id),identity=snapshotIdentity(data),parts=checkedParts(data),source=await sourcePointer(id,identity);
- const copy=await openPartitionRecoveryCopyLab(backupFile,{passwords:backupPasswords});
+ const data=await sourceData(id,deviceLocal),identity=snapshotIdentity(data),parts=checkedParts(data,deviceLocal),source=await sourcePointer(id,identity,deviceLocal);
+ const copy=await openPartitionRecoveryCopyLab(backupFile,{passwords:backupPasswords,deviceLocal});
  check(sourceMatchesPartitionLab(copy.source,source)&&samePartitionSnapshotLab(copy.data,data),'Копия устарела или относится к другому исходнику LAB');
  const bundleId=crypto.randomUUID(),rows={};
  for(const scope of scopes)rows[scope]=await sealPartitionScopeLab({scope,bundleId,password:passwords[scope],data:{...parts[scope],bundleMeta:[{id:'bundle',scope,bundleId}]}});
  const pointer={id:'active',bundleId,revisions:Object.fromEntries(scopes.map(s=>[s,rows[s][0].vaultId]))};
- return atomicUpgrade(id,identity,pointer,rows);
+ return atomicUpgrade(id,identity,pointer,rows,deviceLocal);
 }
 /** Explicit rollback into a distinct, empty synthetic legacy DB. Never
  * resurrect the old database or overwrite any existing legacy rows. */
-export async function restorePartitionLegacyCopyLab(id,{file,backupPasswords,confirmed=false}){
+export async function restorePartitionLegacyCopyLab(id,{file,backupPasswords,confirmed=false,deviceLocal=false}){
  check(confirmed===true,'Подтвердите восстановление LAB');
- const {data}=await openPartitionRecoveryCopyLab(file,{passwords:backupPasswords});snapshotIdentity(data);
- const db=await openPartitionLegacyLab(id);
+ const {data}=await openPartitionRecoveryCopyLab(file,{passwords:backupPasswords,deviceLocal});snapshotIdentity(data);
+ const db=await openPartitionLegacyLab(id,{deviceLocal});
  try{
   await new Promise((resolve,reject)=>{
    const tx=db.transaction(names,'readwrite'),counts=names.map(n=>tx.objectStore(n).count());let remaining=counts.length,failure;

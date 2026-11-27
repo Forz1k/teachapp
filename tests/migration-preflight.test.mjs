@@ -9,7 +9,7 @@ test('Migration screening exposes aggregate values only and never authorizes swi
  const raw=fixture();raw.meta.push({id:'sync-checkpoint-school',value:'SECRET'});
  const before=structuredClone(raw);
  const result=await inspectLocalMigration({load:async()=>raw,storage:{estimate:async()=>env.estimate},secure:true,webLocks:true});
- assert.equal(result.records,1);assert.equal(result.checkpoints,1);assert.deepEqual(result.blockers,['unmigrated-device-checkpoints']);assert.deepEqual(result.warnings,['device-checkpoints']);
+ assert.equal(result.records,1);assert.equal(result.checkpoints,1);assert.deepEqual(result.blockers,['unmigrated-device-checkpoints','checkpoint-invalid']);assert.deepEqual(result.warnings,['device-checkpoints']);
  assert.equal(result.activationAllowed,false);assert.deepEqual(raw,before);assert.doesNotMatch(JSON.stringify(result),/PRIVATE|SECRET|fixture/);
 });
 test('Migration screening flags active Delta marker, non-JSON data, schema integrity and missing capabilities',()=>{

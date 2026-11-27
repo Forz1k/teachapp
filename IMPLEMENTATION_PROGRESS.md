@@ -530,3 +530,7 @@ Verified code backup refs created before changes. Static manifest and integrity 
 ### 8.0.0-rc.3 — Security 6.1, контрольная точка подготовки
 
 Общий чистый layout для диагностики живой схемы и LAB, проверка roundtrip без потерь, точная native-схема и явный отказ при неперенесённых sync checkpoints. Регрессии добавлены; статус CI сверять по точному SHA. Рабочая БД остаётся native v10, production не переключается. Полная интеграция и физическая приёмка открыты.
+
+### RC3 — device-local migration rehearsal
+
+Обычные checkpoint/status сохраняются в отдельном school-v3-device-migrated LAB, изолированы от API областей и обычных копий, проверены миграция/ротация/откат. Состояние Delta и неизвестные форматы отклоняются. Production sync и UI остаются native; CI сверять по точному SHA.

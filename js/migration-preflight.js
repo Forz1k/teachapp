@@ -2,6 +2,7 @@
 import {SCHEMA,readBoundedSnapshot} from './db.js';
 import {BACKUP_VERSION,validateBackup} from './backup.js';
 import {verifyVaultLayoutRoundtrip} from './vault-layout.js';
+import {validateDeviceCheckpoints} from './device-checkpoint-migration.js';
 const names=Object.keys(SCHEMA),encoder=new TextEncoder();
 export const migrationLabLimits=Object.freeze({records:10000,bytes:64*1024*1024});
 function jsonSafe(value,depth=0,stack=new Set()){
@@ -20,11 +21,12 @@ export function inspectMigrationSnapshot(raw,{estimate=null,secure=false,webLock
  const checkpoints=raw.meta.filter(r=>typeof r?.id==='string'&&r.id.startsWith('sync-checkpoint-'));
  if(checkpoints.length){warnings.push('device-checkpoints');blockers.push('unmigrated-device-checkpoints');}
  if(checkpoints.some(r=>r.id.startsWith('sync-checkpoint-migration-')))blockers.push('active-delta-migration');
+ if(checkpoints.length&&!blockers.includes('active-delta-migration')){try{validateDeviceCheckpoints(checkpoints);}catch{blockers.push('checkpoint-invalid');}}
  const data={...raw,meta:raw.meta.filter(r=>!checkpoints.includes(r))};
  const records=names.reduce((sum,n)=>sum+data[n].length,0);
  if(records+checkpoints.length>migrationLabLimits.records)blockers.push('record-limit');
  let bytes=0;
- for(const n of names)for(const row of data[n]){
+ for(const n of names)for(const row of raw[n]){
   if(!jsonSafe(row)){if(!blockers.includes('non-json'))blockers.push('non-json');continue;}
   bytes+=encoder.encode(JSON.stringify(row)).byteLength;
  }

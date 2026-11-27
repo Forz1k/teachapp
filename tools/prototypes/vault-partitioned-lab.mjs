@@ -4,6 +4,7 @@
  * No connection to live TeachApp DB, no plaintext fallback, no cross-scope
  * transactions. Only snapshots independently valid in each scope are accepted. */
 import {SCHEMA,createDataAccess} from '../../js/db.js';
+import {joinDeviceSnapshot,validateDeviceCheckpoints} from '../../js/device-checkpoint-migration.js';
 import {schoolStores,archivePreview,prepareSchoolYearRollover} from '../../js/school-archive.js';
 import {schoolSettingsProjection} from '../../js/model.js';
 import {splitVaultScopesLab,joinVaultScopesLab,validateVaultScopeResultLab} from './vault-scope-bundle.mjs';
@@ -96,12 +97,18 @@ function commitRotation(db,expected,after,selected=scopes){
  });
 }
 export function partitionedVaultLab(id,{layout='v1'}={}){
- check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id)&&['v1','school-v2','school-v2-migrated'].includes(layout),'Некорректный ID или layout LAB');
+ check(typeof id==='string'&&/^[a-z0-9-]{1,48}$/.test(id)&&['v1','school-v2','school-v2-migrated','school-v3-device-migrated'].includes(layout),'Некорректный ID или layout LAB');
  // Explicit, incompatible synthetic layout uses a new database name. Never
  // reinterpret or implicitly migrate an existing ciphertext partition.
- const migrated=layout==='school-v2-migrated',schoolLayout=layout!=='v1',name=migrated?partitionMigrationNameLab(id):(schoolLayout?'teachapp-vault-mutable-school-lab-':'teachapp-vault-mutable-lab-')+id;
+ const deviceLocal=layout==='school-v3-device-migrated',migrated=layout==='school-v2-migrated'||deviceLocal,schoolLayout=layout!=='v1',name=migrated?partitionMigrationNameLab(id,{deviceLocal}):(schoolLayout?'teachapp-vault-mutable-school-lab-':'teachapp-vault-mutable-lab-')+id;
  const split=schoolLayout?splitSchoolVaultLayoutLab:splitVaultScopesLab,join=schoolLayout?joinSchoolVaultLayoutLab:joinVaultScopesLab,validateResult=schoolLayout?validateSchoolVaultLayoutResultLab:validateVaultScopeResultLab;
  const blankParts=()=>split(empty()),fullPart=(scope,part)=>join({...blankParts(),[scope]:part});
+ const unpack=(result,scope)=>{
+  const {deviceMeta,...data}=result.data;
+  if(deviceLocal&&scope==='workspace')check(Object.hasOwn(result.data,'deviceMeta'),'Отсутствуют локальные контрольные точки LAB');
+  else check(!Object.hasOwn(result.data,'deviceMeta'),'Локальные контрольные точки в чужой области LAB');
+  return {part:validateResult({...result,data},scope).data,device:deviceLocal&&scope==='workspace'?validateDeviceCheckpoints(deviceMeta):[]};
+ };
  const using=async fn=>{const db=await open(name,migrated?{version:partitionEncryptedVersionLab,create:false}:{});try{return await fn(db);}finally{db.close();}};
  const current=selected=>using(async db=>requireActive(await readSlices(db,selected),selected));
  const stage=async({data,passwords})=>{
@@ -116,12 +123,12 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
  };
  const authenticate=async passwords=>{
   check(passwordsOK(passwords),'Требуются три независимых пароля LAB');
-  const snapshot=await current(scopes),parts={};
+  const snapshot=await current(scopes),parts={};let device=[];
   for(const scope of scopes){
    const key=await openPartitionKeySessionLab({scope,bundleId:snapshot.pointer.bundleId,password:passwords[scope],rows:snapshot.rows[scope]});
-   try{parts[scope]=validateResult(await key.read(snapshot.rows[scope]),scope).data;}finally{key.close();}
+   try{const opened=unpack(await key.read(snapshot.rows[scope]),scope);parts[scope]=opened.part;if(scope==='workspace')device=opened.device;}finally{key.close();}
   }
-  return {snapshot,parts,data:join(parts)};
+  const portable=join(parts);return {snapshot,parts,device,data:deviceLocal?joinDeviceSnapshot(portable,device):portable};
  };
  return Object.freeze({
   stage,
@@ -133,32 +140,33 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
   async prepareRecoveryCopy({passwords,backupPasswords}){
    check(independentPartitionPasswordsLab(passwords,backupPasswords),'Пароли копии должны быть независимыми от активного набора LAB');
    const {snapshot,data}=await authenticate(passwords);
-   return createPartitionRecoveryCopyLab({data,pointer:snapshot.pointer,passwords:backupPasswords});
+   return createPartitionRecoveryCopyLab({data,pointer:snapshot.pointer,passwords:backupPasswords,deviceLocal});
   },
   async restoreRecoveryCopy({file,backupPasswords,newPasswords,confirmed=false}){
    check(confirmed===true&&independentPartitionPasswordsLab(backupPasswords,newPasswords),'Подтвердите восстановление в пустой LAB с независимыми паролями');
-   const {data}=await openPartitionRecoveryCopyLab(file,{passwords:backupPasswords});
+   const {data}=await openPartitionRecoveryCopyLab(file,{passwords:backupPasswords,deviceLocal});
    return stage({data,passwords:newPasswords});
   },
   async rotatePasswords({passwords,newPasswords,backupPasswords,backupFile,saved=false}){
    check(saved===true&&independentPartitionPasswordsLab(passwords,newPasswords,backupPasswords),'Требуется сохранённая независимая копия и три новых пароля LAB');
-   const {snapshot,parts,data}=await authenticate(passwords);
-   const backup=await openPartitionRecoveryCopyLab(backupFile,{passwords:backupPasswords});
+   const {snapshot,parts,data,device}=await authenticate(passwords);
+   const backup=await openPartitionRecoveryCopyLab(backupFile,{passwords:backupPasswords,deviceLocal});
    check(sourceMatchesPartitionLab(backup.source,snapshot.pointer)&&samePartitionSnapshotLab(backup.data,data),'Копия устарела или не совпадает с текущими ревизиями LAB');
-   const after=await sealAll(parts,snapshot.pointer.bundleId,newPasswords);
+   const nextParts=deviceLocal?{...parts,workspace:{...parts.workspace,deviceMeta:device}}:parts;
+   const after=await sealAll(nextParts,snapshot.pointer.bundleId,newPasswords);
    return using(db=>commitRotation(db,snapshot,after));
   },
   async previewSchoolYear({passwords}){
-   check(schoolLayout,'Для перевода года требуется layout school-v2');
+   check(schoolLayout&&!deviceLocal,'Для перевода года требуется layout school-v2 без миграции устройства');
    const {snapshot,data}=await authenticate(passwords),school=Object.fromEntries(schoolStores.map(n=>[n,data[n]]));
    const {token,...report}=archivePreview(school);
    return {...report,classes:school.classes.map(({id,name,gradeLevel})=>({id,name,gradeLevel:gradeLevel??null})),source:{id:'recovery',sourceBundleId:snapshot.pointer.bundleId,sourceRevisions:{...snapshot.pointer.revisions}}};
   },
   async rollSchoolYear({passwords,backupPasswords,backupFile,saved=false,expected,year,transfers,kind,confirmed=false}){
-   check(schoolLayout&&saved===true&&confirmed===true&&independentPartitionPasswordsLab(passwords,backupPasswords),'Подтвердите перевод года и независимую сохранённую копию school-v2');
+   check(schoolLayout&&!deviceLocal&&saved===true&&confirmed===true&&independentPartitionPasswordsLab(passwords,backupPasswords),'Подтвердите перевод года и независимую сохранённую копию school-v2');
    const {snapshot,data,parts}=await authenticate(passwords);
    check(sourceMatchesPartitionLab(expected,snapshot.pointer),'Предпросмотр устарел. Откройте заново');
-   const backup=await openPartitionRecoveryCopyLab(backupFile,{passwords:backupPasswords});
+   const backup=await openPartitionRecoveryCopyLab(backupFile,{passwords:backupPasswords,deviceLocal});
    check(sourceMatchesPartitionLab(backup.source,snapshot.pointer)&&samePartitionSnapshotLab(backup.data,data),'Копия устарела или не совпадает с текущими ревизиями LAB');
    // Do not copy owner metadata into a new archive unnecessarily: only the
    // school-owned settings are needed for its year and grade calculations.
@@ -187,7 +195,7 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
    let allowed;
    try{
     key=await openPartitionKeySessionLab({scope,bundleId,password,rows:initial.rows[scope],assertActive:guard});password=undefined;guard();
-    const part=validateResult(await key.read(initial.rows[scope]),scope).data;fullPart(scope,part);allowed=new Set(Object.keys(part));guard();arm();
+    const {part}=unpack(await key.read(initial.rows[scope]),scope);fullPart(scope,part);allowed=new Set(Object.keys(part));guard();arm();
    }catch(e){close();throw e;}
    const run=async(names,mode,fn)=>{
     guard();const job=tail.then(async()=>{
@@ -196,12 +204,13 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
       check(selected.length&&new Set(selected).size===selected.length&&selected.every(n=>allowed.has(n)),'Хранилище недоступно в этой области');
       const before=await current([scope]);guard();
       check(before.pointer.bundleId===bundleId&&before.pointer.revisions[scope]===revision,'Ревизия области LAB изменилась. Откройте заново');
-      const part=validateResult(await key.read(before.rows[scope]),scope).data;
+      const {part,device}=unpack(await key.read(before.rows[scope]),scope);
       const prepared=await prepareSchemaSnapshotTransactionLab(fullPart(scope,part),selected,mode,fn,{guard,isOpen:()=>{try{guard();return true;}catch{return false;}}});guard();
       if(mode==='readwrite'){
        const next=split(prepared.data);
        check(scopes.every(s=>s===scope||Object.values(next[s]).every(rows=>rows.length===0)),'Запись другой области LAB');
-       const after=await key.seal(withMeta(scope,bundleId,next[scope]));guard();
+       const nextPart=deviceLocal&&scope==='workspace'?{...next[scope],deviceMeta:device}:next[scope];
+       const after=await key.seal(withMeta(scope,bundleId,nextPart));guard();
        await using(db=>commitScope(db,scope,before,after,guard));guard();revision=after[0].vaultId;
       }
       guard();arm();return prepared.result;
