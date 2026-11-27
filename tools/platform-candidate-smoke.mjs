@@ -1,7 +1,7 @@
 /* Exact bundled HTTPS candidate in local workerd. All provider requests
  * intercepted; no cloud configuration, actual identity provider or real data. */
 import assert from 'node:assert/strict';
-import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
+import {Miniflare,Response,convertV4MiniflareOptions} from 'miniflare';
 import {readdir,readFile,mkdtemp,rm} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -9,10 +9,7 @@ import {setTimeout as sleep} from 'node:timers/promises';
 import {DatabaseSync} from 'node:sqlite';
 import {digestToken} from '../server/cloudflare-protocol.mjs';
 const [bundle]=process.argv.slice(2),entries=(await readdir(bundle)).filter(n=>/\.(m?js)$/.test(n));assert.equal(entries.length,1);
-const originalScript=await readFile(resolve(bundle,entries[0]),'utf8'),dir=await mkdtemp(join(tmpdir(),'teachapp-platform-candidate-'));
-// Diagnostic only: ephemeral synthetic credentials and intercepted endpoint. Never used to authorize integration.
-const script=originalScript.replace(/console\.warn\((["'])Platform provider response unknown:\1,\s*category\)/, 'console.warn("Synthetic transport exception:", e.name, e.message)');
-assert.notEqual(script,originalScript,'Diagnostic instrumentation anchor');
+const script=await readFile(resolve(bundle,entries[0]),'utf8'),dir=await mkdtemp(join(tmpdir(),'teachapp-platform-candidate-'));
 const apiOrigin='https://platform-api.example.invalid',origin='https://platform-ui.example.invalid',issuer='https://identity.example.invalid/',audience='teachapp-candidate',clientId='candidate-test';
 const random=()=>Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex'),root=random(),backup=random(),storage=random();
 const signing=await crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']);
@@ -24,12 +21,11 @@ async function token(sub,extra={}){
  return unsigned+'.'+b64(await crypto.subtle.sign('RSASSA-PKCS1-v1_5',signing.privateKey,new TextEncoder().encode(unsigned)));
 }
 const endpoint='https://fcm.googleapis.com/fcm/send/synthetic-candidate',sent=[];
-const mf=new Miniflare(convertV4MiniflareOptions({name:'teachapp-platform-candidate',modules:true,script,compatibilityDate:'2026-11-01',bindings,durableObjects:{WORKSPACES:{className:'PlatformWorkspace',useSQLite:true},INGRESS:{className:'PlatformIngress',useSQLite:true}},ratelimits:{EDGE_LIMIT:{namespace_id:'80000601',simple:{limit:120,period:60}}},resourcePersistencePath:dir,enableDevRegistry:false,cf:{colo:'TST',country:'GB'},upstream:apiOrigin,verbose:true,outboundService:{node:async(req,res)=>{
-  const chunks=[];for await(const chunk of req)chunks.push(chunk);
-  const url=new URL(req.url, 'https://'+req.headers.host).href,bytes=new Uint8Array(Buffer.concat(chunks));
-  sent.push({url,method:req.method,encoding:req.headers['content-encoding'],authorization:req.headers.authorization,bytes});
-  res.writeHead(url===endpoint?201:403);res.end();
-}}}));
+const mf=new Miniflare(convertV4MiniflareOptions({name:'teachapp-platform-candidate',modules:true,script,compatibilityDate:'2026-11-01',bindings,durableObjects:{WORKSPACES:{className:'PlatformWorkspace',useSQLite:true},INGRESS:{className:'PlatformIngress',useSQLite:true}},ratelimits:{EDGE_LIMIT:{namespace_id:'80000601',simple:{limit:120,period:60}}},resourcePersistencePath:dir,enableDevRegistry:false,cf:{colo:'TST',country:'GB'},upstream:apiOrigin,verbose:false,outboundService:async req=>{
+  const bytes=new Uint8Array(await req.arrayBuffer());
+  sent.push({url:req.url,method:req.method,encoding:req.headers.get('Content-Encoding'),authorization:req.headers.get('Authorization'),bytes});
+  return new Response(null,{status:req.url===endpoint?201:403});
+}}));
 async function call(w,path,secret,method='GET',body){
  const res=await mf.dispatchFetch(apiOrigin+'/v1/workspaces/'+w+'/'+path,{method,headers:{Origin:origin,'CF-Connecting-IP':'192.0.2.10',Authorization:'Bearer '+secret,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});
  return {status:res.status,...await res.json()};
