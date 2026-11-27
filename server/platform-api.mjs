@@ -41,7 +41,7 @@ export function workspaceRatePolicy(s,{auth,rootHash,method,path,now}){
  if(method==='POST'&&path==='recover'&&hash(s.recoveryHash)&&auth===s.recoveryHash&&auth!==rootHash)return {key:'recovery',limit:6};
  if(method==='POST'&&path==='redeem'&&s.invites.some(i=>i.hash===auth&&i.usedAt===null&&i.expiresAt>now))return {key:'redeem',limit:64};
  const actor=memberByHash(s,auth,now);if(!actor)return null;
- const kind=method==='GET'?'read':/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/(?:revoke|rotate)|notification-lab|notification-lab\/ack|notification-lab\/delivery\/(?:claim|finish|check))$/.test(path)?'access':'write';
+ const kind=method==='GET'?(path==='workspace/backup'?'access':'read'):/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/(?:revoke|rotate)|notification-lab|notification-lab\/ack|notification-lab\/delivery\/(?:claim|finish|check))$/.test(path)?'access':'write';
  return {key:'member:'+actor.id+':'+kind,limit:kind==='read'?240:kind==='access'?24:180};
 }
 /** Rolling fixed-minute windows, bounded retry interval; a clock regression
