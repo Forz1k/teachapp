@@ -1,7 +1,7 @@
 import {timedMatchPlayers,timedRate,indexPlayerRecords,matchAssistCounts} from './coach.js';
 import {replayDetailed} from './match-protocol.js';
 import {setterAnalysis} from './match-tactics.js';
-import {definitionKey,testHistory,summarizeTests} from './coach-tests.js';
+import {definitionKey,testHistory,indexTestHistory,summarizeTests} from './coach-tests.js';
 export const sourceLabels={all:'Все матчи',live:'Подробные матчи TeachApp',imported:'VolleyPoint PDF',manual:'Ручные / прежние матчи'};
 export const matchMetrics={aces:'Эйсы',points:'Личные очки',assists:'Результативные передачи (ассисты)',contribution:'Баллы: очки + ассисты',setPositiveRate:'Положительные передачи (PRO)',setErrorRate:'Ошибки передач (PRO)',attackKills:'Результативные атаки',blocks:'Блоки',serveRate:'Успешность подачи',receiveRate:'Положительный приём',attackRate:'Результативность атаки',pointsPer10:'Личные очки за 10 минут LIVE'};
 export const testMetrics={success:'Успешность',target:'Попадания в цель',errors:'Доля ошибок',stability:'Стабильность',progress:'Прогресс',latest:'Последний замер',best:'Лучший замер'};
@@ -63,8 +63,9 @@ export function testComparison(view,key,metric,filter={}){
  if(!d||!Object.hasOwn(testMetrics,metric))return [];
  const skill=d.kind==='skill';
  if(skill&&!['success','target','errors','stability','progress'].includes(metric)||!skill&&!['latest','best','progress'].includes(metric))return [];
- return eligiblePlayers(view.players,filter).map(player=>{
-  const all=testHistory(view.tests,player.id,filter).filter(x=>definitionKey(x.definition)===key);
+ const players=eligiblePlayers(view.players,filter),history=indexTestHistory(view.tests,players.map(p=>p.id),key,filter);
+ return players.map(player=>{
+  const all=history.get(player.id);
   const h=validHistory(all),g=summarizeTests(all)[0],rows=[];
   for(const x of h){const r=x.result;let value=null;
    if(skill){if(metric==='target'){if(r.target!==null)value=percent(r.target,r.attempts);}else value=percent(metric==='errors'?r.errors:r.success,r.attempts);}

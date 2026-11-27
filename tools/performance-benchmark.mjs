@@ -94,3 +94,18 @@ const archive=Array.from({length:8000},(_,i)=>({id:'r'+i,roster:roster.map((_,j)
 const rosterOld=()=>ids.map(id=>archive.filter(m=>m.roster.includes(id)));
 const rosterNew=()=>{const index=indexPlayerRecords(archive);return ids.map(id=>index.get(id)||[]);};
 assert.deepEqual(rosterNew(),rosterOld());const rb=median(rosterOld),ra=median(rosterNew);console.log('ROSTER INDEX BENCHMARK '+JSON.stringify({matches:archive.length,players:ids.length,beforeMs:+rb.toFixed(2),afterMs:+ra.toFixed(2),speedup:+(rb/ra).toFixed(2),identical:true}));
+
+import {indexTestHistory,testHistory,definitionKey,testPresets} from '../js/coach-tests.js';
+const trainingPlayers=Array.from({length:80},(_,i)=>'training-p'+i),trainingMethods=[testPresets.serve,{...testPresets.serve,protocol:'Synthetic alternative'}];
+const trainingSessions=Array.from({length:8000},(_,i)=>({id:'test'+i,date:addDays('2025-09-01',i%730),definition:trainingMethods[i%2],results:Object.fromEntries(Array.from({length:14},(_,j)=>[trainingPlayers[(i+j)%80],{status:'done',attempts:10,success:8,errors:2,adapted:false,target:null,value:null}]))}));
+const trainingKey=definitionKey(trainingMethods[0]),trainingRange={from:'2026-09-01',to:'2027-08-31'};
+const trainingOld=()=>trainingPlayers.map(id=>testHistory(trainingSessions,id,trainingRange).filter(x=>definitionKey(x.definition)===trainingKey));
+const trainingNew=()=>{const idx=indexTestHistory(trainingSessions,trainingPlayers,trainingKey,trainingRange);return trainingPlayers.map(id=>idx.get(id));};
+assert.deepEqual(trainingNew(),trainingOld());
+const selectedSessions=trainingSessions.filter(s=>s.date>=trainingRange.from&&s.date<=trainingRange.to&&definitionKey(s.definition)===trainingKey);
+let enumerations=0;
+const observed=trainingSessions.map(s=>({...s,results:new Proxy(s.results,{ownKeys(target){enumerations++;return Reflect.ownKeys(target);}})}));
+indexTestHistory(observed,trainingPlayers,trainingKey,trainingRange);
+assert.equal(enumerations,selectedSessions.length,'Training index must enumerate only chosen sessions, once each');
+const tb=median(trainingOld),ta=median(trainingNew);
+console.log('TRAINING HISTORY BENCHMARK '+JSON.stringify({sessions:trainingSessions.length,players:trainingPlayers.length,selectedSessions:selectedSessions.length,enumerations,beforeMs:+tb.toFixed(2),afterMs:+ta.toFixed(2),speedup:+(tb/ta).toFixed(2),identical:true}));

@@ -59,6 +59,21 @@ export function testHistory(sessions,playerId,{from='',to=''}={}){
  for(const s of sessions||[]){if(from&&s.date<from||to&&s.date>to||!Object.hasOwn(s.results,playerId))continue;out.push({id:s.id,date:s.date,definition:s.definition,result:s.results[playerId]});}
  return out.sort((a,b)=>a.date.localeCompare(b.date)||a.id.localeCompare(b.id));
 }
+/** Per-calculation index: only the chosen method, period and eligible players.
+ * Stable date/id order matches testHistory, including equal dates. No global
+ * cache: rebuilding after a record edit keeps the comparison current. */
+export function indexTestHistory(sessions,playerIds,key,{from='',to=''}={}){
+ const ids=new Set(playerIds),byPlayer=new Map([...ids].map(id=>[id,[]]));
+ if(!ids.size)return byPlayer;
+ const chosen=(sessions||[]).filter(s=>(!from||s.date>=from)&&(!to||s.date<=to)&&definitionKey(s.definition)===key).sort((a,b)=>a.date.localeCompare(b.date)||a.id.localeCompare(b.id));
+ for(const s of chosen){
+  for(const [id,result] of Object.entries(s.results)){
+   if(!ids.has(id))continue;
+   byPlayer.get(id).push({id:s.id,date:s.date,definition:s.definition,result});
+  }
+ }
+ return byPlayer;
+}
 export function summarizeTests(history){
  const groups=new Map();
  for(const item of history){const k=definitionKey(item.definition);if(!groups.has(k))groups.set(k,{definition:item.definition,history:[],attempts:0,success:0,errors:0,target:0,targetAttempts:0,adapted:0,skipped:0,restricted:0,measurements:[]});const g=groups.get(k),r=item.result;g.history.push(item);

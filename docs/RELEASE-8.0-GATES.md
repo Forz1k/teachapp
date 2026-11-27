@@ -105,3 +105,5 @@ RC4 media recovery: owner-visible public-only JSON snapshot, portal binding and 
 RC5 preparation (still rc.4): local video review summary and full filtered CSV, explicit opt-in for names/private notes, unknown PDF times preserved, formula-safe fields and stale confirmation barrier. Physical video playback/export acceptance remains open.
 
 RC5 preparation (still rc.4): Studio custom cover positioning and editable ellipse layer. Portable numeric-only photo coordinates, old style compatibility and transient layer exclusion from match kit. Physical export acceptance remains open.
+
+RC5 preparation (still rc.4): seasonal training history indexed by selected method, period and eligible athlete, equality with previous individual scan and deterministic enumeration budget. Physical device timing/memory acceptance remains open.
