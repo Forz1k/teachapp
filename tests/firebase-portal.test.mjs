@@ -189,3 +189,19 @@ test('LIVE retries a lost acknowledged PUT without conflict or extra point, then
   P.pausePortalPublisher(id);const n=calls.length;assert.equal(P.heartbeatPortal(id,d.id),false);assert.equal(calls.length,n);
  }finally{P.disconnectPortal(id);}
 });
+
+test('read-only inspection, pending retry and generation fence do not let an old tab resume',async()=>{
+ server=null;const map=new Map();globalThis.localStorage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};
+ const id='broadcast-fence',start=Date.parse('2026-11-27T12:00:00Z'),players=Array.from({length:6},(_,i)=>({id:'p'+i,number:i+1,name:'Synthetic '+i}));
+ const d={id:'match-fence',teamId:id,date:localDay(start),mode:'dual',teamName:'Команда',opponent:'Гости',competition:'',venue:'',startedAt:new Date(start).toISOString(),ourPlayers:players,awayPlayers:[],roster:players.map(x=>x.id),lineup:players.map(x=>x.id),awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours',events:[]};
+ const credentials={origin,apiKey,email:'trainer@example.org',password:'password',slug:'fence',team:'Команда'};
+ try{
+  await P.connectPortal(id,credentials,fake);P.setPortalEnabled(id,true,'Команда');P.syncPortalMatch(d,{start:true});await wait(()=>server?.match?.id==='match_'+start&&!P.portalInfo(id).running&&!P.portalInfo(id).dirty);
+  const n=calls.filter(c=>c.method==='PUT').length,checked=await P.inspectPortal(id,d);assert.equal(checked.matches,true);assert.equal(checked.contentEqual,true);assert.equal(typeof checked.updatedAt,'number');assert.equal(P.retryPortal(id),false);assert.equal(calls.filter(c=>c.method==='PUT').length,n);
+  assert.equal(P.syncPortalMatch({...d,teamId:'test-rehearsal'},{start:true}),false);
+  // A newer tab completed pause/resume; old tab never observed the transient pause.
+  map.set('teachapp:portal-fence:'+id,'new-generation');map.set('teachapp:portal-paused:'+id,'0');
+  assert.equal(P.portalInfo(id).data.publisherPaused,true);assert.equal(P.heartbeatPortal(id,d.id),false);assert.throws(()=>P.retryPortal(id),/приостановлена/);assert.equal(calls.filter(c=>c.method==='PUT').length,n);
+  const preview=await P.previewPortalHandoff(id,d);await P.continuePortalHandoff(id,d,preview.etag,{confirmed:true});assert.equal(P.portalInfo(id).data.publisherPaused,false);assert.notEqual(map.get('teachapp:portal-fence:'+id),'new-generation');
+ }finally{P.disconnectPortal(id);}
+});

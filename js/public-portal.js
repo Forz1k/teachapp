@@ -193,3 +193,16 @@ export function checkHandoffMatch(local,remote){
  if(remote.stats.length&&!equal(projected.stats,remote.stats))throw Error('Опубликованная статистика отличается от локального черновика.');
  return {id:remote.id,opponent:remote.opponent,set:remote.set,score:{...remote.score},setsWon:{...remote.setsWon},events:remote.events.length,stats:remote.stats.length};
 }
+
+/** Stream transport and score freshness are independent: a connected viewer
+ * can still be looking at a stale publisher heartbeat. */
+export function viewerFreshness(data,{connected=false,awaitingSnapshot=true,now=Date.now()}={}){
+ const live=!!data?.match&&['live','break'].includes(data.match.status),delta=data?now-data.updatedAt:null,age=delta===null?null:Math.max(0,Math.floor(delta/1000));
+ const clockMismatch=delta!==null&&delta< -60000,stale=live&&(delta>90000||clockMismatch);
+ return {live,age,clockMismatch,stale,fresh:connected&&!awaitingSnapshot&&!stale,transport:connected&&!awaitingSnapshot};
+}
+export const publicStatMetrics={points:'Очки',attack:'Результативные атаки',tip:'Скидки',ace:'Эйсы',block:'Блоки'};
+export function publicStatRows(rows,side,metric='points'){
+ if(!sides.includes(side)||!Object.hasOwn(publicStatMetrics,metric))throw Error('Выберите публичный показатель');
+ return rows.filter(x=>x.side===side).slice().sort((a,b)=>b[metric]-a[metric]||b.points-a.points||a.number-b.number);
+}

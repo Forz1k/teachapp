@@ -1,7 +1,7 @@
 import {mediaTarget,fetchPublicMedia,newsTypes} from './public-media.js';
 import {resolveArchiveRoute,routedArchivePage,routedArchiveRecord,resultLink,fixtureCalendar,archiveSeasons,archiveSeason,archiveSeasonBounds,filterArchiveSeason,searchArchive,mergeLoadedArchive,publicResultCard,archiveMatchSummary,opponentHistory} from './public-archive.js';
 import {animateOnce,scoreChanges,enterGroup,normalizeMotion,motionModes,motionAllowed} from './motion.js';
-import {viewerTarget,viewerPageLink,fixtureLink,fixtureState,scheduleSections,readPortal,portalState,countdown,fanResults,resultOutcome,resultSummary,publicMatchMoments} from './public-portal.js';
+import {viewerTarget,viewerPageLink,fixtureLink,fixtureState,scheduleSections,readPortal,portalState,countdown,fanResults,resultOutcome,resultSummary,publicMatchMoments,viewerFreshness,publicStatMetrics,publicStatRows} from './public-portal.js';
 import {reasons,boardPalette} from './match-protocol.js';
 import {paintStudio,canvasPng} from './media-studio.js';
 const root=document.getElementById('portal'),connection=document.getElementById('connection'),nav=document.getElementById('portal-nav');
@@ -12,7 +12,8 @@ const date=t=>format(t,{dateStyle:'long',timeStyle:'short'})+' · местное
 const head=(title,detail='')=>el('div','section-head',null,el('h2','',title),detail?el('small','',detail):null);
 let data=null,connected=false,awaitingSnapshot=true,received=false,problem='',lastMode='',lastStale=false,tab='overview',lastMatchId=null,lastPaintedMatch=null,lastPaintedTab=null;
 let resultFilter='all',resultQuery='',resultLimit=40,primaryPage=false,lastStreakKey='',archiveRowsExtra=[],archiveCursor=null,archiveLoaded=false,archiveBusy=false,archiveMessage='',archiveAddress='',archiveRoute=null,directResult=null,directBusy=false,seasonFilter='all',archiveEpoch=0,archiveScope='all',archivePageEpoch=0,directError='',opponentFilter='';
-let mediaAddress='',media=null,mediaBusy=false,mediaError='',mediaEpoch=0;
+let mediaAddress='',media=null,mediaBusy=false,mediaError='',mediaEpoch=0,reconnectViewer=null;
+const statSort={ours:'points',theirs:'points'};
 const tabs=[['overview','Матч'],['schedule','Расписание'],['results','Результаты'],['news','Новости'],['tournament','Турнир']];
 function renderNav(){if(!nav)return;nav.hidden=!data;if(!data)return;if(!nav.childElementCount){for(const [key,label] of tabs){const b=el('button','',label);b.type='button';b.dataset.tab=key;b.onclick=()=>{tab=key;draw();if(['news','tournament'].includes(key))void loadMedia();};nav.append(b);}}for(const b of nav.children)b.setAttribute('aria-pressed',String(b.dataset.tab===tab));}
 function scoreNode(match,side){const n=el('strong','team-score',match.status==='finished'?match.setsWon[side]:match.score[side]);n.dataset.scoreSide=side;return n;}
@@ -21,7 +22,7 @@ function teams(team,opponent,match,logos=match?.logos){
  return el('div','teams',null,item(team,'ours'),el('span','vs',match?':':'VS'),item(opponent,'theirs'));
 }
 function sets(m){const item=(x,i,active=false)=>el('span',active?'current':'',null,el('small','',active?'Сейчас · '+i:'Партия '+i),el('strong','',x.ours+':'+x.theirs));return el('div','sets',null,...m.sets.map((x,i)=>item(x,i+1)),m.status==='live'?item(m.score,m.set,true):null);}
-function statTable(rows,side,team){const a=rows.filter(x=>x.side===side);if(!a.length)return null;const table=el('table','',null,el('thead','',null,el('tr','',null,...['№','Очки','Атаки*','Скидки','Эйсы','Блоки'].map(x=>el('th','',x)))),el('tbody','',null,...a.sort((a,b)=>b.points-a.points||a.number-b.number).map(x=>el('tr','',null,...[x.number,x.points,x.attack,x.tip,x.ace,x.block].map(v=>el('td','',v))))));return card(head(team),el('div','table-wrap',null,table),p('* Результативные атаки, включая скидки. Только отмеченные действия.'));}
+function statTable(rows,side,team){const a=publicStatRows(rows,side,statSort[side]);if(!a.length)return null;const sort=el('select','fan-stat-sort');sort.setAttribute('aria-label','Показатель игроков · '+team);for(const [k,label] of Object.entries(publicStatMetrics)){const option=el('option','',label);option.value=k;sort.append(option);}sort.value=statSort[side];const table=el('table','',null,el('thead','',null,el('tr','',null,...['№','Очки','Атаки*','Скидки','Эйсы','Блоки'].map(x=>el('th','',x)))),el('tbody'));const lead=p('','fan-stat-lead');function paint(){const sorted=publicStatRows(rows,side,statSort[side]),k=statSort[side],top=sorted[0][k];table.tBodies[0].replaceChildren(...sorted.map(x=>el('tr','',null,...[x.number,x.points,x.attack,x.tip,x.ace,x.block].map(v=>el('td','',v)))));lead.textContent=top>0?publicStatMetrics[k]+': '+top+' · '+sorted.filter(x=>x[k]===top).map(x=>'№'+x.number).join(', '):'Нет отмеченных действий по показателю.';}sort.onchange=()=>{statSort[side]=sort.value;paint();};paint();return card(head('Игроки · '+team),sort,lead,el('div','table-wrap',null,table),p('* Результативные атаки включают скидки. Только опубликованные номера и отмеченные действия; сумма личных очков не равна счёту команды.'));}
 function scheduleRows(items){return items.map(x=>{
  const link=el('a','result-link',teamName()+' — '+x.opponent);link.href=fixtureLink(shareLink,x.id);
  return el('div','fixture',null,el('div','date-tile',null,el('strong','',format(x.startAt,{day:'numeric'})),el('small','',format(x.startAt,{month:'short'}))),el('div','',null,link,el('small','',date(x.startAt)),x.startAt<=Date.now()?p('Время прошло · начало или результат не опубликованы'):null,el('div','fixture-actions',null,calendarButton(x),shareFixture(x))));
@@ -132,8 +133,10 @@ function resultsPanel(rows,full=false){
 }
 function eventsPanel(m){const events=publicMatchMoments(m);return card(head('Ход матча','Последние '+events.length+' розыгрышей'),p('Только опубликованные события. Серии и смена лидера отмечаются по непрерывному видимому отрезку.'),...events.slice().reverse().map(e=>el('div','event',null,el('span','point-side '+e.side),el('strong','',e.score),el('div','',null,el('span','event-name',e.kind==='point'?'Очко без детализации':reasons[e.kind]),el('small','',(e.actor==='ours'?teamName():m.opponent)+(e.number==null?'':' · №'+e.number)+' · партия '+e.set+' · очко: '+(e.side==='ours'?teamName():m.opponent)),...e.notes.map(n=>el('span','moment-note',n))))));}
 function momentum(m){const rows=m.events.filter(e=>e.set===m.set);if(rows.length<2)return null;const chart=el('div','momentum',null,...rows.map(e=>{const n=el('span',e.side);n.title=e.score+' · '+(e.side==='ours'?teamName():m.opponent);return n;}));chart.style.setProperty('--n',rows.length);chart.setAttribute('role','img');chart.setAttribute('aria-label','Последние '+rows.length+' очков текущей партии: '+rows.map(e=>e.score+' '+(e.side==='ours'?teamName():m.opponent)).join(', '));return card(head('Динамика партии','Последние '+rows.length+' очков'),chart,el('div','legend',null,el('span','',teamName()),el('span','',m.opponent)),p('Слева направо: от более раннего очка к последнему.'));}
+function reconnectButton(){const b=el('button','archive-link','Обновить соединение');b.type='button';b.onclick=()=>reconnectViewer?.();return b;}
+function ageText(f){return f.clockMismatch?'Время устройства отличается от времени сервера.':f.age===null?'':('Последняя публикация: '+(f.age<60?f.age+' сек. назад':Math.floor(f.age/60)+' мин. назад'));}
 function draw(){
- const now=Date.now(),pinned=tab==='overview'?fixtureTarget():null,state=selectedState(data,now),stale=!!data&&['live','break'].includes(state.mode)&&now-data.updatedAt>90000,modeChanged=lastMode!==state.mode;lastMode=state.mode;lastStale=stale;const fresh=connected&&!awaitingSnapshot&&!stale;
+ const now=Date.now(),pinned=tab==='overview'?fixtureTarget():null,state=selectedState(data,now),f=viewerFreshness(data,{connected,awaitingSnapshot,now}),stale=f.stale,modeChanged=lastMode!==state.mode;lastMode=state.mode;lastStale=stale;const fresh=f.fresh;
  const previous=lastPaintedMatch,current=data?.match;const changes=scoreChanges(previous,current),finished=previous&&current&&previous.id===current.id&&previous.status!=='finished'&&current.status==='finished';lastPaintedMatch=current?{id:current.id,set:current.set,status:current.status,score:{...current.score}}:null;
  const tabChanged=lastPaintedTab!==tab;lastPaintedTab=tab;
  const mount=parts=>{
@@ -144,12 +147,12 @@ function draw(){
  };
  const matchId=state.match?.id;if(!fixtureTarget()&&matchId&&matchId!==lastMatchId&&['live','break'].includes(state.mode))tab='overview';lastMatchId=matchId;
  const name=teamName();for(const id of ['brand-team','footer-team']){const n=document.getElementById(id);if(n)n.textContent=name;}document.title=name+' — матчи и результаты | TeachApp';if(brand)brand.setAttribute('aria-label','TeachApp — '+name);
- connection.textContent=connected&&!awaitingSnapshot?'● На связи':received?'Нет актуальной связи':'Подключение…';connection.dataset.state=connected&&!awaitingSnapshot?'online':'offline';renderNav();
- if(!data){setScoreboard(false);root.replaceChildren(card(el('h1','',received?'Страница пока не опубликована':'TeachApp Volleyball'),p(problem||(received?'Попросите тренера опубликовать расписание.':'Ожидание данных…'))));return;}
+ connection.textContent=f.transport?(stale?'Счёт не обновляется':'● На связи'):received?'Нет актуальной связи':'Подключение…';connection.dataset.state=fresh?'online':'offline';renderNav();
+ if(!data){setScoreboard(false);root.replaceChildren(card(el('h1','',received?'Страница пока не опубликована':'TeachApp Volleyball'),p(problem||(received?'Попросите тренера опубликовать расписание.':'Ожидание данных…')),reconnectViewer?reconnectButton():null));return;}
  const m=state.match,upcoming=data.schedule.filter(x=>x.id!==data.match?.scheduledId),merged=mergeLoadedArchive(fanResults(data),archiveRowsExtra),past=merged.rows;
  if(seasonFilter!=='all'&&seasonFilter!==archiveScope&&!archiveSeasons(past).map(String).includes(seasonFilter))seasonFilter='all';
  if(resultFilter==='draw'&&!past.some(x=>resultOutcome(x)==='draw'))resultFilter='all';const latest=!pinned&&!state.next&&!['live','break'].includes(state.mode)&&past[0]&&(!m||past[0].id!==m.id)?past[0]:null;
- const parts=[];parts.push(el('p','portal-updated','Последнее обновление: '+format(data.updatedAt,{dateStyle:'short',timeStyle:'medium'})));if(stale||!connected||awaitingSnapshot)parts.push(el('div','notice',stale?'Данные давно не обновлялись. Последний полученный счёт.':'Соединение восстанавливается. Показаны последние данные.'));
+ const parts=[];parts.push(el('p','portal-updated','Последнее обновление: '+format(data.updatedAt,{dateStyle:'short',timeStyle:'medium'})));if(f.live)parts.push(el('p','portal-age',ageText(f)));if(stale||!f.transport)parts.push(el('div','notice',null,p(!f.transport?'Соединение восстанавливается. Показаны последние данные.':f.clockMismatch?'Проверьте часы устройства. Актуальность счёта не подтверждена.':'Связь со страницей есть, но тренер давно не отправлял обновления. Показан последний счёт.'),reconnectButton()));
  if(merged.conflicts.length&&['overview','results'].includes(tab))parts.push(el('div','notice','В архиве найдены противоречивые записи ('+merged.conflicts.length+'). Они исключены из сводки, если нет актуального опубликованного результата.'));
  const params=new URL(shareLink).searchParams,requested=params.get('archive')||params.get('match');if(requested&&tab==='overview'){const detailed=data.match?.id===requested&&!params.has('archive')?data.match:null;const row=params.has('archive')?directResult:detailed||past.find(x=>x.id===requested)||directResult;const back=el('a','archive-link','← Все матчи');const u=new URL(shareLink);back.href=viewerPageLink(u.href);const retry=el('button','archive-link','Проверить архивную запись');retry.type='button';retry.disabled=directBusy;retry.onclick=()=>void loadDirectArchive();parts.push(back,row?(detailed?card(head('Матч',detailed.status==='finished'?'Завершён':fresh?'Текущий счёт':'Последний счёт'),teams(teamName(),detailed.opponent,detailed),sets(detailed),p(date(detailed.startedAt)),shareMatch(row),detailed.status==='finished'?resultDownload(row):null):historicalMatchPanel(row,past)):card(p(directBusy?'Загрузка результата…':directError||'Результат не найден или снят с публикации.')));if(!detailed&&(params.has('archive')||!past.some(x=>x.id===requested)))parts.push(retry);if(detailed?.events.length){parts.push(eventsPanel(detailed));const trend=momentum(detailed);if(trend)parts.push(trend);}if(detailed?.stats.length)parts.push(...[statTable(detailed.stats,'ours',teamName()),statTable(detailed.stats,'theirs',detailed.opponent)].filter(Boolean));mount(parts);return;}
  if(['news','tournament'].includes(tab)){parts.push(mediaPanel());mount(parts);return;}
@@ -187,26 +190,44 @@ try{
  const target=viewerTarget(location.href);primaryPage=target.primary;shareLink=target.share;if(brand)brand.href=viewerPageLink(shareLink);for(const id of ['brand-team','footer-team']){const n=document.getElementById(id);if(n)n.textContent=teamName();}
  if(shareLink!==location.href){try{window.history.replaceState(window.history.state,'',shareLink);}catch{}}
  archiveAddress=target.address;mediaAddress=mediaTarget(target.address);
- const stream=new EventSource(target.address);
- stream.onopen=()=>{connected=true;awaitingSnapshot=true;problem='';draw();};
- let current=null;
- function receive(event){
-  try{
-   const {path,data:value}=JSON.parse(event.data);
-   if(typeof path!=='string')return;
-   if(path==='/'&&event.type==='put')current=value;
-   else{
-    if(!current||typeof current!=='object')current=Object.create(null);
-    const assign=(key,v)=>{const parts=key.split('/').filter(Boolean);if(!parts.length||parts.some(k=>['__proto__','constructor','prototype'].includes(k)))return;let parent=current;for(const k of parts.slice(0,-1)){if(!Object.hasOwn(parent,k)||!parent[k]||typeof parent[k]!=='object')parent[k]=Object.create(null);parent=parent[k];}if(v===null)delete parent[parts.at(-1)];else parent[parts.at(-1)]=v;};
-    if(event.type==='put')assign(path,value);else for(const [key,v] of Object.entries(value||{}))assign(path+'/'+key,v);
-   }
-   const next=readPortal(current),same=JSON.stringify(data&&{...data,updatedAt:0})===JSON.stringify(next&&{...next,updatedAt:0}),wasConnected=connected&&!awaitingSnapshot;const hadData=!!data;data=next;if(!next)resetArchive();received=true;connected=true;awaitingSnapshot=false;const nextMode=selectedState(data).mode,nextStale=!!data&&['live','break'].includes(nextMode)&&Date.now()-data.updatedAt>90000;if(!same||!wasConnected||nextStale!==lastStale||nextMode!==lastMode)draw();else if(next){const updated=root.querySelector('.portal-updated');if(updated)updated.textContent='Последнее обновление: '+format(next.updatedAt,{dateStyle:'short',timeStyle:'medium'});}if(next&&(!hadData||!wasConnected)&&['news','tournament'].includes(tab))void loadMedia();if(next&&(!hadData||!wasConnected)&&(new URL(shareLink).searchParams.has('archive')||new URL(shareLink).searchParams.has('match')))void loadDirectArchive();else if(next&&!same&&!directResult&&new URL(shareLink).searchParams.has('match'))void loadDirectArchive();
-  }catch{connected=false;awaitingSnapshot=true;problem='Не удалось прочитать обновление. Ожидаем повторного подключения.';draw();}
+ let stream=null,current=null,generation=0,closed=false,retryTimer=null;
+ function clearRetry(){if(retryTimer!==null){clearTimeout(retryTimer);retryTimer=null;}}
+ function startStream(){
+  if(closed)return;clearRetry();stream?.close();current=null;const token=++generation;connected=false;awaitingSnapshot=true;problem='';draw();
+  if(navigator.onLine===false){problem='Нет интернета. Проверьте подключение.';draw();return;}
+  const source=new EventSource(target.address);stream=source;
+  const active=()=>!closed&&generation===token;
+  source.onopen=()=>{if(!active())return;connected=true;awaitingSnapshot=true;problem='';draw();};
+  function receive(event){
+   if(!active())return;
+   try{
+    const {path,data:value}=JSON.parse(event.data);
+    if(typeof path!=='string')throw Error('Invalid path');
+    const rootPut=path==='/'&&event.type==='put';
+    // Never apply partial patches to an old or uninitialized root on reconnect.
+    if(awaitingSnapshot&&!rootPut)return;
+    if(rootPut)current=value;
+    else{
+     if(!current||typeof current!=='object')throw Error('Missing root');
+     const assign=(key,v)=>{const parts=key.split('/').filter(Boolean);if(!parts.length||parts.some(k=>['__proto__','constructor','prototype'].includes(k)))return;let parent=current;for(const k of parts.slice(0,-1)){if(!Object.hasOwn(parent,k)||!parent[k]||typeof parent[k]!=='object')parent[k]=Object.create(null);parent=parent[k];}if(v===null)delete parent[parts.at(-1)];else parent[parts.at(-1)]=v;};
+     if(event.type==='put')assign(path,value);else for(const [key,v] of Object.entries(value||{}))assign(path+'/'+key,v);
+    }
+    const next=readPortal(current);if(current!==null&&!next)throw Error('Invalid public snapshot');
+    const same=JSON.stringify(data&&{...data,updatedAt:0})===JSON.stringify(next&&{...next,updatedAt:0}),wasConnected=connected&&!awaitingSnapshot,hadData=!!data;data=next;if(!next)resetArchive();received=true;connected=true;awaitingSnapshot=false;
+    const nextMode=selectedState(data).mode,nextStale=viewerFreshness(data,{connected,awaitingSnapshot}).stale;
+    if(!same||!wasConnected||nextStale!==lastStale||nextMode!==lastMode)draw();else if(next){const updated=root.querySelector('.portal-updated');if(updated)updated.textContent='Последнее обновление: '+format(next.updatedAt,{dateStyle:'short',timeStyle:'medium'});const age=root.querySelector('.portal-age');if(age)age.textContent=ageText(viewerFreshness(data,{connected,awaitingSnapshot}));}
+    if(next&&(!hadData||!wasConnected)&&['news','tournament'].includes(tab))void loadMedia();if(next&&(!hadData||!wasConnected)&&(new URL(shareLink).searchParams.has('archive')||new URL(shareLink).searchParams.has('match')))void loadDirectArchive();else if(next&&!same&&!directResult&&new URL(shareLink).searchParams.has('match'))void loadDirectArchive();
+   }catch{connected=false;awaitingSnapshot=true;problem='Не удалось прочитать обновление. Ожидаем повторного подключения.';source.close();generation++;draw();retryTimer=setTimeout(startStream,2000);}
+  }
+  source.addEventListener('put',receive);source.addEventListener('patch',receive);
+  source.onerror=()=>{if(!active())return;connected=false;awaitingSnapshot=true;current=null;problem='Не удалось подключиться. Проверьте ссылку или интернет.';draw();};
+  const revoked=message=>{if(!active())return;source.close();generation++;connected=false;awaitingSnapshot=true;current=null;data=null;resetArchive();received=true;problem=message;draw();};
+  source.addEventListener('cancel',()=>revoked('Страница недоступна'));source.addEventListener('auth_revoked',()=>revoked('Доступ отозван'));
  }
- stream.addEventListener('put',receive);stream.addEventListener('patch',receive);
- stream.onerror=()=>{connected=false;awaitingSnapshot=true;problem='Не удалось подключиться. Проверьте ссылку или интернет.';draw();};
- stream.addEventListener('cancel',()=>{stream.close();connected=false;data=null;resetArchive();received=true;problem='Страница недоступна';draw();});
- stream.addEventListener('auth_revoked',()=>{stream.close();connected=false;data=null;resetArchive();received=true;problem='Доступ отозван';draw();});
- window.addEventListener('pagehide',()=>{stream.close();clearInterval(clock);},{once:true});window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
- const clock=setInterval(()=>{if(!data)return;const state=selectedState(data),stale=['live','break'].includes(state.mode)&&Date.now()-data.updatedAt>90000;if(state.mode!==lastMode||stale!==lastStale){draw();return;}if(state.mode==='upcoming'&&tab==='overview')root.querySelectorAll('.clock strong').forEach((n,i)=>{const value=String(countdown(state.remaining)[i]).padStart(2,'0');if(n.textContent===value)return;n.textContent=value;if(i<3&&!document.hidden)animateOnce(n,'score',{duration:200});});},1000);
+ reconnectViewer=startStream;startStream();
+ const offline=()=>{clearRetry();stream?.close();generation++;current=null;connected=false;awaitingSnapshot=true;problem='Нет интернета';draw();};
+ window.addEventListener('offline',offline);window.addEventListener('online',startStream);
+ const visible=()=>{if(!document.hidden){if(!connected||awaitingSnapshot)startStream();else draw();}};document.addEventListener('visibilitychange',visible);
+ window.addEventListener('pagehide',()=>{closed=true;clearRetry();stream?.close();clearInterval(clock);window.removeEventListener('offline',offline);window.removeEventListener('online',startStream);document.removeEventListener('visibilitychange',visible);},{once:true});window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
+ const clock=setInterval(()=>{if(!data)return;const state=selectedState(data),f=viewerFreshness(data,{connected,awaitingSnapshot}),stale=f.stale;if(state.mode!==lastMode||stale!==lastStale){draw();return;}const age=root.querySelector('.portal-age');if(age)age.textContent=ageText(f);if(state.mode==='upcoming'&&tab==='overview')root.querySelectorAll('.clock strong').forEach((n,i)=>{const value=String(countdown(state.remaining)[i]).padStart(2,'0');if(n.textContent===value)return;n.textContent=value;if(i<3&&!document.hidden)animateOnce(n,'score',{duration:200});});},1000);
 }catch{received=true;problem='Откройте постоянную ссылку, которую отправил тренер.';draw();}

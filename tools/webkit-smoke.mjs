@@ -531,7 +531,7 @@ try{
  console.log('WEBKIT DOCUMENTS PASS: actual school-year and season plan selectors, preview, privacy and mobile layout.');
  // Public viewer uses a synthetic stream; no production Firebase access.
  const fan=await context.newPage();fan.on('pageerror',error=>errors.push(error.message));
- await fan.addInitScript(()=>{window.EventSource=class{constructor(){this.handlers={};window.__fanPush=data=>this.handlers.put?.({type:'put',data:JSON.stringify({path:'/',data})});setTimeout(()=>this.onopen?.(),0);}addEventListener(k,f){this.handlers[k]=f;}close(){}};});
+ await fan.addInitScript(()=>{window.EventSource=class{constructor(){this.handlers={};window.__fanPush=data=>this.handlers.put?.({type:'put',data:JSON.stringify({path:'/',data})});window.__fanPatch=(path,data)=>this.handlers.put?.({type:'put',data:JSON.stringify({path,data})});window.__fanError=()=>this.onerror?.();window.__fanOpen=()=>this.onopen?.();setTimeout(()=>this.onopen?.(),0);}addEventListener(k,f){this.handlers[k]=f;}close(){}};});
  await fan.goto(origin+'/live/index.html');
  await fan.waitForFunction(()=>typeof window.__fanPush==='function');
  const future={schema:1,team:'Тестовая команда',updatedAt:Date.now(),schedule:[{id:'fixture1',opponent:'Гости',startAt:Date.now()+3600000}],archive:[]};
@@ -539,6 +539,14 @@ try{
  assert.equal(await fan.locator('.credit a').getAttribute('href'),'https://github.com/Forz1k/teachapp');
  await fan.locator('[data-tab="schedule"]').click();await fan.locator('.fixture').waitFor();
  const fixtureHref=await fan.locator('.fixture a').getAttribute('href');assert.equal(new URL(fixtureHref).searchParams.get('fixture'),'fixture1');await fan.goto(fixtureHref);await fan.waitForFunction(()=>typeof window.__fanPush==='function');await fan.evaluate(x=>window.__fanPush(x),future);await fan.locator('.clock').waitFor();await fan.locator('.scoreboard-toggle').click();assert.equal(await fan.locator('.scoreboard-toggle').getAttribute('aria-pressed'),'true');await fan.locator('.scoreboard-toggle').click();await fan.goto(origin+'/live/index.html');await fan.waitForFunction(()=>typeof window.__fanPush==='function');await fan.evaluate(x=>window.__fanPush(x),future);await fan.locator('.clock').waitFor();
+ const live={id:'viewer-live',opponent:'Гости',startedAt:Date.now(),status:'live',set:1,score:{ours:8,theirs:6},setsWon:{ours:0,theirs:0},sets:[],serve:'ours',colors:{ours:'blue',theirs:'red'},events:[],stats:[{side:'ours',number:1,points:5,attack:4,tip:0,ace:1,block:0},{side:'ours',number:2,points:3,attack:0,tip:0,ace:3,block:0}]};
+ await fan.evaluate(x=>window.__fanPush(x),{...future,match:live,updatedAt:Date.now()-95000});await fan.getByText('Счёт не обновляется',{exact:true}).waitFor();assert.equal(await fan.locator('.status-pill').textContent(),'ПОСЛЕДНИЙ СЧЁТ');
+ await fan.getByRole('button',{name:'Обновить соединение',exact:true}).click();await fan.evaluate(()=>window.__fanOpen());await fan.evaluate(()=>window.__fanPatch('/match/score/ours',99));assert.equal(await fan.locator('[data-score-side=ours]').textContent(),'8');
+ await fan.evaluate(x=>window.__fanPush(x),{...future,match:live,updatedAt:Date.now()});await fan.getByText('LIVE',{exact:true}).waitFor();await fan.locator('.fan-stat-sort').selectOption('ace');assert.equal(await fan.locator('.fan-stat-lead').textContent(),'Эйсы: 3 · №2');
+ await fan.evaluate(()=>window.__fanError());await fan.getByText('Нет актуальной связи',{exact:true}).waitFor();assert.equal(await fan.locator('.status-pill').textContent(),'ПОСЛЕДНИЙ СЧЁТ');
+ await fan.evaluate(x=>{window.__fanOpen();window.__fanPush(x);},{...future,match:live,updatedAt:Date.now()});await fan.getByText('LIVE',{exact:true}).waitFor();assert.equal(await fan.locator('.fan-stat-sort').inputValue(),'ace');
+ await fan.evaluate(x=>window.__fanPush(x),future);await fan.locator('.clock').waitFor();
+ console.log('WEBKIT VIEWER RECONNECT PASS: stale heartbeat, patch before root ignored, fresh snapshot, player sort and offline status.');
  await fan.locator('#theme').click();assert.equal(await fan.locator('html').getAttribute('data-theme'),'light');
  assert.ok(await fan.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'public viewport overflow');
  await fan.locator('#fan-motion').click();await fan.locator('#fan-motion').click();assert.equal(await fan.locator('html').getAttribute('data-motion'),'off');
