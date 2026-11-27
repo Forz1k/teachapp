@@ -113,3 +113,8 @@ RC5 preparation (still rc.4): scoped seasonal match analytics avoids unrelated r
 ## RC5 — функциональный кандидат
 
 Scope of RC5 is frozen for candidate review: the earlier RC5 preparation checkpoints plus view-local video marker projection, provenance/notes filters and per-set coverage; transient Studio layer alignment and optional pointer movement; indexed season ranges and exact-team reads. No new persisted schema or server switch. Existing skill coverage and periodization remain available; physical playback/clip, skill/season, Studio export and large-archive performance acceptance are not closed. Further decomposition is a remaining engineering task, not a claim that every large module has been split. Version is synchronized across package, lock, service worker and app. RC5 is a candidate for isolated review, not stable release authorization. RC6 proposed scope: production identity, authorization, operational rate-limit/recovery and background push; subsequent migration and acceptance gates remain mandatory. OBS remains excluded.
+
+
+## RC6 — Platform HTTPS-кандидат
+
+Включены код проверки подписанной identity, серверное членство и короткие сессии, атомарная ротация, отдельная конфигурация с edge binding и постоянным ingress-лимитом, зашифрованные резервные копии и восстановление в новое пространство, согласие и фоновая очередь Push. Конкретные IdP, HTTPS-маршруты, секреты, проверка доставки на физических устройствах и независимый аудит остаются открытыми. По умолчанию отдельный кандидат выключен, LAB локален, main не меняется. Подробности — [PLATFORM_7.md](PLATFORM_7.md). Не считать автоматический тест актом production-приёмки.
