@@ -47,7 +47,7 @@ export function identityPlan(current,input){
  const {identityHash,path,method,body,now}=input;
  if(!hash(identityHash)||method!=='POST'||current&&current.id!==input.workspaceId)return {error:fail(401,'unauthorized')};
  if(input.candidate){
-  if(!Number.isSafeInteger(input.identityExpiresAt)||input.identityExpiresAt<=now||path==='identity/bind')return {error:fail(401,'unauthorized')};
+  if(!Number.isSafeInteger(input.identityExpiresAt)||input.identityExpiresAt<=now||path==='identity/bind'||path==='identity/redeem'&&identityHash===input.operatorIdentity)return {error:fail(401,'unauthorized')};
   if(path==='identity/bootstrap'){
    if(identityHash!==input.operatorIdentity||!exact(body,['credentialHash','name'])||!hash(body.credentialHash))return {error:fail(401,'unauthorized')};
    return {input:{...input,path:'bootstrap',auth:body.credentialHash,body:{name:body.name}},bind:true};
