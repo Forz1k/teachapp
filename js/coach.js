@@ -101,6 +101,13 @@ export function playerAttendance(playerId,trainings,today=todayIso()){
   if(total)s.pct=Math.round((s.present+s.limited)/total*1000)/10;
   return s;
 }
+// Explicit assists are stored in the event log, not the legacy result stats payload.
+export function matchAssistCounts(match){
+ const counts=new Map();
+ for(const e of match.detail?.events||[])if(e.type==='rally'&&e.side==='ours'&&['kill','tip'].includes(e.kind)&&e.player&&e.assist&&e.assist!==e.player)counts.set(e.assist,(counts.get(e.assist)||0)+1);
+ return counts;
+}
+export function assistTotals(matches,playerId=null){let assists=null,points=null,recorded=0;for(const m of matches){const counts=matchAssistCounts(m);const n=playerId?counts.get(playerId):[...counts.values()].reduce((a,b)=>a+b,0);if(n){assists=(assists??0)+n;recorded++;}const ps=playerId?[m.stats[playerId]]:Object.values(m.stats);for(const st of ps)if(st?.points!=null)points=(points??0)+st.points;}return {assists,points,recorded,contribution:points!=null||assists!=null?(points||0)+(assists||0):null};}
 export function summarizeStats(matches,playerIds=null){
   const sums=Object.fromEntries(keys.map(k=>[k,null])),recorded=Object.fromEntries(keys.map(k=>[k,0]));
   const selected=playerIds?new Set(playerIds):null;
@@ -170,7 +177,7 @@ export function playerSeasonStats(matches,playerId,{from='',to=''}={}){
   }
  }
  playingTime.pointsPer10=timedRate({ms:playingTime.rateMs,rallies:playingTime.rateRallies,points:playingTime.ratePoints});
- return {summary,rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,importedMatches,importedErrors,importedBreakdown,importedServiceWins,importedLongestSeries,rates,chosen,playingTime,capture:combineCaptureSummaries(captures),captureMatches};
+ return {summary,assists:assistTotals(chosen,playerId),rosterMatches:chosen.length,detailedMatches,rallies,errors,unknownOnCourt,serviceRallies,serviceWins,serviceAces,serviceErrors,unclassifiedServiceLosses,importedMatches,importedErrors,importedBreakdown,importedServiceWins,importedLongestSeries,rates,chosen,playingTime,capture:combineCaptureSummaries(captures),captureMatches};
 }
 export function teamView(data,teamId){
   return {players:data.coachPlayers.filter(p=>p.teamId===teamId),trainings:data.coachTrainings.filter(t=>t.teamId===teamId).sort(dateOrder),
@@ -182,12 +189,12 @@ function csvCell(value){
   return '"'+s.replaceAll('"','""')+'"';
 }
 export function coachCsv(view){
-  const rows=[['Дата','Соревнование','Соперник','Счёт','Партии','Игрок',...Object.values(metrics),'Время на площадке (измерено)','Полнота времени','VolleyPoint: время по длительности партий','VolleyPoint: партии с данными']];
+  const rows=[['Дата','Соревнование','Соперник','Счёт','Партии','Игрок',...Object.values(metrics),'Время на площадке (измерено)','Полнота времени','VolleyPoint: время по длительности партий','VolleyPoint: партии с данными','Ассисты (отмечено)','Баллы: очки + ассисты (отмечено)']];
   const names=new Map();for(const p of view.players)if(!names.has(p.id))names.set(p.id,p.name);
   for(const m of view.matches){
     const score=matchScore(m),base=[m.date,m.competition,m.opponent,score.ours+':'+score.theirs,m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')];
-    const timing=m.detail?courtTime(replayDetailed(m.detail)):null;
-    for(const id of m.roster){const historic=volleyPlayerTime(m,id);rows.push([...base,names.get(id)||'',...keys.map(k=>m.stats[id]?.[k]??''),timing?.measured?courtTimeLabel(timing.players.ours[id]||0):'',timing?.measured?(timing.partial?'Частично':'Измерено'):historic?'Восстановлено по PDF':'Нет данных',historic?volleyTimeLabel(historic):'',historic?historic.knownSets+'/'+historic.sets.length:'']);}
+    const timing=m.detail?courtTime(replayDetailed(m.detail)):null,assists=matchAssistCounts(m);
+    for(const id of m.roster){const historic=volleyPlayerTime(m,id);rows.push([...base,names.get(id)||'',...keys.map(k=>m.stats[id]?.[k]??''),timing?.measured?courtTimeLabel(timing.players.ours[id]||0):'',timing?.measured?(timing.partial?'Частично':'Измерено'):historic?'Восстановлено по PDF':'Нет данных',historic?volleyTimeLabel(historic):'',historic?historic.knownSets+'/'+historic.sets.length:'',assists.get(id)??'',m.stats[id]?.points!=null||assists.has(id)?(m.stats[id]?.points||0)+(assists.get(id)||0):'']);}
     if(!m.roster.length)rows.push([...base,'',...keys.map(()=> ''),'','','','']);
   }
   return '\uFEFF'+rows.map(r=>r.map(csvCell).join(';')).join('\r\n');
@@ -214,6 +221,10 @@ export function playerTrainingLoad(playerId,trainings,{from='',to='',today=today
 
 /** Backend-bound commands; pure analytics and validation stay shared. */
 function buildCoachCommands(db){
+async function readLiveMatch(id){return db.transaction(['coachLive'],'readonly',async s=>{const d=await s.coachLive.get(id);if(d)replay(d);return d||null;});}
+async function listLiveMatches(){return db.transaction(['coachLive'],'readonly',s=>s.coachLive.getAll());}
+// The probe is an atomic write/delete; no committed dummy or native backend escape.
+async function probeLiveStorage(){const id=uid('live-probe');await db.transaction(['coachLive'],'readwrite',async s=>{await s.coachLive.add({id});await s.coachLive.delete(id);});return true;}
 async function loadCoach(){
   return db.readSnapshot(coachStores);
 }
@@ -340,11 +351,11 @@ async function finishLiveMatch(id,revision){
   await s.coachMatches.add(m);await s.coachLive.delete(id);return m;
  });
 }
- return Object.freeze({loadCoach,loadCoachForView,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch});
+ return Object.freeze({loadCoach,loadCoachForView,readLiveMatch,listLiveMatches,probeLiveStorage,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch});
 }
 
 // Native API stays permanently bound to the existing IndexedDB backend.
-export const {loadCoach,loadCoachForView,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch}=buildCoachCommands(nativeDb);
+export const {loadCoach,loadCoachForView,readLiveMatch,listLiveMatches,probeLiveStorage,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch}=buildCoachCommands(nativeDb);
 
 const coachSessionStores=new Set(coachStores);
 const emptyCoachView=()=>({selectedTeamId:null,data:Object.fromEntries([...coachSessionStores].map(n=>[n,[]]))});
@@ -378,7 +389,7 @@ export function createCoachSession(access){
       cell.facade=Object.freeze({get selectedTeamId(){return cell.snapshot.selectedTeamId;},get data(){return cell.snapshot.data;}});
       view=cell;return cell.facade;
      }
-     if(name!=='loadCoach')invalidateView();
+     if(!['loadCoach','readLiveMatch','listLiveMatches','probeLiveStorage'].includes(name))invalidateView();
      return result;
     }catch(e){close();throw e;}
    });

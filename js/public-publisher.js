@@ -4,12 +4,15 @@ import {archiveTarget,archiveKey,equalArchiveResult,queueArchiveResult,archivePr
 import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures,checkHandoffMatch} from './public-portal.js';
 import {firebaseSignIn,firebasePublisher,samePortalContent} from './firebase-portal.js';
 const PREFIX='teachapp:public-portal:',states=new Map();
-const initial=()=>({origin:'',apiKey:'',owner:'',slug:'',team:'',schedule:[],archive:[],match:null,activeId:null,enabled:false,publisherPaused:false,pendingDelete:false,confirmedEtag:null,pendingWrite:null,archivePending:[],settings:{events:true,numbers:false,stats:true,auto:true,permanent:false}});
+const initial=()=>({origin:'',apiKey:'',owner:'',slug:'',team:'',schedule:[],archive:[],match:null,activeId:null,enabled:false,publisherPaused:false,pendingDelete:false,confirmedEtag:null,confirmedAt:null,pendingWrite:null,archivePending:[],settings:{events:true,numbers:false,stats:true,auto:true,permanent:false}});
 const clone=x=>structuredClone(x);
-const key=id=>PREFIX+id,pauseKey=id=>'teachapp:portal-paused:'+id;
+const key=id=>PREFIX+id,pauseKey=id=>'teachapp:portal-paused:'+id,fenceKey=id=>'teachapp:portal-fence:'+id;
+const readFence=id=>{try{return localStorage.getItem(fenceKey(id))||'';}catch{return null;}};
 // Separate local flag prevents a stale tab's saved public draft from clearing a pause.
-function isPaused(e){try{if(localStorage.getItem(pauseKey(e.id))==='1')e.data.publisherPaused=true;}catch{}return !!e.data.publisherPaused;}
-function persistPause(e,value){localStorage.setItem(pauseKey(e.id),value?'1':'0');if(localStorage.getItem(pauseKey(e.id))!==(value?'1':'0'))throw Error('Не удалось сохранить режим отправки');}
+function isPaused(e){try{const fence=readFence(e.id);if(fence===null||fence!==e.fence||localStorage.getItem(pauseKey(e.id))==='1')e.data.publisherPaused=true;}catch{e.data.publisherPaused=true;}return !!e.data.publisherPaused;}
+// Every explicit pause/resume changes the local generation. A stale tab cannot
+// rejoin silently just because a newer tab later clears the pause marker.
+function persistPause(e,value){if(value)localStorage.setItem(pauseKey(e.id),'1');const fence=crypto.randomUUID();localStorage.setItem(fenceKey(e.id),fence);if(readFence(e.id)!==fence)throw Error('Не удалось сохранить поколение отправки');e.fence=fence;localStorage.setItem(pauseKey(e.id),value?'1':'0');if(localStorage.getItem(pauseKey(e.id))!==(value?'1':'0'))throw Error('Не удалось сохранить режим отправки');}
 function save(e){try{localStorage.setItem(key(e.id),JSON.stringify(e.data));return true;}catch{e.status='Не удалось сохранить настройки на устройстве';return false;}}
 function entry(id){
  if(states.has(id))return states.get(id);
@@ -19,12 +22,12 @@ function entry(id){
  data.archive=data.archive.map(row=>({...row,id:row.id?.startsWith('result_')?row.id:'match_'+row.startedAt}));
  data.archivePending=(Array.isArray(data.archivePending)?data.archivePending:[]).flatMap(row=>{try{return [archiveProjection(row)];}catch{return [];}});
  try{if(localStorage.getItem(pauseKey(id))==='1')data.publisherPaused=true;}catch{}
- const e={id,data,session:null,publisher:null,status:data.publisherPaused?'Отправка приостановлена на этом устройстве':data.enabled?'Войдите для синхронизации':'Не опубликовано',dirty:false,running:false,conflict:false,archiveSending:false,timer:null,epoch:0,listeners:new Set()};
+ const e={id,data,fence:readFence(id),session:null,publisher:null,status:data.publisherPaused?'Отправка приостановлена на этом устройстве':data.enabled?'Войдите для синхронизации':'Не опубликовано',dirty:false,running:false,conflict:false,archiveSending:false,timer:null,epoch:0,listeners:new Set()};
  states.set(id,e);return e;
 }
 function notify(e){for(const f of e.listeners){try{f();}catch{}}}
 function status(e,t){e.status=t;notify(e);}
-export function portalInfo(id){const e=entry(id);isPaused(e);return {data:clone(e.data),connected:!!e.session,status:e.status,dirty:e.dirty,conflict:e.conflict,archiveSending:e.archiveSending};}
+export function portalInfo(id){const e=entry(id);isPaused(e);return {data:clone(e.data),connected:!!e.session,status:e.status,dirty:e.dirty,running:e.running,conflict:e.conflict,archiveSending:e.archiveSending};}
 export function watchPortal(id,fn){const e=entry(id);e.listeners.add(fn);return ()=>e.listeners.delete(fn);}
 export function defaultPageCode(id){
  for(let i=0;i<localStorage.length;i++){
@@ -56,24 +59,24 @@ async function flush(e){
      // Keep the exact outgoing projection before network I/O. If the tab
      // closes before acknowledgement, reconnect can recognize this write.
      const prior=e.data.pendingWrite;
-     if(prior&&prior.expected===expected&&!samePortalContent(prior.data,desired)){
+     if(prior&&prior.expected===expected){
       const version=await client.readVersion();
       if(e.epoch!==epoch||isPaused(e))return;
-      if(samePortalContent(version.data,prior.data)){e.data.confirmedEtag=version.etag;e.data.pendingWrite=null;}
+      if(samePortalContent(version.data,prior.data)){e.data.confirmedEtag=version.etag;e.data.confirmedAt=version.data?.updatedAt??null;e.data.pendingWrite=null;}
       else if(version.etag!==expected)throw Object.assign(Error('Конфликт публикации'),{status:412});
      }
      e.data.pendingWrite={expected:e.data.confirmedEtag,data:desired};
      if(!save(e))throw Error('Не удалось сохранить контрольную точку публикации');
      if(isPaused(e))return;
      const result=desired===null?await client.remove(e.data.confirmedEtag):await client.write(desired,e.data.confirmedEtag);
-     if(e.epoch!==epoch)return;isPaused(e);e.data.confirmedEtag=result.etag;e.data.pendingWrite=null;
+     if(e.epoch!==epoch)return;isPaused(e);e.data.confirmedEtag=result.etag;e.data.confirmedAt=result.data?.updatedAt??null;e.data.pendingWrite=null;
      if(desired===null)e.data.pendingDelete=false;
-     save(e);status(e,desired===null?'Страница снята с публикации':'Опубликовано · '+new Date().toLocaleTimeString('ru-RU'));
+     if(save(e))status(e,desired===null?'Страница снята с публикации':'Опубликовано · '+new Date(e.data.confirmedAt??Date.now()).toLocaleTimeString('ru-RU'));else notify(e);
     }
     else status(e,'Не опубликовано');
    }catch(error){if(e.epoch!==epoch)return;e.dirty=true;if(isPaused(e)){status(e,'Отправка остановлена на этом устройстве');break;}if(error.status===412){e.conflict=true;status(e,'Конфликт публикации · изменения на другом устройстве. Проверьте серверную версию.');break;}status(e,'Нет связи или доступа · изменения ожидают отправки');e.timer=setTimeout(()=>{e.timer=null;void flush(e);},15000);break;}
   }
- }finally{e.running=false;if(e.dirty&&e.publisher&&e.epoch!==epoch)void flush(e);}
+ }finally{e.running=false;notify(e);if(e.dirty&&e.publisher&&e.epoch!==epoch)void flush(e);}
 }
 export async function connectPortal(id,{origin,apiKey,email,password,slug='',team},fetcher=globalThis.fetch){
  const e=entry(id),d=e.data;isPaused(e);origin=firebaseOrigin(origin);
@@ -93,7 +96,7 @@ export async function connectPortal(id,{origin,apiKey,email,password,slug='',tea
   const safe=first||expected===version.etag||samePortalContent(version.data,d.pendingDelete||!d.enabled?null:snapshot(e))||!!d.pendingWrite&&samePortalContent(version.data,d.pendingWrite.data);
   e.session?.close();e.epoch++;e.session=session;e.publisher=publisher;e.conflict=!safe;
   Object.assign(d,{origin,apiKey,owner:session.uid,slug:chosen,team:d.team||String(team).trim()});
-  if(safe){d.confirmedEtag=version.etag;d.pendingWrite=null;}
+  if(safe){d.confirmedEtag=version.etag;d.confirmedAt=version.data?.updatedAt??null;d.pendingWrite=null;}
   save(e);status(e,d.publisherPaused?'Отправка приостановлена · продолжите из локального матча':e.conflict?'Конфликт публикации · проверьте серверную версию.':'Подключено · '+(d.enabled?'публикация включена':'публикация выключена'));
   if(!d.publisherPaused&&(d.pendingDelete||d.enabled))enqueue(e);
   return portalInfo(id);
@@ -109,7 +112,7 @@ export async function acceptRemotePortal(id){
  const remote=readPortal(version.data),d=e.data;
  if(e.timer)clearTimeout(e.timer);e.timer=null;
  if(e.archiveSending)throw Error('Завершите отправку архива');
- Object.assign(d,{archivePending:[],confirmedEtag:version.etag,pendingWrite:null,enabled:!!remote,pendingDelete:false,schedule:remote?.schedule||[],archive:remote?.archive||[],match:remote?.match||null,activeId:remote?.match&&['live','break'].includes(remote.match.status)?remote.match.id:null,publisherPaused:!!remote?.match&&['live','break'].includes(remote.match.status)});
+ Object.assign(d,{archivePending:[],confirmedEtag:version.etag,confirmedAt:version.data?.updatedAt??null,pendingWrite:null,enabled:!!remote,pendingDelete:false,schedule:remote?.schedule||[],archive:remote?.archive||[],match:remote?.match||null,activeId:remote?.match&&['live','break'].includes(remote.match.status)?remote.match.id:null,publisherPaused:!!remote?.match&&['live','break'].includes(remote.match.status)});
  if(remote)d.team=remote.team;
  d.settings.auto=false;e.conflict=false;e.dirty=false;if(!save(e))throw Error('Не удалось сохранить серверную версию');persistPause(e,d.publisherPaused);
  status(e,d.publisherPaused?'Принята серверная версия · отправка счёта приостановлена':'Принята серверная версия · автоматический запуск выключен');return portalInfo(id);
@@ -141,7 +144,7 @@ export async function continuePortalHandoff(id,local,expected,{confirmed=false}=
  const version=await client.readVersion();if(e.publisher!==client||e.epoch!==epoch||e.running||version.etag!==expected)throw Error('Опубликованная версия изменилась. Повторите предпросмотр.');
  const remote=readPortal(version.data);checkHandoffMatch(local,remote?.match);
  const before=clone(d),numbered=remote.match.events.some(x=>x.number!=null)||remote.match.stats.length>0;
- Object.assign(d,{team:remote.team,schedule:remote.schedule,archive:remote.archive,match:remote.match,activeId:local.id,enabled:true,pendingDelete:false,pendingWrite:null,confirmedEtag:version.etag,publisherPaused:false});
+ Object.assign(d,{team:remote.team,schedule:remote.schedule,archive:remote.archive,match:remote.match,activeId:local.id,enabled:true,pendingDelete:false,pendingWrite:null,confirmedEtag:version.etag,confirmedAt:version.data?.updatedAt??null,publisherPaused:false});
  // Never broaden public data permissions on takeover. Explicit opt-in can be
  // restored in settings; no newly disclosed numbers or statistics on resume.
  d.settings={...d.settings,auto:false,events:d.settings.events&&remote.match.events.length>0,numbers:d.settings.numbers&&numbered,stats:d.settings.stats&&d.settings.numbers&&numbered&&remote.match.stats.length>0};
@@ -165,7 +168,7 @@ export function saveFixture(id,item){
 }
 export function removeFixture(id,fixtureId){const e=entry(id);ensurePublishingAllowed(e);if(e.data.match?.scheduledId===fixtureId&&['live','break'].includes(e.data.match.status))throw Error('Матч уже идёт');e.data.schedule=e.data.schedule.filter(x=>x.id!==fixtureId);save(e);if(e.data.enabled)enqueue(e);else notify(e);}
 export function syncPortalMatch(match,{start=false,finish=false,discard=false}={}){
- if(match?.mode!=='dual')return false;const e=entry(match.teamId),d=e.data;if(isPaused(e)){if(start)ensurePublishingAllowed(e);return false;}if(!d.enabled)return false;
+ if(match?.mode!=='dual'||match.teamId==='test-rehearsal')return false;const e=entry(match.teamId),d=e.data;if(isPaused(e)){if(start)ensurePublishingAllowed(e);return false;}if(!d.enabled)return false;
  const scheduled=matchingSchedule(d.schedule,match);
  const publicId='match_'+Date.parse(match.startedAt);
  const continuing=d.activeId===match.id||d.activeId===publicId&&d.match?.id===publicId;
@@ -186,7 +189,14 @@ export function syncPortalMatch(match,{start=false,finish=false,discard=false}={
  }
  save(e);enqueue(e);return true;
 }
-export function heartbeatPortal(id,matchId){const e=entry(id);if(!isPaused(e)&&e.data.enabled&&e.data.activeId===matchId&&e.data.match&&['live','break'].includes(e.data.match.status))enqueue(e);}
+export async function inspectPortal(id,local=null){
+ const e=entry(id),client=e.publisher,epoch=e.epoch;if(!client)throw Error('Сначала подключите Firebase');
+ const version=await client.readVersion();if(e.publisher!==client||e.epoch!==epoch)throw Error('Подключение изменилось. Повторите проверку.');
+ const remote=readPortal(version.data),m=remote?.match;let matches=null;if(local&&m&&['live','break'].includes(m.status)){try{checkHandoffMatch(local,m);matches=true;}catch{matches=false;}}
+ return {exists:!!remote,updatedAt:remote?.updatedAt??null,match:m?{opponent:m.opponent,status:m.status,set:m.set,score:{...m.score},events:m.events.length,players:m.stats.length}:null,matches,contentEqual:samePortalContent(version.data,e.data.pendingDelete||!e.data.enabled?null:snapshot(e)),paused:isPaused(e),conflict:e.conflict,pending:e.running||e.dirty||!!e.data.pendingWrite};
+}
+export function retryPortal(id){const e=entry(id);ensurePublishingAllowed(e);if(e.conflict)throw Error('Сначала разрешите конфликт публикации');if(!e.publisher)throw Error('Сначала подключите Firebase');if(e.running)return false;if(!e.dirty&&!e.data.pendingWrite&&!e.data.pendingDelete)return false;enqueue(e);return true;}
+export function heartbeatPortal(id,matchId){const e=entry(id);if(!isPaused(e)&&!e.conflict&&e.data.enabled&&e.data.activeId===matchId&&e.data.match&&['live','break'].includes(e.data.match.status)){enqueue(e);return true;}return false;}
 export function setPublicTeamName(id,team){const e=entry(id);ensurePublishingAllowed(e);const name=String(team).trim().slice(0,100);if(!name)throw Error('Укажите публичное название');e.data.team=name;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
 export function stopPortalMatch(id){const e=entry(id);ensurePublishingAllowed(e);e.data.activeId=null;e.data.match=null;e.data.settings.auto=false;save(e);if(e.data.enabled)enqueue(e);else notify(e);}
 

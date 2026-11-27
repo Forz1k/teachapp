@@ -519,6 +519,93 @@ try{
  await shown.getByRole('button',{name:'Возобновить время',exact:true}).waitFor();assert.equal(await shown.locator('.court-time-panel [data-court-time]').first().textContent(),(await page.evaluate(async id=>{const C=await import('./js/coach.js'),V=await import('./js/match-protocol.js'),T=await import('./js/court-time.js');return T.courtTimeLabel(V.courtTime(V.replayDetailed((await C.loadCoach()).coachLive.find(x=>x.id===id))).elapsedMs);},timedId)));
  await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
  console.log('WEBKIT COURT TIME PASS: live tick, timeout pause, explicit resume, persisted exact clock and six players, reopen and mobile stats.');
+ // Isolated rehearsal: no real coach records or public publishing, even when offline.
+ const rehearsalContext=await browser.newContext({...devices['iPhone 13'],locale:'ru-RU',serviceWorkers:'allow'});
+ try{
+  const rp=await rehearsalContext.newPage(),requests=[];
+  rp.on('request',req=>{if(!req.url().startsWith(origin+'/'))requests.push(req.url());});
+  await rp.goto(origin+'/index.html');await rp.locator('.workspace-nav').waitFor();
+  const before=await rp.evaluate(async()=>JSON.stringify(await (await import('./js/coach.js')).loadCoach()));
+  const open=()=>rp.evaluate(async()=>{(await import('./js/screens/match-protocol.js')).openRehearsal();});
+  await open();await rp.getByRole('button',{name:'Быстрый тест · до 5 очков',exact:true}).click();
+  await rp.locator('.vp-board-points').waitFor();
+  assert.match(await rp.locator('.match-live-label').textContent(),/ТЕСТ/);
+  assert.equal(await rp.locator('.vp-mini-player').count(),12);
+  await rehearsalContext.setOffline(true);
+  await rp.locator('.vp-points .vp-ours').click();await rp.locator('[data-reason="tip"]').click();await rp.getByLabel('Автор результативной передачи',{exact:true}).selectOption('test-a-2');await rp.locator('.vp-author-grid [data-player]').first().click();
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
+  assert.match(await rp.locator('[data-live-save-status]').textContent(),/Сохранено/);
+  assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events[0].assist),'test-a-2');
+  await rp.getByRole('button',{name:'Статистика',exact:true}).click();
+  await rp.getByRole('heading',{name:'Результативные связки (ассисты)',exact:true}).waitFor();
+  assert.match(await rp.locator('.sheet.show').textContent(),/Отмеченные ассисты: 1 из 1/);
+  await rp.getByRole('heading',{name:/Фактический порядок P1–P6/}).waitFor();
+  await rp.getByRole('heading',{name:'Серии набранных и потерянных очков',exact:true}).waitFor();
+  await rp.getByRole('button',{name:'Матч',exact:true}).click();
+  await rehearsalContext.setOffline(false);
+  await rp.reload();await rp.locator('.workspace-nav').waitFor();
+  await rp.locator('.vp-board-points').waitFor(); // same-tab automatic recovery
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
+  assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events[0].assist),'test-a-2');
+  await rp.locator('.vp-undo').click();await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='0');
+  assert.equal(await rp.evaluate(async()=>JSON.stringify(await (await import('./js/coach.js')).loadCoach())),before);
+  assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length),0);
+  // Rehearsal exercise for the new mobile bench, libero and historical score editor.
+  await rp.locator('.vp-bench-open').click();await rp.locator('[data-sub-out="test-a-1"]').click();
+  await rp.locator('[data-sub-in="test-a-7"]').click();await rp.waitForFunction(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events[0]?.in==='test-a-7');
+  await rp.locator('.vp-bench-open').click();await rp.locator('[data-sub-out="test-a-7"]').click();await rp.locator('[data-sub-in="test-a-1"]').click();
+  await rp.waitForFunction(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length===2);
+  await rp.locator('.vp-bench-open').click();await rp.locator('[data-libero-action="test-a-9"][data-libero-for="test-a-5"]').click();
+  await rp.waitForFunction(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length===3);
+  await rp.getByRole('button',{name:'Быстрый',exact:true}).click();
+  await rp.locator('.vp-points .vp-ours').click();await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
+  await rp.locator('.vp-bench-open').click();await rp.locator('[data-libero-action="return"]').click();
+  await rp.waitForFunction(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length===5);
+  await rp.getByRole('button',{name:'События',exact:true}).click();await rp.locator('[data-event-index="3"] button').click();
+  await rp.getByText('Исправить команду, получившую очко',{exact:true}).click();
+  await rp.getByRole('button',{name:/Предпросмотр: очко/}).click();
+  await rp.getByRole('button',{name:'Подтвердить исправление счёта',exact:true}).click();
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.theirs strong')?.textContent==='1');
+  assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length),5);
+  assert.equal(await rp.evaluate(async()=>JSON.stringify(await (await import('./js/coach.js')).loadCoach())),before);
+  assert.deepEqual(requests,[]);
+  console.log('WEBKIT LIVE CONTROLS PASS: paired substitute and return, libero entry/return, historical score correction, no real records.');
+  // Use real IndexedDB in the isolated test browser. A concurrent writer must not
+  // be overwritten by the old screen. Recovery reopens the latest persisted score.
+  await rp.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
+  await rp.locator('.sheet.show').waitFor({state:'hidden'});
+  const liveId=await rp.evaluate(async()=>{
+   const C=await import('./js/coach.js'),V=await import('./js/screens/match-protocol.js'),M=await import('./js/model.js'),team=await C.saveTeam({name:'Synthetic recovery'}),players=[];
+   for(let i=0;i<6;i++)players.push(await C.savePlayer({teamId:team.id,name:'Synthetic '+i,number:i+1,position:'universal'}));
+   const roster=players.map(p=>p.id),d=await C.startDetailedMatch({teamId:team.id,date:M.todayIso(),teamName:team.name,opponent:'Synthetic opponent',roster,ourPlayers:players,awayPlayers:[],lineup:roster,awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours'});
+   V.openDetailedMatch(d,()=>{},async()=>{});return d.id;
+  });
+  await rp.getByRole('button',{name:'Быстрый',exact:true}).click();
+  await rp.evaluate(()=>{const b=document.querySelector('.vp-points .vp-ours');b.click();b.click();});
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
+  assert.equal(await rp.evaluate(async id=>(await (await import('./js/coach.js')).readLiveMatch(id)).events.length,liveId),1);
+  await rp.evaluate(async id=>{const C=await import('./js/coach.js'),d=await C.readLiveMatch(id);await C.changeLiveMatch(id,d.revision,{type:'rally',side:'ours',kind:'point'});},liveId);
+  await rp.waitForTimeout(400);await rp.locator('.vp-points .vp-ours').click();
+  await rp.getByText(/Запись не подтверждена; ввод остановлен/).waitFor();
+  assert.equal(await rp.locator('.vp-points .vp-ours').isDisabled(),true);
+  await rp.getByRole('button',{name:'Восстановить сохранённый черновик',exact:true}).click();
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='2');
+  assert.equal(await rp.evaluate(async id=>(await (await import('./js/coach.js')).readLiveMatch(id)).events.length,liveId),2);
+  await rp.waitForFunction(()=>!!navigator.serviceWorker.controller);
+  await rehearsalContext.setOffline(true);await rp.reload();
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='2');
+  assert.match(await rp.locator('[data-live-network]').textContent(),/Нет сети/);
+  await rehearsalContext.setOffline(false);
+  await rp.evaluate(async()=>{await (await import('./js/privacy-shield.js')).changeScreenLock({next:'384729'});});
+  await rp.reload();await rp.locator('.privacy-cover').waitFor();await rp.locator('.workspace-nav').waitFor({state:'attached'});
+  assert.equal(await rp.locator('#app').evaluate(el=>el.inert),true);
+  assert.equal(await rp.locator('.vp-board-points').count(),0);
+  await rp.getByLabel('PIN или пароль разблокировки').fill('384729');await rp.getByRole('button',{name:'Разблокировать',exact:true}).click();
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='2');
+  assert.deepEqual(requests,[]);
+ }finally{await rehearsalContext.close();}
+ console.log('WEBKIT LIVE REHEARSAL PASS: offline score, automatic reload, undo, untouched coach data, real draft duplicate guard, stale revision recovery and locked startup.');
+
  const vpFixture=await page.evaluate(async rows=>{const C=await import('./js/coach.js'),V=await import('./js/volleypoint-import.js'),U=await import('./js/screens/volleypoint-import.js');const report=V.parseVolleyRows(rows),team=await C.saveTeam({name:'История VolleyPoint'}),mapping={};for(const p of report.teams[0].players){const r=await C.savePlayer({teamId:team.id,name:p.name,number:p.number,position:'universal'});mapping[p.number]=r.id;}const input={...V.buildVolleyImport(report,0,mapping),teamId:team.id};delete input.imported.timing;input.opponent='Старое имя соперника';const m=await C.saveVolleyImport(input),view=C.teamView(await C.loadCoach(),team.id);U.openImportedReport(m,view,()=>U.openVolleyImport(team,view,async()=>{},{matchId:m.id}));return {teamId:team.id,matchId:m.id,playerId:mapping[1]};},timingRows);
  await shown.getByRole('heading',{name:'Игровое время по PDF',exact:true}).waitFor();await shown.getByRole('button',{name:'Дополнить из исходного PDF',exact:true}).click();
  await shown.getByLabel('PDF VolleyPoint',{exact:true}).setInputFiles({name:'synthetic-volley.pdf',mimeType:'application/pdf',buffer:timingPdf()});
@@ -680,7 +767,7 @@ try{
 
  // Public viewer uses a synthetic stream; no production Firebase access.
  const fan=await context.newPage();fan.on('pageerror',error=>errors.push(error.message));
- await fan.addInitScript(()=>{window.EventSource=class{constructor(){this.handlers={};window.__fanPush=data=>this.handlers.put?.({type:'put',data:JSON.stringify({path:'/',data})});setTimeout(()=>this.onopen?.(),0);}addEventListener(k,f){this.handlers[k]=f;}close(){}};});
+ await fan.addInitScript(()=>{window.EventSource=class{constructor(){this.handlers={};window.__fanPush=data=>this.handlers.put?.({type:'put',data:JSON.stringify({path:'/',data})});window.__fanPatch=(path,data)=>this.handlers.put?.({type:'put',data:JSON.stringify({path,data})});window.__fanError=()=>this.onerror?.();window.__fanOpen=()=>this.onopen?.();setTimeout(()=>this.onopen?.(),0);}addEventListener(k,f){this.handlers[k]=f;}close(){}};});
  await fan.goto(origin+'/live/index.html');
  await fan.waitForFunction(()=>typeof window.__fanPush==='function');
  const future={schema:1,team:'Тестовая команда',updatedAt:Date.now(),schedule:[{id:'fixture1',opponent:'Гости',startAt:Date.now()+3600000}],archive:[]};
@@ -688,6 +775,14 @@ try{
  assert.equal(await fan.locator('.credit a').getAttribute('href'),'https://github.com/Forz1k/teachapp');
  await fan.locator('[data-tab="schedule"]').click();await fan.locator('.fixture').waitFor();
  const fixtureHref=await fan.locator('.fixture a').getAttribute('href');assert.equal(new URL(fixtureHref).searchParams.get('fixture'),'fixture1');await fan.goto(fixtureHref);await fan.waitForFunction(()=>typeof window.__fanPush==='function');await fan.evaluate(x=>window.__fanPush(x),future);await fan.locator('.clock').waitFor();await fan.locator('.scoreboard-toggle').click();assert.equal(await fan.locator('.scoreboard-toggle').getAttribute('aria-pressed'),'true');await fan.locator('.scoreboard-toggle').click();await fan.goto(origin+'/live/index.html');await fan.waitForFunction(()=>typeof window.__fanPush==='function');await fan.evaluate(x=>window.__fanPush(x),future);await fan.locator('.clock').waitFor();
+ const live={id:'viewer-live',opponent:'Гости',startedAt:Date.now(),status:'live',set:1,score:{ours:8,theirs:6},setsWon:{ours:0,theirs:0},sets:[],serve:'ours',colors:{ours:'blue',theirs:'red'},events:[],stats:[{side:'ours',number:1,points:5,attack:4,tip:0,ace:1,block:0},{side:'ours',number:2,points:3,attack:0,tip:0,ace:3,block:0}]};
+ await fan.evaluate(x=>window.__fanPush(x),{...future,match:live,updatedAt:Date.now()-95000});await fan.getByText('Счёт не обновляется',{exact:true}).waitFor();assert.equal(await fan.locator('.status-pill').textContent(),'ПОСЛЕДНИЙ СЧЁТ');
+ await fan.getByRole('button',{name:'Обновить соединение',exact:true}).click();await fan.evaluate(()=>window.__fanOpen());await fan.evaluate(()=>window.__fanPatch('/match/score/ours',99));assert.equal(await fan.locator('[data-score-side=ours]').textContent(),'8');
+ await fan.evaluate(x=>window.__fanPush(x),{...future,match:live,updatedAt:Date.now()});await fan.getByText('LIVE',{exact:true}).waitFor();await fan.locator('.fan-stat-sort').selectOption('ace');assert.equal(await fan.locator('.fan-stat-lead').textContent(),'Эйсы: 3 · №2');
+ await fan.evaluate(()=>window.__fanError());await fan.getByText('Нет актуальной связи',{exact:true}).waitFor();assert.equal(await fan.locator('.status-pill').textContent(),'ПОСЛЕДНИЙ СЧЁТ');
+ await fan.evaluate(x=>{window.__fanOpen();window.__fanPush(x);},{...future,match:live,updatedAt:Date.now()});await fan.getByText('LIVE',{exact:true}).waitFor();assert.equal(await fan.locator('.fan-stat-sort').inputValue(),'ace');
+ await fan.evaluate(x=>window.__fanPush(x),future);await fan.locator('.clock').waitFor();
+ console.log('WEBKIT VIEWER RECONNECT PASS: stale heartbeat, patch before root ignored, fresh snapshot, player sort and offline status.');
  await fan.locator('#theme').click();assert.equal(await fan.locator('html').getAttribute('data-theme'),'light');
  assert.ok(await fan.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'public viewport overflow');
  await fan.locator('#fan-motion').click();await fan.locator('#fan-motion').click();assert.equal(await fan.locator('html').getAttribute('data-motion'),'off');

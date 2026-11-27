@@ -518,3 +518,7 @@ Selected compatible 6.1–6.9 changes from the integration branch and verified v
 ## 6.0.3-rc.1 — reconciliation candidate (not released)
 
 Reconciles published main 6.0.2 (d4cb5bb) with combined review candidate (3d3ec44, PR #175). Preserves published release history and Window-realm privacy event constructors, retains notification lifecycle and both browser test suites. Version and cache identity updated consistently; no production deployment. Combined exact-SHA verification pending.
+
+## 8.0.0-rc.1 — cumulative integration (not released)
+
+Merge parents: roadmap 6f6d083 and LIVE candidate d513984 (main 6.0.6 ancestor). Native and backend-bound coach commands share LIVE read/probe via transaction; no LAB fallback to native. All existing browser scenarios retained. Added actual 6.0.6 upgrade with assist and isolated rehearsal, plus routed coach-session tests. OBS excluded. CI to be verified on exact SHA. No manual acceptance or production cutover claimed.

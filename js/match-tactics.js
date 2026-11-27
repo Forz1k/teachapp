@@ -195,3 +195,70 @@ export function trainingRecommendations(debrief,exercises,{minErrors=3,minDetail
   return {kind:e.kind,topic:topic.name,count:e.count,detailed:debrief.detailed,rallies:debrief.rallies,exercises:matches.slice(0,5).map(x=>({id:x.id,name:x.name,minutes:x.minutes,description:x.description,equipment:x.equipment}))};
  });
 }
+
+/** Explicit assists and fully observed attempts are separate evidence streams.
+ * An assisted kill is counted once in explicit totals, never added to PRO attempts. */
+export function setterAnalysis(timelines,{side='ours',set=0,min=10}={}){
+ if(!['ours','theirs'].includes(side)||side==='theirs'&&timelines.length>1||!Number.isInteger(set)||set<0||!Number.isInteger(min)||min<1||min>500)throw Error('Проверьте выборку передач');
+ const players=new Map(),pairs=new Map();let rallies=0,kills=0,attributed=0,assists=0,complete=0;
+ const row=id=>{if(!players.has(id))players.set(id,{id,onCourt:0,assists:0,assistedKills:0,attempts:0,errors:0,qualityKnown:0,positive:0,perfect:0,assistMatches:0,attemptMatches:0});return players.get(id);};
+ for(const timeline of timelines){
+  const seenAssist=new Set(),seenAttempt=new Set(),seenPair=new Set();
+  for(const e of timeline){
+   if(e.type!=='rally'||set&&e.set!==set)continue;rallies++;
+   for(const id of e.before.lineups[side])row(id).onCourt++;
+   if(e.side===side&&['kill','tip'].includes(e.kind)){
+    kills++;if(e.player)attributed++;
+    if(e.player&&e.assist&&e.player!==e.assist&&e.before.lineups[side].includes(e.player)&&e.before.lineups[side].includes(e.assist)){
+     assists++;row(e.assist).assists++;row(e.player).assistedKills++;seenAssist.add(e.assist);
+     const key=JSON.stringify([e.assist,e.player]);if(!pairs.has(key))pairs.set(key,{setter:e.assist,attacker:e.player,assists:0,matches:0});pairs.get(key).assists++;seenPair.add(key);
+    }
+   }
+   if(!e.captureComplete||captureIssue(e))continue;complete++;
+   for(const t of e.touches||[]){if(t.side!==side||t.action!=='set')continue;
+    const r=row(t.player);r.attempts++;r.errors+=Number(t.result==='error');r.qualityKnown+=Number(t.quality!=='unknown');r.positive+=Number(t.quality==='positive'||t.quality==='perfect');r.perfect+=Number(t.quality==='perfect');seenAttempt.add(t.player);
+   }
+  }
+  for(const id of seenAssist)row(id).assistMatches++;for(const id of seenAttempt)row(id).attemptMatches++;for(const key of seenPair)pairs.get(key).matches++;
+ }
+ const observed=recordedConnections(timelines,{side,set,min});
+ const rows=[...players.values()].map(r=>({...r,positiveRate:pct(r.positive,r.qualityKnown===r.attempts?r.attempts:0),errorRate:pct(r.errors,r.attempts),eligible:r.attempts>=min,positiveEligible:r.attempts>=min&&r.qualityKnown===r.attempts})).filter(r=>r.assists||r.assistedKills||r.attempts).sort((a,b)=>b.assists-a.assists||b.attempts-a.attempts||a.id.localeCompare(b.id));
+ return {matches:timelines.length,rallies,kills,attributed,assists,complete,coverage:pct(assists,kills),rows,pairs:[...pairs.values()].sort((a,b)=>b.assists-a.assists||a.setter.localeCompare(b.setter)||a.attacker.localeCompare(b.attacker)),observed};
+}
+/** Actual P1..P6 player order before each rally, including the active libero.
+ * Opponent identifiers are local to a match and must never be combined across matches. */
+export function orderedLineups(timelines,{side='ours',set=0,min=10}={}){
+ if(!['ours','theirs'].includes(side)||side==='theirs'&&timelines.length>1||!Number.isInteger(set)||set<0||!Number.isInteger(min)||min<1||min>500)throw Error('Проверьте выборку составов');
+ const map=new Map();
+ for(const timeline of timelines){const seen=new Set();for(const e of timeline){
+  if(e.type!=='rally'||set&&e.set!==set)continue;
+  const ids=e.before.lineups[side];if(ids.length!==6||new Set(ids).size!==6)continue;
+  const key=JSON.stringify(ids);if(!map.has(key))map.set(key,{key,players:[...ids],...blank(),matches:0});
+  const r=map.get(key),phase=e.before.serve===side?'serve':'receive';r.rallies++;r.won+=Number(e.side===side);r.lost+=Number(e.side!==side);r[phase]++;r[phase+'Won']+=Number(e.side===side);seen.add(key);
+ }for(const key of seen)map.get(key).matches++;}
+ return sortedRows(map,min).map(r=>({...r,serveEligible:r.serve>=min,receiveEligible:r.receive>=min}));
+}
+/** Consecutive winning runs reset at each set, including an unfinished last run. */
+export function rallyStreaks(timeline,{set=0}={}){
+ if(!Number.isInteger(set)||set<0)throw Error('Выберите партию');
+ const rows=[];let current=null;
+ for(const e of timeline){if(e.type!=='rally'||set&&e.set!==set)continue;
+  const [ours,theirs]=e.score.split(':').map(Number);
+  if(current&&current.set===e.set&&current.side===e.side){current.length++;current.end=e.score;}
+  else {current={set:e.set,side:e.side,length:1,start:(ours-Number(e.side==='ours'))+':'+(theirs-Number(e.side==='theirs')),end:e.score};rows.push(current);}
+ }
+ const summary=Object.fromEntries(['ours','theirs'].map(side=>{const a=rows.filter(r=>r.side===side);return [side,{runs:a.length,max:Math.max(0,...a.map(r=>r.length)),long:a.filter(r=>r.length>=3).length,points:a.reduce((n,r)=>n+r.length,0)}];}));
+ return {rows,summary};
+}
+/** Team comparison: actual set outcomes from every selected result, detailed
+ * rally rates only from logs. Aggregate numerators, never average percentages. */
+export function opponentComparison(matches,{from='',to='',min=30}={}){
+ if(!Number.isInteger(min)||min<1||min>500)throw Error('Проверьте минимальную выборку');
+ const groups=new Map();
+ for(const m of matches){if(from&&m.date<from||to&&m.date>to)continue;const key=nameKey(m.opponent);if(!key)continue;
+  if(!groups.has(key))groups.set(key,{key,name:m.opponent,matches:0,wins:0,losses:0,draws:0,setsWon:0,setsLost:0,detailed:0,...blank()});
+  const r=groups.get(key),a=m.sets.filter(s=>s.ours>s.theirs).length,b=m.sets.filter(s=>s.ours<s.theirs).length;r.matches++;r.wins+=Number(a>b);r.losses+=Number(a<b);r.draws+=Number(a===b);r.setsWon+=a;r.setsLost+=b;
+  if(m.detail?.mode==='dual'){r.detailed++;for(const e of replayDetailed(m.detail).timeline)if(e.type==='rally')record(r,e);}
+ }
+ return [...groups.values()].map(r=>({...finish(r),eligible:r.rallies>=min,serveEligible:r.serve>=min,receiveEligible:r.receive>=min})).sort((a,b)=>b.matches-a.matches||a.name.localeCompare(b.name,'ru'));
+}

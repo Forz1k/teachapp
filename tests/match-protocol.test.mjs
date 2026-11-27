@@ -35,12 +35,12 @@ test('Подробный матч переносит историю и обе к
  for(let i=0;i<15;i++)d=await C.changeLiveMatch(d.id,d.revision,{type:'rally',side:'ours',kind:'point'});
  d=await C.changeLiveMatch(d.id,d.revision,{type:'next',lineup,awayLineup:base.awayLineup,serve:'ours'});
  for(let i=0;i<15;i++)d=await C.changeLiveMatch(d.id,d.revision,{type:'rally',side:'ours',kind:'point'});
- d=await C.changeLiveMatch(d.id,d.revision,{type:'attribute',kind:'kill',player:lineup[0]});
+ d=await C.changeLiveMatch(d.id,d.revision,{type:'attribute',kind:'kill',player:lineup[0],assist:lineup[1]});
  const beforeColors=d.events;d=await C.changeLiveColors(d.id,d.revision,{ours:'green',theirs:'purple'});assert.deepEqual(d.events,beforeColors);assert.equal(d.boardColors.ours,'green');
  const m=await C.finishLiveMatch(d.id,d.revision);assert.equal(m.detail.boardColors.theirs,'purple');assert.equal(m.detail.events.length,31);assert.equal(reportData(m.detail).sets.length,2);
- assert.equal(m.stats[lineup[0]].attackKills,1);
+ assert.equal(m.stats[lineup[0]].attackKills,1);assert.equal(C.matchAssistCounts(m).get(lineup[1]),1);assert.equal(m.stats[lineup[1]],undefined);
  const b=await S.makeBackup();assert.equal(b.version,BACKUP_VERSION);await S.restoreBackup(b);
- assert.equal((await C.loadCoach()).coachMatches[0].detail.awayPlayers.length,7);
+ const restored=(await C.loadCoach()).coachMatches[0];assert.equal(restored.detail.awayPlayers.length,7);assert.equal(C.matchAssistCounts(restored).get(lineup[1]),1);
  await assert.rejects(C.saveMatch(m),/нельзя редактировать/);
 });
 

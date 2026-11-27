@@ -12,6 +12,7 @@ import {catalog} from '../health.js';
 import {todayIso,fmtFull} from '../model.js';
 import * as ui from '../ui.js';
 import {openMatchCenter} from './volleyball.js';
+import {openRehearsal} from './match-protocol.js';
 import {openPublicResult} from './public-portal.js';
 import {competitionCard} from './competition-center.js';
 import {historyPanel} from './match-history.js';
@@ -118,7 +119,7 @@ function playerCard(team,player,view,refresh){
     const n=s.errors,t=s.playingTime,c=s.capture;
     const percent=m=>m.value==null?'—':m.value.toFixed(1)+'% · '+m.n+'/'+m.total;
     content.replaceChildren(
-      el('div',{class:'dashboard-metrics'},[metric('Личные очки',format(s.summary.sums.points),'trophy','Зафиксировано'),metric('Эйсы',format(s.summary.sums.aces),'quick','Зафиксировано'),metric('Атаки',format(s.summary.sums.attackKills),'chart','Результативные'),metric('Блоки',format(s.summary.sums.blocks),'shield','Зафиксировано')]),
+      el('div',{class:'dashboard-metrics'},[metric('Личные очки',format(s.summary.sums.points),'trophy','Зафиксировано'),metric('Ассисты',format(s.assists.assists),'chart','Отмеченные передачи'),metric('Баллы',format(s.assists.contribution),'trophy','Очки + ассисты'),metric('Эйсы',format(s.summary.sums.aces),'quick','Зафиксировано'),metric('Атаки',format(s.summary.sums.attackKills),'chart','Результативные'),metric('Блоки',format(s.summary.sums.blocks),'shield','Зафиксировано')]),
       card('Матчи · выбранный период',[p('В заявке: '+s.rosterMatches+' · подробных протоколов: '+s.detailedMatches),p('Розыгрышей на площадке по подробным протоколам: '+s.rallies),trendChart(s.chosen.filter(m=>Number.isFinite(m.stats[player.id]?.points)).map(m=>({date:m.date,value:m.stats[player.id].points})).sort((a,b)=>a.date.localeCompare(b.date)).slice(-20),{unit:'очки',label:'Личные очки в матчах'}),p('График: последние 20 матчей с известным показателем.')]),
       card('Игровое время',[el('div',{class:'dashboard-metrics'},[metric('Измерено LIVE',t.measuredMatches?courtTimeLabel(t.totalMs):'—','quick','Фактические замеры'),metric('Среднее LIVE',t.measuredMatches?courtTimeLabel(t.totalMs/t.measuredMatches):'—','chart','По замерам')]),p('LIVE-замеры: '+t.measuredMatches+' · частичные: '+t.partialMatches+' · доля измеренного времени команды: '+ratio(t.totalMs,t.teamMs)),card('Результативность за 10 минут LIVE',[p(t.pointsPer10==null?'Недостаточно данных: минимум 10 минут и 10 розыгрышей с включённым учётом.':'Отмеченные личные очки за 10 минут: '+Math.round(t.pointsPer10*100)/100),p('Выборка: '+courtTimeLabel(t.rateMs)+' · '+t.rateRallies+' розыгрышей · '+t.ratePoints+' личных очков · '+t.rateMatches+' матчей с розыгрышами'),p('При включённом учёте: выиграно командой '+t.timedWon+'/'+t.timedRallies+' · разница '+(t.timedWon-t.timedLost)+' · выигранных без полной атрибуции '+t.unattributedTimedWins),p('Только зафиксированные личные эйсы, атаки и блоки в измеренных интервалах. Не показатель качества всех попыток и не сравнение с PDF.')]),
       t.rows.length?el('details',{},[el('summary',{text:'LIVE · по матчам и партиям · '+t.rows.length}),...t.rows.map(r=>el('div',{class:'profile-result'},[p(fmtFull(r.date)+' · '+r.opponent+' · '+courtTimeLabel(r.ms)+(r.partial?' · частично':'')),p(r.sets.map((v,i)=>'П'+(i+1)+' '+courtTimeLabel(v.ms)+(v.partial?'*':'')).join(' · ')),playerTimeline(view.matches.find(m=>m.id===r.matchId),player.id)]))]):p('Включите измерение в подробном LIVE-матче.'),
@@ -260,7 +261,8 @@ export async function renderCoach(root,ctx={}){
   async function refresh(){
     const seq=++sequence;
     try{
-      const loaded=await C.loadCoachForView(selectedTeam,{archived:showArchived});if(seq!==sequence)return;
+      const loaded=await C.loadCoachForView(selectedTeam,{archived:showArchived});
+      const recoverable=['home','matches'].includes(selectedSection)?await C.listLiveMatches():[];if(seq!==sequence)return;
       const data=loaded.data;selectedTeam=loaded.selectedTeamId;
       if(root.isConnected&&ctx.onSection)ctx.onSection(selectedSection);
       body.replaceChildren();
@@ -271,6 +273,8 @@ export async function renderCoach(root,ctx={}){
       const archived=el('input',{type:'checkbox'});archived.checked=showArchived;archived.onchange=()=>{showArchived=archived.checked;refresh();};
       body.append(card('Команды',[teams.length?field('Команда',picker):p('Добавьте первую волейбольную команду.'),field('Показать архивные команды',archived),btn('+ Команда',()=>teamForm(null,refresh),'primary wide')]));
       body.append(btn('Организация соревнований',openTournaments,'wide'));
+      if(['home','matches'].includes(selectedSection))body.append(btn('Тестовый LIVE-матч',openRehearsal,'wide'));
+      if(recoverable.length){const rows=recoverable.flatMap(d=>{const t=data.coachTeams.find(x=>x.id===d.teamId);if(!t)return [];return [btn('Восстановить LIVE · '+t.name+' · '+d.opponent+' · '+d.date,()=>openMatchCenter(t,refresh,{draftId:d.id}),'primary wide')];});if(rows.length)body.append(card('Сохранённые LIVE-матчи',[p('Откройте нужный черновик. Счёт берётся из сохранённого журнала, а не из кеша экрана.'),...rows]));}
       const team=teams.find(t=>t.id===selectedTeam);if(!team)return;
       const view=C.teamView(data,team.id);
       body.append(el('div',{class:'coach-actions'},[btn('Название',()=>teamForm(team,refresh)),btn(team.archived?'Восстановить команду':'Архивировать',()=>confirm('Изменить статус команды?','Данные сохранятся.',()=>C.saveTeam({...team,archived:!team.archived}),refresh))]));
@@ -334,7 +338,7 @@ export async function renderCoach(root,ctx={}){
           const won=chosen.filter(m=>{const s=C.matchScore(m);return s.ours>s.theirs;}).length;
           const lost=chosen.filter(m=>{const s=C.matchScore(m);return s.ours<s.theirs;}).length;
           stats.replaceChildren(p('Матчей: '+chosen.length+' · побед: '+won+' · поражений: '+lost+' · равный счёт: '+(chosen.length-won-lost)),
-            metricTable(C.summarizeStats(chosen,id?[id]:null)));
+            metricTable(C.summarizeStats(chosen,id?[id]:null)),p('Ассисты: '+format(C.assistTotals(chosen,id||null).assists)+' · баллы (очки + ассисты): '+format(C.assistTotals(chosen,id||null).contribution)));
           const byPlayer=C.indexPlayerRecords(view.trainings);
           const attendanceRows=(id?view.players.filter(p=>p.id===id):view.players).map(player=>{
             const a=C.playerAttendance(player.id,byPlayer.get(player.id)||[]);

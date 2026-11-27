@@ -81,3 +81,34 @@ export function validateLiveData(data){
    replay(d);
  }
 }
+
+/** Synthetic rehearsal: device-local, never enters coach stores, sync or public publishing. */
+export const rehearsalKey='teachapp.live.rehearsal.v1';
+export function makeRehearsal({short=false,now=new Date(),id=globalThis.crypto.randomUUID()}={}){
+ const players=(side,label)=>Array.from({length:10},(_,i)=>({id:'test-'+side+'-'+(i+1),name:label+' '+(i+1),number:i+1}));
+ const ourPlayers=players('a','Игрок А'),awayPlayers=players('b','Игрок Б');
+ const d={id:'test-'+id,teamId:'test-rehearsal',mode:'dual',teamName:'ТЕСТ · Синие',opponent:'ТЕСТ · Красные',competition:'Учебный матч — неофициальный',venue:'Тестовая площадка',
+ date:[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-'),startedAt:now.toISOString(),ourPlayers,awayPlayers,roster:ourPlayers.map(p=>p.id),lineup:ourPlayers.slice(0,6).map(p=>p.id),awayLineup:awayPlayers.slice(0,6).map(p=>p.id),libero:ourPlayers[8].id,libero2:ourPlayers[9].id,scheme:'5-1',substitutionMode:'paired',bestOf:3,target:short?5:25,decider:short?5:15,firstServe:'ours',events:[],revision:0,
+ regulation:{name:short?'Ускоренный тест':'Тестовый регламент',winBy:2,pointCap:null,liberoInterval:'oneRally',ends:'manual',deciderSwitchAt:short?3:8},boardColors:{ours:'blue',theirs:'red'}};
+ replayDetailed(d);return d;
+}
+export function rehearsalStore(storage=globalThis.localStorage,locks=globalThis.navigator?.locks){
+ const read=()=>{const raw=storage.getItem(rehearsalKey);if(raw===null)return null;const d=JSON.parse(raw);
+  assert(d?.teamId==='test-rehearsal'&&typeof d.id==='string'&&d.id.startsWith('test-')&&Number.isSafeInteger(d.revision)&&d.revision>=0,'Некорректный тестовый черновик');replayDetailed(d);return d;};
+ const write=d=>{replayDetailed(d);storage.setItem(rehearsalKey,JSON.stringify(d));return d;};
+ const current=(id,revision)=>{const d=read();assert(d&&d.id===id&&d.revision===revision,'Тестовый матч изменился. Откройте его заново');return d;};
+ const locked=fn=>locks?.request?locks.request(rehearsalKey,fn):Promise.resolve().then(fn);
+ return {read,
+  start:options=>locked(()=>{assert(!read(),'Сначала удалите или продолжите тестовый матч');return write(makeRehearsal(options));}),
+  change:(id,revision,event)=>locked(()=>{const d=current(id,revision),next=event===null?undoEvent(d):appendEvent(d,event);return write({...next,revision:d.revision+1});}),
+  colors:(id,revision,colors,logos)=>locked(()=>{const d=current(id,revision);return write({...d,boardColors:{...colors},boardLogos:{...logos},revision:d.revision+1});}),
+  discard:(id,revision)=>locked(()=>{current(id,revision);storage.removeItem(rehearsalKey);}),
+  finish:(id,revision)=>locked(()=>{const d=current(id,revision),state=replayDetailed(d);assert(state.finished,'Сначала завершите матч по партиям');return {id:d.id,teamId:d.teamId,date:d.date,opponent:d.opponent,competition:d.competition,sets:state.sets,roster:d.roster,stats:state.stats,detail:d};})
+ };
+}
+
+// Only the current tab's navigation hint; the event log remains authoritative.
+export const liveResumeKey='teachapp.live.resume.v1';
+export function readLiveResume(storage){try{const v=JSON.parse((storage??globalThis.sessionStorage).getItem(liveResumeKey)||'null');return v&&typeof v.id==='string'&&v.id.length>0&&v.id.length<=200&&typeof v.teamId==='string'&&v.teamId.length>0&&v.teamId.length<=200&&typeof v.token==='string'&&v.token.length<=200&&typeof v.rehearsal==='boolean'&&v.rehearsal===(v.teamId==='test-rehearsal')?v:null;}catch{return null;}}
+export function rememberLive(d,rehearsal,storage){try{const v={id:d.id,teamId:d.teamId,rehearsal:!!rehearsal,token:globalThis.crypto.randomUUID()};(storage??globalThis.sessionStorage).setItem(liveResumeKey,JSON.stringify(v));return v;}catch{return null;}}
+export function clearLiveResume(marker,storage){if(!marker)return;try{const s=storage??globalThis.sessionStorage;if(readLiveResume(s)?.token===marker.token)s.removeItem(liveResumeKey);}catch{}}

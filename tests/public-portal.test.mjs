@@ -63,3 +63,12 @@ test('Schedule keeps past unpublished dates separate and does not let old fixtur
  const g=scheduleSections(data,now);assert.deepEqual(g.past.map(x=>x.id),['past']);assert.deepEqual(g.future.map(x=>x.id),['next','later']);
  assert.equal(portalState(data,now).next.id,'next');
 });
+
+test('viewer freshness separates transport and age; public sorting is immutable and metric-specific',async()=>{
+ const {viewerFreshness,publicStatRows}=await import('../js/public-portal.js');const data={updatedAt:100000,match:{status:'live'}};
+ assert.equal(viewerFreshness(data,{connected:true,awaitingSnapshot:false,now:100001}).fresh,true);
+ const stale=viewerFreshness(data,{connected:true,awaitingSnapshot:false,now:191000});assert.equal(stale.transport,true);assert.equal(stale.fresh,false);assert.equal(stale.age,91);
+ assert.equal(viewerFreshness(data,{connected:true,awaitingSnapshot:true,now:100001}).fresh,false);
+ assert.equal(viewerFreshness(data,{connected:true,awaitingSnapshot:false,now:1000}).clockMismatch,true);
+ const rows=[{side:'ours',number:1,points:5,ace:1},{side:'ours',number:2,points:3,ace:3},{side:'theirs',number:1,points:8,ace:8}];const original=structuredClone(rows);assert.deepEqual(publicStatRows(rows,'ours','ace').map(r=>r.number),[2,1]);assert.deepEqual(rows,original);
+});

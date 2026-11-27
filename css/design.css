@@ -527,3 +527,16 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visi
 
 /* Selection never changes column geometry or sticky positioning. */
 .journal td.cell.journal-selected{outline:2px solid var(--accent);outline-offset:-3px;background:var(--card-2)}.journal td.cell.journal-selected .cell-inner{box-shadow:inset 0 0 0 2px var(--accent);border-radius:5px}
+
+/* LIVE controls: large targets, wrapping names, no horizontal overflow on phones. */
+.vp-sub-grid .btn,.vp-player-overlay [data-sub-out]{min-height:56px;min-width:0;white-space:normal;overflow-wrap:anywhere}
+.vp-player-overlay [data-sub-out] strong{font-size:13px;max-width:100%}
+.vp-player-overlay [data-libero-action]{min-height:48px;white-space:normal;overflow-wrap:anywhere}
+.vp-bench-open{min-height:48px}
+
+.vp-streak-bars{display:grid;gap:7px;min-width:0}
+.vp-streak-row{display:grid;grid-template-columns:minmax(64px,auto) minmax(34px,1fr) minmax(0,1fr);align-items:center;gap:6px;font-size:12px}
+.vp-streak-row strong{overflow-wrap:anywhere;font-size:12px}
+.vp-streak-track{height:9px;border-radius:5px;background:var(--sep);overflow:hidden}
+.vp-streak-track span{display:block;height:100%;border-radius:5px;background:var(--vp-ours-start,#2265B8)}
+.vp-streak-track .theirs{background:var(--vp-theirs-start,#C33E50)}
