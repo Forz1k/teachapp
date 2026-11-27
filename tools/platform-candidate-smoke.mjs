@@ -9,7 +9,10 @@ import {setTimeout as sleep} from 'node:timers/promises';
 import {DatabaseSync} from 'node:sqlite';
 import {digestToken} from '../server/cloudflare-protocol.mjs';
 const [bundle]=process.argv.slice(2),entries=(await readdir(bundle)).filter(n=>/\.(m?js)$/.test(n));assert.equal(entries.length,1);
-const script=await readFile(resolve(bundle,entries[0]),'utf8'),dir=await mkdtemp(join(tmpdir(),'teachapp-platform-candidate-'));
+const originalScript=await readFile(resolve(bundle,entries[0]),'utf8'),dir=await mkdtemp(join(tmpdir(),'teachapp-platform-candidate-'));
+// Diagnostic only: ephemeral synthetic credentials and intercepted endpoint. Never used to authorize integration.
+const script=originalScript.replace(/console\.warn\((["'])Platform provider response unknown:\1,\s*category\)/, 'console.warn("Synthetic transport exception:", e.name, e.message)');
+assert.notEqual(script,originalScript,'Diagnostic instrumentation anchor');
 const apiOrigin='https://platform-api.example.invalid',origin='https://platform-ui.example.invalid',issuer='https://identity.example.invalid/',audience='teachapp-candidate',clientId='candidate-test';
 const random=()=>Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex'),root=random(),backup=random(),storage=random();
 const signing=await crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']);
