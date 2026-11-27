@@ -31,10 +31,10 @@ export function classifyPushResponseLab(response,{now,ttl}){
  if(status>=500)return {outcome:'unknown',retryAfter:null};
  return {outcome:'rejected',retryAfter:null};
 }
-export async function deliverGenericPushLab({endpoint,receiverPublic,auth,keyPair,now,expiresAt,readClock=()=>now,stillCurrent=()=>false,transport}){
+export async function deliverGenericPushLab({endpoint,receiverPublic,auth,keyPair,now,expiresAt,sendBefore=expiresAt,readClock=()=>now,stillCurrent=()=>false,transport}){
  check(typeof endpoint==='string'&&endpointPattern.test(endpoint),'Only synthetic endpoint is allowed');
  check(typeof transport==='function','Injected synthetic transport required');
- check(Number.isSafeInteger(now)&&now>=0&&Number.isSafeInteger(expiresAt),'Invalid signal lifetime');
+ check(Number.isSafeInteger(now)&&now>=0&&Number.isSafeInteger(expiresAt)&&Number.isSafeInteger(sendBefore)&&sendBefore<=expiresAt,'Invalid signal lifetime');
  check(typeof readClock==='function'&&typeof stillCurrent==='function','Invalid guard');
  // Capture inputs before the first await, including the pair container.
  check(receiverPublic instanceof Uint8Array&&receiverPublic.length===65&&auth instanceof Uint8Array&&auth.length===16,'Invalid subscription key');
@@ -42,15 +42,15 @@ export async function deliverGenericPushLab({endpoint,receiverPublic,auth,keyPai
  let observed=now;
  const clock=()=>{try{const value=readClock();if(!Number.isSafeInteger(value)||value<observed)return null;observed=value;return value;}catch{return null;}};
  const allowed=async()=>{try{return await stillCurrent()===true;}catch{return false;}};
- if(expiresAt<=now||!await allowed())return cancelled();
+ if(expiresAt<=now||sendBefore<=now||!await allowed())return cancelled();
  const started=clock();
- if(started===null||expiresAt<=started)return cancelled();
+ if(started===null||expiresAt<=started||sendBefore<=started)return cancelled();
  const authorization=await vapidAuthorizationLab({endpoint,keyPair,now:started,ttl:Math.min(600,expiresAt-started)});
  const body=await sealGenericPushLab({receiverPublic,auth});
  if(!await allowed())return cancelled();
  // No asynchronous step between this final time fence and the call.
  const sentAt=clock();
- if(sentAt===null||sentAt>=expiresAt||sentAt>=authorization.expiresAt)return cancelled();
+ if(sentAt===null||sentAt>=expiresAt||sentAt>=sendBefore||sentAt>=authorization.expiresAt)return cancelled();
  const ttl=Math.min(86400,expiresAt-sentAt);
  const headers={'Authorization':authorization.authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream','TTL':String(ttl),'Urgency':'normal','Topic':'teachapp-workspace-update'};
  try{
