@@ -1,7 +1,7 @@
 import './firebase-portal-emulator.mjs';
 import assert from 'node:assert/strict';
 import {readMediaVersion,writePublicMedia,removePublicMedia,fetchPublicMedia} from '../js/public-media.js';
-import {captureFrozenArchiveV3Backup,executeFrozenArchiveV3Copy,inspectArchiveV3Control,transitionArchiveV3} from '../js/public-archive.js';
+import {captureFrozenArchiveV3Backup,executeFrozenArchiveV3Copy,inspectArchiveV3Control,transitionArchiveV3,capturePublicMigrationBundle,verifyPublicMigrationBundle,preparePublicMigrationBundle,copyPublicMigrationBundle,activatePublicMigrationBundle} from '../js/public-archive.js';
 const user=async()=>{const r=await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:crypto.randomUUID()+'@example.test',password:crypto.randomUUID(),returnSecureToken:true})});assert.equal(r.status,200);return r.json();};
 const owner=await user(),other=await user(),page='publicTeams/'+owner.localId+'/team',archive='publicMatchArchive/'+owner.localId+'/team';
 async function call(method,path,value,token,expected,params={},headers={}){const u=new URL('http://127.0.0.1:9000/'+(path?path+'.json':'.json'));u.searchParams.set('ns','demo-teachapp-default-rtdb');for(const [k,v] of Object.entries(params))u.searchParams.set(k,v);if(token&&token!=='owner')u.searchParams.set('auth',token);const r=await fetch(u,{method,headers:{...headers,...(token==='owner'?{Authorization:'Bearer owner'}:{})},...(value===undefined?{}:{body:JSON.stringify(value)})});const data=await r.json();assert.equal(r.status,expected,method+' '+path+' '+JSON.stringify(data).slice(0,200));return {data,etag:r.headers.get('ETag')};}
@@ -63,6 +63,8 @@ await call('PATCH','',{[control]:{phase:'frozen',generation:1},[newPath+'/r0']:v
 const address='https://demo-teachapp-default-rtdb.firebaseio.com/'+parent+'.json';
 const adapter=(url,opts)=>{const u=new URL(url),local=new URL('http://127.0.0.1:9000'+u.pathname+u.search);local.searchParams.set('ns','demo-teachapp-default-rtdb');return fetch(local,opts);};
 const controlOpts={confirmed:true,getToken:async()=>owner.idToken,fetcher:adapter};
+const migrationMedia='publicMedia/'+owner.localId+'/'+slug;await call('PUT',migrationMedia,publicData,owner.idToken,200);
+await call('PATCH','',{[control]:{phase:'frozen',generation:1},[migrationMedia]:{...publicData,news:[]}},owner.idToken,401);
 const initialState=await inspectArchiveV3Control(address,controlOpts);assert.deepEqual(initialState,{phase:'legacy',generation:0});
 assert.deepEqual(await transitionArchiveV3(address,'freeze',{...controlOpts,expected:initialState}),{phase:'frozen',generation:1});
 await call('PUT',oldPath+'/'+key(1),{...row(1),opponent:'Changed'},owner.idToken,401);
@@ -86,19 +88,25 @@ await call('PUT',newPath+'/r2',marked(2,1),owner.idToken,401);
 await call('PUT',oldPath+'/'+key(0),row(0),owner.idToken,200);
 assert.deepEqual(await transitionArchiveV3(address,'freeze',{...controlOpts,expected:{phase:'legacy',generation:2}}),{phase:'frozen',generation:3});
 await call('PUT',newPath+'/r2',marked(2,1),owner.idToken,401);
-const backup=await captureFrozenArchiveV3Backup(address,{fetcher:adapter});
+await call('PUT',migrationMedia,{...publicData,news:[]},owner.idToken,401);await call('DELETE',migrationMedia,undefined,owner.idToken,401);
+const bundle=await capturePublicMigrationBundle(address,controlOpts),bundleReport=await verifyPublicMigrationBundle(bundle);assert.equal(bundleReport.news,1);assert.equal(bundleReport.tournament,true);assert.equal(bundleReport.generation,3);
+const altered=structuredClone(bundle);altered.media.value.news[0].title='tampered';await assert.rejects(verifyPublicMigrationBundle(altered),/Контрольная сумма/);
+const backup=bundle.archive;
 await assert.rejects(transitionArchiveV3(address,'activate',{...controlOpts,expected:{phase:'frozen',generation:3},backup}),/не совпадают/);
 assert.deepEqual(await inspectArchiveV3Control(address,controlOpts),{phase:'frozen',generation:3});
 assert.equal(backup.source.length,45);assert.equal(backup.destination.length,1);
 const opts={confirmed:true,getToken:async()=>owner.idToken,fetcher:adapter,batchLimit:20};
-const firstCopy=await executeFrozenArchiveV3Copy(address,backup,opts);assert.equal(firstCopy.copied,20);assert.equal(firstCopy.remaining,24);
+const firstCopy=await copyPublicMigrationBundle(address,bundle,opts);assert.equal(firstCopy.copied,20);assert.equal(firstCopy.remaining,24);
 const secondCopy=await executeFrozenArchiveV3Copy(address,backup,{...opts,batchLimit:50});assert.equal(secondCopy.copied,24);assert.equal(secondCopy.complete,true);
 const retryCopy=await executeFrozenArchiveV3Copy(address,backup,opts);assert.equal(retryCopy.copied,0);assert.equal(retryCopy.complete,true);
 const migrated=[];let cursor=null;
 for(;;){const page=(await call('GET',newPath,undefined,null,200,{orderBy:'"sortKey"',limitToLast:cursor?'41':'40',...(cursor?{endAt:JSON.stringify(cursor)}:{})})).data;const rows=Object.values(page||{}).sort((a,b)=>b.sortKey.localeCompare(a.sortKey));if(cursor)assert.equal(rows.shift()?.sortKey,cursor);migrated.push(...rows);if(rows.length<40)break;cursor=rows.at(-1).sortKey;}
 assert.equal(migrated.length,45);for(const v of migrated){const i=Number(v.id.slice(1));assert.deepEqual(v,marked(i,i===1?1:3));}
 await assert.rejects(transitionArchiveV3(address,'activate',{...controlOpts,expected:{phase:'frozen',generation:1},backup}),/Поколение/);
-assert.deepEqual(await transitionArchiveV3(address,'activate',{...controlOpts,expected:{phase:'frozen',generation:3},backup}),{phase:'v3',generation:4});
+assert.equal((await preparePublicMigrationBundle(address,bundle,controlOpts)).complete,true);
+await call('PATCH','',{[control]:{phase:'v3',generation:4},[migrationMedia]:{...publicData,news:[]}},owner.idToken,401);
+assert.deepEqual(await activatePublicMigrationBundle(address,bundle,{...controlOpts,expected:{phase:'frozen',generation:3}}),{phase:'v3',generation:4});
+assert.deepEqual((await call('GET',migrationMedia,undefined,null,200)).data,publicData);await call('PUT',migrationMedia,{...publicData,news:[{...news,title:'After cutover'}]},owner.idToken,200);console.log('RC7 PUBLIC MIGRATION PASS: combined archive/media snapshot, frozen media fence, atomic multi-location rejection, copy and activation, media unchanged through cutover.');
 await call('PUT',oldPath+'/'+key(0),row(0),owner.idToken,401);await call('PUT',control,{phase:'legacy',generation:5},owner.idToken,401);
 await call('PUT',newPath+'/r999',marked(999,3),owner.idToken,401);
 await call('PUT',newPath+'/r1',v3row({...row(1),opponent:'Corrected'}),owner.idToken,200);

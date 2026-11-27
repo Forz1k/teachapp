@@ -1,5 +1,6 @@
 // Public archive v2: score-only projection. Never stores a private match record.
 import {viewerPageLink,resultOutcome} from './public-portal.js';
+import {mediaTarget,readMediaVersion,createMediaBackup,verifyMediaBackup} from './public-media.js';
 const id=/^[A-Za-z0-9_-]{1,100}$/,key=/^\d{16}_[A-Za-z0-9_-]{1,100}$/;
 const validScore=x=>Number.isInteger(x)&&x>=0&&x<=9999;
 export function archiveProjection(r){
@@ -389,4 +390,51 @@ export async function transitionArchiveV3(address,action,{expected,backup,confir
  const after=await readMigrationControl(canonical,getToken,fetcher);
  if(after.state.phase!==next.phase||after.state.generation!==next.generation)throw Error('Не удалось подтвердить переход миграции');
  return after.state;
+}
+
+// RC7: one independently saved public-only bundle for the frozen archive and
+// media center. Candidate rules fence media updates through both old/new
+// generation states. Existing score-only primitives remain available for
+// review and old backup inspection, not the operator's activation path.
+const publicMigrationFormat='teachapp-public-migration-rc7-1';
+async function readMigrationMedia(address,{getToken,fetcher=fetch}={}){
+ if(typeof getToken!=='function')throw Error('Требуется авторизация владельца');
+ const token=await getToken();if(typeof token!=='string'||!token)throw Error('Требуется авторизация владельца');
+ return createMediaBackup(address,await readMediaVersion(mediaTarget(address),fetcher,token));
+}
+export async function capturePublicMigrationBundle(address,opts={}){
+ const first=await inspectArchiveV3Control(address,opts);
+ if(first.phase!=='frozen')throw Error('Требуется замороженный архив и медиацентр');
+ const media=await readMigrationMedia(address,opts),archive=await captureFrozenArchiveV3Backup(address,opts),again=await readMigrationMedia(address,opts),last=await inspectArchiveV3Control(address,opts);
+ if(last.phase!=='frozen'||last.generation!==first.generation||archive.generation!==first.generation||media.sha256!==again.sha256)throw Error('Архив или медиацентр изменились во время резервирования');
+ const payload={format:publicMigrationFormat,archive,media};
+ return {...payload,sha256:await migrationChecksum({format:payload.format,archive:archive.sha256,media:media.sha256})};
+}
+export async function verifyPublicMigrationBundle(bundle){
+ if(!exactArchiveFields(bundle,['format','archive','media','sha256'])||bundle.format!==publicMigrationFormat||typeof bundle.sha256!=='string'||!/^[a-f0-9]{64}$/.test(bundle.sha256))throw Error('Требуется совместная копия архива и медиацентра RC7');
+ const archive=await verifyFrozenArchiveV3Backup(bundle.archive),media=await verifyMediaBackup(archive.address,bundle.media);
+ if(bundle.sha256!==await migrationChecksum({format:bundle.format,archive:bundle.archive.sha256,media:bundle.media.sha256}))throw Error('Контрольная сумма общей копии не совпадает');
+ return {address:archive.address,generation:archive.generation,sourceCount:archive.sourceCount,destinationCount:archive.destinationCount,news:media.value.news.length,tournament:!!media.value.tournament,requiresReview:archive.requiresReview};
+}
+export async function preparePublicMigrationBundle(address,bundle,opts={}){
+ const saved=await verifyPublicMigrationBundle(bundle),canonical=archiveTarget(address).replace('/publicMatchArchive/','/publicTeams/');
+ if(saved.address!==canonical)throw Error('Копия принадлежит другому порталу');
+ const before=await inspectArchiveV3Control(canonical,opts);
+ if(before.phase!=='frozen'||before.generation!==saved.generation)throw Error('Поколение миграции изменилось');
+ const plan=await prepareFrozenArchiveV3Copy(canonical,bundle.archive,opts),media=await readMigrationMedia(canonical,opts),after=await inspectArchiveV3Control(canonical,opts);
+ if(media.sha256!==bundle.media.sha256)throw Error('Медиацентр изменился после резервирования');
+ if(after.phase!=='frozen'||after.generation!==saved.generation)throw Error('Поколение миграции изменилось');
+ return {...plan,news:saved.news,tournament:saved.tournament,bundleSha256:bundle.sha256};
+}
+export async function copyPublicMigrationBundle(address,bundle,opts={}){
+ if(opts.confirmed!==true)throw Error('Требуется явное подтверждение переноса');
+ await preparePublicMigrationBundle(address,bundle,opts);
+ const result=await executeFrozenArchiveV3Copy(address,bundle.archive,opts);
+ await preparePublicMigrationBundle(address,bundle,opts);return result;
+}
+export async function activatePublicMigrationBundle(address,bundle,opts={}){
+ if(opts.confirmed!==true)throw Error('Требуется явное подтверждение переноса');
+ const plan=await preparePublicMigrationBundle(address,bundle,opts);
+ if(!plan.complete)throw Error('Архивы не совпадают полностью; активация запрещена');
+ return transitionArchiveV3(address,'activate',{...opts,backup:bundle.archive});
 }

@@ -152,6 +152,20 @@ export async function verifyCurrentEncryptedRecoveryCopy({data,file,backupPasswo
  check(typeof backupPassword==='string'&&backupPassword.length>=12&&backupPassword.length<=1024,'Независимый пароль копии от 12 символов');
  const actual=await readRecovery(file,backupPassword);check(snapshotIdentity(actual)===snapshotIdentity(data),'Независимая копия устройства устарела. Создайте новую.');return true;
 }
+/** Read-only authenticated recovery screening. No plaintext, endpoint, IDs or
+ * credentials in the returned aggregate. The actual activation repeats all checks. */
+export async function inspectEncryptedRecoveryCopy({file,backupPassword,checkpointPasswords={},current=null,stillAllowed=()=>true}){
+ const guard=()=>check(stillAllowed(),'Проверка копии отменена');guard();
+ const data=await readRecovery(file,backupPassword);guard();
+ await checkCheckpoints(data,checkpointPasswords);guard();
+ if(current!==null){checkSource(current);check(snapshotIdentity(current)===snapshotIdentity(data),'Независимая копия устройства устарела. Создайте новую.');}
+ const {portable,device}=splitDeviceSnapshot(data);
+ return Object.freeze({records:names.reduce((sum,n)=>sum+portable[n].length,0),checkpoints:device.filter(r=>['sync-checkpoint-school','sync-checkpoint-coach'].includes(r.id)).length,pendingMigrations:device.filter(r=>r.id.startsWith('sync-checkpoint-migration-')).length,currentVerified:current!==null,authenticated:true,activationAllowed:false});
+}
+export async function inspectNativeRecoveryCopy(options){
+ assertNoLostEncryptedSource();noPersistentSyncCredentials();
+ return inspectEncryptedRecoveryCopy({...options,current:await sourceData()});
+}
 /** Recover only into a genuinely absent database in a new browser profile.
  * Never delete/overwrite an existing v10, v11 or unknown database. */
 export async function recoverIntoEmptyEncryptedStorage({passwords,backupPassword,file,checkpointPasswords={},confirmed=false,stillAllowed=()=>true}){

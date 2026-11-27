@@ -295,7 +295,7 @@
       "$uid": {
         "$slug": {
           ".read": "root.child('publicTeams').child($uid).child($slug).exists() || (auth != null && auth.uid === $uid && root.child('publishers').child(auth.uid).val() === true)",
-          ".write": "auth != null && auth.uid === $uid && root.child('publishers').child(auth.uid).val() === true && (!newData.exists() || (root.child('publicTeams').child($uid).child($slug).exists() && newData.parent().parent().parent().child('publicTeams').child($uid).child($slug).exists()))",
+          ".write": "auth != null && auth.uid === $uid && root.child('publishers').child(auth.uid).val() === true && (!newData.exists() || (root.child('publicTeams').child($uid).child($slug).exists() && newData.parent().parent().parent().child('publicTeams').child($uid).child($slug).exists())) && root.child('archiveMigration').child($uid).child($slug).child('phase').val() !== 'frozen' && newData.parent().parent().parent().child('archiveMigration').child($uid).child($slug).child('phase').val() !== 'frozen'",
           ".validate": "newData.hasChildren(['schema'])",
           "schema": {
             ".validate": "newData.val() === 1"

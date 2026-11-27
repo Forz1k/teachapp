@@ -1,6 +1,6 @@
 # TeachApp: контрольная интеграция до 8.0
 
-Интеграционная ветка объединяет контрольные пакеты 6.0.1–7.3, стабильные LIVE 6.0.3–6.0.6 и кандидаты 7.4–7.5. Версия приложения 8.0.0-rc.5 — неопубликованный кандидат; ни один незавершённый пакет не объявляется релизом. Основная ветка остаётся 6.0.6.
+Интеграционная ветка объединяет контрольные пакеты 6.0.1–7.3, стабильные LIVE 6.0.3–6.0.7 и кандидаты 7.4–7.5. Версия приложения 8.0.0-rc.7 — неопубликованный кандидат; ни один незавершённый пакет не объявляется релизом. Основная ветка остаётся 6.0.7.
 
 | Область | Контрольный пакет | Условие полного завершения |
 | --- | --- | --- |
@@ -113,3 +113,12 @@ RC5 preparation (still rc.4): scoped seasonal match analytics avoids unrelated r
 ## RC5 — функциональный кандидат
 
 Scope of RC5 is frozen for candidate review: the earlier RC5 preparation checkpoints plus view-local video marker projection, provenance/notes filters and per-set coverage; transient Studio layer alignment and optional pointer movement; indexed season ranges and exact-team reads. No new persisted schema or server switch. Existing skill coverage and periodization remain available; physical playback/clip, skill/season, Studio export and large-archive performance acceptance are not closed. Further decomposition is a remaining engineering task, not a claim that every large module has been split. Version is synchronized across package, lock, service worker and app. RC5 is a candidate for isolated review, not stable release authorization. RC6 proposed scope: production identity, authorization, operational rate-limit/recovery and background push; subsequent migration and acceptance gates remain mandatory. OBS remains excluded.
+
+## RC7 — миграции, совместимость и восстановление
+
+Кандидат 8.0.0-rc.7. Стабильный исходник 6.0.7 закреплён по SHA `1017f187a3cc8c26b46e4936f9c60773b4512783`. Перенос новых LIVE-событий и шаблонов сохраняет прежние документы; WebKit репетирует фактическое обновление и обратное обновление v10, включая последующие записи и независимое восстановление. Нельзя возвращать старую версию поверх уже активированного v11/Delta v3. RC7 собирается отдельным stacked PR к RC6; до подтверждения итогового RC6 не сливать.
+
+1. **Локальное хранилище.** Перед v11 открыть сохранённый файл через отдельную кнопку проверки копии. Аутентификация checkpoint обязательна; сверка источника выполняется повторно непосредственно при атомарной записи. Не запускать на рабочем профиле до приёмки. После активации новые записи защищаются актуальной независимой копией; восстановление — только в отдельный пустой профиль, с новыми независимыми паролями. Не удалять базу и не откатывать бинарник поверх v11.
+2. **Delta.** Зафиксировать точную ревизию источника каждого контура, проверить копию и серверный fence; перенести в изолированное назначение, проверить привязки v11 и новую независимую копию. До активации доступны signed seal/rollback и возврат только после проверки всех устройств. После активации возврат без согласования новых данных запрещён. Проверка в local workerd не выдаёт разрешение на production.
+3. **Firebase.** В отдельном контуре с candidate rules заморозить архив и медиа. Сохранить и повторно выбрать единую публичную JSON-копию с обоими архивами и медиа. Подтвердить полное совпадение, выполнить ограниченные create-only пакеты; перед активацией повторная сверка поколения и медиа. Отмена заморозки доступна до V3, после активации обратного переключения нет. Не развертывать правила на production без отдельной приёмки.
+4. **Приёмка.** После слияния RC6 и RC7 повторить все exact-head workflow на интеграционной ветке, проверить артефакты, все 18 ручных актов и отдельные эксплуатационные миграции. Зелёный stacked PR не является готовностью 8.0 stable. OBS исключён.

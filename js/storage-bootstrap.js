@@ -1,6 +1,6 @@
 /* Determine the real storage mode before the normal application starts. */
 import {configureEncryptedStorage} from './db.js';
-import {probeStorageMode,openEncryptedStorage,prepareNativeEncryptionCopy,activateNativeEncryption,recoverIntoEmptyEncryptedStorage,migrationFileLimit,legacySyncCredentialKeys,hasPersistentSyncCredentials,forgetLegacySyncCredentials} from './encrypted-storage.js';
+import {probeStorageMode,openEncryptedStorage,prepareNativeEncryptionCopy,inspectEncryptedRecoveryCopy,inspectNativeRecoveryCopy,activateNativeEncryption,recoverIntoEmptyEncryptedStorage,migrationFileLimit,legacySyncCredentialKeys,hasPersistentSyncCredentials,forgetLegacySyncCredentials} from './encrypted-storage.js';
 import {createOwnerSessionLifecycle,scrubPrivateDocument} from './vault-owner-lifecycle.js';
 import {clearSessionSyncCredentials} from './sync-credential-storage.js';
 const root=document.getElementById('app');
@@ -13,7 +13,7 @@ function values(fields){const result=Object.fromEntries(Object.entries(fields).m
 function clearSecrets(v){if(v)for(const k of Object.keys(v))v[k]=undefined;}
 const resetURL=()=>{const u=new URL(location.href);u.searchParams.delete('secure-migration');u.searchParams.delete('secure-recovery');location.replace(u.href);};
 function migrationScreen(recovery=false){
- const n=panel(recovery?'Восстановление защищённой базы · RC3':'Шифрование базы · RC3',recovery?'Только новый профиль без базы TeachApp. Существующее хранилище никогда не заменяется.':'Экспериментальный перенос на v11. Сохраните независимую копию вне браузера и выберите тот же файл. Не используйте рабочие данные до независимой приёмки. Старые версии не смогут открыть v11.');
+ const n=panel(recovery?'Восстановление защищённой базы · RC7':'Шифрование базы · RC7',recovery?'Только новый профиль без базы TeachApp. Существующее хранилище никогда не заменяется.':'Экспериментальный перенос на v11. Сохраните независимую копию вне браузера и выберите тот же файл. Не используйте рабочие данные до независимой приёмки. Старые версии не смогут открыть v11.');
  const bp=secret(n,'Независимый пароль копии (от 12 символов)','backup');
  const status=el('p','Данные не изменены.',{role:'status'});let busy=false,active=true;
  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'&&busy)active=false;});window.addEventListener('pagehide',()=>{active=false;});
@@ -26,14 +26,21 @@ function migrationScreen(recovery=false){
  const file=el('input',null,{type:'file',accept:'.json,application/json','aria-label':'Сохранённая независимая копия'});n.append(file);
  const fields=Object.fromEntries(scopes.map(([k,label])=>[k,secret(n,'Новый пароль · '+label,k)]));
  const cp=Object.fromEntries(scopes.slice(0,2).map(([k,label])=>[k,secret(n,'Пароль существующей синхронизации · '+label+' (если есть контрольная точка)','checkpoint-'+k)]));
+ const verify=button('Проверить сохранённую копию',async()=>{
+  if(busy||!active||!file.files[0]||file.files[0].size>migrationFileLimit){status.textContent='Выберите допустимый сохранённый файл.';return;}
+  busy=true;verify.disabled=download.disabled=activate.disabled=true;const checkpointPasswords=values(cp);let backupPassword=bp.value;bp.value='';
+  try{const content=await file.files[0].text();if(!active)return;const report=await (recovery?inspectEncryptedRecoveryCopy:inspectNativeRecoveryCopy)({file:content,backupPassword,checkpointPasswords,stillAllowed:()=>active&&document.visibilityState==='visible'});if(active)status.textContent='Копия проверена: '+report.records+' записей, контрольных точек '+report.checkpoints+', незавершённых переносов '+report.pendingMigrations+'. '+(report.currentVerified?'Совпадает с текущей базой. ':'')+'База не изменена. Это не разрешение на перенос.';}
+  catch(e){if(active)status.textContent='Проверка не пройдена: '+e.message;}
+  finally{clearSecrets(checkpointPasswords);backupPassword=undefined;busy=false;verify.disabled=download.disabled=activate.disabled=false;}
+ });n.append(verify);
  const confirm=el('input',null,{type:'checkbox'}),label=el('label',' Я сохранил независимую копию и понимаю, что старые версии не откроют v11.');label.prepend(confirm);n.append(label,status);
  const activate=button(recovery?'Восстановить в пустой профиль':'Перенести в зашифрованную базу',async()=>{
   if(busy||!active||!confirm.checked||!file.files[0]){status.textContent='Выберите сохранённую копию и подтвердите действие.';return;}
   if(file.files[0].size>migrationFileLimit){status.textContent='Файл слишком большой.';return;}
-  busy=true;activate.disabled=download.disabled=true;const passwords=values(fields),checkpointPasswords=values(cp);let backupPassword=bp.value;bp.value='';
+  busy=true;activate.disabled=download.disabled=verify.disabled=true;const passwords=values(fields),checkpointPasswords=values(cp);let backupPassword=bp.value;bp.value='';
   try{const content=await file.files[0].text();if(!active)return;await (recovery?recoverIntoEmptyEncryptedStorage:activateNativeEncryption)({passwords,backupPassword,file:content,checkpointPasswords,confirmed:true,stillAllowed:()=>active&&document.visibilityState==='visible'});resetURL();}
   catch(e){status.textContent='Операция не подтверждена: '+e.message+' Не очищайте данные.';}
-  finally{clearSecrets(passwords);clearSecrets(checkpointPasswords);backupPassword=undefined;busy=false;activate.disabled=download.disabled=false;}
+  finally{clearSecrets(passwords);clearSecrets(checkpointPasswords);backupPassword=undefined;busy=false;activate.disabled=download.disabled=verify.disabled=false;}
  });
  n.append(activate,button('Вернуться без изменений',()=>{if(!busy)resetURL();}));
 }

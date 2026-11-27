@@ -24,11 +24,13 @@ function court(players,lineup,libero,liberoFor,serve,onPick){
       el('strong',{text:'Зона '+z}),el('span',{text:name(players,id)}),id===libero?el('small',{text:'Либеро'}):null,z===1&&serve==='ours'?el('small',{text:'Подача'}):null]);
    })]);
 }
-function lineupFields(players,initial=[],libero=null){
+function lineupFields(players,initial=[],libero=null,libero2=null,template=false){
  const lib=select([['','Без либеро'],...players.map(p=>[p.id,name(players,p.id)])],libero||'');
- const picker=lineupPicker(players,initial,{excluded:lib.value?[lib.value]:[]});
- lib.onchange=()=>picker.setExcluded(lib.value?[lib.value]:[]);
- return {node:el('div',{class:'vb-stack'},[picker.node,field('Либеро (не входит в стартовую шестёрку)',lib)]),values:()=>({lineup:picker.get(),libero:lib.value||null})};
+ const lib2=select([['','Без второго либеро'],...players.map(p=>[p.id,name(players,p.id)])],libero2||'');
+ const excluded=()=>[lib.value,template?lib2.value:''].filter(Boolean);
+ const picker=lineupPicker(players,initial,{excluded:excluded()});
+ lib.onchange=lib2.onchange=()=>{if(!lib.value||lib2.value===lib.value)lib2.value='';picker.setExcluded(excluded());};
+ return {node:el('div',{class:'vb-stack'},[picker.node,field('Либеро (не входит в стартовую шестёрку)',lib),template?field('Второй либеро',lib2):null]),values:()=>({lineup:picker.get(),libero:lib.value||null,...(template?{libero2:lib2.value||null}:{})})};
 }
 import {openLineupAssistant,openTacticBoards} from './tactics.js';
 import {openPreMatchDossier} from './coach-opponents.js';
@@ -48,9 +50,10 @@ export async function openMatchCenter(team,refresh,options={}){
  });
  const portal=portalInfo(team.id).data,fixtures=portal.schedule.filter(x=>localDay(x.startAt)===todayIso()&&x.id!==portal.match?.scheduledId&&!data.coachLive.some(d=>d.teamId===team.id&&d.date===todayIso()&&d.opponent.trim().toLocaleLowerCase('ru')===x.opponent.trim().toLocaleLowerCase('ru')));
  if(fixtures.length)body.append(el('section',{class:'card-block vb-stack'},[el('h3',{text:'Сегодня по расписанию'}),...fixtures.map(f=>el('div',{class:'vb-stack'},[p(new Intl.DateTimeFormat('ru-RU',{timeStyle:'short'}).format(f.startAt)+' · '+f.opponent),btn('Подготовить матч · '+f.opponent,()=>prepare(null,f),'primary wide')]))]));
- body.append(check,btn('Тестовый LIVE-матч',openRehearsal,'wide'),btn('Предматчевое досье',()=>openPreMatchDossier(team,back),'wide'),btn('+ Новый подробный матч',()=>prepare(),'primary wide'),btn('Прежний режим матча',()=>setup(team,active,null,refresh),'wide'),btn('+ Сохранить расстановку',()=>setup(team,active,{preset:true},refresh),'wide'),btn('Помощник состава',()=>openFromCenter('dossier',fresh=>openLineupAssistant(fresh.coachTeams[0],C.teamView(fresh,team.id),back)),'wide'),btn('Тактическая доска',()=>openTacticBoards(team),'wide'),btn('Публичная страница команды',()=>openPublicPortal(team,back),'wide'),btn('Импорт защищённого черновика',()=>openDraftImport(team,back),'wide'));
- for(const x of data.coachLineups.filter(x=>x.teamId===team.id))body.append(el('div',{class:'card-block vb-stack'},[p(x.name+' · '+V.schemes[x.scheme]),court(players,x.lineup,x.libero,null,null,null),
-   btn('Начать с этой расстановкой',()=>prepare(x),'wide'),btn('Удалить расстановку',async()=>{if(await ui.confirmDialog({title:'Удалить расстановку?',text:'Матчи не меняются.',ok:'Удалить'})){await C.deleteLineup(x.id);openMatchCenter(team,refresh);}},'wide')]));
+ body.append(check,btn('Тестовый LIVE-матч',openRehearsal,'wide'),btn('Предматчевое досье',()=>openPreMatchDossier(team,back),'wide'),btn('+ Новый подробный матч',()=>prepare(),'primary wide'),btn('Прежний режим матча',()=>setup(team,active,null,refresh),'wide'),btn('Помощник состава',()=>openFromCenter('dossier',fresh=>openLineupAssistant(fresh.coachTeams[0],C.teamView(fresh,team.id),back)),'wide'),btn('Тактическая доска',()=>openTacticBoards(team),'wide'),btn('Публичная страница команды',()=>openPublicPortal(team,back),'wide'),btn('Импорт защищённого черновика',()=>openDraftImport(team,back),'wide'));
+ body.append(el('h3',{text:'Шаблоны стартовой расстановки'}),p('Сохраните отдельно шестёрку для подачи и для приёма. Выбирайте их при подготовке каждой партии.'),btn('+ Шаблон на подачу',()=>setup(team,active,{preset:true,purpose:'serve'},refresh),'wide'),btn('+ Шаблон на приём',()=>setup(team,active,{preset:true,purpose:'receive'},refresh),'wide'),btn('+ Сохранить расстановку',()=>setup(team,active,{preset:true,purpose:'any'},refresh),'wide'));
+ for(const x of data.coachLineups.filter(x=>x.teamId===team.id))body.append(el('div',{class:'card-block vb-stack'},[p(x.name+' · '+V.schemes[x.scheme]+' · '+({serve:'Подача',receive:'Приём',any:'Универсальная'}[x.purpose]||'Универсальная')),court(players,x.lineup,x.libero,null,null,null),
+   btn('Начать с этой расстановкой',()=>prepare(x),'wide'),btn('Изменить шаблон',()=>setup(team,active,{...x,preset:true},refresh),'wide'),btn('Удалить расстановку',async()=>{if(await ui.confirmDialog({title:'Удалить расстановку?',text:'Матчи не меняются.',ok:'Удалить'})){await C.deleteLineup(x.id);openMatchCenter(team,refresh);}},'wide')]));
  for(const d of data.coachLive.filter(x=>x.teamId===team.id)){
   const s=V.replay(d);body.append(el('div',{class:'card-block vb-stack'},[p(d.date+' · '+d.opponent+' · '+(s.score?.ours??s.ours)+':'+(s.score?.theirs??s.theirs)),btn('Продолжить матч',()=>d.mode==='dual'?openDetailedMatch(d,back,refresh):live(team,players,d,refresh),'primary wide'),d.mode==='dual'&&!s.finished?btn('Экспорт черновика для передачи',()=>exportDraft(d),'wide'):null]));
  }
@@ -60,9 +63,9 @@ export async function openMatchCenter(team,refresh,options={}){
 function setup(team,players,preset,refresh){
  const isPreset=preset?.preset===true;
  if(players.length<6)return toast('Нужно не менее шести действующих игроков');
- const title=el('input',{placeholder:isPreset?'Название расстановки':'Соперник'}),competition=el('input',{placeholder:'Соревнование'}),day=el('input',{type:'date',value:todayIso(),max:todayIso()});
+ const title=el('input',{placeholder:isPreset?'Название расстановки':'Соперник',value:isPreset?(preset.name||({serve:'Старт на подачу',receive:'Старт на приём'}[preset.purpose]||'')):''}),competition=el('input',{placeholder:'Соревнование'}),day=el('input',{type:'date',value:todayIso(),max:todayIso()});
  const scheme=select(Object.entries(V.schemes),preset?.scheme||'5-1'),best=select([[3,'До двух побед'],[5,'До трёх побед']],3),target=select([15,21,25].map(n=>[n,n]),25),decider=select([15,21,25].map(n=>[n,n]),15),serve=select([['ours','Наши'],['theirs','Соперник']],'ours');
- const l=lineupFields(players,preset?.lineup,preset?.libero),roster=players.map(p=>p.id);
+ const purpose=select([['serve','Подаём'],['receive','Принимаем'],['any','Универсальная']],preset?.purpose||'any'),l=lineupFields(players,preset?.lineup,preset?.libero,preset?.libero2,isPreset),roster=players.map(p=>p.id);
  const warnings=el('div',{class:'vb-stack'}),drawWarnings=()=>{
   const m=C.trainingWarnings({date:day.value,roster,exercises:[{name:'Волейбол',activityId:'volley'},{name:'Прыжки',activityId:'jump'},{name:'Соревнование',activityId:'competition'}]},players);
   warnings.replaceChildren(p(m.length?'Проверьте ограничения у '+new Set(m.map(x=>x.player.id)).size+' игроков.':'По выбранным нагрузкам совпадений нет. Это не медицинский допуск.'),...m.map(x=>p(name(players,x.player.id)+' · '+x.exercises.map(e=>e.name).join(', '))));
@@ -73,7 +76,7 @@ function setup(team,players,preset,refresh){
   try{
    const values=l.values();
    if(!V.validLineup(values.lineup,roster)||values.lineup.includes(values.libero))throw Error('Выберите шесть разных игроков и отдельного либеро');
-   if(isPreset){await C.saveLineup({teamId:team.id,name:title.value,scheme:scheme.value,roster,...values});await openMatchCenter(team,refresh);}
+   if(isPreset){await C.saveLineup({id:preset.id,teamId:team.id,name:title.value,scheme:scheme.value,purpose:purpose.value,roster,...values});await openMatchCenter(team,refresh);}
    else{
     if(!await ui.confirmDialog({title:'Начать матч?',text:'Подтвердите фактический состав и допустимость нагрузки. Проверки не заменяют решение тренера.',ok:'Начать'}))return;
     const d=await C.startLiveMatch({teamId:team.id,date:day.value,opponent:title.value,competition:competition.value,scheme:scheme.value,roster,...values,bestOf:Number(best.value),target:Number(target.value),decider:Number(decider.value),firstServe:serve.value});live(team,players,d,refresh);
@@ -82,7 +85,7 @@ function setup(team,players,preset,refresh){
  },'primary wide');
  openSheet(el('div',{class:'vb-stack'},[el('h2',{text:isPreset?'Расстановка':'Новый матч'}),field(isPreset?'Название':'Соперник',title),field('Схема (подсказка тренера)',scheme),
    p('5–1 и 4–2 — обозначения схемы. Позиции задаются вручную, приложение не проверяет тактические обязанности.'),
-   ...(!isPreset?[field('Дата',day),field('Соревнование',competition),field('Формат',best),field('Очков в партии',target),field('Решающая партия',decider),field('Первая подача',serve),warnings]:[]),
+   ...(isPreset?[field('Назначение шаблона',purpose)]:[]),...(!isPreset?[field('Дата',day),field('Соревнование',competition),field('Формат',best),field('Очков в партии',target),field('Решающая партия',decider),field('Первая подача',serve),warnings]:[]),
    l.node,save,btn('Назад',()=>openMatchCenter(team,refresh),'wide')]));
 }
 function live(team,players,initial,refresh){

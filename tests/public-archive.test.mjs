@@ -258,3 +258,22 @@ test('V3 control freeze and thaw are explicit monotonic transitions using authen
  await assert.rejects(transitionArchiveV3(address,'freeze',{...opts,expected:initial}),/Поколение/);
  assert.deepEqual(await transitionArchiveV3(address,'thaw',{...opts,expected:frozen}),{phase:'legacy',generation:2});assert.equal(writes,2);
 });
+
+import {capturePublicMigrationBundle,verifyPublicMigrationBundle,preparePublicMigrationBundle,activatePublicMigrationBundle} from '../js/public-archive.js';
+test('RC7 combined bundle refuses corrupt media, stale media, wrong generation and unconfirmed activation without writes',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,source=[row(1)],dest=source.slice();
+ let state={phase:'frozen',generation:3},media={schema:1,news:[{publicId:'test',type:'news',title:'Synthetic',body:'Text',date:'2026-11-27'}]},calls=0,writes=0;
+ const fetcher=async(url,opt={})=>{calls++;const u=new URL(url);
+  if(u.pathname.includes('/archiveMigration/')){if(opt.method==='PUT'){writes++;state=JSON.parse(opt.body);}return new Response(JSON.stringify(state),{headers:{ETag:'control-'+state.generation}});}
+  if(u.pathname.includes('/publicMedia/')){assert.equal(u.searchParams.get('auth'),'synthetic');assert.notEqual(opt.method,'PUT');return new Response(JSON.stringify(media),{headers:{ETag:'media-tag'}});}
+  return migrationFetcher(source,dest)(url,opt);
+ };
+ const opts={getToken:async()=> 'synthetic',fetcher,confirmed:true,expected:{...state}},bundle=await capturePublicMigrationBundle(address,opts);
+ assert.equal((await verifyPublicMigrationBundle(bundle)).news,1);assert.equal((await preparePublicMigrationBundle(address,bundle,opts)).complete,true);
+ const bad=structuredClone(bundle);bad.media.value.news[0].title='Tampered';
+ const before=calls;await assert.rejects(activatePublicMigrationBundle(address,bad,opts),/Контрольная сумма/);assert.equal(calls,before);
+ await assert.rejects(activatePublicMigrationBundle(address,bundle,{...opts,confirmed:false}),/подтверждение/);assert.equal(calls,before);
+ const original=media;media={...media,news:[]};await assert.rejects(activatePublicMigrationBundle(address,bundle,opts),/Медиацентр изменился/);assert.equal(writes,0);
+ media=original;state={phase:'frozen',generation:5};await assert.rejects(activatePublicMigrationBundle(address,bundle,opts),/Поколение/);assert.equal(writes,0);
+ state=opts.expected;assert.deepEqual(await activatePublicMigrationBundle(address,bundle,opts),{phase:'v3',generation:4});assert.equal(writes,1);
+});
