@@ -2,6 +2,7 @@
  * No connection to db.open(), live IndexedDB, device checkpoints or sync.
  * Whole-snapshot CAS is intentionally a correctness baseline, not production storage. */
 import {SCHEMA} from '../../js/db.js';
+import {splitDeviceSnapshot,joinDeviceSnapshot} from '../../js/device-checkpoint-migration.js';
 import {BACKUP_VERSION,validateBackup} from '../../js/backup.js';
 import {stageVaultLab,readVaultLab,replaceVaultLab} from './local-vault.mjs';
 const scope='workspace',names=Object.keys(SCHEMA);
@@ -12,8 +13,9 @@ const keyOK=k=>{try{cmp(k,k);return true;}catch{return false;}};
 const keyPath=(row,path)=>Array.isArray(path)?path.map(p=>row[p]):row[path];
 const dom=(name,message)=>new DOMException(message,name);
 const payload=data=>({app:'teachapp',version:BACKUP_VERSION,data});
-function checkedData(data){
+function checkedData(data,{deviceLocal=false}={}){
  check(data&&Object.keys(data).length===names.length&&names.every(n=>Array.isArray(data[n])),'Требуется полный снимок текущей схемы');
+ if(deviceLocal){const {portable,device}=splitDeviceSnapshot(data);return joinDeviceSnapshot(validateBackup(payload(portable)),device);}
  check(data.meta.every(r=>typeof r.id==='string'&&!r.id.startsWith('sync-checkpoint-')),'Контрольные точки синхронизации не переносятся в LAB');
  return validateBackup(payload(data));
 }
@@ -75,10 +77,10 @@ function makeStore(table,def,active,writable,failed){
 }
 /** Prepare a validated snapshot transaction without committing. Callback is
  * invoked once; its store handles expire before any CAS write. LAB only. */
-export async function prepareSchemaSnapshotTransactionLab(input,storeNames,mode,fn,{guard=()=>{},isOpen=()=>true}={}){
+export async function prepareSchemaSnapshotTransactionLab(input,storeNames,mode,fn,{guard=()=>{},isOpen=()=>true,deviceLocal=false}={}){
  const selected=[].concat(storeNames);
  check(selected.length&&new Set(selected).size===selected.length&&selected.every(n=>Object.hasOwn(SCHEMA,n))&&['readonly','readwrite'].includes(mode)&&typeof fn==='function','Некорректная транзакция LAB');
- guard();const data=checkedData(copy(input)),tables=new Map(selected.map(n=>[n,new Map(data[n].map(row=>[row.id,row]))]));
+ guard();const data=checkedData(copy(input),{deviceLocal}),tables=new Map(selected.map(n=>[n,new Map(data[n].map(row=>[row.id,row]))]));
  let active=true,firstError=null;const failed=error=>{if(!firstError)firstError=error;};
  const stores=Object.fromEntries(selected.map(n=>[n,makeStore(tables.get(n),SCHEMA[n],()=>active&&isOpen(),mode==='readwrite',failed)]));
  let result;try{result=await fn(stores);}finally{active=false;}
@@ -86,7 +88,7 @@ export async function prepareSchemaSnapshotTransactionLab(input,storeNames,mode,
  if(mode==='readwrite'){
   if(firstError)throw firstError;
   for(const n of selected)data[n]=[...tables.get(n).values()].sort((a,b)=>cmp(a.id,b.id));
-  checkedData(data);
+  checkedData(data,{deviceLocal});
  }
  return {result,data,selected};
 }

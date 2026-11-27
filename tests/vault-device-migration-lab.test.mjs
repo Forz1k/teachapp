@@ -3,6 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {SCHEMA} from '../js/db.js';
 import {encryptBackup} from '../js/privacy.js';
+import {BACKUP_VERSION} from '../js/backup.js';
+import {projectScope} from '../js/sync.js';
 import {splitDeviceSnapshot,joinDeviceSnapshot,validateDeviceCheckpoints} from '../js/device-checkpoint-migration.js';
 import {inspectMigrationSnapshot} from '../js/migration-preflight.js';
 import {partitionedVaultLab} from '../tools/prototypes/vault-partitioned-lab.mjs';
@@ -71,4 +73,38 @@ test('Active Delta migration and corrupted status stop device-local migration be
  const data=await fixture();data.meta.push({id:'sync-checkpoint-migration-school'});await seed('device-delta',data);
  await assert.rejects(preparePartitionLegacyMigrationLab('device-delta',{backupPasswords,...flags}),/Delta/);
  const db=await openPartitionLegacyLab('device-delta',flags);assert.equal(db.version,10);db.close();
+});
+
+test('Migrated device uses the actual sync executor: atomic data/checkpoint CAS, independent scopes and uncertain local completion',async()=>{
+ const data=await fixture(),id='device-sync-executor',password='synthetic-sync-password',area='school';
+ const cp=data.meta.find(r=>r.id==='sync-checkpoint-school'),endpoint=cp.endpoint;
+ cp.envelope=await encryptBackup({app:'teachapp-sync',version:1,backupVersion:BACKUP_VERSION,area,workspaceId:cp.workspaceId,revision:cp.revision,snapshot:projectScope(data,area)},password);
+ await seed(id,data);
+ const copy=await preparePartitionLegacyMigrationLab(id,{backupPasswords,...flags});
+ await migratePartitionLegacyLab(id,{passwords,backupPasswords,backupFile:copy.file,saved:true,confirmed:true,...flags});
+ const lab=partitionedVaultLab(id,{layout:'school-v3-device-migrated'});
+ let remote={revision:cp.revision,envelope:cp.envelope},writes=0,race=false;
+ const client={get:async()=>structuredClone(remote),put:async(expected,envelope)=>{
+  assert.equal(expected,remote.revision);writes++;remote={revision:expected+1,envelope};
+  if(race){const other=await lab.openScope({scope:'school',password:passwords.school});try{await other.put('classes',{id:'c',name:'Concurrent school edit',gradeLevel:7});}finally{other.close();}}
+  return structuredClone(remote);
+ }};
+ const inputs={passwords,area,endpoint,password,client};
+ assert.equal((await lab.deviceSyncState(inputs)).status,'clean');
+ const noOp=await lab.prepareDeviceSync(inputs);
+ await lab.executeDeviceSync({...inputs,plan:noOp,choices:{},confirmed:true,reuseRemote:true});assert.equal(writes,0);
+ const update=async name=>{const school=await lab.openScope({scope:'school',password:passwords.school});try{await school.put('classes',{id:'c',name,gradeLevel:7});}finally{school.close();}};
+ await update('First edited class');const before=await lab.status(),plan=await lab.prepareDeviceSync(inputs);
+ assert.equal(plan.conflicts.length,0);assert.equal((await lab.executeDeviceSync({...inputs,plan,choices:{},confirmed:true})).revision,4);
+ const after=await lab.status(),latest=await lab.snapshot({passwords});
+ assert.equal(writes,1);assert.equal(after.revisions.coach,before.revisions.coach);
+ assert.equal(latest.meta.find(r=>r.id===cp.id).revision,4);assert.equal((await lab.deviceSyncState(inputs)).status,'clean');
+ assert.deepEqual(latest.meta.find(r=>r.id==='sync-checkpoint-coach'),data.meta.find(r=>r.id==='sync-checkpoint-coach'));
+ await update('Second edited class');const plan2=await lab.prepareDeviceSync(inputs);race=true;
+ await assert.rejects(lab.executeDeviceSync({...inputs,plan:plan2,choices:{},confirmed:true}),/Сервер принял пакет, но локальная запись не завершилась/);
+ const conflicted=await lab.snapshot({passwords});
+ assert.equal(conflicted.classes[0].name,'Concurrent school edit');assert.equal(conflicted.meta.find(r=>r.id===cp.id).revision,4);assert.equal(remote.revision,5);
+ assert.equal((await lab.deviceSyncState(inputs)).status,'pending');
+ assert.equal(writes,2);
+ await assert.rejects(lab.prepareDeviceSync({...inputs,endpoint:'https://example.com'}),/синтетический адрес/);
 });

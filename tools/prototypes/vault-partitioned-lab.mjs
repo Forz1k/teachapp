@@ -4,7 +4,8 @@
  * No connection to live TeachApp DB, no plaintext fallback, no cross-scope
  * transactions. Only snapshots independently valid in each scope are accepted. */
 import {SCHEMA,createDataAccess} from '../../js/db.js';
-import {joinDeviceSnapshot,validateDeviceCheckpoints} from '../../js/device-checkpoint-migration.js';
+import {joinDeviceSnapshot,splitDeviceSnapshot,validateDeviceCheckpoints} from '../../js/device-checkpoint-migration.js';
+import {createSyncExecutor,prepareSync,localSyncState,normalizeEndpoint} from '../../js/sync.js';
 import {schoolStores,archivePreview,prepareSchoolYearRollover} from '../../js/school-archive.js';
 import {schoolSettingsProjection} from '../../js/model.js';
 import {splitVaultScopesLab,joinVaultScopesLab,validateVaultScopeResultLab} from './vault-scope-bundle.mjs';
@@ -80,13 +81,13 @@ async function sealAll(parts,bundleId,passwords,selected=scopes){
  for(const scope of selected)rows[scope]=await sealPartitionScopeLab({scope,bundleId,password:passwords[scope],data:withMeta(scope,bundleId,parts[scope])});
  return rows;
 }
-function commitRotation(db,expected,after,selected=scopes){
+function commitRotation(db,expected,after,selected=scopes,guard=()=>{}){
  return new Promise((resolve,reject)=>{
-  const tx=db.transaction(stores,'readwrite'),state=tx.objectStore('state'),p=state.get('active'),requests=Object.fromEntries(scopes.map(s=>[s,tx.objectStore(s).getAll()]));let remaining=4,failure,next;
+  guard();const tx=db.transaction(stores,'readwrite'),state=tx.objectStore('state'),p=state.get('active'),requests=Object.fromEntries(scopes.map(s=>[s,tx.objectStore(s).getAll()]));let remaining=4,failure,next;
   const compare=()=>{
    if(--remaining)return;
    try{
-    const pointer=p.result;
+    guard();const pointer=p.result;
     check(validPointer(pointer)&&pointer.bundleId===expected.pointer.bundleId&&scopes.every(s=>pointer.revisions[s]===expected.pointer.revisions[s]&&samePartitionCiphertextLab(requests[s].result,expected.rows[s])),'Ревизии LAB изменились. Подготовьте новую копию');
     for(const scope of selected){const table=tx.objectStore(scope);table.clear();for(const row of after[scope])table.add(row);}
     next={...pointer,revisions:{...pointer.revisions,...Object.fromEntries(selected.map(s=>[s,after[s][0].vaultId]))}};state.put(next);
@@ -121,17 +122,56 @@ export function partitionedVaultLab(id,{layout='v1'}={}){
   const pointer={id:'active',bundleId,revisions:Object.fromEntries(scopes.map(s=>[s,rows[s][0].vaultId]))};
   return using(db=>commitInitial(db,pointer,rows));
  };
- const authenticate=async passwords=>{
-  check(passwordsOK(passwords),'Требуются три независимых пароля LAB');
-  const snapshot=await current(scopes),parts={};let device=[];
+ const authenticate=async(passwords,guard=()=>{})=>{
+  guard();check(passwordsOK(passwords),'Требуются три независимых пароля LAB');
+  const snapshot=await current(scopes),parts={};let device=[];guard();
   for(const scope of scopes){
-   const key=await openPartitionKeySessionLab({scope,bundleId:snapshot.pointer.bundleId,password:passwords[scope],rows:snapshot.rows[scope]});
+   const key=await openPartitionKeySessionLab({scope,bundleId:snapshot.pointer.bundleId,password:passwords[scope],rows:snapshot.rows[scope],assertActive:guard});
    try{const opened=unpack(await key.read(snapshot.rows[scope]),scope);parts[scope]=opened.part;if(scope==='workspace')device=opened.device;}finally{key.close();}
   }
-  const portable=join(parts);return {snapshot,parts,device,data:deviceLocal?joinDeviceSnapshot(portable,device):portable};
+  const portable=join(parts);guard();return {snapshot,parts,device,data:deviceLocal?joinDeviceSnapshot(portable,device):portable};
+ };
+ const syntheticEndpoint=endpoint=>{
+  const normalized=normalizeEndpoint(endpoint),host=new URL(normalized).hostname;
+  check(host.endsWith('.invalid')||['localhost','127.0.0.1','[::1]'].includes(host),'Разрешён только синтетический адрес LAB');return normalized;
+ };
+ const deviceAccess=(passwords,stillAllowed)=>{
+  check(deviceLocal&&typeof stillAllowed==='function','Требуется device-local LAB');
+  const guard=()=>check(stillAllowed(),'Сеанс синхронизации LAB заблокирован');
+  return Object.freeze({
+   async dumpAll(){return (await authenticate(passwords,guard)).data;},
+   async transaction(names,mode,fn){
+    guard();const {snapshot,parts,device,data}=await authenticate(passwords,guard);
+    const prepared=await prepareSchemaSnapshotTransactionLab(data,names,mode,fn,{guard,isOpen:stillAllowed,deviceLocal:true});guard();
+    if(mode==='readwrite'){
+     const separated=splitDeviceSnapshot(prepared.data),next=split(separated.portable);
+     for(const scope of scopes)fullPart(scope,next[scope]);
+     const previous={...parts,workspace:{...parts.workspace,deviceMeta:device}};
+     next.workspace={...next.workspace,deviceMeta:separated.device};
+     const selected=scopes.filter(s=>!samePartitionSnapshotLab(next[s],previous[s]));
+     const after=await sealAll(next,snapshot.pointer.bundleId,passwords,selected);guard();
+     await using(db=>commitRotation(db,snapshot,after,selected,guard));guard();
+    }
+    return prepared.result;
+   }
+  });
  };
  return Object.freeze({
   stage,
+  async prepareDeviceSync({passwords,area,endpoint,password,client,stillAllowed=()=>true}){
+   const access=deviceAccess(passwords,stillAllowed),data=await access.dumpAll();
+   const plan=await prepareSync({area,endpoint:syntheticEndpoint(endpoint),password,client,data});
+   check(stillAllowed(),'Сеанс синхронизации LAB заблокирован');return plan;
+  },
+  async executeDeviceSync({passwords,plan,choices,password,client,confirmed=false,reuseRemote=false,stillAllowed=()=>true}){
+   syntheticEndpoint(plan?.endpoint);const access=deviceAccess(passwords,stillAllowed);
+   return createSyncExecutor(access)({plan,choices,password,client,confirmed,reuseRemote,stillAllowed});
+  },
+  async deviceSyncState({passwords,area,endpoint,password,stillAllowed=()=>true}){
+   const access=deviceAccess(passwords,stillAllowed),data=await access.dumpAll();
+   const result=await localSyncState({area,endpoint:syntheticEndpoint(endpoint),password,data});
+   check(stillAllowed(),'Сеанс синхронизации LAB заблокирован');return result;
+  },
   async status(){
    const {pointer}=await using(db=>readSlices(db,[]));
    if(pointer===undefined)return {active:false};check(validPointer(pointer),'Указатель LAB повреждён');return {active:true,...pointer};

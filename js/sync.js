@@ -1036,10 +1036,14 @@ export function previewSync(current,plan,choices={}){
 function guardSync(stillAllowed,remoteMayHaveCommitted=false){
  if(!stillAllowed())throw Object.assign(Error(remoteMayHaveCommitted?'Обмен остановлен. Сервер мог принять пакет; локальные изменения не применены. При повторном подключении сравните ревизии.':'Обмен остановлен до записи.'),{code:'sync-paused',remoteMayHaveCommitted});
 }
-export async function executeSync({plan,choices,password,client,confirmed=false,reuseRemote=false,stillAllowed=()=>true}){
+/** Fixed backend for the explicitly selected sync executor. The published
+ * wrapper below always uses native IndexedDB; no mutable global routing. */
+export function createSyncExecutor(access){
+ check(access&&typeof access.dumpAll==='function'&&typeof access.transaction==='function','Требуется явный backend синхронизации');
+ return async function executeBoundSync({plan,choices,password,client,confirmed=false,reuseRemote=false,stillAllowed=()=>true}){
  check(confirmed,'Подтвердите синхронизацию');
  guardSync(stillAllowed);
- const initial=await db.dumpAll();guardBinding(initial,plan.area,plan.endpoint,client);
+ const initial=await access.dumpAll();guardBinding(initial,plan.area,plan.endpoint,client);
  const preview=previewSync(initial,plan,choices);
  guardSync(stillAllowed);
  check(!preview.conflicts.length,'Сначала разрешите все конфликты');
@@ -1047,7 +1051,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
  if(pullOnly&&plan.checkpoint?.revision===plan.revision&&same(plan.local,plan.remote)){
   // No network write and no rewrite of the potentially large encrypted checkpoint.
   const stores=[...new Set([...keysFor(plan.area),'meta'])];
-  await db.transaction(stores,'readwrite',async s=>{
+  await access.transaction(stores,'readwrite',async s=>{
    guardSync(stillAllowed);
    const current=Object.fromEntries(await Promise.all(stores.map(async n=>[n,await s[n].getAll()])));
    guardBinding(current,plan.area,plan.endpoint,client);
@@ -1063,7 +1067,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
  const envelope=pullOnly?plan.remoteEnvelope:await encryptBackup(packetPayload(preview.snapshot,plan.area,plan.workspaceId,nextRevision),password);
  // Recheck after expensive encryption; the transaction below checks again after CAS.
  guardSync(stillAllowed);
- const beforeWrite=await db.dumpAll();guardBinding(beforeWrite,plan.area,plan.endpoint,client);previewSync(beforeWrite,plan,choices);
+ const beforeWrite=await access.dumpAll();guardBinding(beforeWrite,plan.area,plan.endpoint,client);previewSync(beforeWrite,plan,choices);
  guardSync(stillAllowed);
  if(!pullOnly){
   let committed;
@@ -1072,7 +1076,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
   if(committed?.revision!==nextRevision||!same(committed.envelope,envelope))throw Object.assign(Error('Сервер не подтвердил запись ожидаемой ревизии'),{remoteMayHaveCommitted:true});
  }
  try{
-  return await db.transaction(names,'readwrite',async s=>{
+  return await access.transaction(names,'readwrite',async s=>{
    guardSync(stillAllowed,!pullOnly);
    const current=Object.fromEntries(await Promise.all(names.map(async n=>[n,await s[n].getAll()])));
    guardSync(stillAllowed,!pullOnly);
@@ -1093,7 +1097,9 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
    return {revision:nextRevision,counts:final.counts};
   });
  }catch(e){if(e?.code==='sync-paused')throw e;throw Error((pullOnly?'Локальная запись не завершилась.':'Сервер принял пакет, но локальная запись не завершилась.')+' Ваши данные не заменены этой операцией. Повторите синхронизацию; при конфликте проверьте обе версии.');}
+};
 }
+export async function executeSync(options){return createSyncExecutor(db)(options);}
 // Automatic sync only for an already confirmed workspace; never auto-propagate deletions.
 export async function syncPersonalArea({area,endpoint,password,client,stillAllowed=()=>true,initialize=false}){
  const binding=await migrationBindingStatus(area);if(binding.status!=='none')return {area,status:'review',reason:'migration-binding'};

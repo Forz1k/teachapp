@@ -73,3 +73,5 @@ node tools/release-readiness.mjs --check "$SHA" release-evidence.json
 Native диагностика использует общий school-v2 layout и проверяет обратную сборку и точную схему до чтения. Неперенесённые sync checkpoints — отдельный blocker. Production DB всё ещё v10; акты storage-migration-rollback, независимый аудит и остальные 18 ручных условий не закрыты автоматически.
 
 RC3: отдельный device-local LAB v3 репетирует сохранение обычных checkpoint/status при атомарной миграции, записи, ротации и откате. Production blocker сохраняется до интеграции рабочего sync и проверки вложенных пакетов/ревизий на устройствах. Delta binding запрещён.
+
+RC3: общая команда синхронизации проверена с фиксированным backend device-local LAB; production auto-sync/UI и независимая эксплуатационная приёмка остаются открытыми.

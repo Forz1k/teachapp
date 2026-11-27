@@ -534,3 +534,7 @@ Verified code backup refs created before changes. Static manifest and integrity 
 ### RC3 — device-local migration rehearsal
 
 Обычные checkpoint/status сохраняются в отдельном school-v3-device-migrated LAB, изолированы от API областей и обычных копий, проверены миграция/ротация/откат. Состояние Delta и неизвестные форматы отклоняются. Production sync и UI остаются native; CI сверять по точному SHA.
+
+### RC3 — общий исполнитель синхронизации
+
+Фиксированный backend LAB запускает существующую команду обмена с полным CAS шифротекстов, сохранением других областей, без native fallback. Синтетическая гонка после PUT и повтор без PUT покрыты тестами. Не переключает production auto-sync/UI.
