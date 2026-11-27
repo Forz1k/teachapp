@@ -12,11 +12,14 @@ function envelope(e){
  return exact(e,['app','version','kdf','iterations','cipher','salt','iv','data'])&&e.app==='teachapp-encrypted'&&e.version===1&&e.kdf==='PBKDF2-SHA256'&&e.iterations===600000&&e.cipher==='AES-256-GCM'&&b64(e.salt)&&e.salt.length===24&&e.salt.endsWith('==')&&b64(e.iv)&&e.iv.length===16&&!e.iv.includes('=')&&typeof e.data==='string'&&e.data.length>=24&&e.data.length<=Math.ceil((64*1024*1024+16)/3)*4&&b64(e.data);
 }
 export function validateDeviceCheckpoints(rows){
- check(Array.isArray(rows)&&rows.length<=4,'Неизвестные контрольные точки устройства');
+ check(Array.isArray(rows)&&rows.length<=6,'Неизвестные контрольные точки устройства');
  const byId=new Map();
  for(const row of rows){
   check(row&&typeof row.id==='string'&&!byId.has(row.id),'Повтор контрольной точки устройства');
-  check(!row.id.startsWith('sync-checkpoint-migration-'),'Незавершённый перенос Delta');
+  if(row.id.startsWith('sync-checkpoint-migration-')){
+   const area=areas.find(a=>row.id==='sync-checkpoint-migration-'+a),https=x=>{try{const u=new URL(x);return u.protocol==='https:'&&u.origin===x&&!u.port&&!['localhost','127.0.0.1','[::1]'].includes(u.hostname);}catch{return false;}};
+   check(area&&row.protocol==='delta-v3'&&exact(row,['id','protocol','sourceProtocolVersion','area','migrationId','sourceEndpoint','sourceWorkspaceId','sourceRevision','destinationEndpoint','destinationWorkspaceId','destinationRevision','digest'])&&row.area===area&&[1,2].includes(row.sourceProtocolVersion)&&uuid.test(row.migrationId)&&uuid.test(row.sourceWorkspaceId)&&row.migrationId!==row.sourceWorkspaceId&&row.destinationWorkspaceId===row.migrationId&&Number.isSafeInteger(row.sourceRevision)&&row.sourceRevision>0&&row.destinationRevision===1&&https(row.sourceEndpoint)&&https(row.destinationEndpoint)&&row.sourceEndpoint!==row.destinationEndpoint&&/^[a-f0-9]{64}$/.test(row.digest),'Незавершённый перенос Delta или повреждённая привязка');byId.set(row.id,row);continue;
+  }
   const area=areas.find(a=>row.id==='sync-checkpoint-'+a||row.id==='sync-checkpoint-status-'+a);
   check(area,'Неизвестная контрольная точка устройства');
   check(identity(row),'Некорректная идентичность контрольной точки');
@@ -28,6 +31,7 @@ export function validateDeviceCheckpoints(rows){
  }
  for(const area of areas){
   const status=byId.get('sync-checkpoint-status-'+area),cp=byId.get('sync-checkpoint-'+area);
+  const binding=byId.get('sync-checkpoint-migration-'+area);if(binding)check(cp?.protocol==='delta-v3'&&cp.endpoint===binding.destinationEndpoint&&cp.workspaceId===binding.destinationWorkspaceId&&cp.revision===1&&!status,'Неверная контрольная точка переноса v3');
   if(status)check(cp&&['endpoint','workspaceId','revision','protocol'].every(k=>cp[k]===status[k]),'Состояние синхронизации не совпадает с контрольной точкой');
  }
  return structuredClone(rows);
