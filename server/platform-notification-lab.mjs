@@ -7,7 +7,9 @@ const current=m=>m.notificationLab??{revision:0,endpoint:null};
 export function notificationLabState(member,now){
  if(!roles.has(member?.role)||member.revokedAt!==null||member.expiresAt<=now)return null;
  const s=current(member);
- return {revision:s.revision,enabled:s.endpoint!==null,expiresAt:s.endpoint===null?null:member.expiresAt};
+ const expiry=s.endpoint==='provider'?Math.min(member.expiresAt,s.sealedSubscription?.expiresAt??member.expiresAt):member.expiresAt;
+ const enabled=s.endpoint!==null&&(s.endpoint!=='provider'||!!s.sealedSubscription&&expiry>now);
+ return {revision:s.revision,enabled,expiresAt:enabled?expiry:null};
 }
 export function changeNotificationLab(member,body,now){
  const status=notificationLabState(member,now);
@@ -30,7 +32,7 @@ export function queueAthleteNoticeLab(members,teamId,athleteId,now){
   if(member.role!=='athlete'||member.teamId!==teamId||member.athleteId!==athleteId||!notificationLabState(member,now)?.enabled)continue;
   const s=current(member),sequence=inbox(member).sequence+1;
   if(!Number.isSafeInteger(sequence))throw Error('Synthetic notice sequence exhausted');
-  s.notice={sequence,pending:true,expiresAt:Math.min(now+NOTICE_TTL,member.expiresAt)};
+  s.notice={sequence,pending:true,expiresAt:Math.min(now+NOTICE_TTL,notificationLabState(member,now).expiresAt)};
  }
 }
 export function notificationInboxLab(member,now){
