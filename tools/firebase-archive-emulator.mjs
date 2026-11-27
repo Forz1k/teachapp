@@ -1,5 +1,6 @@
 import './firebase-portal-emulator.mjs';
 import assert from 'node:assert/strict';
+import {readMediaVersion,writePublicMedia,removePublicMedia,fetchPublicMedia} from '../js/public-media.js';
 import {captureFrozenArchiveV3Backup,executeFrozenArchiveV3Copy,inspectArchiveV3Control,transitionArchiveV3} from '../js/public-archive.js';
 const user=async()=>{const r=await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:crypto.randomUUID()+'@example.test',password:crypto.randomUUID(),returnSecureToken:true})});assert.equal(r.status,200);return r.json();};
 const owner=await user(),other=await user(),page='publicTeams/'+owner.localId+'/team',archive='publicMatchArchive/'+owner.localId+'/team';
@@ -21,7 +22,24 @@ const v=await call('GET',path,undefined,null,200,{}, {'X-Firebase-ETag':'true'})
 
 await call('PUT',page,{schema:1,team:'Synthetic',updatedAt:1},owner.idToken,200);
 const media='publicMedia/'+owner.localId+'/team',news={publicId:'news1',type:'announcement',title:'Synthetic announcement',body:'Synthetic text',date:'2026-11-25'},publicData={schema:1,news:[news],tournament:{name:'Synthetic tournament',system:'league',format:'score',rows:[{name:'Team A',place:1,group:0,played:1,won:1,draw:0,lost:0,points:3}],games:[{round:1,group:0,a:'Team A',b:'Team B',date:'2026-11-25',time:'10:00',venue:'Hall',status:'finished',score:'2:0'}]}};
-const mv=await call('GET',media,undefined,null,200,{}, {'X-Firebase-ETag':'true'});await call('PUT',media,publicData,owner.idToken,200,{}, {'If-Match':mv.etag});await call('GET',media,undefined,null,200);await call('PUT',media,publicData,other.idToken,401);await call('PUT',media,{...publicData,news:[{...news,privateNote:'secret'}]},owner.idToken,401);await call('PUT',media,{...publicData,news:Array(21).fill(news)},owner.idToken,401);await call('PUT',media,{...publicData,tournament:{...publicData.tournament,games:[{...publicData.tournament.games[0],studentId:'secret'}]}},owner.idToken,401);await call('PUT',media,publicData,owner.idToken,412,{}, {'If-Match':mv.etag});await call('DELETE',page,undefined,owner.idToken,200);await call('GET',media,undefined,null,401);console.log('PASS: bounded public media, no private fields, owner-only CAS, hidden on unpublish');
+const mv=await call('GET',media,undefined,null,200,{}, {'X-Firebase-ETag':'true'});await call('PUT',media,publicData,owner.idToken,200,{}, {'If-Match':mv.etag});await call('GET',media,undefined,null,200);await call('PUT',media,publicData,other.idToken,401);await call('PUT',media,{...publicData,news:[{...news,privateNote:'secret'}]},owner.idToken,401);await call('PUT',media,{...publicData,news:Array(21).fill(news)},owner.idToken,401);await call('PUT',media,{...publicData,tournament:{...publicData.tournament,games:[{...publicData.tournament.games[0],studentId:'secret'}]}},owner.idToken,401);await call('PUT',media,publicData,owner.idToken,412,{}, {'If-Match':mv.etag});
+const mediaUrl='https://demo-teachapp-default-rtdb.firebaseio.com/'+media+'.json';
+const mediaAdapter=(url,opts)=>{const u=new URL(url),local=new URL('http://127.0.0.1:9000'+u.pathname+u.search);local.searchParams.set('ns','demo-teachapp-default-rtdb');return fetch(local,opts);};
+const mediaBefore=await readMediaVersion(mediaUrl,mediaAdapter,owner.idToken);assert.equal(mediaBefore.exists,true);
+const mediaNext=await writePublicMedia(mediaUrl,{...publicData,news:[{...news,title:'Verified update'}]},owner.idToken,mediaBefore.etag,mediaAdapter);
+assert.equal(mediaNext.value.news[0].title,'Verified update');
+await assert.rejects(removePublicMedia(mediaUrl,owner.idToken,mediaBefore.etag,mediaAdapter),e=>e.status===412);
+await call('PATCH','',{[page]:null,[media]:publicData},owner.idToken,401);
+await call('DELETE',page,undefined,owner.idToken,200);await call('GET',media,undefined,null,401);
+await call('GET',media,undefined,other.idToken,401);await call('DELETE',media,undefined,other.idToken,401);
+await call('PUT',media,publicData,owner.idToken,401);
+const hidden=await readMediaVersion(mediaUrl,mediaAdapter,owner.idToken);assert.equal(hidden.exists,true);assert.equal(hidden.value.news[0].title,'Verified update');
+const purged=await removePublicMedia(mediaUrl,owner.idToken,hidden.etag,mediaAdapter);assert.equal(purged.exists,false);
+await call('PUT',page,{schema:1,team:'Synthetic',updatedAt:1},owner.idToken,200);
+assert.deepEqual(await fetchPublicMedia(mediaUrl,mediaAdapter),{schema:1,news:[]});
+await call('DELETE',page,undefined,owner.idToken,200);
+console.log('PASS: bounded public media, no private fields, owner-only CAS, verified hidden purge and no stale media on republish');
+
 
 await call('PUT',page,{schema:1,team:'Synthetic',updatedAt:1},owner.idToken,200);
 const v3='publicMatchArchiveV3/'+owner.localId+'/team',v3row=r=>({...r,sortKey:String(r.startedAt).padStart(16,'0')+'_'+r.id});

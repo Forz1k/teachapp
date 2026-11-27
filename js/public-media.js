@@ -24,6 +24,65 @@ export function mediaProjection(raw){
 }
 export function mediaTarget(address){const u=new URL(address);if(u.protocol!=='https:'||u.username||u.password||u.port||!/^([a-z0-9-]+\.)+(firebaseio\.com|firebasedatabase\.app)$/.test(u.hostname)||!/^\/publicTeams\/[A-Za-z0-9_-]{1,100}\/[A-Za-z0-9_-]{1,100}\.json$/.test(u.pathname)||u.search||u.hash)throw Error('Некорректный адрес медиацентра');u.pathname=u.pathname.replace('/publicTeams/','/publicMedia/');return u.href;}
 async function request(url,options,fetcher){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);try{const r=await fetcher(url,{cache:'no-store',referrerPolicy:'no-referrer',signal:controller.signal,...options});if(!r.ok)throw Object.assign(Error(r.status===412?'Публикация изменилась на другом устройстве':r.status===401||r.status===403?'Медиацентр не настроен или недоступен':'Ошибка медиацентра '+r.status),{status:r.status});return {value:await r.json(),etag:r.headers.get('ETag')};}finally{clearTimeout(timer);}}
-export async function readMediaVersion(target,fetcher=fetch){const r=await request(target,{headers:{'X-Firebase-ETag':'true'}},fetcher);if(!r.etag)throw Error('Нет версии медиацентра');if(r.value&&r.value.schema!==1)throw Error('Неизвестная версия медиацентра');return {etag:r.etag,value:mediaProjection(r.value)};}
-export async function fetchPublicMedia(target,fetcher=fetch){const r=await request(target,{},fetcher);if(r.value&&r.value.schema!==1)throw Error('Неизвестная версия медиацентра');return mediaProjection(r.value);}
-export async function writePublicMedia(target,value,token,etag,fetcher=fetch){if(!token||!etag)throw Error('Нужна авторизация и версия');const u=new URL(target);u.searchParams.set('auth',token);return request(u.href,{method:'PUT',headers:{'If-Match':etag,'Content-Type':'application/json'},body:JSON.stringify(mediaProjection(value))},fetcher);}
+
+/** A server response is not a local draft: never silently drop unknown fields
+ * or sparse collection entries before a confirmed replacement. Firebase may
+ * omit an empty news collection or return contiguous numeric-key objects. */
+function wireFields(value,required,optional=[]){
+ if(!value||typeof value!=='object'||Array.isArray(value)||required.some(k=>!Object.hasOwn(value,k))||Object.keys(value).some(k=>!required.includes(k)&&!optional.includes(k)))throw Error('Некорректная структура медиацентра');
+}
+function wireArray(value,max){
+ if(!value||typeof value!=='object')throw Error('Некорректная коллекция медиацентра');
+ const keys=Object.keys(value);
+ if(keys.length>max||keys.some((k,i)=>k!==String(i))||Array.isArray(value)&&value.length!==keys.length)throw Error('Некорректная коллекция медиацентра');
+ return keys.map(k=>value[k]);
+}
+export function readMediaWire(raw){
+ if(raw===null)return mediaProjection(null);
+ wireFields(raw,['schema'],['news','tournament']);
+ if(raw.schema!==1)throw Error('Неизвестная версия медиацентра');
+ if(Object.hasOwn(raw,'news'))for(const row of wireArray(raw.news,20))wireFields(row,['publicId','type','title','body','date']);
+ if(Object.hasOwn(raw,'tournament')){
+  const t=raw.tournament;wireFields(t,['name','system','format','rows','games']);
+  for(const row of wireArray(t.rows,32))wireFields(row,['name','place','group','played','won','draw','lost','points']);
+  for(const game of wireArray(t.games,500))wireFields(game,['round','group','a','b','date','time','venue','status',...(game?.status==='finished'?['score']:[])]);
+ }
+ return mediaProjection(raw);
+}
+function checkedMediaTarget(target){
+ const u=new URL(target);
+ if(!u.pathname.startsWith('/publicMedia/')||mediaTarget(u.href.replace('/publicMedia/','/publicTeams/'))!==u.href)throw Error('Некорректный адрес медиацентра');
+ return u;
+}
+function ownerMediaTarget(target,token){
+ const u=checkedMediaTarget(target);
+ if(typeof token!=='string'||!token)throw Error('Нужна авторизация владельца');
+ u.searchParams.set('auth',token);return u.href;
+}
+export async function readMediaVersion(target,fetcher=fetch,token=null){
+ const url=token===null?checkedMediaTarget(target).href:ownerMediaTarget(target,token);
+ const r=await request(url,{headers:{'X-Firebase-ETag':'true'}},fetcher);
+ if(!r.etag)throw Error('Нет версии медиацентра');
+ return {etag:r.etag,exists:r.value!==null,value:readMediaWire(r.value)};
+}
+export async function fetchPublicMedia(target,fetcher=fetch){
+ const r=await request(checkedMediaTarget(target).href,{},fetcher);return readMediaWire(r.value);
+}
+/** Do not acknowledge a write just because its HTTP response succeeded. */
+export async function writePublicMedia(target,value,token,etag,fetcher=fetch){
+ if(typeof etag!=='string'||!etag)throw Error('Нужна авторизация и версия');
+ const next=mediaProjection(value),url=ownerMediaTarget(target,token);
+ await request(url,{method:'PUT',headers:{'If-Match':etag,'Content-Type':'application/json'},body:JSON.stringify(next)},fetcher);
+ const after=await readMediaVersion(target,fetcher,token);
+ if(!after.exists||JSON.stringify(after.value)!==JSON.stringify(next))throw Object.assign(Error('Не удалось подтвердить опубликованную версию медиацентра'),{status:412});
+ return after;
+}
+/** Explicit CAS purge, including a retained hidden media node. No recreation. */
+export async function removePublicMedia(target,token,etag,fetcher=fetch){
+ if(typeof etag!=='string'||!etag)throw Error('Нужна авторизация и версия');
+ const url=ownerMediaTarget(target,token);
+ await request(url,{method:'DELETE',headers:{'If-Match':etag}},fetcher);
+ const after=await readMediaVersion(target,fetcher,token);
+ if(after.exists)throw Object.assign(Error('Не удалось подтвердить удаление медиацентра'),{status:412});
+ return after;
+}

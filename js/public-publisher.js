@@ -1,4 +1,4 @@
-import {mediaTarget,readMediaVersion,writePublicMedia,mediaProjection} from './public-media.js';
+import {mediaTarget,readMediaVersion,writePublicMedia,removePublicMedia,mediaProjection} from './public-media.js';
 import {archiveTarget,archiveKey,equalArchiveResult,queueArchiveResult,archiveProjection,resolveArchiveRoute,routedArchivePage,routedArchiveVersion,routedArchiveFind,routedArchiveWrite,requireWritableArchive,inspectArchiveV3Control,transitionArchiveV3,captureFrozenArchiveV3Backup,prepareFrozenArchiveV3Copy,executeFrozenArchiveV3Copy} from './public-archive.js';
 /* Team portal state is separate from school/coach records. Opt-in publishing only. */
 import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures,checkHandoffMatch} from './public-portal.js';
@@ -153,7 +153,7 @@ export async function continuePortalHandoff(id,local,expected,{confirmed=false}=
  if(e.timer)clearTimeout(e.timer);e.timer=null;e.dirty=false;e.conflict=false;status(e,'Управление продолжено · счёт подтверждён, запись при следующем событии');return portalInfo(id);
 }
 export function setPortalEnabled(id,enabled,team){
- const e=entry(id),d=e.data;ensurePublishingAllowed(e);if(e.conflict)throw Error('Сначала разрешите конфликт публикации.');if(e.archiveSending&&!enabled)throw Error('Завершите отправку архива');if(enabled&&!e.publisher)throw Error('Сначала подключите Firebase');
+ const e=entry(id),d=e.data;ensurePublishingAllowed(e);if(e.conflict)throw Error('Сначала разрешите конфликт публикации.');if(e.archiveSending)throw Error('Завершите операцию архива или медиацентра');if(enabled&&!e.publisher)throw Error('Сначала подключите Firebase');
  d.enabled=!!enabled;d.team=String(team||d.team).trim().slice(0,100);d.pendingDelete=!enabled; if(!enabled){d.activeId=null;d.match=null;d.archivePending=[];}
  save(e);enqueue(e);return portalInfo(id);
 }
@@ -279,8 +279,27 @@ async function migrateExtendedArchiveCore(id,{confirm,fetcher=fetch}={}){
  return report;
 }
 
-export async function loadMediaVersion(id,fetcher=fetch){const a=archiveSession(id),v=await readMediaVersion(mediaTarget(a.portal),fetcher);a.stillAllowed();return v;}
-export async function publishMediaVersion(id,value,etag,fetcher=fetch){const a=archiveSession(id),token=await a.session.getToken();a.stillAllowed();await writePublicMedia(mediaTarget(a.portal),mediaProjection(value),token,etag,fetcher);return true;}
+
+function mediaAccess(id,fetcher,{requirePublished=false}={}){
+ const e=entry(id),d=e.data;ensurePublishingAllowed(e);
+ const session=e.session,epoch=e.epoch,enabled=d.enabled;
+ const stillAllowed=()=>{
+  if(!session||e.session!==session||e.epoch!==epoch||isPaused(e)||d.enabled!==enabled||requirePublished&&!d.enabled||d.pendingDelete||e.conflict||e.dirty||e.running)throw Error('Сначала завершите синхронизацию публичной страницы и проверьте подключение');
+ };
+ stillAllowed();
+ return {target:mediaTarget(portalAddress(d.origin,d.owner,d.slug)),getToken:async()=>{stillAllowed();const token=await session.getToken();stillAllowed();return token;},fetcher:async(url,options)=>{stillAllowed();const response=await fetcher(url,options);stillAllowed();return response;}};
+}
+export async function loadMediaVersion(id,fetcher=fetch){
+ return withArchiveMutation(id,async()=>{const a=mediaAccess(id,fetcher);return readMediaVersion(a.target,a.fetcher,await a.getToken());});
+}
+export async function publishMediaVersion(id,value,etag,fetcher=fetch){
+ return withArchiveMutation(id,async()=>{const a=mediaAccess(id,fetcher,{requirePublished:true});return writePublicMedia(a.target,mediaProjection(value),await a.getToken(),etag,a.fetcher);});
+}
+export async function purgeMediaVersion(id,etag,{confirmed=false,fetcher=fetch}={}){
+ if(confirmed!==true)throw Error('Требуется подтверждение удаления медиацентра');
+ return withArchiveMutation(id,async()=>{const a=mediaAccess(id,fetcher);return removePublicMedia(a.target,await a.getToken(),etag,a.fetcher);});
+}
+
 
 /** Pending records are created only by explicit opt-in on already public results.
  * Retry is manual; conflicts never overwrite and remain queued. */
