@@ -1,0 +1,41 @@
+{
+  "name": "teachapp-platform-https-candidate",
+  "main": "server/platform-worker.mjs",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WORKSPACES",
+        "class_name": "PlatformWorkspace"
+      },
+      {
+        "name": "INGRESS",
+        "class_name": "PlatformIngress"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "PlatformWorkspace",
+        "PlatformIngress"
+      ]
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "EDGE_LIMIT",
+      "namespace_id": "80000601",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    }
+  ]
+}
