@@ -10,9 +10,9 @@ const area=(name,value='')=>{const n=e('textarea','',{'aria-label':name});n.valu
 const row=(...children)=>e('div','',{class:'row'},children);
 const button=(title,fn,primary=false)=>{const b=e('button',title,{type:'button',class:primary?'primary':''});b.onclick=fn;return b;};
 const json=v=>JSON.stringify(v,null,2);
-let api=null,connecting=null,member=null,serial=0,busy=false,scoreTimer=null,active=null,pending=null;
+let api=null,connecting=null,member=null,sessionAddress=null,sessionSpace=null,serial=0,busy=false,scoreTimer=null,active=null,pending=null;
 const stopTimer=()=>{if(scoreTimer)clearInterval(scoreTimer);scoreTimer=null;};
-function close(){serial++;stopTimer();connecting?.close();connecting=null;api?.close();api=null;member=null;active=null;pending=null;busy=false;login();}
+function close(){serial++;stopTimer();connecting?.close();connecting=null;api?.close();api=null;member=null;sessionAddress=null;sessionSpace=null;active=null;pending=null;busy=false;login();}
 function status(text,error=false){const n=root.querySelector('#status');if(n){n.textContent=text;n.className=error?'status error':'status';}}
 async function run(fn){if(busy)return;busy=true;const epoch=serial;try{await fn(epoch);if(epoch===serial)status('Готово');}catch(err){if(epoch===serial){status(err.message,true);if(err.status===401&&api){close();status('Сессия недействительна или отозвана. Войдите заново.',true);}}}finally{if(epoch===serial)busy=false;}}
 function login(){
@@ -26,14 +26,33 @@ function login(){
   let result,issued=null;try{
    if(mode==='login'){result=await temp.request('me');if(epoch!==serial){temp.close();return;}api=temp;}
    else{issued=await temp.request(mode,'POST',mode==='bootstrap'?{name:workspaceName}:{});temp.close();if(epoch!==serial)return;api=platformClient(address,space,issued.token);result=await api.request('me');}
-   if(epoch!==serial)return;member=result.member;await render(result.name,issued?.token);
+   if(epoch!==serial)return;member=result.member;sessionAddress=address;sessionSpace=space;await render(result.name,issued?.token);
   }catch(err){temp.close();if(epoch===serial){api?.close();api=null;member=null;}throw err;}
   finally{if(connecting===temp)connecting=null;}
  });}
 }
 function showSecret(title,value){const n=input(title,value,'password');n.readOnly=true;n.className='secret';return box(title,p('Показывается только сейчас. Храните тестовый код отдельно; не отправляйте его через общие каналы.'),n,row(button('Показать / скрыть',()=>{n.type=n.type==='password'?'text':'password';}),button('Скрыть код',()=>{n.value='';n.closest('.card').remove();}))); }
+async function rotateSession(epoch,name){
+ if(!confirm('Сменить код сессии? Старый код и неиспользованные приглашения перестанут действовать. Управление LIVE будет освобождено, подписка отключена. Сохраните новый код отдельно.'))return;
+ if(pending)throw Error('Сначала сверяйте неподтверждённую операцию LIVE.');
+ const old=api,address=sessionAddress,space=sessionSpace,expected=member;
+ stopTimer();
+ try{
+  const rotated=await old.request('session/rotate','POST',{});
+  if(epoch!==serial||api!==old)return;
+  if(rotated.workspaceId!==space||rotated.member?.id!==expected.id||rotated.member?.role!==expected.role||rotated.member?.expiresAt!==expected.expiresAt)throw Error('Неожиданный ответ сервера');
+  const replacement=platformClient(address,space,rotated.token);
+  old.close();api=replacement;member=rotated.member;active=null;pending=null;
+  await render(name,rotated.token);
+ }catch(err){
+  if(epoch!==serial||api!==old)return;
+  // An ambiguous response may have committed rotation. Never replay it.
+  if(err.status===409||err.status===429){await render(name);throw err;}
+  close();status('Результат смены кода неизвестен или сессия недействительна. Восстановите владельца или запросите новое приглашение.',true);
+ }
+}
 async function render(name,issued){
- stopTimer();root.replaceChildren(box(name,p(roles[member.role]||member.role),button('Выйти',close),button('Отозвать эту сессию',()=>run(async()=>{if(!confirm('Отозвать код этой сессии на сервере? Для нового входа понадобится приглашение или код восстановления владельца.'))return;await api.request('session/revoke','POST',{});close();status('Сессия отозвана на сервере.');}))),e('p','',{id:'status',role:'status',class:'status'}));
+ stopTimer();root.replaceChildren(box(name,p(roles[member.role]||member.role),button('Выйти',close),button('Сменить код сессии',()=>run(epoch=>rotateSession(epoch,name))),button('Отозвать эту сессию',()=>run(async()=>{if(!confirm('Отозвать код этой сессии на сервере? Для нового входа понадобится приглашение или код восстановления владельца.'))return;await api.request('session/revoke','POST',{});close();status('Сессия отозвана на сервере.');}))),e('p','',{id:'status',role:'status',class:'status'}));
  if(issued)root.append(showSecret('Код новой сессии',issued));
  if(['owner','coach','athlete'].includes(member.role))root.append(notificationCard());
  if(member.role==='athlete'){const section=box('Мой кабинет',p('Доступ только к собственным заданиям и расписанию.'));root.append(inboxCard(),section);await athlete(section);return;}
