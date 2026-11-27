@@ -41,5 +41,5 @@ jobs:
       - run: npx --yes wrangler@4.161.0 deploy --config wrangler.delta-dev.jsonc --dry-run --outdir "${RUNNER_TEMP}/delta-build"
       - run: npx --yes wrangler@4.161.0 deploy --config wrangler.migration-source-dev.jsonc --dry-run --outdir "${RUNNER_TEMP}/migration-source-build"
       - run: npx --yes wrangler@4.161.0 deploy --config wrangler.delta-candidate.jsonc --dry-run --outdir "${RUNNER_TEMP}/delta-candidate-build"
-      - run: node tools/delta-smoke.mjs
       - run: node tools/delta-v3-migration-smoke.mjs "$RUNNER_TEMP/migration-source-build" "$RUNNER_TEMP/delta-candidate-build"
+      - run: node tools/delta-smoke.mjs

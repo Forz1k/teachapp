@@ -2,7 +2,7 @@
  * are dispatchFetch identifiers; no external network, real secrets or deploy. */
 import assert from 'node:assert/strict';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
-import {readdir,mkdtemp,rm} from 'node:fs/promises';
+import {readdir,readFile,mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import 'fake-indexeddb/auto';
@@ -16,7 +16,7 @@ import {prepareNativeEncryptionCopy,activateNativeEncryption,openEncryptedStorag
 import {projectScope,relayClient,deltaCandidateClient,prepareDeltaMigration,freezeDeltaCandidateSource,commitDeltaMigration,cutoverDeltaCandidateDevice,activateDeltaCandidateMigration,finalizeDeltaCandidateDevice,rollbackDeltaCandidateDevice,sealDeltaMigrationRollback,deltaMigrationFenceClient,deltaCandidateSyncAdapter,prepareSync,executeSync,migrationBindingStatus,verifyLocalCheckpoint} from '../js/sync.js';
 
 const [sourceDir,deltaDir]=process.argv.slice(2),entry=async dir=>{const js=(await readdir(dir)).filter(n=>/\.(m?js)$/.test(n));assert.equal(js.length,1,'Expected one bundled entrypoint in '+dir);return resolve(dir,js[0]);};
-const sourceScript=await entry(sourceDir),deltaScript=await entry(deltaDir),dir=await mkdtemp(join(tmpdir(),'teachapp-v3-'));
+const sourceScript=await readFile(await entry(sourceDir),'utf8'),deltaScript=await readFile(await entry(deltaDir),'utf8'),dir=await mkdtemp(join(tmpdir(),'teachapp-v3-'));
 const origin='https://app.example.com',sourceEndpoint='https://source.example.com',destinationEndpoint='https://delta.example.com',scopes=['school','coach'];
 const tok=n=>n.repeat(43),sourceToken={school:tok('A'),coach:tok('B')},destinationToken={school:tok('C'),coach:tok('D')},sourceFenceToken={school:tok('E'),coach:tok('F')},destinationSealToken={school:tok('G'),coach:tok('H')};
 const sourcePassword={school:'synthetic-school-source',coach:'synthetic-coach-source'},destinationPassword={school:'synthetic-school-dest',coach:'synthetic-coach-dest'},backupPassword='synthetic-migration-file-password',deviceBackupPassword='synthetic-independent-device-copy',passwords={school:'synthetic-v11-school-key',coach:'synthetic-v11-coach-key',workspace:'synthetic-v11-owner-key'};
@@ -24,7 +24,7 @@ const map=async fn=>Object.fromEntries(await Promise.all(scopes.map(async a=>[a,
 const signing=await map(async()=>{const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);return {privateKey:await crypto.subtle.exportKey('jwk',pair.privateKey),publicKey:await crypto.subtle.exportKey('jwk',pair.publicKey)};});
 const sourceVars={TEACHAPP_SYNC_ORIGIN:origin,TEACHAPP_SYNC_TOKEN_HASHES:JSON.stringify(await map(async a=>[await digestToken(sourceToken[a])])),TEACHAPP_SYNC_MIGRATION_CANDIDATE:'true',TEACHAPP_SYNC_MIGRATION_ENDPOINT:sourceEndpoint,TEACHAPP_SYNC_FENCE_HASHES:JSON.stringify(await map(a=>digestToken(sourceFenceToken[a]))),TEACHAPP_SYNC_ROLLBACK_VERIFY_KEYS:JSON.stringify(await map(a=>signing[a].publicKey))};
 const targetVars={TEACHAPP_DELTA_CANDIDATE:'true',TEACHAPP_DELTA_ORIGIN:origin,TEACHAPP_DELTA_ENDPOINT:destinationEndpoint,TEACHAPP_DELTA_TOKEN_HASHES:JSON.stringify(await map(async a=>[await digestToken(destinationToken[a])])),TEACHAPP_DELTA_SEAL_HASHES:JSON.stringify(await map(a=>digestToken(destinationSealToken[a]))),TEACHAPP_DELTA_ROLLBACK_SIGN_KEYS:JSON.stringify(await map(a=>signing[a].privateKey))};
-const start=(scriptPath,binding,className,bindings,persist)=>new Miniflare(convertV4MiniflareOptions({name:'teachapp-v3-'+persist,modules:true,scriptPath,compatibilityDate:'2026-11-01',bindings,durableObjects:{[binding]:{className,useSQLite:true}},resourcePersistencePath:join(dir,persist),enableDevRegistry:false,cf:false,upstream:persist==='source'?sourceEndpoint:destinationEndpoint,verbose:false}));
+const start=(script,binding,className,bindings,persist)=>new Miniflare(convertV4MiniflareOptions({name:'teachapp-v3-'+persist,modules:true,script,compatibilityDate:'2026-11-01',bindings,durableObjects:{[binding]:{className,useSQLite:true}},resourcePersistencePath:join(dir,persist),enableDevRegistry:false,cf:false,upstream:persist==='source'?sourceEndpoint:destinationEndpoint,verbose:false}));
 let source,target,access;
 const store=()=>{const m=new Map();return {getItem:k=>m.get(k)??null,setItem:(k,v)=>m.set(k,String(v)),removeItem:k=>m.delete(k)};};
 Object.defineProperty(globalThis,'localStorage',{value:store(),configurable:true,writable:true});
