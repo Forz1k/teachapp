@@ -261,7 +261,8 @@ export async function renderCoach(root,ctx={}){
   async function refresh(){
     const seq=++sequence;
     try{
-      const loaded=await C.loadCoachForView(selectedTeam,{archived:showArchived});if(seq!==sequence)return;
+      const loaded=await C.loadCoachForView(selectedTeam,{archived:showArchived});
+      const recoverable=['home','matches'].includes(selectedSection)?await C.listLiveMatches():[];if(seq!==sequence)return;
       const data=loaded.data;selectedTeam=loaded.selectedTeamId;
       if(root.isConnected&&ctx.onSection)ctx.onSection(selectedSection);
       body.replaceChildren();
@@ -273,6 +274,7 @@ export async function renderCoach(root,ctx={}){
       body.append(card('Команды',[teams.length?field('Команда',picker):p('Добавьте первую волейбольную команду.'),field('Показать архивные команды',archived),btn('+ Команда',()=>teamForm(null,refresh),'primary wide')]));
       body.append(btn('Организация соревнований',openTournaments,'wide'));
       if(['home','matches'].includes(selectedSection))body.append(btn('Тестовый LIVE-матч',openRehearsal,'wide'));
+      if(recoverable.length){const rows=recoverable.flatMap(d=>{const t=data.coachTeams.find(x=>x.id===d.teamId);if(!t)return [];return [btn('Восстановить LIVE · '+t.name+' · '+d.opponent+' · '+d.date,()=>openMatchCenter(t,refresh,{draftId:d.id}),'primary wide')];});if(rows.length)body.append(card('Сохранённые LIVE-матчи',[p('Откройте нужный черновик. Счёт берётся из сохранённого журнала, а не из кеша экрана.'),...rows]));}
       const team=teams.find(t=>t.id===selectedTeam);if(!team)return;
       const view=C.teamView(data,team.id);
       body.append(el('div',{class:'coach-actions'},[btn('Название',()=>teamForm(team,refresh)),btn(team.archived?'Восстановить команду':'Архивировать',()=>confirm('Изменить статус команды?','Данные сохранятся.',()=>C.saveTeam({...team,archived:!team.archived}),refresh))]));
