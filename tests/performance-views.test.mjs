@@ -77,3 +77,23 @@ test('School analytics shares one full-class evidence scan across period and KTP
  const only=calculateSchoolAnalytics({...input,studentId:'q'});assert.equal(scans,2);assert.equal(only.rows.length,1);assert.equal(only.att.pct,50);assert.equal(only.trend[0].mean,null);assert.deepEqual(only.ktp,a.ktp);
  data[1].value='1';const changed=calculateSchoolAnalytics(input);assert.equal(scans,3);assert.equal(changed.rows[0].mean,2);assert.equal(changed.trend[0].mean,1);
 });
+
+test('LIVE center and dossier use exact team and purpose-scoped indexed reads without fallback',async()=>{
+ await DB.clearAll();await DB.bulkPut('coachTeams',[{id:'a',name:'A',archived:false},{id:'b',name:'B',archived:true}]);
+ for(const n of C.coachStores.filter(n=>n!=='coachTeams'))await DB.bulkPut(n,[{id:'a-'+n,teamId:'a',date:'2026-09-01'},...Array.from({length:n==='coachMatches'?1200:1},(_,i)=>({id:'b-'+n+i,teamId:'b',date:'2026-09-02'}))]);
+ const full=await C.loadCoach(),reads=[],all=[],get=[],origIndex=IDBIndex.prototype.getAll,origAll=IDBObjectStore.prototype.getAll,origGet=IDBObjectStore.prototype.get;
+ IDBIndex.prototype.getAll=function(...a){reads.push([this.objectStore.name,this.name,a[0]]);return origIndex.apply(this,a);};
+ IDBObjectStore.prototype.getAll=function(...a){all.push(this.name);return origAll.apply(this,a);};
+ IDBObjectStore.prototype.get=function(...a){get.push([this.name,a[0]]);return origGet.apply(this,a);};
+ try{
+  for(const [scope,names] of [['center',['coachPlayers','coachLive','coachLineups']],['setup',['coachPlayers','coachMatches','coachLineups']],['dossier',['coachPlayers','coachTrainings','coachMatches','coachTests']]]){
+   reads.length=get.length=0;const v=await C.loadCoachTeamScope('a',scope);
+   assert.equal(v.selectedTeamId,'a');assert.deepEqual(get,[['coachTeams','a']]);assert.deepEqual(reads.sort(),names.map(n=>[n,'teamId','a']).sort());assert.deepEqual(all,[]);
+   for(const n of C.coachStores)assert.deepEqual(v.data[n],n==='coachTeams'?full[n].filter(x=>x.id==='a'):names.includes(n)?full[n].filter(x=>x.teamId==='a'):[]);
+  }
+  reads.length=0;assert.equal((await C.listLiveMatches('a')).length,1);assert.deepEqual(reads,[['coachLive','teamId','a']]);
+  reads.length=0;await assert.rejects(C.loadCoachTeamScope('missing','center'),/не найдена/);assert.equal(reads.length,0);
+  await assert.rejects(C.loadCoachTeamScope('a','invalid'),/область/);assert.equal((await C.loadCoachTeamScope('b','center')).selectedTeamId,'b');assert.equal(all.length,0);
+ }finally{IDBIndex.prototype.getAll=origIndex;IDBObjectStore.prototype.getAll=origAll;IDBObjectStore.prototype.get=origGet;}
+ assert.deepEqual(await C.loadCoach(),full);
+});

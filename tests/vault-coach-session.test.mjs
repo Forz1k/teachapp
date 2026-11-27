@@ -25,7 +25,8 @@ test('Encrypted coach commands share native validation, isolate views and revoke
  assert.equal(coach.view,view);assert.equal(coach.getAll,undefined);
  const live=await coach.startLiveMatch({teamId:team.id,date:'2025-09-01',opponent:'Synthetic LIVE',competition:'Cup',scheme:'5-1',roster,lineup:roster,bestOf:3,target:15,decider:15,firstServe:'ours'});
  assert.equal(view.selectedTeamId,null);assert.equal(view.data.coachMatches.length,0);assert.equal(coach.view,null);assert.equal(peer.data.coachMatches.length,1);
- const fresh=await coach.loadCoachForView(team.id);
+ const scoped=await coach.loadCoachTeamScope(team.id,'center');assert.equal(scoped.data.coachMatches.length,0);assert.equal(scoped.data.coachLive[0].id,live.id);assert.equal(scoped.data.coachPlayers.length,6);assert.equal(coach.view,scoped);assert.equal((await coach.listLiveMatches(team.id)).length,1);
+ const fresh=await coach.loadCoachForView(team.id);assert.equal(scoped.selectedTeamId,null);assert.equal(scoped.data.coachPlayers.length,0);
  assert.equal((await coach.readLiveMatch(live.id)).revision,0);assert.equal((await coach.listLiveMatches()).length,1);assert.equal(await coach.probeLiveStorage(),true);assert.equal((await coach.listLiveMatches()).length,1);assert.equal(coach.view,fresh);assert.deepEqual(await D.dumpAll(),native);
  const changed=await coach.changeLiveMatch(live.id,live.revision,{type:'rally',side:'ours',kind:'point'});
  assert.equal(changed.revision,1);assert.equal(fresh.data.coachLive.length,0);

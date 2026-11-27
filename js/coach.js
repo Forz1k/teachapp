@@ -68,7 +68,7 @@ export function validateCoachData(data){
 /** Backend-bound commands; pure analytics and validation stay shared. */
 function buildCoachCommands(db){
 async function readLiveMatch(id){return db.transaction(['coachLive'],'readonly',async s=>{const d=await s.coachLive.get(id);if(d)replay(d);return d||null;});}
-async function listLiveMatches(){return db.transaction(['coachLive'],'readonly',s=>s.coachLive.getAll());}
+async function listLiveMatches(teamId){return db.transaction(['coachLive'],'readonly',s=>teamId===undefined?s.coachLive.getAll():s.coachLive.index('teamId').getAll(teamId));}
 // The probe is an atomic write/delete; no committed dummy or native backend escape.
 async function probeLiveStorage(){const id=uid('live-probe');await db.transaction(['coachLive'],'readwrite',async s=>{await s.coachLive.add({id});await s.coachLive.delete(id);});return true;}
 async function loadCoach(){
@@ -85,6 +85,17 @@ async function loadCoachForView(teamId,{archived=false}={}){
  });
 }
 
+// Explicit team and purpose; no fallback to a different team, no full archive scan.
+async function loadCoachTeamScope(teamId,scope){
+ const scopes={center:['coachPlayers','coachLive','coachLineups'],setup:['coachPlayers','coachMatches','coachLineups'],dossier:['coachPlayers','coachTrainings','coachMatches','coachTests']};
+ if(!str(teamId)||!Object.hasOwn(scopes,scope))throw Error('Выберите команду и область чтения');
+ const names=scopes[scope];
+ return db.transaction(['coachTeams',...names],'readonly',async s=>{
+  const team=await s.coachTeams.get(teamId);if(!team)throw Error('Команда не найдена');
+  const rows=await Promise.all(names.map(async n=>[n,await s[n].index('teamId').getAll(teamId)]));
+  return {selectedTeamId:team.id,data:{...Object.fromEntries(coachStores.map(n=>[n,[]])),coachTeams:[team],...Object.fromEntries(rows)}};
+ });
+}
 async function write(name,record,guard){
   return db.transaction(coachStores,'readwrite',async s=>{
     const data=Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()])));
@@ -197,11 +208,11 @@ async function finishLiveMatch(id,revision){
   await s.coachMatches.add(m);await s.coachLive.delete(id);return m;
  });
 }
- return Object.freeze({loadCoach,loadCoachForView,readLiveMatch,listLiveMatches,probeLiveStorage,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch});
+ return Object.freeze({loadCoach,loadCoachForView,loadCoachTeamScope,readLiveMatch,listLiveMatches,probeLiveStorage,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch});
 }
 
 // Native API stays permanently bound to the existing IndexedDB backend.
-export const {loadCoach,loadCoachForView,readLiveMatch,listLiveMatches,probeLiveStorage,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch}=buildCoachCommands(nativeDb);
+export const {loadCoach,loadCoachForView,loadCoachTeamScope,readLiveMatch,listLiveMatches,probeLiveStorage,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch}=buildCoachCommands(nativeDb);
 
 const coachSessionStores=new Set(coachStores);
 const emptyCoachView=()=>({selectedTeamId:null,data:Object.fromEntries([...coachSessionStores].map(n=>[n,[]]))});
@@ -230,7 +241,7 @@ export function createCoachSession(access){
     guard();
     try{
      const result=await fn(...input);guard();
-     if(name==='loadCoachForView'){
+     if(name==='loadCoachForView'||name==='loadCoachTeamScope'){
       invalidateView();const cell={snapshot:result};
       cell.facade=Object.freeze({get selectedTeamId(){return cell.snapshot.selectedTeamId;},get data(){return cell.snapshot.data;}});
       view=cell;return cell.facade;

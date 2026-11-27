@@ -2,7 +2,7 @@ import {openTrainingDynamics} from './training-dynamics.js';
 import * as ui from '../ui.js';
 import {listWork,saveWork} from '../workbench.js';
 import {opponentProfiles,trainingOverview,preMatchDossier} from '../coach-opponents.js';
-import {matchScore,loadCoach,teamView} from '../coach.js';
+import {matchScore,loadCoachTeamScope,teamView} from '../coach.js';
 import {catalog,types} from '../health.js';
 import {todayIso,fmtFull} from '../model.js';
 import {openMatchReport} from './match-protocol.js';
@@ -11,7 +11,7 @@ const p=text=>el('p',{text}),btn=(text,onclick,kind='')=>el('button',{type:'butt
 const card=(title,children)=>el('article',{class:'card-block'},[el('h3',{text:title}),...children]);
 export async function openPreMatchDossier(team,back=closeSheet,initialOpponent='',initialDate=todayIso()){
  try{
-  const data=await loadCoach(),view=teamView(data,team.id),[notes,goals]=await Promise.all([listWork('opponentNote'),listWork('coachGoal')]),groups=opponentProfiles(team.id,view.matches,notes);
+  const {data}=await loadCoachTeamScope(team.id,'dossier'),view=teamView(data,team.id),[notes,goals]=await Promise.all([listWork('opponentNote'),listWork('coachGoal')]),groups=opponentProfiles(team.id,view.matches,notes);
   const opponent=el('input',{type:'text',value:initialOpponent||groups[0]?.name||'',maxlength:200,'aria-label':'Соперник для досье'}),pick=el('select',{},[el('option',{value:'',text:'Известные соперники'}),...groups.map(g=>el('option',{value:g.name,text:g.name}))]),date=el('input',{type:'date',value:initialDate}),limit=el('select',{},[3,5,10].map(n=>el('option',{value:String(n),text:String(n)+' матчей'}))),out=el('div',{class:'vp-stack','aria-live':'polite'});
   limit.value='5';
   const field=(name,n)=>el('label',{class:'field'},[el('span',{text:name}),n]),pct=(n,d)=>d?Math.round(100*n/d)+'% · '+n+'/'+d:'Нет данных',activity=id=>catalog.find(a=>a.id===id)?.name||id;
