@@ -118,18 +118,28 @@ export function validateVolleyTiming(m){
 // For unchanged starters the nominal duration is the reported full-set duration.
 // For changed participants only an inclusive interval is defensible without timestamps.
 // Unknown or omitted substitution sections never imply zero substitutions.
-export function volleyPlayerTime(m,id){
- const v=m.imported?.timing;if(!v||!m.roster.includes(id))return null;
- const sets=v.sets.map((s,i)=>{
-  const teamMs=s.seconds*1000,timeoutMs=s.timeouts===null?null:s.timeouts.reduce((n,t)=>n+t.seconds*1000,0);
-  const p=s.lineup&&s.changes?participants(s.lineup,s.changes):null;
+function preparePlayerTime(v){
+ return v.sets.map((s,i)=>({set:i+1,teamMs:s.seconds*1000,timeoutMs:s.timeouts===null?null:s.timeouts.reduce((n,t)=>n+t.seconds*1000,0),p:s.lineup&&s.changes?participants(s.lineup,s.changes):null}));
+}
+function playerTimeFromSets(prepared,id){
+ const sets=prepared.map(({set,teamMs,timeoutMs,p})=>{
   const kind=!p||!teamMs?'unknown':p.changed.has(id)?'changed':p.ever.has(id)?'full':'bench';
   const minMs=kind==='unknown'?null:kind==='full'?teamMs:0,maxMs=kind==='unknown'?null:kind==='bench'?0:teamMs;
-  return {set:i+1,kind,minMs,maxMs,teamMs,timeoutMs};
+  return {set,kind,minMs,maxMs,teamMs,timeoutMs};
  });
  const known=sets.filter(s=>s.minMs!==null);
  if(!known.length)return null;
  return {sets,knownSets:known.length,unknownSets:sets.length-known.length,minMs:known.reduce((n,s)=>n+s.minMs,0),maxMs:known.reduce((n,s)=>n+s.maxMs,0),teamMs:known.reduce((n,s)=>n+s.teamMs,0),partial:known.length!==sets.length||known.some(s=>s.kind==='changed')};
+}
+export function volleyPlayerTime(m,id){
+ const v=m.imported?.timing;if(!v||!m.roster.includes(id))return null;
+ return playerTimeFromSets(preparePlayerTime(v),id);
+}
+// One transient snapshot per imported match: no persisted cache or changed evidence.
+export function volleyPlayerTimes(m){
+ const v=m.imported?.timing;if(!v||!m.roster.length)return new Map();
+ const prepared=preparePlayerTime(v);
+ return new Map([...new Set(m.roster)].map(id=>[id,playerTimeFromSets(prepared,id)]));
 }
 export function volleyTimeLabel(t){
  if(!t||t.minMs===null)return '—';

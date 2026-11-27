@@ -17,3 +17,7 @@ Seasonal comparisons select eligible athletes once and exclude matches with no e
 ## RC5 preparation — pure coach analytics decomposition
 
 The calculation and CSV functions live in `js/coach-analytics.js`, with the existing `coach.js` exports retained as a compatibility facade. Seasonal ranking uses the pure module directly. Player cards reuse their existing court-time snapshot instead of calculating it again. The new module is explicitly precached and packaged for offline PWA review. Native and encrypted coach commands, data schemas and version remain unchanged. Existing regressions and an export-identity test guard compatibility; physical-device timing and memory acceptance remains open.
+
+## RC5 preparation — imported match CSV timing snapshot
+
+Imported match CSV calculates set participation and timeout evidence once per match, then derives independent per-player results using the same full/changed/bench/unknown semantics as the individual player view. A regression counts substitution-list iterations and compares batch results to the individual calculation, including missing evidence. Empty-roster CSV rows retain all header columns. No schema, persistent cache, publication or version change; physical-device export remains unverified.

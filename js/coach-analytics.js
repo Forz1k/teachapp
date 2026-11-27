@@ -4,7 +4,7 @@ import {catalog,active,ancestorIds} from './health.js';
 import {courtTimeLabel} from './court-time.js';
 import {captureSummary,combineCaptureSummaries,captureComparison} from './match-capture.js';
 import {replayDetailed,courtTime} from './match-protocol.js';
-import {volleyPlayerTime,volleyTimeLabel} from './volleypoint-time.js';
+import {volleyPlayerTime,volleyPlayerTimes,volleyTimeLabel} from './volleypoint-time.js';
 export const attendanceLabels={present:'Присутствовала',absent:'Отсутствовала',limited:'Присутствовала, нагрузка ограничена'};
 export const metrics={serves:'Подачи (всего)',serveErrors:'Ошибки на подаче',aces:'Эйсы',receptions:'Приёмы (всего)',receptionGood:'Положительные приёмы',attacks:'Атаки (всего)',attackKills:'Результативные атаки',blocks:'Результативные блоки',points:'Очки (всего)'};
 const activityMap=new Map(catalog.map(a=>[a.id,a]));
@@ -139,9 +139,9 @@ export function coachCsv(view){
   const names=new Map();for(const p of view.players)if(!names.has(p.id))names.set(p.id,p.name);
   for(const m of view.matches){
     const score=matchScore(m),base=[m.date,m.competition,m.opponent,score.ours+':'+score.theirs,m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')];
-    const timing=m.detail?courtTime(replayDetailed(m.detail)):null,assists=matchAssistCounts(m);
-    for(const id of m.roster){const historic=volleyPlayerTime(m,id);rows.push([...base,names.get(id)||'',...keys.map(k=>m.stats[id]?.[k]??''),timing?.measured?courtTimeLabel(timing.players.ours[id]||0):'',timing?.measured?(timing.partial?'Частично':'Измерено'):historic?'Восстановлено по PDF':'Нет данных',historic?volleyTimeLabel(historic):'',historic?historic.knownSets+'/'+historic.sets.length:'',assists.get(id)??'',m.stats[id]?.points!=null||assists.has(id)?(m.stats[id]?.points||0)+(assists.get(id)||0):'']);}
-    if(!m.roster.length)rows.push([...base,'',...keys.map(()=> ''),'','','','']);
+    const timing=m.detail?courtTime(replayDetailed(m.detail)):null,assists=matchAssistCounts(m),historicTimes=volleyPlayerTimes(m);
+    for(const id of m.roster){const historic=historicTimes.get(id);rows.push([...base,names.get(id)||'',...keys.map(k=>m.stats[id]?.[k]??''),timing?.measured?courtTimeLabel(timing.players.ours[id]||0):'',timing?.measured?(timing.partial?'Частично':'Измерено'):historic?'Восстановлено по PDF':'Нет данных',historic?volleyTimeLabel(historic):'',historic?historic.knownSets+'/'+historic.sets.length:'',assists.get(id)??'',m.stats[id]?.points!=null||assists.has(id)?(m.stats[id]?.points||0)+(assists.get(id)||0):'']);}
+    if(!m.roster.length)rows.push([...base,'',...keys.map(()=> ''),...Array(6).fill('')]);
   }
   return '\uFEFF'+rows.map(r=>r.map(csvCell).join(';')).join('\r\n');
 }
