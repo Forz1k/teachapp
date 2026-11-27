@@ -946,7 +946,7 @@ export async function rollbackDeltaMigrationDevice(args){
    an initial anchor or encrypted delta travels across the network.
    No normal app callers: data access is injected by the synthetic test harness. */
 function deltaSyncAdapter({endpoint,area,token,password,readData,synthetic=false,confirmed=false,mode='lab',acceptCompactedHistory=false,fetcher,timeoutMs}){
- check((mode==='lab'?synthetic===true:confirmed===true)&&typeof readData==='function','Требуется явное подтверждение Delta и backend');
+ check((mode==='lab'?synthetic===true:confirmed===true)&&typeof readData==='function',mode==='lab'?'Интеграция Delta LAB только для синтетических данных':'Требуется явное подтверждение Delta и backend');
  check(typeof password==='string'&&password.length>=12,'Проверьте пароль Delta LAB');
  endpoint=normalizeEndpoint(endpoint);
  const client=mode==='candidate'?deltaCandidateClient(endpoint,area,token,{fetcher,timeoutMs,confirmed}):deltaLabClient(endpoint,area,token,{fetcher,timeoutMs});
