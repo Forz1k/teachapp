@@ -1,7 +1,7 @@
 /* app.js — точка входа: маршрутизация между табами, инициализация, service worker. */
 
 import * as store from './store.js';
-import {NATIVE_STORAGE_FENCED_EVENT} from './db.js';
+import {NATIVE_STORAGE_FENCED_EVENT,isEncryptedStorage,encryptedStorageAllowed} from './db.js';
 import {scrubPrivateDocument} from './vault-owner-lifecycle.js';
 import {displayClassName} from './model.js';
 import * as ui from './ui.js';
@@ -45,6 +45,7 @@ let storageRevoked=false;
 window.addEventListener(NATIVE_STORAGE_FENCED_EVENT,()=>{
  if(storageRevoked)return;storageRevoked=true;store.revokeNativeView();scrubPrivateDocument();location.reload();
 });
+window.addEventListener('teachapp:encrypted-locked',()=>{storageRevoked=true;store.revokeNativeView();});
 let syncSession=null,autoBusy=false,autoAttempt=0;
 let syncHint='',autoRetryTimer=null,autoRetryCount=0;
 function clearAutoRetry(reset=false){if(autoRetryTimer!==null)clearTimeout(autoRetryTimer);autoRetryTimer=null;if(reset)autoRetryCount=0;}
@@ -58,7 +59,7 @@ function safeAutoRoute(){
  return store.state.currentTab==='today'||store.state.currentTab==='coach'&&navigation.coach==='home';
 }
 async function maybeAutoSync(initial=false,manual=false,retry=false){
- if(!readSyncIdentity()||autoBusy||document.body.classList.contains('privacy-covered'))return;
+ if(storageRevoked||!encryptedStorageAllowed()||!readSyncIdentity()||autoBusy||document.body.classList.contains('privacy-covered'))return;
  if(!syncSession||navigator.onLine===false||document.visibilityState==='hidden'){
   if(manual)ui.toast(navigator.onLine===false?'Нет интернета. Изменения сохранены на устройстве.':'Откройте синхронизацию в настройках для ручного обмена.');return;
  }
@@ -67,7 +68,7 @@ async function maybeAutoSync(initial=false,manual=false,retry=false){
  const oldTabbar=tabbarEl;
  ui.setUnderlyingInert(appRoot,true);ui.setUnderlyingInert(oldTabbar,true);
  try{
-  const result=await syncSession.exclusive(()=>runPersonalSync({permitted:()=>document.visibilityState!=='hidden'&&!document.body.classList.contains('privacy-covered')}));
+  const result=await syncSession.exclusive(()=>runPersonalSync({permitted:()=>!storageRevoked&&encryptedStorageAllowed()&&document.visibilityState!=='hidden'&&!document.body.classList.contains('privacy-covered')}));
   if(result?.areas.some(x=>x.changed))await store.load();
   syncHint=result?'':'Другая вкладка открыта · обмен отложен';
    const delay=syncRetryDelay(result,autoRetryCount),code=readSyncIdentity();
@@ -344,7 +345,7 @@ async function boot() {
   // Горячие клавиши для отладки на десктопе: 1-5 — табы
   window.addEventListener('keydown', (e) => {
     if(autoBusy)return;
-    if(e.altKey && e.code==='KeyH'){e.preventDefault();ui.coverPrivacy();return;}
+    if(e.altKey && e.code==='KeyH'){e.preventDefault();if(isEncryptedStorage())window.dispatchEvent(new Event('teachapp:lock-encrypted'));else ui.coverPrivacy();return;}
     if(document.body.classList.contains('privacy-covered'))return;
     if (e.target.matches('input, textarea, select')) return;
     if (e.key === 'Escape') { ui.closeSheet(); return; }

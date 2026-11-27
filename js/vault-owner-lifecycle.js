@@ -26,6 +26,10 @@ export function createOwnerSessionLifecycle({openSession,onLock=()=>{},channelNa
   c.timer=setTimer(()=>{if(cell===c)revoke('expired');},idleMs);c.timer?.unref?.();
  }
  function activity(){if(cell&&allowed(cell))arm(cell);}
+ async function run(names,mode,fn,sync){
+  const c=cell;check(c?.access&&allowed(c),'Сеанс владельца заблокирован');
+  try{const method=sync?c.access.syncTransaction:c.access.transaction;check(typeof method==='function','Операция недоступна');const result=await method.call(c.access,names,mode,fn);check(allowed(c),'Сеанс владельца заблокирован');return result;}catch(e){allowed(c);throw e;}
+ }
  const events=['pointerdown','keydown','touchstart'];
  for(const event of events)doc.addEventListener(event,activity,{passive:true});
  doc.addEventListener('visibilitychange',background);doc.addEventListener('freeze',freeze);win.addEventListener('pagehide',pagehide);
@@ -47,12 +51,8 @@ export function createOwnerSessionLifecycle({openSession,onLock=()=>{},channelNa
     throw error;
    }
   },
-  async transaction(names,mode,fn){
-   const c=cell;check(c?.access&&allowed(c),'Сеанс владельца заблокирован');
-   try{const result=await c.access.transaction(names,mode,fn);
-    check(allowed(c),'Сеанс владельца заблокирован');return result;
-   }catch(e){allowed(c);throw e;}
-  },
+  async transaction(names,mode,fn){return run(names,mode,fn,false);},
+  async syncTransaction(names,mode,fn){return run(names,mode,fn,true);},
   isUnlocked(){return !!cell?.access&&allowed(cell);},
   lock,
   lockEveryTab(){

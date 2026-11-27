@@ -1,5 +1,6 @@
 /* Personal workspace secret. Never log or include the code in a backup or URL. */
 import {normalizeEndpoint,syncAreas} from './sync.js';
+import {syncCredentialStorage} from './sync-credential-storage.js';
 const PREFIX='TAP1',KEY='teachapp.personal-sync.v1';
 const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true});
 function b64(bytes){return btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');}
@@ -42,9 +43,9 @@ export async function personalTokenHashes(code){
  return Object.fromEntries(pairs);
 }
 export function readPersonalCode(storage){
- try{const value=(storage??globalThis.localStorage).getItem(KEY);return value?parsePersonalCode(value).code:null;}catch{return null;}
+ try{const value=(storage??syncCredentialStorage()).getItem(KEY);return value?parsePersonalCode(value).code:null;}catch{return null;}
 }
-export function savePersonalCode(code,storage=globalThis.localStorage){
+export function savePersonalCode(code,storage=syncCredentialStorage()){
  const parsed=parsePersonalCode(code);
  if(storage.getItem('teachapp.trusted-device.v2')!==null)throw Error('Сначала явно отключите индивидуальный профиль v2');
  const old=readPersonalCode(storage);
@@ -52,4 +53,4 @@ export function savePersonalCode(code,storage=globalThis.localStorage){
  storage.setItem(KEY,parsed.code);
  if(readPersonalCode(storage)!==parsed.code)throw Error('Не удалось сохранить подключение');
 }
-export function forgetPersonalCode(storage=globalThis.localStorage){storage.removeItem(KEY);}
+export function forgetPersonalCode(storage=syncCredentialStorage()){storage.removeItem(KEY);}

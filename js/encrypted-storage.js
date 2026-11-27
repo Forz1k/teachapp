@@ -61,7 +61,7 @@ export function probeStorageMode(){
  return new Promise((resolve,reject)=>{
   const q=indexedDB.open(DB);let absent=false,blocked=false;
   q.onblocked=()=>{blocked=true;reject(storageError());};q.onupgradeneeded=e=>{absent=e.oldVersion===0;q.transaction.abort();};
-  q.onerror=()=>{if(absent&&!blocked)resolve('native');else reject(storageError());};
+  q.onerror=()=>{if(absent&&!blocked)resolve('empty');else reject(storageError());};
   q.onsuccess=()=>{const db=q.result,mode=db.version<=LEGACY?'native':db.version===VERSION&&schema(db,stores)?'encrypted':null;db.close();if(blocked)return;if(mode)resolve(mode);else reject(storageError());};
  });
 }
@@ -128,6 +128,33 @@ export async function prepareNativeEncryptionCopy({backupPassword}){
  const envelope=await encryptBackup({app:'teachapp-native-encryption-recovery',version:1,data},backupPassword),reopened=await decryptBackup(envelope,backupPassword);
  check(snapshotIdentity(reopened.data)===snapshotIdentity(data),'Проверка независимой копии не пройдена');
  const file=JSON.stringify(envelope);check(file.length<=migrationFileLimit,'Копия слишком велика');return file;
+}
+/** Independent recovery file from a confirmed snapshot, never a portable backup. */
+export async function exportEncryptedRecoveryCopy({data,backupPassword}){
+ check(typeof backupPassword==='string'&&backupPassword.length>=12&&backupPassword.length<=1024,'Независимый пароль копии от 12 символов');
+ const expected=checkSource(data),envelope=await encryptBackup({app:'teachapp-native-encryption-recovery',version:1,data},backupPassword);
+ const reopened=await decryptBackup(envelope,backupPassword);check(checkSource(reopened.data)===expected,'Проверка независимой копии не пройдена');
+ const file=JSON.stringify(envelope);check(file.length<=migrationFileLimit,'Копия слишком велика');return file;
+}
+async function readRecovery(file,password){
+ check(typeof file==='string'&&file.length<=migrationFileLimit,'Некорректный размер копии');
+ const copy=await decryptBackup(JSON.parse(file),password);check(exact(copy,['app','version','data'])&&copy.app==='teachapp-native-encryption-recovery'&&copy.version===1,'Неверный формат независимой копии');checkSource(copy.data);return copy.data;
+}
+/** Recover only into a genuinely absent database in a new browser profile.
+ * Never delete/overwrite an existing v10, v11 or unknown database. */
+export async function recoverIntoEmptyEncryptedStorage({passwords,backupPassword,file,checkpointPasswords={},confirmed=false,stillAllowed=()=>true}){
+ check(confirmed===true&&independent(passwords,backupPassword),'Требуются независимые пароли и подтверждение');
+ const guard=()=>check(stillAllowed(),'Восстановление отменено');guard();noPersistentSyncCredentials();
+ const data=await readRecovery(file,backupPassword);backupPassword=undefined;await checkCheckpoints(data,checkpointPasswords);checkpointPasswords=undefined;guard();
+ const parts=partsFor(data),bundleId=crypto.randomUUID(),rows={};
+ try{for(const s of scopes){rows[s]=await cipher.sealPartitionScope({scope:s,bundleId,password:passwords[s],data:withMeta(s,bundleId,parts[s])});guard();}}finally{passwords=undefined;}
+ const pointer={id:'active',bundleId,revisions:Object.fromEntries(scopes.map(s=>[s,rows[s][0].vaultId]))};
+ return new Promise((resolve,reject)=>{
+  const q=indexedDB.open(DB,VERSION);let blocked=false,created=false,failure;
+  q.onblocked=()=>{blocked=true;reject(storageError());};
+  q.onupgradeneeded=e=>{const db=q.result,tx=q.transaction;try{guard();noPersistentSyncCredentials();check(!blocked&&e.oldVersion===0,'Восстановление возможно только в пустой профиль без базы TeachApp');for(const s of scopes){const table=db.createObjectStore(s,{keyPath:'id'});for(const row of rows[s])table.add(row);}db.createObjectStore('state',{keyPath:'id'}).add(pointer);created=true;}catch(e){failure=e;tx.abort();}};
+  q.onerror=()=>reject(failure||q.error||storageError());q.onsuccess=()=>{q.result.close();if(created&&!blocked)resolve(true);else reject(Error('База уже существует; перезапись запрещена'));};
+ });
 }
 function upgrade(expected,pointer,rows,guard){
  return new Promise((resolve,reject)=>{

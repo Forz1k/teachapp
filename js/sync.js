@@ -1099,7 +1099,7 @@ export function createSyncExecutor(access){
  }catch(e){if(e?.code==='sync-paused')throw e;throw Error((pullOnly?'Локальная запись не завершилась.':'Сервер принял пакет, но локальная запись не завершилась.')+' Ваши данные не заменены этой операцией. Повторите синхронизацию; при конфликте проверьте обе версии.');}
 };
 }
-export async function executeSync(options){return createSyncExecutor(db)(options);}
+export async function executeSync(options){const permitted=options.stillAllowed??(()=>true);return createSyncExecutor({dumpAll:db.dumpAll,transaction:db.syncTransaction})({...options,stillAllowed:()=>db.encryptedStorageAllowed()&&permitted()});}
 // Automatic sync only for an already confirmed workspace; never auto-propagate deletions.
 export async function syncPersonalArea({area,endpoint,password,client,stillAllowed=()=>true,initialize=false}){
  const binding=await migrationBindingStatus(area);if(binding.status!=='none')return {area,status:'review',reason:'migration-binding'};
@@ -1140,7 +1140,7 @@ export async function localSyncState({area,endpoint,password,data}){
 }
 export async function disconnectSync(area,confirmed=false){
  check(validArea(area)&&confirmed,'Подтвердите отключение');
- await db.transaction(['meta'],'readwrite',async s=>{
+ await db.syncTransaction(['meta'],'readwrite',async s=>{
   if(await s.meta.get(migrationBindingKey(area)))throw migrationGuardError();
   await s.meta.delete(keyOf(area));
   await s.meta.delete(statusKey(area));

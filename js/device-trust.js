@@ -1,3 +1,4 @@
+import {syncCredentialStorage} from './sync-credential-storage.js';
 /* Experimental v2 device pairing. No automatic production migration or stored administrator key. */
 import {normalizeEndpoint,syncAreas,relayClient,verifySyncSnapshot} from './sync.js';
 import {parsePersonalCode,personalCredentials} from './personal-sync.js';
@@ -147,10 +148,10 @@ export function trustedRelayClient(profile,area,options={}){
 // Separate, opt-in credential store. It is deliberately excluded from all backups.
 // Browser profile access can expose credentials; use only a protected device.
 const trustedStorageKey='teachapp.trusted-device.v2';
-export function readTrustedProfile(storage=globalThis.localStorage){try{const raw=storage.getItem(trustedStorageKey);return raw?parseTrustedProfile(JSON.parse(raw)):null;}catch{return null;}}
-export function saveTrustedProfile(profile,storage=globalThis.localStorage){const p=parseTrustedProfile(profile);if(storage.getItem('teachapp.personal-sync.v1'))throw Error('Сначала отключите личный код TAP1. Данные и общие ревизии останутся.');if(storage.getItem(trustedStorageKey)!==null)throw Error('Сначала забудьте прежний профиль устройства');storage.setItem(trustedStorageKey,JSON.stringify(p));if(JSON.stringify(readTrustedProfile(storage))!==JSON.stringify(p))throw Error('Не удалось сохранить профиль');return p;}
-export function forgetTrustedProfile(storage=globalThis.localStorage){storage.removeItem(trustedStorageKey);}
-export function hasTrustedProfileRecord(storage=globalThis.localStorage){try{return storage.getItem(trustedStorageKey)!==null;}catch{return false;}}
-export function readSyncIdentity(storage=globalThis.localStorage){try{const raw=storage.getItem(trustedStorageKey);if(raw!==null)return JSON.stringify(parseTrustedProfile(JSON.parse(raw)));const code=storage.getItem('teachapp.personal-sync.v1');return code?parsePersonalCode(code).code:null;}catch{return null;}}
+export function readTrustedProfile(storage=syncCredentialStorage()){try{const raw=storage.getItem(trustedStorageKey);return raw?parseTrustedProfile(JSON.parse(raw)):null;}catch{return null;}}
+export function saveTrustedProfile(profile,storage=syncCredentialStorage()){const p=parseTrustedProfile(profile);if(storage.getItem('teachapp.personal-sync.v1'))throw Error('Сначала отключите личный код TAP1. Данные и общие ревизии останутся.');if(storage.getItem(trustedStorageKey)!==null)throw Error('Сначала забудьте прежний профиль устройства');storage.setItem(trustedStorageKey,JSON.stringify(p));if(JSON.stringify(readTrustedProfile(storage))!==JSON.stringify(p))throw Error('Не удалось сохранить профиль');return p;}
+export function forgetTrustedProfile(storage=syncCredentialStorage()){storage.removeItem(trustedStorageKey);}
+export function hasTrustedProfileRecord(storage=syncCredentialStorage()){try{return storage.getItem(trustedStorageKey)!==null;}catch{return false;}}
+export function readSyncIdentity(storage=syncCredentialStorage()){try{const raw=storage.getItem(trustedStorageKey);if(raw!==null)return JSON.stringify(parseTrustedProfile(JSON.parse(raw)));const code=storage.getItem('teachapp.personal-sync.v1');return code?parsePersonalCode(code).code:null;}catch{return null;}}
 export function identityAreas(identity){return identity?.startsWith('{')?Object.keys(parseTrustedProfile(JSON.parse(identity)).areas):Object.keys(syncAreas);}
 export async function identityCredentials(identity,area){if(identity?.startsWith('{'))return trustedCredentials(JSON.parse(identity),area);return {...await personalCredentials(identity,area),protocolVersion:1};}

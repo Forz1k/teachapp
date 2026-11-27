@@ -5,6 +5,8 @@ import {retentionPreview,purgeExpired} from '../retention.js';
 import { validateBackup } from '../backup.js';
 import {verifyProtectedBackup} from '../backup-verify.js';
 import {inspectLocalMigration} from '../migration-preflight.js';
+import {isEncryptedStorage,dumpAll,encryptedStorageAllowed} from '../db.js';
+import {exportEncryptedRecoveryCopy} from '../encrypted-storage.js';
 /* screens/settings.js — настройки, импорт, экспорт, резервные копии, управление классами. */
 
 import { APP_VERSION } from '../version.js';
@@ -305,6 +307,10 @@ export function renderSettings(root, ctx = {}) {
       diagnostics.textContent='Структура и связи корректны · записей '+Object.values(payload.data).reduce((n,a)=>n+a.length,0)+storage;
     }catch{diagnostics.textContent='Проверка не пройдена. Не удаляйте приложение и не очищайте хранилище. Сохраните защищённую копию для диагностики.';}finally{button.disabled=false;}
   }}),el('button',{class:'btn wide',type:'button',text:'Проверить и исправить КТП',onclick:openKtpDiagnostics})]));
+  const secured=isEncryptedStorage();
+  const securePanel=el('div',{class:'card-block'},[el('div',{class:'head',text:'Шифрование локальной базы · RC3'}),el('p',{text:secured?'Записи IndexedDB зашифрованы. Коды синхронизации действуют только в сеансе. Отдельные браузерные настройки и данные публичного портала не входят в это хранилище.':'Перенос экспериментальный; используйте только после независимой приёмки и сохранения проверенной копии.'}),el('button',{class:'btn wide',type:'button',text:secured?'Заблокировать защищённый сеанс':'Подготовить перенос в v11',onclick:()=>{if(secured)window.dispatchEvent(new Event('teachapp:lock-encrypted'));else{const u=new URL(location.href);u.searchParams.set('secure-migration','1');location.assign(u.href);}}})]);
+  if(secured)securePanel.append(el('button',{class:'btn wide',type:'button',text:'Независимая копия v11',onclick:async()=>{let password=await ui.promptDialog({title:'Независимый пароль копии',text:'Отдельный пароль от 12 символов. Копия содержит локальные контрольные точки; восстановление только в новый профиль.',password:true,ok:'Создать'});if(password===null)return;try{const file=await exportEncryptedRecoveryCopy({data:await dumpAll(),backupPassword:password});if(encryptedStorageAllowed())ui.downloadBlob(new Blob([file],{type:'application/json'}),'teachapp-v11-recovery.json');}catch(e){if(encryptedStorageAllowed())ui.toast(e.message);}finally{password=undefined;}}}));
+  body.append(securePanel);
   const migrationStatus=el('p',{role:'status',text:'Предварительная локальная проверка. Не запускает шифрование, перенос или восстановление.'});
   const migrationLabels={schema:'неполная схема',integrity:'нарушение связей','active-delta-migration':'незавершённый Delta-перенос','non-json':'неподдерживаемые значения','record-limit':'выше лимита записей LAB','byte-limit':'выше лимита размера LAB','crypto-unavailable':'Web Crypto недоступен','locks-unavailable':'Web Locks недоступен','device-checkpoints':'обнаружены контрольные точки синхронизации','unmigrated-device-checkpoints':'перенос заблокирован: рабочая синхронизация ещё не подключена к зашифрованному хранилищу','checkpoint-invalid':'некорректная или неизвестная контрольная точка устройства','partition-roundtrip':'не удалось без потерь разделить и собрать три области','quota-unknown':'квота неизвестна','low-estimated-space':'мало оценочного свободного места','snapshot-not-loaded':'снимок не загружен из-за лимита; связи и контрольные точки не проверены'};
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Диагностика базы · подготовка миграции'}),migrationStatus,el('button',{class:'btn wide',type:'button',text:'Проверить условия переноса',onclick:async e=>{
@@ -316,7 +322,7 @@ export function renderSettings(root, ctx = {}) {
   }})]));
   const retention=el('input',{type:'number',min:0,max:3650,step:1,value:settings.retentionDays??0});
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Конфиденциальность и сроки хранения'}),
-    el('p',{text:'Экранная ширма не заменяет пароль устройства. Данные IndexedDB не шифруются. Срок действует только для истёкших сведений об ограничениях и группах; 0 — срок не задан. Автоматического удаления нет.'}),
+    el('p',{text:(isEncryptedStorage()?'IndexedDB зашифрована, экранная ширма не заменяет пароль устройства. ':'Экранная ширма не заменяет пароль устройства. Данные IndexedDB не шифруются. ')+'Срок действует только для истёкших сведений об ограничениях и группах; 0 — срок не задан. Автоматического удаления нет.'}),
     el('label',{class:'field'},['Хранить после окончания действия, дней',retention]),
     el('button',{class:'btn wide',type:'button',text:'Сохранить срок',onclick:async()=>{
       const days=Number(retention.value);if(retention.value===''||!Number.isInteger(days)||days<0||days>3650)return ui.toast('Введите 0–3650 дней');

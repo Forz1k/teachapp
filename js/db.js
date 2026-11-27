@@ -98,13 +98,20 @@ const migrations = {
 
 let _db = null;
 let _opening = null;
-let nativeFenced = false;
+let nativeFenced = false, encryptedRoute=null,nativeStarted=false;
+export const isEncryptedStorage=()=>encryptedRoute!==null;
+export const encryptedStorageAllowed=()=>encryptedRoute===null||encryptedRoute.isUnlocked();
+export function configureEncryptedStorage(route){
+ if(nativeStarted||nativeFenced||encryptedRoute||!route||typeof route.transaction!=='function'||typeof route.syncTransaction!=='function'||typeof route.isUnlocked!=='function')throw Error('Маршрут хранилища уже выбран или некорректен');
+ encryptedRoute=Object.freeze(route);
+}
 export const NATIVE_STORAGE_FENCED_EVENT='teachapp:native-storage-fenced';
 const fencedError=()=>new DOMException('Версия локального хранилища изменилась. Повторный доступ в этом документе запрещён.','NativeStorageFencedError');
 
 /** Открывает базу. Параллельные обращения используют один запрос IndexedDB. */
 export function open() {
-  if(nativeFenced)return Promise.reject(fencedError());
+  if(nativeFenced||encryptedRoute)return Promise.reject(fencedError());
+  nativeStarted=true;
   if (_db) return Promise.resolve(_db);
   if (_opening) return _opening;
   const pending = new Promise((resolve, reject) => {
@@ -254,9 +261,11 @@ export function createDataAccess(run){
   return Object.freeze(access);
 }
 
-// Published application remains permanently bound to the existing native IDB
-// backend. No setter, migration toggle, password or LAB import in this file.
-export const {bulkPut,get,getAll,put,del,clear,count,byIndex,transaction,clearAll,dumpAll,readSnapshot,replaceAll}=createDataAccess(tx);
+// Bootstrap fixes the encrypted route before importing the app. Native is
+// the default only for legacy installations; no fallback after route choice.
+const routed=(n,m,fn)=>encryptedRoute?encryptedRoute.transaction(n,m,fn):tx(n,m,fn);
+export const {bulkPut,get,getAll,put,del,clear,count,byIndex,transaction,clearAll,dumpAll,readSnapshot,replaceAll}=createDataAccess(routed);
+export const syncTransaction=(n,m,fn)=>encryptedRoute?encryptedRoute.syncTransaction(n,m,fn):tx(n,m,fn);
 
 /** Count before materializing a full snapshot. Both operations use the same
  * readonly transaction, so a concurrent writer cannot bypass the row cap.
@@ -281,6 +290,10 @@ export function assertMigrationSchema(t){
 export function readBoundedSnapshot(limit){
  if(!Number.isSafeInteger(limit)||limit<0)throw Error('Некорректный лимит снимка');
  const names=Object.keys(STORES);
+ if(encryptedRoute)return encryptedRoute.transaction(names,'readonly',async stores=>{
+  const records=(await Promise.all(names.map(n=>stores[n].count()))).reduce((a,b)=>a+b,0);
+  return {records,data:records>limit?null:Object.fromEntries(await Promise.all(names.map(async n=>[n,await stores[n].getAll()]))) };
+ });
  return tx(names,'readonly',async (stores,t)=>{
   assertMigrationSchema(t);
   const records=(await Promise.all(names.map(name=>stores[name].count()))).reduce((a,b)=>a+b,0);

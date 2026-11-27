@@ -28,9 +28,10 @@ try{
  // its dependencies import this intercepted module at the canonical URL.
  const channelName='teachapp-owner-app-lab-'+id;
  const bridge=`
- import {SCHEMA,createDataAccess,assertMigrationSchema,NATIVE_STORAGE_FENCED_EVENT} from './db.js?native-schema';
+ import {SCHEMA,createDataAccess,assertMigrationSchema,NATIVE_STORAGE_FENCED_EVENT,configureEncryptedStorage,isEncryptedStorage,encryptedStorageAllowed} from './db.js?native-schema';
  import {createOwnerSessionLifecycle,scrubPrivateDocument} from './vault-owner-lifecycle.js';
- export {SCHEMA,createDataAccess,assertMigrationSchema,NATIVE_STORAGE_FENCED_EVENT};
+ export {SCHEMA,createDataAccess,assertMigrationSchema,NATIVE_STORAGE_FENCED_EVENT,configureEncryptedStorage,isEncryptedStorage,encryptedStorageAllowed};
+ export const syncTransaction=(n,m,fn)=>gate.transaction(n,m,fn);
  const gate=createOwnerSessionLifecycle({channelName:${JSON.stringify(channelName)},openSession:async({passwords,stillAllowed})=>{
    const {partitionedVaultLab}=await import('/tools/prototypes/vault-partitioned-lab.mjs');
    return partitionedVaultLab(${JSON.stringify(id)},{layout:'school-v3-device-migrated'}).openOwnerAppRehearsal({passwords,synthetic:true,stillAllowed});
@@ -59,7 +60,7 @@ try{
  });
  window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
  `;
- const appHtml=(await readFile(resolve(root,'index.html'),'utf8')).replace('<script type="module" src="./js/app.js"></script>','<script type="module" src="/owner-lab-login.js"></script>');
+ const appHtml=(await readFile(resolve(root,'index.html'),'utf8')).replace('<script type="module" src="./js/storage-bootstrap.js"></script>','<script type="module" src="/owner-lab-login.js"></script>');
  await context.route(origin+'/index.html',route=>route.fulfill({status:200,contentType:'text/html; charset=utf-8',body:appHtml}));
  await context.route(origin+'/owner-lab-login.js',route=>route.fulfill({status:200,contentType:'text/javascript; charset=utf-8',body:loginScript}));
  await context.route(dbPath,route=>route.fulfill({status:200,contentType:'text/javascript; charset=utf-8',body:bridge}));
