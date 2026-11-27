@@ -69,5 +69,10 @@ export async function deliverProviderPush({subscription,policy,keyPair,contact,n
   const response=await fetcher(sub.endpoint,{method:'POST',headers:{Authorization:authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:String(ttl),Urgency:'normal',Topic:'teachapp-workspace-update'},body,redirect:'error',signal:controller.signal});
   const after=clock();
   return classifyPushResponseLab(response,{now:Math.floor((after??t)/1000),ttl:after===null?0:Math.max(0,Math.floor((expiry-after)/1000))});
- }catch{return unknown();}finally{clearTimeout(timer);}
+ }catch(e){
+  const message=String(e?.message??'');
+  const category=/abort/i.test(message)?'aborted':/different (request|Durable Object)|I\/O context/i.test(message)?'context':/header/i.test(message)?'header':/illegal invocation/i.test(message)?'invocation':/network|connect|DNS|fetch/i.test(message)?'transport':'other';
+  console.warn('Platform provider response unknown:',category);
+  return unknown();
+ }finally{clearTimeout(timer);}
 }
