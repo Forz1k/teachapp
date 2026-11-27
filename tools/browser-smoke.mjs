@@ -93,7 +93,9 @@ try{
  assert.ok(await evalJs('document.querySelector("[data-live-save-status]").textContent.includes("Сохранено")'));
  assert.equal(await evalJs('JSON.parse(localStorage.getItem("teachapp.live.rehearsal.v1")).events[0].assist'),'test-a-2');
  await capture('390-live-rehearsal');
+ const smokeFixture=await evalJs('window.__smoke');
  await send('Page.reload',{ignoreCache:false});await ready('.vp-board-points');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="1"'),'automatic rehearsal recovery');
+ await evalJs('window.__smoke='+JSON.stringify(smokeFixture));
  await closeSheet();await clickText('button','Тестовый LIVE-матч');await clickText('.sheet button','Продолжить / открыть тест');
  await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="1"'),'rehearsal resumed');
  await click('.vp-undo');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="0"'),'rehearsal undo');
