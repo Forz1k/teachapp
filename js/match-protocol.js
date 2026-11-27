@@ -20,6 +20,7 @@ export function opponentHistory(matches,teamId){
  const seen=new Set();return matches.filter(m=>m.teamId===teamId&&m.detail?.mode==='dual'&&m.detail.awayPlayers.length>=6&&m.detail.awayPlayers.length<=30&&m.detail.awayPlayers.every(p=>Number.isInteger(p.number))&&uniq(m.detail.awayPlayers.map(p=>p.number))).sort((a,b)=>b.date.localeCompare(a.date)||b.detail.startedAt.localeCompare(a.detail.startedAt)).filter(m=>{const k=m.opponent.trim().toLocaleLowerCase('ru');if(seen.has(k))return false;seen.add(k);return true;});
 }
 const errors=['serveError','attackError','receiveError','defenseError','setError','netError','otherError'];
+export const canAssist=kind=>['kill','tip'].includes(kind);
 export const canPlace=kind=>['ace','kill','tip','receiveError','defenseError'].includes(kind);
 export const isError=k=>errors.includes(k);
 export const rallyActor=(winner,kind)=>isError(kind)?other(winner):winner;
@@ -166,6 +167,10 @@ export function replayDetailed(d,{capturePlayer=null}={}){
   validateCapture(ev,before,actor);
   const keys=rallyStatKeys;
   if(keys[ev.kind])stat(actor,player,keys[ev.kind]);
+  if(ev.assist!=null){
+   fail(canAssist(ev.kind)&&player!==null&&typeof ev.assist==='string'&&ev.assist!==player&&visible(winner).includes(ev.assist),'Ассист: другой игрок победившей команды на площадке до атаки');
+   stat(winner,ev.assist,['assists']);
+  }
   if(ev.secondary!=null){
    fail(ev.secondary&&typeof ev.secondary==='object'&&secondaryKind(ev.kind)!==null&&ev.secondary.kind===secondaryKind(ev.kind)&&typeof ev.secondary.player==='string','Дополнительная ошибка: приём для эйса, защита для атаки или скидки');
    stat(other(winner),ev.secondary.player,keys[ev.secondary.kind]);
@@ -200,6 +205,7 @@ export function replayDetailed(d,{capturePlayer=null}={}){
  const rule=regulationOf(d);s.changeDue=!s.finished&&(rule.ends!=='manual'&&s.setEnded&&!s.endsAtBreak||rule.ends==='betweenSetsDecider'&&!s.setEnded&&d.bestOf>1&&s.sets.length===d.bestOf-1&&!s.deciderEndsChanged&&Math.max(s.score.ours,s.score.theirs)>=rule.deciderSwitchAt);
  const stats={};
  for(const [id,r] of Object.entries(s.sides.ours.stats)){
+   if(Object.keys(r).every(k=>k==='assists'))continue;
    const allowed=['serves','serveErrors','aces','receptions','receptionGood','attacks','attackKills','blocks','points'];
    stats[id]=Object.fromEntries(Object.entries(r).filter(([k])=>allowed.includes(k)));
  }
@@ -210,14 +216,16 @@ export function detailEvent(d,event,now=new Date().toISOString()){
  let events=[...d.events];
  if(event.type==='editRally'){
   const i=event.index,last=events[i];fail(integer(i,0,events.length-1)&&last?.type==='rally','Выберите розыгрыш в журнале');
-  const patch=event.patch;fail(patch&&typeof patch==='object'&&!Array.isArray(patch)&&Object.keys(patch).every(k=>['kind','player','placement','secondary','observations','touches','captureComplete','captureMode'].includes(k)),'Редактирование не меняет команду, счёт и порядок событий');
-  const updated={...last};if(Object.hasOwn(patch,'kind')&&patch.kind!==last.kind){delete updated.placement;delete updated.secondary;updated.captureComplete=false;}
-  for(const [k,v] of Object.entries(patch)){if(v===null&&['placement','secondary','observations'].includes(k))delete updated[k];else updated[k]=v;}
+  const patch=event.patch;fail(patch&&typeof patch==='object'&&!Array.isArray(patch)&&Object.keys(patch).every(k=>['kind','player','placement','secondary','observations','touches','captureComplete','captureMode','assist'].includes(k)),'Редактирование не меняет команду, счёт и порядок событий');
+  const updated={...last};if(Object.hasOwn(patch,'kind')&&patch.kind!==last.kind){delete updated.placement;delete updated.secondary;delete updated.assist;updated.captureComplete=false;}
+  if(Object.hasOwn(patch,'player')&&patch.player!==last.player)delete updated.assist;
+  for(const [k,v] of Object.entries(patch)){if(v===null&&['placement','secondary','observations','assist'].includes(k))delete updated[k];else updated[k]=v;}
   events[i]=updated;
  }else if(event.type==='attribute'){
   const last=events.at(-1);fail(last?.type==='rally','Можно уточнить только последнее очко');
   events[events.length-1]={...last,kind:event.kind,player:event.player??null};
-  if(last.kind!==event.kind||last.player!==event.player){events[events.length-1].captureComplete=false;}
+  if(last.kind!==event.kind||last.player!==event.player){events[events.length-1].captureComplete=false;delete events[events.length-1].assist;}
+  if(Object.hasOwn(event,'assist')){if(event.assist===null)delete events[events.length-1].assist;else events[events.length-1].assist=event.assist;}
   if(last.kind!==event.kind){delete events[events.length-1].placement;delete events[events.length-1].secondary;events[events.length-1].captureComplete=false;}
  }else if(event.type==='observations'){
   const last=events.at(-1);fail(last?.type==='rally','Выберите завершённый розыгрыш');
@@ -296,7 +304,7 @@ export function rallySummary(timeline,set=0){
  for(const e of timeline){
   if(e.type!=='rally'||(set&&e.set!==set))continue;
   const a=result[e.side];a.points++;a.reasons[e.kind]=(a.reasons[e.kind]||0)+1;if(e.kind==='point')a.unknown++;
-  stat(e.actor,e.player,e.kind);if(e.secondary)stat(other(e.side),e.secondary.player,e.secondary.kind);
+  stat(e.actor,e.player,e.kind);if(e.assist!=null){const r=result[e.side].stats[e.assist]??={};r.assists=(r.assists||0)+1;}if(e.secondary)stat(other(e.side),e.secondary.player,e.secondary.kind);
   for(const side of sides){const row=result[side],serving=e.before.serve===side;if(serving){row.serve++;if(e.side===side)row.onServe++;}else{row.receive++;if(e.side===side)row.receiveWon++;}}
  }
  return result;
