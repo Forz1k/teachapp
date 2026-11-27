@@ -9,7 +9,7 @@ const text=(v,max=100)=>typeof v==='string'&&v===v.trim()&&v.length>0&&v.length<
 const exact=(o,keys)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===keys.slice().sort().join(',');
 const check=(v,msg)=>{if(!v)throw Error(msg);};
 export function validRegulation(r,format){
- return !!(exact(r,['name','winBy','pointCap','liberoInterval','ends','deciderSwitchAt'])&&text(r.name)&&[1,2].includes(r.winBy)&&(r.pointCap===null||integer(r.pointCap,Math.max(format.target,format.bestOf===1?format.target:format.decider),999))&&['manual','oneRally'].includes(r.liberoInterval)&&['manual','betweenSets','betweenSetsDecider'].includes(r.ends)&&integer(r.deciderSwitchAt,1,98)&&(r.ends!=='betweenSetsDecider'||format.bestOf>1&&r.deciderSwitchAt<format.decider));
+ return !!(exact(r,['name','winBy','pointCap','liberoInterval','ends','deciderSwitchAt'])&&text(r.name)&&[1,2,3].includes(r.winBy)&&(r.pointCap===null||integer(r.pointCap,Math.max(format.target,format.bestOf===1?format.target:format.decider),999))&&['manual','oneRally'].includes(r.liberoInterval)&&['manual','betweenSets','betweenSetsDecider'].includes(r.ends)&&integer(r.deciderSwitchAt,1,98)&&(r.ends!=='betweenSetsDecider'||format.bestOf>1&&r.deciderSwitchAt<format.decider));
 }
 export function validMatchFormat(d){
  if(d.regulation===undefined)return [3,5].includes(d.bestOf)&&[15,21,25].includes(d.target)&&[15,21,25].includes(d.decider);
