@@ -359,7 +359,8 @@ try{
   assert.match(await rp.locator('[data-live-network]').textContent(),/Нет сети/);
   await rehearsalContext.setOffline(false);
   await rp.evaluate(async()=>{await (await import('./js/privacy-shield.js')).changeScreenLock({next:'384729'});});
-  await rp.reload();await rp.locator('.privacy-cover').waitFor();await rp.locator('.workspace-nav').waitFor();
+  await rp.reload();await rp.locator('.privacy-cover').waitFor();await rp.locator('.workspace-nav').waitFor({state:'attached'});
+  assert.equal(await rp.locator('#app').evaluate(el=>el.inert),true);
   assert.equal(await rp.locator('.vp-board-points').count(),0);
   await rp.getByLabel('PIN или пароль разблокировки').fill('384729');await rp.getByRole('button',{name:'Разблокировать',exact:true}).click();
   await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='2');
