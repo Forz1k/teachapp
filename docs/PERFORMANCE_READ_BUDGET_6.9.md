@@ -21,3 +21,7 @@ The calculation and CSV functions live in `js/coach-analytics.js`, with the exis
 ## RC5 preparation — imported match CSV timing snapshot
 
 Imported match CSV calculates set participation and timeout evidence once per match, then derives independent per-player results using the same full/changed/bench/unknown semantics as the individual player view. A regression counts substitution-list iterations and compares batch results to the individual calculation, including missing evidence. Empty-roster CSV rows retain all header columns. No schema, persistent cache, publication or version change; physical-device export remains unverified.
+
+## RC5 preparation — pure school analytics and shared period evidence
+
+The storage-facing school analytics facade delegates to a pure calculation module. One full-class attendance evidence scan supports both selected-period statistics and whole-plan KTP completion; the same date is applied consistently. Individual grades and monthly trend share one grade-cell traversal. Period and pupil filters, unknown attendance, explicit absence and future lessons retain their semantics. A deterministic regression counts exactly one mark-array traversal per calculation including 2,000 unrelated records and verifies recomputation after edits. The new module is in the PWA precache; no database, persisted cache or publication change. Physical performance remains unverified.

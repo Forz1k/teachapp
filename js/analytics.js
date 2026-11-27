@@ -2,38 +2,13 @@
 import * as S from './store.js';
 import * as M from './model.js';
 import * as H from './health.js';
-import {periodName} from './assessment.js';
-const avg=a=>a.length?Math.round(a.reduce((s,v)=>s+v,0)/a.length*100)/100:null;
-const grade=m=>m?.flag!=='Н'&&['1','2','3','4','5'].includes(String(m?.value))?Number(m.value):null;
+import {calculateSchoolAnalytics} from './school-analytics-core.js';
 export function schoolAnalytics(classId,from,to,studentId=null,today=M.todayIso()){
-  const students=S.studentsOfClass(classId).filter(s=>!studentId||s.id===studentId);
-  const ids=new Set(students.map(s=>s.id));
-  const lessons=S.lessonsInRange(classId,from,to),allLessons=S.lessonsOfClass(classId);
-  const attendance=S.attendanceContext(lessons,classId),allAttendance=S.attendanceContext(allLessons,classId);
-  const held=lessons.filter(l=>l.date<=today&&attendance.held(l)),marks=attendance.marks;
-  const finalByStudent=new Map(),names=new Map(students.map(s=>[s.id,s.fullName]));
-  for(const r of S.state.finalGrades)if(r.from===from&&r.to===to&&!finalByStudent.has(r.studentId))finalByStudent.set(r.studentId,r);
-  const valuesFor=(s,ls)=>ls.map(l=>grade(marks.get(l.id+'|'+s.id))).filter(x=>x!==null);
-  const rows=students.map(s=>{
-    const values=valuesFor(s,held),mean=avg(values),att=attendance.forStudents([s]);
-    const final=finalByStudent.get(s.id);
-    return {student:s,mean,count:values.length,suggested:mean===null?null:String(M.rawToMark(mean)),final:final?.value||null,att};
+  return calculateSchoolAnalytics({
+    students:S.studentsOfClass(classId),allLessons:S.lessonsOfClass(classId),topics:S.topicsForClass(classId),
+    marks:S.state.marks,parts:S.state.participation,finalGrades:S.state.finalGrades,normResults:S.state.normResults,
+    from,to,studentId,today
   });
-  const trend=M.monthsInRange(from,to).map(({year,month})=>{
-    const ls=held.filter(l=>M.yearOf(l.date)===year&&M.monthOf(l.date)===month);
-    const v=students.flatMap(s=>valuesFor(s,ls));return {month:year+'-'+String(month).padStart(2,'0'),mean:avg(v),count:v.length};
-  });
-  const topics=S.topicsForClass(classId),done=new Set(allLessons.filter(l=>l.date<=today&&allAttendance.held(l)).map(l=>l.topicId));
-  const counts=ls=>{const map=new Map();for(const l of ls)map.set(l.topicId,(map.get(l.topicId)||0)+1);return map;};
-  const heldCounts=counts(held),plannedCounts=counts(lessons);
-  const ktp=topics.map(t=>({name:t.name,done:done.has(t.id),inPeriod:heldCounts.get(t.id)||0,planned:plannedCounts.get(t.id)||0}));
-  const participation={normal:0,adapted:0,paused:0,unrecorded:0};
-  const heldIds=new Set(held.map(l=>l.id));
-  for(const r of S.state.participation)if(ids.has(r.studentId)&&heldIds.has(r.lessonId))participation[r.mode]++;
-  participation.unrecorded=held.length*students.length-participation.normal-participation.adapted-participation.paused;
-  const norms=S.state.normResults.filter(r=>ids.has(r.studentId)&&r.status==='done'&&M.inRange(r.date,from,to)&&r.date<=today)
-    .map(r=>({date:r.date,student:names.get(r.studentId)||'',name:r.definition.name,value:r.value,unit:r.definition.unit,grade:r.grade}));
-  return {rows,trend,ktp,norms,participation,att:attendance.forStudents(students),held:held.length,lessons:lessons.length};
 }
 export function healthOverview(classId,today=M.todayIso()){
   const students=S.studentsOfClass(classId),ids=new Set(students.map(s=>s.id));
