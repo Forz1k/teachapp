@@ -15,6 +15,15 @@ jobs:
       - run: npm test
       - run: npm run validate
       - run: node tools/build-static-release.mjs "${RUNNER_TEMP}/teachapp-static"
+      - name: Record and verify exact static package integrity
+        run: |
+          node tools/release-package-integrity.mjs --create "$RUNNER_TEMP/teachapp-static" "$(git rev-parse HEAD)" "$RUNNER_TEMP/teachapp-static-manifest.json"
+          node tools/release-package-integrity.mjs --verify "$RUNNER_TEMP/teachapp-static" "$(git rev-parse HEAD)" "$RUNNER_TEMP/teachapp-static-manifest.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teachapp-static-manifest
+          path: ${{ runner.temp }}/teachapp-static-manifest.json
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: teachapp-static-review

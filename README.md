@@ -11,7 +11,7 @@
 
   <br>
 
-  <img alt="Версия" src="https://img.shields.io/badge/version-8.0.0--rc.1-5145CD">
+  <img alt="Версия" src="https://img.shields.io/badge/version-8.0.0--rc.2-5145CD">
   <img alt="PWA" src="https://img.shields.io/badge/PWA-offline--first-2563EB">
   <img alt="JavaScript" src="https://img.shields.io/badge/JavaScript-ES_modules-F7DF1E?logo=javascript&logoColor=black">
   <a href="https://github.com/Forz1k/teachapp/actions/workflows/check.yml"><img alt="CI" src="https://github.com/Forz1k/teachapp/actions/workflows/check.yml/badge.svg"></a>
@@ -24,7 +24,7 @@
 
 ## О проекте
 
-> **Интеграционный кандидат 8.0.0-rc.1 (не опубликован).** Содержит 6.1–7.3 в контрольном объёме, LIVE 6.0.3–6.0.6, аналитику 7.4 и трансляции 7.5 без OBS. Стабильная версия в main — 6.0.6. Не устанавливать экспериментальный кандидат на рабочие данные; [условия 8.0](docs/RELEASE-8.0-GATES.md).
+> **Интеграционный кандидат 8.0.0-rc.2 (не опубликован).** Содержит 6.1–7.3 в контрольном объёме, LIVE 6.0.3–6.0.6, аналитику 7.4 и трансляции 7.5 без OBS. Стабильная версия в main — 6.0.6. Не устанавливать экспериментальный кандидат на рабочие данные; [условия 8.0](docs/RELEASE-8.0-GATES.md).
 >
 > Перед обновлением сохраните независимую защищённую копию каждого устройства, закройте другие вкладки и обновите все синхронизируемые устройства. Не очищайте данные сайта. IndexedDB v10, копии v22. LAB не активируются автоматически; production-миграции и физическая приёмка открыты.
 

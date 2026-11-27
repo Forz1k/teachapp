@@ -15,3 +15,5 @@ test('Published 6.0.2 is pinned for a real PWA upgrade check',()=>{
 });
 
 test('Stable 6.0.6 upgrade is pinned and includes live assist and rehearsal',()=>{const yaml=read('.github/workflows/webkit.yml'),sha='4d04398ee48d5f9ea359e50d5f43cd5dfb9b2d0c';assert.ok(yaml.includes('git fetch --no-tags --depth=1 origin '+sha));assert.ok(yaml.includes('node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-6.0.6"'));assert.match(read('tools/upgrade-smoke.mjs'),/LIVE UPGRADE PASS/);});
+
+test('Actual candidate upgrades run against the allowlisted static package and exercise rollback',()=>{const yaml=read('.github/workflows/webkit.yml');assert.ok(yaml.includes('node tools/release-package-integrity.mjs --verify'));assert.ok(yaml.includes('node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-6.0.6" "$RUNNER_TEMP/teachapp-candidate"'));assert.match(read('tools/upgrade-smoke.mjs'),/PWA ROLLBACK PASS/);assert.match(read('.github/workflows/check.yml'),/name: teachapp-static-manifest/);});

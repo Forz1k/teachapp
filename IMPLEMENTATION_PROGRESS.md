@@ -522,3 +522,7 @@ Reconciles published main 6.0.2 (d4cb5bb) with combined review candidate (3d3ec4
 ## 8.0.0-rc.1 — cumulative integration (not released)
 
 Merge parents: roadmap 6f6d083 and LIVE candidate d513984 (main 6.0.6 ancestor). Native and backend-bound coach commands share LIVE read/probe via transaction; no LAB fallback to native. All existing browser scenarios retained. Added actual 6.0.6 upgrade with assist and isolated rehearsal, plus routed coach-session tests. OBS excluded. CI to be verified on exact SHA. No manual acceptance or production cutover claimed.
+
+## 8.0.0-rc.2 — release package and reversible stable-format rehearsal
+
+Verified code backup refs created before changes. Static manifest and integrity check, package-based PWA upgrade, synthetic rollback from candidate to 6.0.6 preserving latest edits and independent recovery. No production cutover; manual acceptance stays pending. Exact SHA CI required.

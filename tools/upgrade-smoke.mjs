@@ -5,8 +5,8 @@ import {readFile} from 'node:fs/promises';
 import {resolve,sep,extname} from 'node:path';
 import {webkit,devices} from 'playwright';
 
-const candidate=process.cwd(),baseline=resolve(process.argv[2]||'');
-const readVersion=async root=>JSON.parse(await readFile(resolve(root,'package.json'),'utf8')).version;
+const candidate=resolve(process.argv[3]||process.cwd()),baseline=resolve(process.argv[2]||'');
+const readVersion=async root=>{const raw=await readFile(resolve(root,'js/version.js'),'utf8'),m=/^export const APP_VERSION = '([^']+)';\s*$/.exec(raw);assert.ok(m,'Missing packaged application version');return m[1];};
 const baselineVersion=await readVersion(baseline);assert.ok(['5.1.0','5.1.1','6.0.0','6.0.2','6.0.6'].includes(baselineVersion));
 const expected=await readVersion(candidate);assert.notEqual(expected,baselineVersion);
 let root=baseline;
@@ -106,11 +106,48 @@ try{
   return {version:(await import('./js/version.js')).APP_VERSION,previous:previous.ours,score:score.ours,marks:(await db.getAll('marks')).length};
  },fixture.matchId);
  assert.deepEqual(offline,{version:expected,previous:1,score:2,marks:2});
- await context.setOffline(false);await context.close();
+ // Reverse compatibility is only rehearsed for the current stable schema and
+ // actual 6.0.6. Capture the *latest* data, not the pre-upgrade backup.
+ let latest=null;
+ if(baselineVersion==='6.0.6'){
+  latest=await page.evaluate(async({id,password})=>{
+   const S=await import('./js/store.js'),C=await import('./js/coach.js'),V=await import('./js/volleyball.js'),db=await import('./js/db.js'),{encryptBackup,decryptBackup}=await import('./js/privacy.js');
+   const draft=await C.readLiveMatch(id),next=await C.changeLiveMatch(id,draft.revision,{type:'rally',side:'ours',kind:'kill',player:draft.lineup[0],assist:draft.lineup[1]});
+   const marks=await db.getAll('marks'),m=marks[0];await S.setMark(m.studentId,m.lessonId,{value:'3'});
+   const store=V.rehearsalStore(),test=store.read();const rehearsal=await store.change(test.id,test.revision,{type:'rally',side:'theirs',kind:'point'});
+   const backup=await S.makeBackup(),protectedBackup=await encryptBackup(backup,password);
+   const decoded=await decryptBackup(protectedBackup,password);
+   return {data:await db.dumpAll(),backupData:backup.data,verified:JSON.stringify(decoded)===JSON.stringify(backup),protectedBackup,rehearsal,revision:next.revision,assist:next.events.at(-1).assist};
+  },{id:fixture.matchId,password:fixture.password});
+  assert.equal(latest.verified,true);assert.equal(latest.revision,3);assert.equal(latest.assist,fixture.assist);
+ }
+ await context.setOffline(false);
  const restoredContext=await browser.newContext({...devices['iPhone 13'],locale:'ru-RU',serviceWorkers:'allow'}),fresh=await restoredContext.newPage();fresh.on('pageerror',e=>errors.push(e.message));
  await fresh.goto(origin+'/index.html');await fresh.locator('.workspace-nav').waitFor();
  const restored=await fresh.evaluate(async({protectedBackup,password})=>{const S=await import('./js/store.js'),db=await import('./js/db.js'),{decryptBackup}=await import('./js/privacy.js');await S.restoreBackup(await decryptBackup(protectedBackup,password));return db.dumpAll();},fixture);
  assert.deepEqual(restored,fixture.backupData,'old encrypted backup must restore in a separate new-version context');
  assert.deepEqual(errors,[]);await restoredContext.close();
+ if(latest){
+  // Same origin, real service-worker controllerchange; no clearing of storage.
+  root=baseline;
+  await page.evaluate(async()=>{const r=await navigator.serviceWorker.getRegistration();if(!r)throw Error('No registration');await r.update();});
+  await page.getByRole('button',{name:'Обновить',exact:true}).waitFor({timeout:45000});
+  const beforeRollback=await page.evaluate(()=>performance.timeOrigin);
+  await Promise.all([page.waitForNavigation({waitUntil:'load',timeout:45000}),page.getByRole('button',{name:'Обновить',exact:true}).click()]);
+  await page.locator('.workspace-nav').waitFor();await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller),undefined,{timeout:45000});
+  const rolled=await page.evaluate(async id=>{const db=await import('./js/db.js'),C=await import('./js/coach.js'),V=await import('./js/volleyball.js');return {data:await db.dumpAll(),draft:await C.readLiveMatch(id),rehearsal:V.rehearsalStore().read(),version:(await import('./js/version.js')).APP_VERSION,dbVersion:(await db.open()).version,time:performance.timeOrigin,caches:await caches.keys()};},fixture.matchId);
+  assert.equal(rolled.version,baselineVersion);assert.equal(rolled.dbVersion,10);assert.notEqual(rolled.time,beforeRollback);assert.deepEqual(rolled.data,latest.data,'rollback preserves edits made after upgrade and the sync checkpoint');assert.deepEqual(rolled.rehearsal,latest.rehearsal);assert.equal(rolled.draft.revision,latest.revision);assert.equal(rolled.draft.events.at(-1).assist,latest.assist);assert.ok(rolled.caches.some(x=>x.endsWith(':v'+baselineVersion)));assert.ok(!rolled.caches.some(x=>x.endsWith(':v'+expected)));
+  await context.setOffline(true);await page.reload();await page.locator('.workspace-nav').waitFor();
+  const score=await page.evaluate(async id=>{const C=await import('./js/coach.js'),V=await import('./js/volleyball.js'),d=await C.readLiveMatch(id);return V.replay(d).ours;},fixture.matchId);assert.equal(score,3);
+  await context.setOffline(false);
+  // The latest independent encrypted copy also restores on 6.0.6 in a
+  // different browser context. Failure to authenticate must not mutate it.
+  const recovery=await browser.newContext({...devices['iPhone 13'],locale:'ru-RU',serviceWorkers:'allow'}),rp=await recovery.newPage();rp.on('pageerror',e=>errors.push(e.message));
+  await rp.goto(origin+'/index.html');await rp.locator('.workspace-nav').waitFor();
+  const recovered=await rp.evaluate(async({protectedBackup,password})=>{const S=await import('./js/store.js'),D=await import('./js/db.js'),{decryptBackup}=await import('./js/privacy.js'),before=await D.dumpAll();let rejected=false;try{await S.restoreBackup(await decryptBackup(protectedBackup,'wrong-password'));}catch{rejected=true;}const untouched=JSON.stringify(before)===JSON.stringify(await D.dumpAll());await S.restoreBackup(await decryptBackup(protectedBackup,password));return {rejected,untouched,data:await D.dumpAll()};},{protectedBackup:latest.protectedBackup,password:fixture.password});
+  assert.equal(recovered.rejected,true);assert.equal(recovered.untouched,true);assert.deepEqual(recovered.data,latest.backupData);await recovery.close();assert.deepEqual(errors,[]);
+  console.log('PWA ROLLBACK PASS: '+expected+' → 6.0.6, exact latest records and checkpoint retained, assist and isolated rehearsal retained, offline reload, latest encrypted copy restored in a separate context; wrong password unchanged.');
+ }
+ await context.close();
  console.log('PWA UPGRADE PASS: actual '+baselineVersion+' → '+expected+'; preserved v2 identity, no automatic initialization, IndexedDB v10, both lesson slots and grades, norm assignment, team/training/match, unfinished score, preserved encrypted checkpoint, zero redundant PUT, previous cache removed, offline edit, encrypted backup restored independently.');
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}
