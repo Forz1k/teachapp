@@ -2,6 +2,7 @@
  * Configs intentionally use the strict JSON subset of JSONC. */
 import {readFileSync} from 'node:fs';
 const lab=Object.freeze({
+ 'wrangler.delta-candidate.jsonc':['teachapp-delta-v3-candidate','server/delta-worker.mjs','DELTA_LEDGERS','DeltaLedger'],
  'wrangler.delta-dev.jsonc':['teachapp-delta-synthetic','server/delta-worker.mjs','DELTA_LEDGERS','DeltaLedger'],
  'wrangler.platform-dev.jsonc':['teachapp-platform-synthetic','server/platform-worker.mjs','WORKSPACES','PlatformWorkspace'],
  'wrangler.migration-source-dev.jsonc':['teachapp-migration-source-synthetic','server/cloudflare-relay.mjs','SNAPSHOTS','SyncSnapshot']

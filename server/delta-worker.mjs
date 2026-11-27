@@ -1,4 +1,5 @@
-/* Isolated local-only delta relay. No production routes or snapshot bindings. */
+/* Delta ledger: isolated LAB and separately configured HTTPS v3 candidate. */
+import {deltaMode,deltaRequestAllowed} from './delta-mode.mjs';
 import {DurableObject} from 'cloudflare:workers';
 import {LIMIT,digestToken} from './cloudflare-protocol.mjs';
 import {normalizeDeltaWrite,decideDeltaWrite,MAX_DELTA_ENTRIES,MAX_LEDGER_BYTES} from './delta-ledger.mjs';
@@ -14,8 +15,9 @@ const H={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-
 const json=(status,body,cors={})=>new Response(JSON.stringify(body),{status,headers:{...H,...cors}});
 function config(env,url){
  try{
-  const origin=new URL(env.TEACHAPP_DELTA_ORIGIN),hashes=JSON.parse(env.TEACHAPP_DELTA_TOKEN_HASHES||'{}'),compactors=JSON.parse(env.TEACHAPP_DELTA_COMPACT_HASHES||'{}'),rotators=JSON.parse(env.TEACHAPP_DELTA_ROTATE_HASHES||'{}'),sealers=JSON.parse(env.TEACHAPP_DELTA_SEAL_HASHES||'{}'),seen=new Set();
-  if(env.TEACHAPP_DELTA_SYNTHETIC!=='true'||!loopback.includes(url.hostname)||origin.protocol!=='http:'||!loopback.includes(origin.hostname)||origin.origin!==env.TEACHAPP_DELTA_ORIGIN||!hashes||typeof hashes!=='object'||Array.isArray(hashes)||Object.keys(hashes).some(k=>!areas.includes(k)))return null;
+  const mode=deltaMode(env);if(!mode||url&&!deltaRequestAllowed(mode,url))return null;
+  const hashes=JSON.parse(env.TEACHAPP_DELTA_TOKEN_HASHES||'{}'),compactors=JSON.parse(env.TEACHAPP_DELTA_COMPACT_HASHES||'{}'),rotators=JSON.parse(env.TEACHAPP_DELTA_ROTATE_HASHES||'{}'),sealers=JSON.parse(env.TEACHAPP_DELTA_SEAL_HASHES||'{}'),seen=new Set();
+  if(!hashes||typeof hashes!=='object'||Array.isArray(hashes)||Object.keys(hashes).some(k=>!areas.includes(k)))return null;
   for(const area of areas){
    const list=hashes[area]??[];
    if(!Array.isArray(list)||list.length>32)return null;
@@ -35,7 +37,7 @@ function config(env,url){
   for(const area of areas){const h=sealers[area];if(h===undefined)continue;if(typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)||seen.has(h)||!hashes[area].length)return null;seen.add(h);}
   const signKeys=normalizeReceiptKeys(JSON.parse(env.TEACHAPP_DELTA_ROLLBACK_SIGN_KEYS||'{}'),true);
   if(!signKeys||Object.keys(signKeys).some(a=>!sealers[a]))return null;
-  return readCount?{origin:origin.origin,hashes,compactors,rotators,sealers,signKeys,reserved:[...seen]}:null;
+  return readCount?{...mode,hashes,compactors,rotators,sealers,signKeys,reserved:[...seen]}:null;
  }catch{return null;}
 }
 function equal(a,b){let d=0;for(let i=0;i<64;i++)d|=a.charCodeAt(i)^b.charCodeAt(i);return d===0;}
@@ -54,12 +56,12 @@ export default {async fetch(request,env){
  if(u.pathname==='/healthz'&&request.method==='GET'){
   const origin=request.headers.get('Origin');
   if(origin&&origin!==settings?.origin)return json(403,{error:'origin'});
-  return json(settings?200:503,{status:settings?'synthetic-ready':'disabled'},origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{});
+  return json(settings?200:503,{status:settings?(settings.kind==='lab'?'synthetic-ready':'candidate-ready'):'disabled'},origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{});
  }
  if(!settings)return json(503,{error:'disabled'});
- const route=/^\/v1\/delta\/(school|coach)(\/.*)$/.exec(u.pathname);
- if(!route||u.search)return json(404,{error:'route'});
- const [,area,internal]=route,path=internal.slice(1),multi=multipartRoute.exec(internal),part=partRoute.exec(internal);
+ const route=/^\/(v1|v3)\/delta\/(school|coach)(\/.*)$/.exec(u.pathname);
+ if(!route||route[1]!==settings.pathVersion||u.search)return json(404,{error:'route'});
+ const [,,area,internal]=route,path=internal.slice(1),multi=multipartRoute.exec(internal),part=partRoute.exec(internal);
  if(!multi&&!part&&!/^(head|anchor|append|compact|rollback-seal|rollback-status|rollback-receipt|revision\/[1-9]\d{0,14})$/.test(path))return json(404,{error:'route'});
  const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};
  if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
@@ -79,7 +81,7 @@ export default {async fetch(request,env){
 }};
 export class DeltaLedger extends DurableObject{
  constructor(ctx,env){
-  super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;this.settings=config(env,new URL('http://localhost'));
+  super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;this.settings=config(env);
   this.sql.exec('CREATE TABLE IF NOT EXISTS revisions (revision INTEGER PRIMARY KEY, kind TEXT NOT NULL, envelope TEXT NOT NULL, bytes INTEGER NOT NULL)');
   this.sql.exec('CREATE TABLE IF NOT EXISTS staged_anchor (id TEXT PRIMARY KEY, manifest TEXT NOT NULL, expires INTEGER NOT NULL)');
   this.sql.exec('CREATE TABLE IF NOT EXISTS staged_parts (id TEXT NOT NULL, part INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(id,part))');
@@ -207,7 +209,7 @@ export class DeltaLedger extends DurableObject{
      return json(200,receipt);
     }
     if(path==='/head'){
-     const h=this.head();return json(200,{revision:h.revision,anchorRevision:h.anchorRevision,count:h.count,bytes:h.bytes,maxEntries:MAX_DELTA_ENTRIES+1,maxBytes:MAX_LEDGER_BYTES,keyEpoch:this.credentials(area).epoch});
+     const h=this.head();return json(200,{revision:h.revision,anchorRevision:h.anchorRevision,count:h.count,bytes:h.bytes,maxEntries:MAX_DELTA_ENTRIES+1,maxBytes:MAX_LEDGER_BYTES,keyEpoch:this.credentials(area).epoch,...(this.settings.kind==='candidate'?{protocolVersion:3}:{})});
     }
     const part=partRoute.exec(path);
     if(part){

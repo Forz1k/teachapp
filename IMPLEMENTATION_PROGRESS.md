@@ -550,3 +550,7 @@ Verified code backup refs created before changes. Static manifest and integrity 
 ### RC3 — реальная интеграция v11 candidate
 
 Штатный bootstrap и неизменённые экраны, маршрутизация без native fallback, явный перенос/rotation/recovery, синхронизация с шифрованным checkpoint и session-only credentials. Тесты на fake IndexedDB и отдельном WebKit профиле с опубликованным статическим пакетом. Результаты сверять по SHA; production не развёрнут.
+
+## 8.0.0-rc.4 — Delta v3 candidate
+
+Отдельная конфигурация без routes и секретов, точный HTTPS origin, отдельный протокол и явный клиентский adapter с маркировкой checkpoint. Не развёрнуто; существующие миграции закрыты до приёмки.

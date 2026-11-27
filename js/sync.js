@@ -378,12 +378,13 @@ export async function replaySyncDeltas({base,baseRevision,area,workspaceId,entri
 
 /* Local synthetic relay only. No change to the production v1/v2 client.
    Keep credential roles separate; never persist tokens or plaintext snapshots. */
-export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sealToken,fetcher=globalThis.fetch,timeoutMs=15000}={}){
+function deltaWireClient(endpoint,area,token,{compactToken,rotateToken,sealToken,fetcher=globalThis.fetch,timeoutMs=15000,mode='lab'}={}){
  endpoint=normalizeEndpoint(endpoint);
- check(validArea(area)&&['localhost','127.0.0.1','[::1]'].includes(new URL(endpoint).hostname)&&new URL(endpoint).protocol==='http:','Delta LAB доступен только на localhost');
+ const u=new URL(endpoint),local=['localhost','127.0.0.1','[::1]'].includes(u.hostname);
+ check(validArea(area)&&(mode==='lab'?local&&u.protocol==='http:':mode==='candidate'&&!local&&u.protocol==='https:'&&u.origin===endpoint&&!u.port),'Delta LAB доступен только на localhost; кандидат требует отдельный HTTPS origin');
  const validToken=t=>typeof t==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(t);
  check(validToken(token)&&(compactToken===undefined||validToken(compactToken)&&compactToken!==token)&&(rotateToken===undefined||validToken(rotateToken)&&rotateToken!==token&&rotateToken!==compactToken)&&(sealToken===undefined||validToken(sealToken)&&![token,compactToken,rotateToken].includes(sealToken)),'Проверьте отдельные тестовые ключи');
- const url=endpoint+'/v1/delta/'+area+'/';
+ const url=endpoint+(mode==='candidate'?'/v3/delta/':'/v1/delta/')+area+'/';
  async function request(path,body,secret=token){
   const encoded=body===undefined?undefined:JSON.stringify(body);
   check(encoded===undefined||new TextEncoder().encode(encoded).length<=defaultCloudflarePacketLimit,'Пакет Delta LAB превышает лимит запроса');
@@ -395,6 +396,7 @@ export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sea
   }finally{clearTimeout(timer);}
  }
  async function writeAnchor(kind,expectedRevision,envelope,secret,rotation){
+  if(mode==='candidate')await readHead();
   const body={expectedRevision,envelope};
   if(kind!=='rotate'&&new TextEncoder().encode(JSON.stringify(body)).length<=defaultCloudflarePacketLimit)return writeAck(await request(kind,body,secret),expectedRevision);
   const {uploadId,manifest,chunks}=await splitDeltaAnchor(envelope,{kind,expectedRevision,rotation}),path='multipart/'+kind+'/'+uploadId+'/';
@@ -413,9 +415,10 @@ export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sea
  function rollbackState(state){
   check(exactFields(state,['revision','seal'])&&Number.isSafeInteger(state.revision)&&state.revision>=0&&(state.seal===null||state.revision===1&&exactFields(state.seal,['migrationId','revision'])&&state.seal.revision===1&&typeof state.seal.migrationId==='string'&&uuid.test(state.seal.migrationId)),'Некорректный ответ барьера назначения Delta LAB');return state;
  }
- return {head:async()=>{
-  const head=await request('head');check(validDeltaHead(head)&&exactFields(head,['revision','anchorRevision','count','bytes','maxEntries','maxBytes','keyEpoch'])&&Number.isSafeInteger(head.bytes)&&head.bytes>=0&&head.maxEntries===129&&head.maxBytes===16*1024*1024&&head.bytes<=head.maxBytes&&Number.isSafeInteger(head.keyEpoch)&&head.keyEpoch>=0&&(head.revision!==0||head.bytes===0&&head.keyEpoch===0),'Некорректная цепочка Delta LAB');return head;
- },rollbackStatus:async()=>rollbackState(await request('rollback-status')),rollbackReceipt:()=>request('rollback-receipt'),sealRollback:async migrationId=>{check(validToken(sealToken)&&typeof migrationId==='string'&&uuid.test(migrationId),'Нужен отдельный ключ закрытия назначения');const state=rollbackState(await request('rollback-seal',{expectedRevision:1,migrationId},sealToken));check(state.seal?.migrationId===migrationId,'Закрытие назначения не подтверждено');return state;},getRevision:async rev=>{
+ async function readHead(){
+  const head=await request('head');check(validDeltaHead(head)&&exactFields(head,['revision','anchorRevision','count','bytes','maxEntries','maxBytes','keyEpoch',...(mode==='candidate'?['protocolVersion']:[])])&&(mode!=='candidate'||head.protocolVersion===3)&&Number.isSafeInteger(head.bytes)&&head.bytes>=0&&head.maxEntries===129&&head.maxBytes===16*1024*1024&&head.bytes<=head.maxBytes&&Number.isSafeInteger(head.keyEpoch)&&head.keyEpoch>=0&&(head.revision!==0||head.bytes===0&&head.keyEpoch===0),'Некорректная цепочка Delta LAB или версия протокола');return head;
+ }
+ return {head:readHead,rollbackStatus:async()=>rollbackState(await request('rollback-status')),rollbackReceipt:()=>request('rollback-receipt'),sealRollback:async migrationId=>{check(validToken(sealToken)&&typeof migrationId==='string'&&uuid.test(migrationId),'Нужен отдельный ключ закрытия назначения');if(mode==='candidate')await readHead();const state=rollbackState(await request('rollback-seal',{expectedRevision:1,migrationId},sealToken));check(state.seal?.migrationId===migrationId,'Закрытие назначения не подтверждено');return state;},getRevision:async rev=>{
    check(revision(rev),'Некорректная ревизия');const row=await request('revision/'+rev);
    check(plain(row)&&row.revision===rev&&['anchor','delta'].includes(row.kind),'Пропущена или подменена ревизия изменений');
    if(!Object.hasOwn(row,'multipart')){check(exactFields(row,['revision','kind','envelope'])&&isEncryptedBackup(row.envelope),'Некорректный снимок Delta LAB');return row;}
@@ -428,10 +431,16 @@ export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sea
    return {revision:rev,kind:'anchor',envelope};
   },
   anchor:envelope=>writeAnchor('anchor',0,envelope,token),
-  append:async(expectedRevision,envelope)=>writeAck(await request('append',{expectedRevision,envelope}),expectedRevision),
+  append:async(expectedRevision,envelope)=>{if(mode==='candidate')await readHead();return writeAck(await request('append',{expectedRevision,envelope}),expectedRevision);},
   compact:(expectedRevision,envelope)=>{check(validToken(compactToken),'Нужен отдельный ключ компактизации');return writeAnchor('compact',expectedRevision,envelope,compactToken);},
   rotate:(expectedRevision,envelope,rotation)=>{check(validToken(rotateToken)&&normalizeRotationHashes(rotation),'Нужен отдельный ключ ротации');return writeAnchor('rotate',expectedRevision,envelope,rotateToken,rotation);}
  };
+}
+export function deltaLabClient(endpoint,area,token,options={}){return deltaWireClient(endpoint,area,token,{...options,mode:'lab'});}
+/** Explicit HTTPS v3 candidate; no auto discovery, fallback or migration. */
+export function deltaCandidateClient(endpoint,area,token,{confirmed=false,...options}={}){
+ check(confirmed===true,'Подтвердите отдельный сервер Delta v3');
+ return deltaWireClient(endpoint,area,token,{...options,mode:'candidate'});
 }
 function validDeltaHead(h){
  return plain(h)&&Number.isSafeInteger(h.revision)&&h.revision>=0&&Number.isSafeInteger(h.anchorRevision)&&Number.isInteger(h.count)&&h.count>=0&&h.count<=129&&
@@ -813,14 +822,19 @@ export async function commitDeltaMigration(args){
 // stay in the operator's encrypted files; never change the ordinary TAP1/TAD2 profile.
 const migrationBindingKey=area=>'sync-checkpoint-migration-'+area;
 const migrationBinding=(data,area)=>data.meta.find(r=>r.id===migrationBindingKey(area))??null;
-const labAdapters=new WeakMap();
+const labAdapters=new WeakMap(),candidateAdapters=new WeakMap();
 function migrationGuardError(){return Object.assign(Error('Контур привязан к экспериментальному переносу Delta LAB. Обычный обмен запрещён; используйте проверенный файл переноса и согласованный возврат.'),{code:'migration-binding'});}
 function bindingMatches(binding,cp,area){
  return binding?.protocol==='delta-lab-v1'&&[1,2].includes(binding.sourceProtocolVersion)&&binding.area===area&&typeof binding.migrationId==='string'&&uuid.test(binding.migrationId)&&binding.destinationWorkspaceId===binding.migrationId&&cp&&typeof binding.destinationEndpoint==='string'&&cp.endpoint===binding.destinationEndpoint&&cp.workspaceId===binding.destinationWorkspaceId&&revision(cp.revision)&&cp.revision>=binding.destinationRevision&&binding.destinationRevision===1;
 }
 function guardBinding(data,area,endpoint,client){
- const binding=migrationBinding(data,area);if(!binding)return null;
- const adapter=labAdapters.get(client),cp=getCheckpoint(data,area);
+ const binding=migrationBinding(data,area),cp=getCheckpoint(data,area),candidate=candidateAdapters.get(client);
+ // A candidate checkpoint may never be reused by a snapshot or LAB client.
+ // Existing legacy checkpoint must not be reinterpreted as a v3 checkpoint.
+ if(candidate){check(candidate.area===area&&candidate.endpoint===endpoint&&!binding&&(!cp||cp.protocol==='delta-v3'),'Нужен проверенный перенос на Delta v3');}
+ else if(cp?.protocol==='delta-v3')throw Object.assign(Error('Контур использует Delta v3; обычный обмен запрещён'),{code:'delta-version-barrier'});
+ if(!binding)return null;
+ const adapter=labAdapters.get(client);
  if(!adapter||adapter.area!==area||adapter.endpoint!==endpoint||!bindingMatches(binding,cp,area)||cp.endpoint!==endpoint)throw migrationGuardError();
  return binding;
 }
@@ -931,11 +945,11 @@ export async function rollbackDeltaMigrationDevice(args){
    The full envelopes returned to that pipeline are generated locally; only
    an initial anchor or encrypted delta travels across the network.
    No normal app callers: data access is injected by the synthetic test harness. */
-export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synthetic=false,acceptCompactedHistory=false,fetcher,timeoutMs}){
- check(synthetic===true&&typeof readData==='function','Интеграция Delta LAB только для синтетических данных');
+function deltaSyncAdapter({endpoint,area,token,password,readData,synthetic=false,confirmed=false,mode='lab',acceptCompactedHistory=false,fetcher,timeoutMs}){
+ check((mode==='lab'?synthetic===true:confirmed===true)&&typeof readData==='function','Требуется явное подтверждение Delta и backend');
  check(typeof password==='string'&&password.length>=12,'Проверьте пароль Delta LAB');
  endpoint=normalizeEndpoint(endpoint);
- const client=deltaLabClient(endpoint,area,token,{fetcher,timeoutMs});
+ const client=mode==='candidate'?deltaCandidateClient(endpoint,area,token,{fetcher,timeoutMs,confirmed}):deltaLabClient(endpoint,area,token,{fetcher,timeoutMs});
  let baseline=null,pending=null,busy=false;
  async function exclusive(task){
   check(!busy,'Дождитесь завершения обмена Delta LAB');busy=true;
@@ -946,6 +960,7 @@ export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synth
    baseline=null;pending=null;
    const current=await readData(),cp=getCheckpoint(current,area);
    guardBinding(current,area,endpoint,adapter);
+   if(mode==='candidate')check(!migrationBinding(current,area),'Незавершённый перенос LAB; v3 запрещён');
    let checkpoint=null;
    if(cp){
     check(cp.endpoint===endpoint&&revision(cp.revision)&&uuid.test(cp.workspaceId),'Этот контур связан с другим сервером или повреждён');
@@ -988,8 +1003,10 @@ export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synth
    return copy(pending.ack);
   })
  };
- labAdapters.set(adapter,{area,endpoint});return adapter;
+ if(mode==='lab')labAdapters.set(adapter,{area,endpoint});else candidateAdapters.set(adapter,{area,endpoint});return adapter;
 }
+export function deltaLabSyncAdapter(options){return deltaSyncAdapter({...options,mode:'lab'});}
+export function deltaCandidateSyncAdapter(options){return deltaSyncAdapter({...options,mode:'candidate'});}
 
 export async function prepareSync({area,endpoint,password,client,data}){
  endpoint=normalizeEndpoint(endpoint);
@@ -1087,7 +1104,7 @@ export function createSyncExecutor(access){
    const final=previewSync(current,plan,choices);
    check(!final.conflicts.length&&same(final.snapshot,preview.snapshot),'Изменился результат слияния');
    const data=combineScope(current,final.snapshot,plan.area);
-   const cp={id:keyOf(plan.area),endpoint:plan.endpoint,workspaceId:plan.workspaceId,revision:nextRevision,envelope};
+   const cp={id:keyOf(plan.area),endpoint:plan.endpoint,workspaceId:plan.workspaceId,revision:nextRevision,envelope,...(candidateAdapters.has(client)?{protocol:'delta-v3'}:{})};
    data.meta=data.meta.filter(r=>r.id!==cp.id&&r.id!==statusKey(plan.area)).concat(cp,successRecord(plan.area,cp));
    // Delete changed keys first to avoid transient unique-index collisions. One atomic transaction.
    for(const n of [...new Set([...keysFor(plan.area),'meta'])]){

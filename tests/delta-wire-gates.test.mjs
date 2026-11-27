@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {SCHEMA} from '../js/db.js';
 import {BACKUP_VERSION} from '../js/backup.js';
-import {projectScope,buildSyncDelta,applySyncDelta,deltaLabClient} from '../js/sync.js';
+import {projectScope,buildSyncDelta,applySyncDelta,deltaLabClient,deltaCandidateClient} from '../js/sync.js';
 
 const endpoint='http://127.0.0.1:9876',token='A'.repeat(43),sealToken='B'.repeat(43);
 const migrationId='00000000-0000-4000-8000-000000000001';
@@ -39,4 +39,22 @@ test('A newer authenticated delta format has a distinct update-required barrier'
  const packet=await buildSyncDelta(base,next,ctx);
  await assert.rejects(applySyncDelta(base,{...packet,backupVersion:BACKUP_VERSION+1},ctx),e=>e.code==='newer-backup-format');
  assert.deepEqual(await applySyncDelta(base,packet,ctx),next);
+});
+
+import {deltaMode,deltaRequestAllowed} from '../server/delta-mode.mjs';
+test('Delta v3 configuration is separate, HTTPS exact-origin and fail-closed',()=>{
+ const env={TEACHAPP_DELTA_CANDIDATE:'true',TEACHAPP_DELTA_ORIGIN:'https://app.example.com',TEACHAPP_DELTA_ENDPOINT:'https://delta.example.com'};
+ const mode=deltaMode(env);assert.equal(mode.pathVersion,'v3');assert.equal(deltaRequestAllowed(mode,new URL('https://delta.example.com/v3/delta/coach/head')),true);
+ for(const url of ['http://delta.example.com','https://evil.example.com','https://delta.example.com:444'])assert.equal(deltaRequestAllowed(mode,new URL(url)),false);
+ for(const bad of [{...env,TEACHAPP_DELTA_SYNTHETIC:'true'},{...env,TEACHAPP_DELTA_ENDPOINT:'http://localhost:80'},{...env,TEACHAPP_DELTA_ORIGIN:env.TEACHAPP_DELTA_ENDPOINT},{...env,TEACHAPP_DELTA_ENDPOINT:'https://delta.example.com/path'},{...env,TEACHAPP_DELTA_CANDIDATE:'false'}])assert.equal(deltaMode(bad),null);
+});
+test('Delta v3 checks protocol before writes and never tries v1',async()=>{
+ const origin='https://delta.example.com',calls=[];
+ assert.throws(()=>deltaCandidateClient(origin,'coach',token),/Подтвердите/);
+ assert.throws(()=>deltaCandidateClient(endpoint,'coach',token,{confirmed:true}),/HTTPS/);
+ const client=deltaCandidateClient(origin,'coach',token,{confirmed:true,fetcher:async(url,init)=>{calls.push([url,init.method]);return Response.json(head);}});
+ await assert.rejects(client.append(1,envelope),/версия/);assert.deepEqual(calls,[[origin+'/v3/delta/coach/head','GET']]);
+ calls.length=0;
+ const ok=deltaCandidateClient(origin,'coach',token,{confirmed:true,fetcher:async(url,init)=>{calls.push([url,init.method]);return Response.json(init.method==='GET'?{...head,protocolVersion:3}:{revision:2,replayed:false});}});
+ assert.deepEqual(await ok.append(1,envelope),{revision:2,replayed:false});assert.deepEqual(calls,[[origin+'/v3/delta/coach/head','GET'],[origin+'/v3/delta/coach/append','PUT']]);
 });
