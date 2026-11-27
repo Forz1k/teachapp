@@ -88,9 +88,10 @@ try{
  await clickText('button','Тестовый LIVE-матч');await clickText('.sheet button','Быстрый тест · до 5 очков');await ready('.vp-board-points');
  assert.ok(await evalJs('document.querySelector(".match-live-label").textContent.includes("ТЕСТ")'));
  assert.equal(await evalJs('document.querySelectorAll(".vp-mini-player").length'),12);
- await click('.vp-points .vp-ours');await click('[data-reason="tip"]');await click('.vp-author-grid [data-player]');
+ await click('.vp-points .vp-ours');await click('[data-reason="tip"]');await evalJs(`(()=>{const n=document.querySelector('select[aria-label="Автор результативной передачи"]');n.value='test-a-2';n.dispatchEvent(new Event('change'));return true;})()`);await click('.vp-author-grid [data-player]');
  await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="1"'),'rehearsal first point');
  assert.ok(await evalJs('document.querySelector("[data-live-save-status]").textContent.includes("Сохранено")'));
+ assert.equal(await evalJs('JSON.parse(localStorage.getItem("teachapp.live.rehearsal.v1")).events[0].assist'),'test-a-2');
  await capture('390-live-rehearsal');
  await closeSheet();await clickText('button','Тестовый LIVE-матч');await clickText('.sheet button','Продолжить / открыть тест');
  await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="1"'),'rehearsal resumed');

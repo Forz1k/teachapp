@@ -283,8 +283,8 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
    }
    if(pointDraft){
     const {side:winner,editing,kind}=pointDraft;
-    const submit=(k,player=null,extra={})=>perform(editing?{type:'attribute',kind:k,player}:{type:'rally',side:winner,kind:k,player,captureMode,...extra},()=>{pointDraft=null;selected=null;});
-    const afterAuthor=(k,player=null)=>{if(!editing&&captureMode==='pro'){pointDraft={...pointDraft,author:player,touchEntry:true};draw();return;}if(!editing&&scoutEntry&&V.canPlace(k)){pointDraft={...pointDraft,author:player,extra:true,defender:null,zone:null};draw();}else submit(k,player);};
+    const submit=(k,player=null,extra={})=>{const assist=V.canAssist(k)&&player&&pointDraft.assist&&player!==pointDraft.assist?pointDraft.assist:null;return perform(editing?{type:'attribute',kind:k,player,assist}:{type:'rally',side:winner,kind:k,player,captureMode,...(assist?{assist}:{}),...extra},()=>{pointDraft=null;selected=null;});};
+    const afterAuthor=(k,player=null)=>{if(player&&pointDraft.assist===player){toast('Автор атаки и передачи должны быть разными игроками');return;}if(!editing&&captureMode==='pro'){pointDraft={...pointDraft,author:player,touchEntry:true};draw();return;}if(!editing&&scoutEntry&&V.canPlace(k)){pointDraft={...pointDraft,author:player,extra:true,defender:null,zone:null};draw();}else submit(k,player);};
     const options=V.rallyReasonOptions(winner,serve).filter(k=>k!=='point');
     const area=el('section',{class:'vp-attribution match-attribution','aria-label':editing?'Уточнение очка':'Новое очко'},[
       el('div',{class:'vp-rally-heading'},[el('strong',{text:(editing?'Уточнить очко · ':'+1 · ')+sideName(d,winner)}),el('small',{text:pointDraft.extra?'Доп. данные · защита':kind?'2 · Игрок':'1 · Причина'})]),
@@ -300,11 +300,17 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
        btn('Начислить очко',()=>submit(kind,pointDraft.author,{...(pointDraft.zone?{placement:pointDraft.zone}:{}),...(secondary&&pointDraft.defender?{secondary:{kind:secondary,player:pointDraft.defender}}:{})}),'primary wide'),btn('Пропустить уточнение',()=>submit(kind,pointDraft.author),'wide'),btn('Назад к игрокам',()=>{pointDraft={side:winner,editing,kind};draw();},'wide'));
     }else if(!kind){
       for(const [title,group] of [['Результативное действие',options.filter(k=>!V.isError(k))],['Ошибка соперника',options.filter(V.isError)]]){
-        if(group.length)area.append(el('strong',{class:'vp-rally-label',text:title}),el('div',{class:'vp-actions vp-reason-grid'},group.map(k=>el('button',{type:'button',class:'btn','data-reason':k,text:V.reasons[k],onclick:()=>{pointDraft={...pointDraft,kind:k};draw();}}))));
+        if(group.length)area.append(el('strong',{class:'vp-rally-label',text:title}),el('div',{class:'vp-actions vp-reason-grid'},group.map(k=>el('button',{type:'button',class:'btn','data-reason':k,text:V.reasons[k],onclick:()=>{pointDraft={...pointDraft,kind:k,assist:editing&&last?.kind===k?last.assist||null:null};draw();}}))));
       }
       area.append(btn('Без детализации',()=>submit('point'),'wide'));
     }else{
       const actor=V.rallyActor(winner,kind),players=V.rallyCandidates(d,courtState,serve,winner,kind);
+      if(V.canAssist(kind)){
+       const choices=roster(d,winner).filter(p=>courtState[winner].includes(p.id));
+       const assist=select([['','Без отметки'],...choices.map(p=>[p.id,playerLabel(p)])],pointDraft.assist||'');
+       assist.setAttribute('aria-label','Автор результативной передачи');assist.onchange=()=>{pointDraft.assist=assist.value||null;};
+       area.append(field('Ассист · автор передачи (необязательно)',assist),p('Если известна передача, выберите её автора перед атакующей. Счёт команды увеличится только на 1.'));
+      }
       area.append(el('strong',{text:V.reasons[kind]+' · '+sideName(d,actor)}),
         p(players.length?'Выберите игрока, находившегося на площадке до розыгрыша.':'Нет доступных игроков. Можно сохранить причину без автора.'),
         el('div',{class:'vp-actions vp-author-grid'},players.map(player=>el('button',{type:'button',class:'btn','data-player':player.id,onclick:()=>afterAuthor(kind,player.id)},[el('strong',{text:player.number==null?'—':'№'+player.number}),el('span',{text:player.name}),el('small',{text:'P'+player.zone})]))),
@@ -344,7 +350,7 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
      const playerStats=s.sides[side].stats[selected.id]||{};
      const area=el('section',{class:'vp-attribution vp-player-overlay','aria-label':'Действия игрока'},[
       el('h3',{text:name(d,side,selected.id)}),
-      p('Очки: '+(playerStats.points||0)+' · Ошибки: '+(playerStats.errors||0)),el('p',{},['На площадке: ',el('strong',{'data-court-time':selected.id,'data-court-side':side,text:courtTimeLabel(V.courtTime(s,Date.now()).measured?V.courtTime(s,Date.now()).players[side][selected.id]||0:null)})]),
+      p('Очки: '+(playerStats.points||0)+' · Ассисты: '+(playerStats.assists??'—')+' · Баллы: '+((playerStats.points||0)+(playerStats.assists||0))+' · Ошибки: '+(playerStats.errors||0)),el('p',{},['На площадке: ',el('strong',{'data-court-time':selected.id,'data-court-side':side,text:courtTimeLabel(V.courtTime(s,Date.now()).measured?V.courtTime(s,Date.now()).players[side][selected.id]||0:null)})]),
       p('Атаки: '+(playerStats.attackKills||0)+' · Скидки: '+(playerStats.tipKills||0)+' · Блоки: '+(playerStats.blocks||0)+' · Эйсы: '+(playerStats.aces||0)),
       field('Игрок на замену',reserve),candidates.length?btn('Замена · '+s.subCounts[side]+'/'+V.matchLimits(d).substitutions,()=>{if(!reserve.value)return toast('Выберите запасного');perform({type:'sub',side,out:selected.id,in:reserve.value},()=>selected=null);},'primary wide'):p('Допустимых обычных замен нет.')]);
      if(side==='ours'&&V.liberoIds(d).length){
@@ -357,6 +363,10 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
    if(!pointDraft&&d.events.at(-1)?.type==='rally'){
     const details=el('details',{class:'vp-match-more'},[el('summary',{text:'Детали последнего очка'}),btn('Уточнить последнее очко',()=>begin(last.side,true),'wide')]);body.append(details);details.open=detailOpen;details.ontoggle=()=>{detailOpen=details.open;};
     if(last?.type==='rally'){const editor=observationEditor(d,last,items=>perform({type:'observations',observations:items},()=>{detailOpen=true;observationOpen=true;}));editor.open=observationOpen;editor.ontoggle=()=>{observationOpen=editor.open;};details.append(editor);}
+    if(last&&V.canAssist(last.kind)&&last.player){
+     const assistant=select([['','Без отметки'],...roster(d,last.side).filter(p=>last.before.lineups[last.side].includes(p.id)&&p.id!==last.player).map(p=>[p.id,playerLabel(p)])],last.assist||'');
+     details.append(field('Ассист · автор передачи',assistant),btn('Сохранить ассист',()=>perform({type:'editRally',index:d.events.length-1,patch:{assist:assistant.value||null}},()=>{detailOpen=true;}),'wide'));
+    }
     if(last&&V.secondaryKind(last.kind)){
      const losing=last.side==='ours'?'theirs':'ours',kind=V.secondaryKind(last.kind),players=roster(d,losing).filter(p=>last.before.lineups[losing].includes(p.id));
      const extra=select([['','Не указана'],...players.map(p=>[p.id,playerLabel(p)])],last.secondary?.player||'');
@@ -391,7 +401,7 @@ function table(headers,rows){
 function section(title,...children){return el('section',{class:'vp-report-section'},[el('h3',{text:title}),...children]);}
 function eventText(d,x){
  if(x.type==='clock')return x.running?'Запуск / возобновление времени':'Пауза игрового времени';
- if(x.type==='rally')return sideName(d,x.side)+' · '+V.reasons[x.kind]+' · '+name(d,x.actor,x.player)+(x.placement?' · зона '+x.placement:'')+(x.secondary?' · '+V.reasons[x.secondary.kind]+': '+name(d,x.side==='ours'?'theirs':'ours',x.secondary.player):'')+(x.observations?.length?' · успешных действий: '+x.observations.length:'');
+ if(x.type==='rally')return sideName(d,x.side)+' · '+V.reasons[x.kind]+' · '+name(d,x.actor,x.player)+(x.assist?' · ассист: '+name(d,x.side,x.assist):'')+(x.placement?' · зона '+x.placement:'')+(x.secondary?' · '+V.reasons[x.secondary.kind]+': '+name(d,x.side==='ours'?'theirs':'ours',x.secondary.player):'')+(x.observations?.length?' · успешных действий: '+x.observations.length:'');
  if(x.type==='sub')return sideName(d,x.side)+' · замена '+name(d,x.side,x.out)+' → '+name(d,x.side,x.in)+' · P'+x.zone;
  if(x.type==='timeout')return sideName(d,x.side)+' · тайм-аут '+x.number;
  if(x.type==='libero')return d.teamName+' · '+(x.for?'Либеро '+name(d,'ours',x.player||d.libero)+' вместо '+name(d,'ours',x.for):'Возвращение основного игрока')+(x.exception?' · исключение: '+x.exception:'');
@@ -408,7 +418,7 @@ function placementBlock(d,s,side,kind){
 function historyRallyEditor(d,event,index,save,close){
  const kinds=V.rallyReasonOptions(event.side,event.before.serve);
  if(!kinds.includes(event.kind))kinds.push(event.kind);
- const reason=select(kinds.map(k=>[k,V.reasons[k]]),event.kind),player=select([],''),zone=select([['','Не указана'],...Array.from({length:6},(_,i)=>[i+1,'P'+(i+1)])],event.placement??''),defender=select([],'');
+ const reason=select(kinds.map(k=>[k,V.reasons[k]]),event.kind),player=select([],''),zone=select([['','Не указана'],...Array.from({length:6},(_,i)=>[i+1,'P'+(i+1)])],event.placement??''),defender=select([],''),assist=select([],'');
  const losing=event.side==='ours'?'theirs':'ours';
  function fill(){
   const k=reason.value,changed=k!==event.kind;
@@ -417,9 +427,11 @@ function historyRallyEditor(d,event,index,save,close){
   zone.disabled=!V.canPlace(k);zone.value=changed?'':String(event.placement??'');
   defender.replaceChildren(el('option',{value:'',text:'Не указана'}),...roster(d,losing).filter(p=>event.before.lineups[losing].includes(p.id)).map(p=>el('option',{value:p.id,text:playerLabel(p)})));
   defender.disabled=!V.secondaryKind(k);defender.value=changed?'':event.secondary?.player||'';
+  fillAssist(changed?'':event.assist||'');
  }
- reason.onchange=fill;fill();
- const node=section('Редактирование · сет '+event.set+' · '+event.score,p('Команда, получившая очко: '+sideName(d,event.side)+'. Счёт и переходы не изменяются.'),field('Причина',reason),field('Автор',player),field('Зона завершения',zone),field('Дополнительная ошибка соперника',defender),btn('Сохранить уточнение',()=>save({kind:reason.value,player:player.value||null,placement:!zone.disabled&&zone.value?Number(zone.value):null,secondary:!defender.disabled&&defender.value?{kind:V.secondaryKind(reason.value),player:defender.value}:null}),'primary wide'),
+ function fillAssist(value=''){const old=value;assist.replaceChildren(el('option',{value:'',text:'Без отметки'}),...roster(d,event.side).filter(p=>event.before.lineups[event.side].includes(p.id)&&p.id!==player.value).map(p=>el('option',{value:p.id,text:playerLabel(p)})));assist.disabled=!V.canAssist(reason.value)||!player.value;assist.value=!assist.disabled&&[...assist.options].some(o=>o.value===old)?old:'';}
+ player.onchange=()=>fillAssist(assist.value);reason.onchange=fill;fill();
+ const node=section('Редактирование · сет '+event.set+' · '+event.score,p('Команда, получившая очко: '+sideName(d,event.side)+'. Счёт и переходы не изменяются.'),field('Причина',reason),field('Автор',player),field('Ассист · автор передачи',assist),field('Зона завершения',zone),field('Дополнительная ошибка соперника',defender),btn('Сохранить уточнение',()=>save({kind:reason.value,player:player.value||null,assist:!assist.disabled&&assist.value?assist.value:null,placement:!zone.disabled&&zone.value?Number(zone.value):null,secondary:!defender.disabled&&defender.value?{kind:V.secondaryKind(reason.value),player:defender.value}:null}),'primary wide'),
  observationEditor(d,event,items=>save({observations:items})),touchEditor(d,event,(touches,captureComplete)=>save({touches,captureComplete})),btn('Отмена',close,'wide'));
  return node;
 }
@@ -494,7 +506,7 @@ function liveAnalysis(d,s){
   })),p('Доли рассчитаны среди завершений с известной зоной, а не среди всех атак. Без отмеченной зоны точка не предполагается.'));
   const rows=sides.flatMap(side=>{
    const r=data[side];return [section(sideName(d,side)+' · '+r.points+' очков',p('На подаче: '+r.onServe+'/'+r.serve+' ('+pct(r.onServe,r.serve)+') · на приёме: '+r.receiveWon+'/'+r.receive+' ('+pct(r.receiveWon,r.receive)+')'),
-    table(['Игрок','Атаки*','Скидки','Блок','Эйс','Ошибки','Очки'],roster(d,side).map(p=>{const x=r.stats[p.id]||{};return [playerLabel(p),x.attackKills??'—',x.tipKills??'—',x.blocks??'—',x.aces??'—',x.errors??'—',x.points??'—'];})),
+    table(['Игрок','Атаки*','Скидки','Блок','Эйс','Ошибки','Очки','Ассисты','Баллы'],roster(d,side).map(p=>{const x=r.stats[p.id]||{};return [playerLabel(p),x.attackKills??'—',x.tipKills??'—',x.blocks??'—',x.aces??'—',x.errors??'—',x.points??'—',x.assists??'—',x.points!=null||x.assists!=null?(x.points||0)+(x.assists||0):'—'];})),
     p('* Результативные атаки включают скидки. Процент успешности всех атак не рассчитывается без записи всех попыток.'),
     table(['Причина очка','Количество'],Object.entries(V.reasons).map(([k,t])=>[t,r.reasons[k]||0])))];
   });
@@ -540,7 +552,7 @@ function summaryBlocks(d,s){
  return sides.flatMap(side=>{
   const a=s.sides[side],op=sideName(d,side);
   return [section(op+' · '+a.points+' очков',p('На подаче: '+a.onServe+' · на ошибках соперника: '+a.opponentErrors+' · макс. серия: '+a.maxRun+' · без детализации: '+a.unknown),
-    table(['Игрок','Атака (вкл. скидки)','Скидки','Блок','Эйс','Ошибки','Защита: ошибки'],roster(d,side).map(r=>{const st=a.stats[r.id]||{};return [playerLabel(r),st.attackKills??'—',st.tipKills??'—',st.blocks??'—',st.aces??'—',st.errors??'—',st.defenseErrors??'—'];})),
+    table(['Игрок','Атака (вкл. скидки)','Скидки','Блок','Эйс','Ошибки','Защита: ошибки','Очки','Ассисты','Баллы'],roster(d,side).map(r=>{const st=a.stats[r.id]||{};return [playerLabel(r),st.attackKills??'—',st.tipKills??'—',st.blocks??'—',st.aces??'—',st.errors??'—',st.defenseErrors??'—',st.points??'—',st.assists??'—',st.points!=null||st.assists!=null?(st.points||0)+(st.assists||0):'—'];})),
     table(['Причина очка','Количество'],Object.entries(V.reasons).map(([k,t])=>[t,s.timeline.filter(x=>x.type==='rally'&&x.side===side&&x.kind===k).length]))),
     section('Эффективность переходов · '+op,p('P1–P6 — шесть циклов относительно стартовой расстановки партии; первый цикл P1.'),
       table(['Цикл','Розыгрыши','Выиграно','Проиграно','+/−'],a.rotations.map(r=>['P'+r.position,r.rallies,r.won,r.lost,r.won-r.lost]))),
@@ -558,7 +570,7 @@ export function buildMatchReport(m){
  return el('article',{class:'vp-report'},[el('div',{class:'vp-report-brand'},[el('strong',{text:'TeachApp'}),el('span',{text:'Тренерский протокол'})]),
   el('h1',{text:'Протокол матча'}),el('div',{class:'vp-report-score'},[el('div',{},[teamEmblem(d,'ours'),p(d.teamName)]),el('strong',{text:wins+' : '+(s.sets.length-wins)}),el('div',{},[teamEmblem(d,'theirs'),p(d.opponent)])]),
   p('Волейбол · '+regulationOf(d).name+' · до '+d.bestOf+' партий · '+d.date+' · '+(d.competition||'Без турнира')+' · '+(d.venue||'Место не указано')+' · '+seconds(duration)),
-  p('Журнал событий: '+d.events.length+' · результат восстановлен из истории. Не официальный судейский бланк. Неуказанная статистика обозначена прочерком.'),
+  p('Журнал событий: '+d.events.length+' · результат восстановлен из истории. Не официальный судейский бланк. Неуказанная статистика обозначена прочерком. Баллы = зафиксированные личные очки + ассисты; не командный счёт.'),
   section('Результаты партий',table(['Сет',d.teamName,d.opponent,'Длительность'],sets.map(x=>[x.set,x.ours,x.theirs,seconds(x.seconds)]))),
   section('Стартовые расстановки',...sets.map(x=>section('Сет '+x.set,table(['Команда','P1','P2','P3','P4','P5','P6'],sides.map(side=>[sideName(d,side),...Array.from({length:6},(_,i)=>x.lineups[side][i]?name(d,side,x.lineups[side][i]):'—')]))))),
   section('Замены и либеро',table(['Сет','Счёт','Действие'],s.timeline.filter(x=>x.type==='sub'||x.type==='libero').map(x=>[x.set,x.score,eventText(d,x)]))),
@@ -566,7 +578,7 @@ export function buildMatchReport(m){
   section('Судейские санкции (записанные решения)',table(['Сет','Счёт','Санкция'],s.timeline.filter(x=>x.type==='sanction').map(x=>[x.set,x.score,eventText(d,x)]))),
   section('Тайм-ауты',table(['Сет','Счёт','Команда','№'],s.timeline.filter(x=>x.type==='timeout').map(x=>[x.set,x.score,sideName(d,x.side),x.number]))),
   courtTimeBlock(d,s),...summaryBlocks(d,s),captureBlock(d,s),
-  section('Детали очка',table(['Сет','Счёт','Команда','Причина','Автор','Зона','Доп. ошибка'],s.timeline.filter(x=>x.type==='rally').map(x=>[x.set,x.score,sideName(d,x.side),V.reasons[x.kind],name(d,x.actor,x.player),x.placement??'—',x.secondary?V.reasons[x.secondary.kind]+' · '+name(d,x.side==='ours'?'theirs':'ours',x.secondary.player):'—']))),
+  section('Детали очка',table(['Сет','Счёт','Команда','Причина','Автор','Ассист','Зона','Доп. ошибка'],s.timeline.filter(x=>x.type==='rally').map(x=>[x.set,x.score,sideName(d,x.side),V.reasons[x.kind],name(d,x.actor,x.player),x.assist?name(d,x.side,x.assist):'—',x.placement??'—',x.secondary?V.reasons[x.secondary.kind]+' · '+name(d,x.side==='ours'?'theirs':'ours',x.secondary.player):'—']))),
   section('Подписи',p('Первый судья __________________________'),p('Капитан '+d.teamName+' __________________________'),p('Капитан '+d.opponent+' __________________________'))]);
 }
 import {openMatchTactics} from './match-tactics.js';

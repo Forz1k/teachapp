@@ -319,13 +319,15 @@ try{
   assert.match(await rp.locator('.match-live-label').textContent(),/ТЕСТ/);
   assert.equal(await rp.locator('.vp-mini-player').count(),12);
   await rehearsalContext.setOffline(true);
-  await rp.locator('.vp-points .vp-ours').click();await rp.locator('[data-reason="tip"]').click();await rp.locator('.vp-author-grid [data-player]').first().click();
+  await rp.locator('.vp-points .vp-ours').click();await rp.locator('[data-reason="tip"]').click();await rp.getByLabel('Автор результативной передачи',{exact:true}).selectOption('test-a-2');await rp.locator('.vp-author-grid [data-player]').first().click();
   await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
   assert.match(await rp.locator('[data-live-save-status]').textContent(),/Сохранено/);
+  assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events[0].assist),'test-a-2');
   await rehearsalContext.setOffline(false);
   await rp.reload();await rp.locator('.workspace-nav').waitFor();
   await open();await rp.getByRole('button',{name:'Продолжить / открыть тест',exact:true}).click();
   await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
+  assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events[0].assist),'test-a-2');
   await rp.locator('.vp-undo').click();await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='0');
   assert.equal(await rp.evaluate(async()=>JSON.stringify(await (await import('./js/coach.js')).loadCoach())),before);
   assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length),0);
