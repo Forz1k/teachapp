@@ -41,7 +41,7 @@ export function workspaceRatePolicy(s,{auth,rootHash,method,path,now}){
  if(method==='POST'&&path==='recover'&&hash(s.recoveryHash)&&auth===s.recoveryHash&&auth!==rootHash)return {key:'recovery',limit:6};
  if(method==='POST'&&path==='redeem'&&s.invites.some(i=>i.hash===auth&&i.usedAt===null&&i.expiresAt>now))return {key:'redeem',limit:64};
  const actor=memberByHash(s,auth,now);if(!actor)return null;
- const kind=method==='GET'?(path==='workspace/backup'?'access':'read'):/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/(?:revoke|rotate)|notification-lab|notification-lab\/ack|notification-lab\/delivery\/(?:claim|finish|check))$/.test(path)?'access':'write';
+ const kind=method==='GET'?(path==='workspace/backup'?'access':'read'):/^(owner\/recovery|invite|invites\/cancel|revoke|members\/prune|session\/(?:revoke|rotate|identity-refresh)|notification-lab|notification-lab\/ack|notification-lab\/delivery\/(?:claim|finish|check))$/.test(path)?'access':'write';
  return {key:'member:'+actor.id+':'+kind,limit:kind==='read'?240:kind==='access'?24:180};
 }
 /** Rolling fixed-minute windows, bounded retry interval; a clock regression
@@ -58,7 +58,7 @@ function exactRevision(m,revision){require(int(revision)&&revision===m.revision,
 function validateSetScore(m){const target=m.set===m.bestOf?m.decider:m.target;return Math.max(m.score.ours,m.score.theirs)>=target&&Math.abs(m.score.ours-m.score.theirs)>=2;}
 /** The adapter must commit returned state atomically, only if changed. Tokens
  * and request bodies are already bounded and hashed by the HTTP entrypoint. */
-export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash,body,issued,now}){
+export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash,body,issued,now,candidate,identityHash,identityExpiresAt}){
  const s=current?clone(current):null;
  try{
   require(id(workspaceId)&&hash(auth)&&int(now),401,'unauthorized');
@@ -141,21 +141,23 @@ export function dispatchWorkspace(current,{workspaceId,method,path,auth,rootHash
     return ok({configured:true,version:s.recoveryVersion},200,true);
    }
    if(method==='GET'&&path==='members'){owner();return ok({members:s.members.map(publicMember)});}
-   if(method==='POST'&&path==='session/rotate'){
+   if(method==='POST'&&['session/rotate','session/identity-refresh'].includes(path)){
+    const refresh=path==='session/identity-refresh';
+    if(refresh)require(candidate===true&&hash(identityHash)&&actor.identityHash===identityHash&&int(identityExpiresAt)&&identityExpiresAt>now,401,'unauthorized');
     require(exact(body,[]),400,'packet');
     // The existing session must still be valid. Rotation neither changes its
     // scope nor extends its absolute expiry. The server generates the secret.
     require(actor.role!=='owner'||hash(s.recoveryHash),409,'recovery-required');
     require(hash(issued?.hash)&&hash(issued?.secret)&&issued.hash!==rootHash&&issued.hash!==s.recoveryHash&&!s.members.some(m=>m.tokenHash===issued.hash)&&!s.invites.some(i=>i.hash===issued.hash),409,'collision');
-    if(actor.notificationLab){
+    if(!refresh&&actor.notificationLab){
      const revision=actor.notificationLab.revision+1;
      require(int(revision,1),409,'revision');
      actor.notificationLab={revision,endpoint:null};
     }
     actor.tokenHash=issued.hash;
-    s.invites=s.invites.filter(i=>i.issuerId!==actor.id);
+    if(!refresh)s.invites=s.invites.filter(i=>i.issuerId!==actor.id);
     releaseMemberLeases(s,new Set([actor.id]));
-    audit(s,actor,'session.rotate',actor.id,now);
+    audit(s,actor,refresh?'session.identity-refresh':'session.rotate',actor.id,now);
     return ok({workspaceId:s.id,member:publicMember(actor),token:issued.secret},200,true);
    }
    if(method==='POST'&&path==='session/revoke'){
