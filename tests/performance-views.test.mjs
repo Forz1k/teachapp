@@ -86,7 +86,7 @@ test('LIVE center and dossier use exact team and purpose-scoped indexed reads wi
  IDBObjectStore.prototype.getAll=function(...a){all.push(this.name);return origAll.apply(this,a);};
  IDBObjectStore.prototype.get=function(...a){get.push([this.name,a[0]]);return origGet.apply(this,a);};
  try{
-  for(const [scope,names] of [['center',['coachPlayers','coachLive','coachLineups']],['setup',['coachPlayers','coachMatches','coachLineups']],['dossier',['coachPlayers','coachTrainings','coachMatches','coachTests']]]){
+  for(const [scope,names] of [['center',['coachPlayers','coachLive','coachLineups']],['setup',['coachPlayers','coachMatches','coachLineups']],['dossier',['coachPlayers','coachTrainings','coachMatches','coachTests']],['season',['coachTrainings','coachMatches']]]){
    reads.length=get.length=0;const v=await C.loadCoachTeamScope('a',scope);
    assert.equal(v.selectedTeamId,'a');assert.deepEqual(get,[['coachTeams','a']]);assert.deepEqual(reads.sort(),names.map(n=>[n,'teamId','a']).sort());assert.deepEqual(all,[]);
    for(const n of C.coachStores)assert.deepEqual(v.data[n],n==='coachTeams'?full[n].filter(x=>x.id==='a'):names.includes(n)?full[n].filter(x=>x.teamId==='a'):[]);

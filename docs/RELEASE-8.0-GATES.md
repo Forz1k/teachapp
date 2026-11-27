@@ -1,6 +1,6 @@
 # TeachApp: контрольная интеграция до 8.0
 
-Интеграционная ветка объединяет контрольные пакеты 6.0.1–7.3, стабильные LIVE 6.0.3–6.0.6 и кандидаты 7.4–7.5. Версия приложения 8.0.0-rc.4 — неопубликованный кандидат; ни один незавершённый пакет не объявляется релизом. Основная ветка остаётся 6.0.6.
+Интеграционная ветка объединяет контрольные пакеты 6.0.1–7.3, стабильные LIVE 6.0.3–6.0.6 и кандидаты 7.4–7.5. Версия приложения 8.0.0-rc.5 — неопубликованный кандидат; ни один незавершённый пакет не объявляется релизом. Основная ветка остаётся 6.0.6.
 
 | Область | Контрольный пакет | Условие полного завершения |
 | --- | --- | --- |
@@ -109,3 +109,7 @@ RC5 preparation (still rc.4): Studio custom cover positioning and editable ellip
 RC5 preparation (still rc.4): seasonal training history indexed by selected method, period and eligible athlete, equality with previous individual scan and deterministic enumeration budget. Physical device timing/memory acceptance remains open.
 
 RC5 preparation (still rc.4): scoped seasonal match analytics avoids unrelated roster logs; pure coach calculations and CSV serialization extracted behind compatibility facade, reused player court-time snapshot and new precache entry. Physical-device timing/memory acceptance and further decomposition remain open.
+
+## RC5 — функциональный кандидат
+
+Scope of RC5 is frozen for candidate review: the earlier RC5 preparation checkpoints plus view-local video marker projection, provenance/notes filters and per-set coverage; transient Studio layer alignment and optional pointer movement; indexed season ranges and exact-team reads. No new persisted schema or server switch. Existing skill coverage and periodization remain available; physical playback/clip, skill/season, Studio export and large-archive performance acceptance are not closed. Further decomposition is a remaining engineering task, not a claim that every large module has been split. Version is synchronized across package, lock, service worker and app. RC5 is a candidate for isolated review, not stable release authorization. RC6 proposed scope: production identity, authorization, operational rate-limit/recovery and background push; subsequent migration and acceptance gates remain mandatory. OBS remains excluded.

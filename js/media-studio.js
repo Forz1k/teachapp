@@ -73,6 +73,29 @@ export function duplicateStudioLayer(raw,index){
  const l=layers[index],copy={...l,x:Math.min(100-l.width,l.x+3),y:Math.min(100-l.height,l.y+3)};
  layers.splice(index+1,0,copy);return layers;
 }
+export function positionStudioLayer(raw,index,{x,y,horizontal,vertical}={}){
+ const layers=studioLayers(raw),l=layers[index];if(!Number.isInteger(index)||!l)throw Error('Слой не найден');
+ if(horizontal!==undefined&&!['left','center','right'].includes(horizontal)||vertical!==undefined&&!['top','middle','bottom'].includes(vertical))throw Error('Некорректное выравнивание слоя');
+ const nx=horizontal==='left'?0:horizontal==='center'?(100-l.width)/2:horizontal==='right'?100-l.width:x;
+ const ny=vertical==='top'?0:vertical==='middle'?(100-l.height)/2:vertical==='bottom'?100-l.height:y;
+ layers[index]={...l,x:clamp(nx,0,100-l.width,l.x),y:clamp(ny,0,100-l.height,l.y)};
+ return layers;
+}
+/** Pointer coordinate in the rendered content, excluding object-fit contain letterboxing. */
+export function studioCanvasPoint(clientX,clientY,rect,width,height,{clamped=false}={}){
+ if(![clientX,clientY,rect?.left,rect?.top,rect?.width,rect?.height,width,height].every(Number.isFinite)||Math.min(rect.width,rect.height,width,height)<=0)return null;
+ const scale=Math.min(rect.width/width,rect.height/height),w=width*scale,h=height*scale,x=(clientX-rect.left-(rect.width-w)/2)/w*100,y=(clientY-rect.top-(rect.height-h)/2)/h*100;
+ if(!clamped&&(x<0||x>100||y<0||y>100))return null;
+ return {x:Math.max(0,Math.min(100,x)),y:Math.max(0,Math.min(100,y))};
+}
+export function studioLayerAt(raw,point){
+ if(!point||![point.x,point.y].every(Number.isFinite))return -1;
+ const layers=studioLayers(raw);
+ for(let i=layers.length-1;i>=0;i--){const l=layers[i];if(!l.opacity||point.x<l.x||point.x>l.x+l.width||point.y<l.y||point.y>l.y+l.height)continue;
+  if(l.kind==='ellipse'&&((point.x-l.x-l.width/2)/(l.width/2))**2+((point.y-l.y-l.height/2)/(l.height/2))**2>1)continue;return i;
+ }
+ return -1;
+}
 /** Extra layers are transient, rendered in list order, and never stored in style presets. */
 export function paintStudioLayers(ctx,layers,w,h){
  for(const l of studioLayers(layers)){
