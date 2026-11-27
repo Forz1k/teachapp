@@ -15,14 +15,14 @@ export function pushProviderPolicy(entries){
  const rules=entries.map(x=>{
   if(!exact(x,['origin','prefix'])||typeof x.origin!=='string'||typeof x.prefix!=='string')throw Error('Provider policy');
   const u=new URL(x.origin);
-  if(u.protocol!=='https:'||u.origin!==x.origin||!allowedHosts.has(u.hostname)||u.port||u.username||u.password||! /^\/[A-Za-z0-9_/-]{1,100}\/$/.test(x.prefix)||x.prefix.includes('//')||x.prefix.includes('..'))throw Error('Provider policy');
+  if(u.protocol!=='https:'||u.origin!==x.origin||!allowedHosts.has(u.hostname)||u.port||u.username||u.password||!(u.hostname==='web.push.apple.com'&&x.prefix==='/'||/^\/[A-Za-z0-9_/-]{1,100}\/$/.test(x.prefix))||x.prefix.includes('//')||x.prefix.includes('..'))throw Error('Provider policy');
   return {origin:u.origin,prefix:x.prefix};
  });
  return endpoint=>{
   try{
    if(typeof endpoint!=='string'||endpoint.length>2048)return null;
    const u=new URL(endpoint);
-   if(u.href!==endpoint||u.username||u.password||u.hash||u.search||!rules.some(r=>r.origin===u.origin&&u.pathname.startsWith(r.prefix)&&u.pathname.length>r.prefix.length)||! /^\/[A-Za-z0-9_./~%-]+$/.test(u.pathname)||/%(?:2f|5c|2e|00)/i.test(u.pathname)||u.pathname.includes('//'))return null;
+   if(u.href!==endpoint||u.username||u.password||u.hash||u.search||!rules.some(r=>r.origin===u.origin&&u.pathname.startsWith(r.prefix)&&u.pathname.length>r.prefix.length)||! /^\/[A-Za-z0-9_./~%:-]+$/.test(u.pathname)||/%(?:2f|5c|2e|00)/i.test(u.pathname)||u.pathname.includes('//'))return null;
    return u;
   }catch{return null;}
  };
