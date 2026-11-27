@@ -58,3 +58,21 @@ test('Review CSV escapes spreadsheet formulas and multiline private text, handle
  const csv=videoReviewCsv(rows,[{index:1,text:'@formula',favorite:true},{index:250,text:'line "one"\nline two',favorite:false}],{includePrivate:true});
  assert.ok(csv.includes('"\'  =SUM(1;2)"'));assert.ok(csv.includes('"\'@formula"'));assert.ok(csv.includes('"line ""one""\nline two"'));assert.match(csv,/"250";"1"/);
 });
+
+test('Prepared video review projection filters provenance and notes without re-reading match evidence',async()=>{
+ const {projectVideoMarkers,calibratedMarkers,importedVideoMarkers,videoReviewBySet}=await import('../js/video-review.js');
+ const base=videoMarkers(detail,0),anchors=[{index:1,seconds:10},{index:2,seconds:25}],notes=[{index:2,text:'Private note',favorite:true}];
+ assert.deepEqual(projectVideoMarkers(base,{firstAt:20}),videoMarkers(detail,20));
+ assert.deepEqual(projectVideoMarkers(base,{anchors}),calibratedMarkers(detail,anchors));
+ assert.equal(projectVideoMarkers(base,{anchors,onlyNotes:true,notes})[0].index,2);
+ assert.equal(projectVideoMarkers(base,{anchors,provenance:'estimated'}).length,0);
+ assert.deepEqual(projectVideoMarkers(base,{provenance:'estimated'}),base);
+ const pdf={imported:{rallies:[{set:1,ours:1,theirs:0,kind:'aces',winner:'ours'},{set:2,ours:0,theirs:1,kind:'unknown',winner:'theirs'},{set:2,ours:1,theirs:1,kind:'unknown',winner:'ours'}]}};
+ const raw=importedVideoMarkers(pdf),points=[{index:1,seconds:2},{index:3,seconds:25}];
+ assert.deepEqual(projectVideoMarkers(raw,{imported:true,anchors:points,duration:10}),importedVideoMarkers(pdf,points,{duration:10}));
+ assert.deepEqual(projectVideoMarkers(raw,{imported:true,anchors:points,provenance:'unlinked'}).map(m=>[m.index,m.seconds]),[[2,null]]);
+ assert.deepEqual(projectVideoMarkers(raw,{imported:true,anchors:points,onlyLinked:true,duration:10}).map(m=>m.index),[1]);
+ const groups=videoReviewBySet(projectVideoMarkers(raw,{imported:true,anchors:points,duration:10}),notes);
+ assert.deepEqual(groups.map(s=>[s.set,s.total,s.manual,s.unlinked,s.outsideVideo,s.ours,s.theirs]),[[1,1,1,0,0,1,0],[2,2,1,1,1,1,1]]);
+ assert.equal(raw[1].seconds,null);assert.throws(()=>projectVideoMarkers(raw,{imported:true,anchors:[{index:4,seconds:1}]}));
+});
