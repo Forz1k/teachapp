@@ -4,14 +4,15 @@ import {digestToken} from './cloudflare-protocol.mjs';
 import {dispatchWorkspace,BODY_LIMIT,STATE_LIMIT,workspaceRatePolicy,consumeWorkspaceRate} from './platform-api.mjs';
 import {syntheticPlatformConfig} from './platform-config.mjs';
 import {identityConfig,verifyIdentityAccessToken,identityPlan,bindIdentityResult} from './platform-identity.mjs';
+import {sealWorkspaceBackup,openWorkspaceBackup,restoreWorkspaceData,BACKUP_BODY_LIMIT} from './platform-backup.mjs';
 const H={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Type':'application/json; charset=utf-8'};
 const json=(status,body,cors={})=>new Response(JSON.stringify(body),{status,headers:{...H,...cors}});
 const secret=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
-async function bodyOf(request){
+async function bodyOf(request,limit=BODY_LIMIT){
  if(!/^application\/json(?:;|$)/i.test(request.headers.get('content-type')||''))return {error:415};
- const len=request.headers.get('content-length');if(len!==null&&(!/^\d+$/.test(len)||Number(len)>BODY_LIMIT))return {error:413};
+ const len=request.headers.get('content-length');if(len!==null&&(!/^\d+$/.test(len)||Number(len)>limit))return {error:413};
  if(!request.body)return {error:400};const reader=request.body.getReader();let count=0,chunks=[];
- try{for(;;){const p=await reader.read();if(p.done)break;count+=p.value.byteLength;if(count>BODY_LIMIT){await reader.cancel();return {error:413};}chunks.push(p.value);}}finally{reader.releaseLock();}
+ try{for(;;){const p=await reader.read();if(p.done)break;count+=p.value.byteLength;if(count>limit){await reader.cancel();return {error:413};}chunks.push(p.value);}}finally{reader.releaseLock();}
  try{const raw=new Uint8Array(count);let offset=0;for(const c of chunks){raw.set(c,offset);offset+=c.byteLength;}return {body:JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw))};}catch{return {error:400};}
 }
 export default {async fetch(request,env){
@@ -40,7 +41,9 @@ export default {async fetch(request,env){
    identityHash=await verifyIdentityAccessToken(config,assertion[1]);
    if(!identityHash)return json(401,{error:'unauthorized'},cors);
   }else auth=await digestToken(token[1]);
-  const packet=request.method==='GET'?{body:null}:await bodyOf(request);if(packet.error)return json(packet.error,{error:'packet'},cors);
+  const restore=r[2]==='workspace/restore';
+  if(restore&&(auth!==settings.rootHash||request.method!=='POST'))return json(401,{error:'unauthorized'},cors);
+  const packet=request.method==='GET'?{body:null}:await bodyOf(request,restore?BACKUP_BODY_LIMIT:BODY_LIMIT);if(packet.error)return json(packet.error,{error:'packet'},cors);
   if(identityRoute&&['identity/bind','identity/redeem'].includes(r[2])){
    const value=packet.body;
    if(!value||Array.isArray(value)||Object.keys(value).join(',')!=='credential'||typeof value.credential!=='string'||! /^[a-f0-9]{64}$/.test(value.credential))return json(400,{error:'packet'},cors);
@@ -53,10 +56,17 @@ export default {async fetch(request,env){
  }catch{return json(503,{error:'unavailable'},cors);}
 }};
 export class PlatformWorkspace extends DurableObject{
- constructor(ctx,env){super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;this.sql.exec('CREATE TABLE IF NOT EXISTS workspace_state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)');this.sql.exec('CREATE TABLE IF NOT EXISTS rate_buckets (key TEXT PRIMARY KEY, start INTEGER NOT NULL, count INTEGER NOT NULL)');}
+ constructor(ctx,env){super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;this.backupKey=env.TEACHAPP_PLATFORM_BACKUP_KEY;this.sql.exec('CREATE TABLE IF NOT EXISTS workspace_state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)');this.sql.exec('CREATE TABLE IF NOT EXISTS rate_buckets (key TEXT PRIMARY KEY, start INTEGER NOT NULL, count INTEGER NOT NULL)');}
  async fetch(request){
   if(request.method!=='POST'||new URL(request.url).pathname!=='/dispatch')return json(404,{error:'route'});
-  try{const input=await request.json();const out=this.storage.transactionSync(()=>{
+  try{const input=await request.json();let recovery=null;
+   if(input.path==='workspace/restore'){
+    if(input.auth!==input.rootHash||input.method!=='POST')return json(401,{error:'unauthorized'});
+    if(typeof this.backupKey!=='string'||! /^[a-f0-9]{64}$/.test(this.backupKey))return json(503,{error:'backup-disabled'});
+    if(!input.body||Object.keys(input.body).sort().join(',')!=='packet,sourceWorkspaceId')return json(400,{error:'packet'});
+    try{recovery=await openWorkspaceBackup(input.body.packet,this.backupKey,input.body.sourceWorkspaceId);}catch{return json(400,{error:'backup-invalid'});}
+   }
+   const out=this.storage.transactionSync(()=>{
    const row=this.sql.exec('SELECT body FROM workspace_state WHERE id=1').toArray()[0],current=row?JSON.parse(row.body):null,now=Date.now();
    const plan=input.path.startsWith('identity/')?identityPlan(current,{...input,now}):null;
    if(plan?.error)return plan.error;
@@ -69,10 +79,20 @@ export class PlatformWorkspace extends DurableObject{
     if(!rate.allowed)return {status:429,body:{error:'rate-limit',retryAfter:rate.retryAfter},retryAfter:rate.retryAfter};
     this.sql.exec('INSERT INTO rate_buckets(key,start,count) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET start=excluded.start,count=excluded.count',policy.key,rate.start,rate.count);
    }
-   let result=dispatchWorkspace(current,effective);
+   if(input.path==='workspace/backup'&&input.method==='GET'){
+    const gate=dispatchWorkspace(current,{...effective,path:'members'});
+    return gate.status===200?{status:200,backupState:current}:gate;
+   }
+   let result=dispatchWorkspace(current,recovery?{...effective,path:'bootstrap',body:{name:recovery.name}}:effective);
+   if(recovery&&result.changed){try{result=restoreWorkspaceData(result,recovery,now);}catch{return {status:409,body:{error:'backup-invalid'}};}}
    if(plan?.bind)result=bindIdentityResult(result,input.identityHash,STATE_LIMIT);
    if(result.changed)this.sql.exec('INSERT INTO workspace_state(id,body) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',JSON.stringify(result.state));return result;
-  });return json(out.status,out.body,out.retryAfter?{'Retry-After':String(out.retryAfter)}:{});}catch{return json(503,{error:'storage'});}
+  });
+  if(out.backupState){
+   if(typeof this.backupKey!=='string'||! /^[a-f0-9]{64}$/.test(this.backupKey))return json(503,{error:'backup-disabled'});
+   return json(200,{packet:await sealWorkspaceBackup(out.backupState,this.backupKey)});
+  }
+  return json(out.status,out.body,out.retryAfter?{'Retry-After':String(out.retryAfter)}:{});}catch{return json(503,{error:'storage'});}
  }
 }
 
