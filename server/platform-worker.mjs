@@ -21,6 +21,13 @@ export default {async fetch(request,env){
  const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin','Access-Control-Expose-Headers':'Retry-After'}:{};if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
  if(request.method==='OPTIONS')return origin===settings.origin?new Response(null,{status:204,headers:{...cors,'Access-Control-Allow-Methods':'GET, POST, PUT, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'}}):json(403,{error:'origin'});
  if(!['GET','POST','PUT'].includes(request.method))return json(405,{error:'method'},cors);
+ // One bounded deployment-wide ingress bucket in the loopback rehearsal.
+ // No caller header, token, workspace name or attacker-derived storage key.
+ try{
+  const ingress=env.INGRESS.get(env.INGRESS.idFromName('loopback-v1'));
+  const limited=await ingress.fetch('https://internal/admit',{method:'POST'});
+  if(limited.status!==204){const retry=limited.headers.get('Retry-After');return json(limited.status===429?429:503,{error:limited.status===429?'rate-limit':'unavailable',...(retry?{retryAfter:Number(retry)}:{})},{...cors,...(retry?{'Retry-After':retry}:{})});}
+ }catch{return json(503,{error:'unavailable'},cors);}
  const identityRoute=r[2].startsWith('identity/');
  const token=/^Bearer ([a-f0-9]{64})$/.exec(request.headers.get('Authorization')||'');
  const assertion=identityRoute&&/^Bearer ([A-Za-z0-9_.-]{1,8192})$/.exec(request.headers.get('Authorization')||'');
@@ -66,5 +73,26 @@ export class PlatformWorkspace extends DurableObject{
    if(plan?.bind)result=bindIdentityResult(result,input.identityHash,STATE_LIMIT);
    if(result.changed)this.sql.exec('INSERT INTO workspace_state(id,body) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',JSON.stringify(result.state));return result;
   });return json(out.status,out.body,out.retryAfter?{'Retry-After':String(out.retryAfter)}:{});}catch{return json(503,{error:'storage'});}
+ }
+}
+
+export class PlatformIngress extends DurableObject{
+ constructor(ctx,env){
+  super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;
+  this.limit=env.TEACHAPP_PLATFORM_INGRESS_LIMIT===undefined?1200:Number(env.TEACHAPP_PLATFORM_INGRESS_LIMIT);
+  this.sql.exec('CREATE TABLE IF NOT EXISTS ingress_rate (id INTEGER PRIMARY KEY CHECK(id=1), start INTEGER NOT NULL, count INTEGER NOT NULL)');
+ }
+ async fetch(request){
+  if(request.method!=='POST'||new URL(request.url).pathname!=='/admit')return json(404,{error:'route'});
+  if(!Number.isSafeInteger(this.limit)||this.limit<1||this.limit>10000)return json(503,{error:'disabled'});
+  try{
+   const rate=this.storage.transactionSync(()=>{
+    const prior=this.sql.exec('SELECT start,count FROM ingress_rate WHERE id=1').toArray()[0];
+    const next=consumeWorkspaceRate({limit:this.limit},prior,Date.now());
+    if(next.allowed)this.sql.exec('INSERT INTO ingress_rate(id,start,count) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET start=excluded.start,count=excluded.count',next.start,next.count);
+    return next;
+   });
+   return rate.allowed?new Response(null,{status:204}):json(429,{error:'rate-limit',retryAfter:rate.retryAfter},{'Retry-After':String(rate.retryAfter)});
+  }catch{return json(503,{error:'storage'});}
  }
 }
