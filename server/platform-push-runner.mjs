@@ -29,7 +29,7 @@ async function runDelivery({adapter,memberId,revision,sequence,readClock=Date.no
    if(!sub||!await current())result={outcome:'cancelled',retryAfter:null};
    else result=await deliver({subscription:sub,ticket,time,current});
   }
- }catch{result=unknown;}
+ }catch(e){console.warn('Platform delivery preparation failed:',e?.name==='OperationError'?'crypto':e?.name==='TypeError'?'type':'other');result=unknown;}
  if(!outcomes.has(result?.outcome))result=unknown;
  try{
   const final=await adapter.finish({memberId,ticket:structuredClone(ticket),outcome:result.outcome,retryAfter:result.retryAfter??null});
