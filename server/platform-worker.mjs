@@ -97,7 +97,7 @@ export class PlatformWorkspace extends DurableObject{
    subscription:async({memberId,ticket})=>{const s=this.readState(),m=s?.members.find(x=>x.id===memberId);if(!m||!noticeDeliveryCurrentLab(m,ticket,Date.now()))return null;return openProviderSubscription(config,m.notificationLab.sealedSubscription,s.id,m.id,ticket.revision);},
    finish:async({memberId,ticket,outcome,retryAfter})=>mutate(memberId,(m,_s,t)=>finishNoticeDeliveryLab(m,{ticket,outcome,retryAfter,now:t}))
   };
-  for(const item of due)await runProviderDelivery({adapter,memberId:item.id,revision:item.revision,sequence:item.sequence,config,fetcher:fetch});
+  for(const item of due)await runProviderDelivery({adapter,memberId:item.id,revision:item.revision,sequence:item.sequence,config,fetcher:(url,init)=>fetch(url,init)});
   const next=schedule()[0];if(next)await this.ensureAlarm(Math.max(Date.now()+1000,next.due));
  }
  async fetch(request){
