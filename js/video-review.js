@@ -88,3 +88,49 @@ export function createVideoMarkerIndex(markers){
   }
  };
 }
+
+/** Local review report of the exact current filters, never just the displayed page.
+ * Raw source video, internal IDs and personal text are not exported by default. */
+const reviewAlignmentLabels=Object.freeze({manual:'Ручная точка',interpolated:'Интерполяция',extrapolated:'Оценка вне контрольных точек',recorded:'Оценка по времени протокола',unlinked:'Без привязки'});
+function checkedReviewMarkers(markers){
+ if(!Array.isArray(markers)||markers.length>20000)throw Error('Слишком большая или некорректная подборка видеоразбора');
+ const seen=new Set();
+ for(const m of markers){
+  if(!m||!Number.isSafeInteger(m.index)||m.index<1||seen.has(m.index)||!Number.isInteger(m.set)||m.set<1||!Object.hasOwn(reviewAlignmentLabels,m.alignment)||typeof m.score!=='string'||typeof m.label!=='string'||!['ours','theirs'].includes(m.side)||m.alignment==='unlinked'&&m.seconds!==null||m.alignment!=='unlinked'&&(!Number.isFinite(m.seconds)||m.seconds<0))throw Error('Некорректная отметка видеоразбора');
+  seen.add(m.index);
+ }
+ return markers;
+}
+export function summarizeVideoReview(markers,notes=[]){
+ const rows=checkedReviewMarkers(markers),favorites=new Set(notes.filter(n=>n?.favorite===true).map(n=>n.index));
+ const result={total:rows.length,manual:0,estimated:0,unlinked:0,outsideVideo:0,favorites:0};
+ for(const m of rows){
+  if(m.alignment==='manual')result.manual++;
+  else if(m.alignment==='unlinked')result.unlinked++;
+  else result.estimated++;
+  if(m.outsideVideo)result.outsideVideo++;
+  if(favorites.has(m.index))result.favorites++;
+ }
+ return result;
+}
+// Quote every field; escape spreadsheet formula prefixes even after whitespace/control characters.
+const reviewCsvCell=value=>{
+ let s=String(value??'');
+ if(/^[\s\u0000-\u001f\u007f\ufeff]*[=+\-@]/u.test(s)||/^[\t\r\n]/.test(s))s="'"+s;
+ return '"'+s.replaceAll('"','""')+'"';
+};
+export function videoReviewCsv(markers,notes=[],{includePrivate=false}={}){
+ const rows=checkedReviewMarkers(markers),byIndex=new Map(notes.map(n=>[n.index,n]));
+ const columns=['Розыгрыш','Партия','Счёт','Сторона','Завершение','Время видео, с','Происхождение времени','Вне видео','В подборке'];
+ if(includePrivate===true)columns.push('Игрок','Приватная заметка');
+ const lines=[columns.map(reviewCsvCell).join(';')];
+ for(const m of rows){
+  const note=byIndex.get(m.index);
+  const values=[m.index,m.set,m.score,m.side==='ours'?'Наша команда':'Соперник',m.label,m.seconds===null?'':String(Math.round(m.seconds*1000)/1000).replace('.',','),reviewAlignmentLabels[m.alignment],m.outsideVideo?'Да':'Нет',note?.favorite?'Да':'Нет'];
+  if(includePrivate===true)values.push(m.player||'',note?.text||'');
+  lines.push(values.map(reviewCsvCell).join(';'));
+ }
+ const result='\ufeff'+lines.join('\r\n')+'\r\n';
+ if(new TextEncoder().encode(result).length>10000000)throw Error('Слишком большой отчёт видеоразбора');
+ return result;
+}

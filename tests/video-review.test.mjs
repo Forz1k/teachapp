@@ -41,3 +41,20 @@ test('Indexed playback navigation is equivalent to linear reference across ties,
  const source=[{index:1,seconds:2,alignment:'manual'},{index:2,seconds:2,alignment:'manual'}],cached=createVideoMarkerIndex(source);
  source[0].seconds=100;const returned=cached.adjacent(0,5,1);assert.equal(returned.index,1);returned.seconds=200;assert.equal(cached.adjacent(0,5,1).seconds,2);
 });
+
+test('Review summary and CSV retain filtered provenance, omit private fields by default and never invent PDF times',async()=>{
+ const {summarizeVideoReview,videoReviewCsv}=await import('../js/video-review.js');
+ const rows=[{index:1,set:1,score:'1:0',side:'ours',label:'Эйс',alignment:'manual',seconds:5.125,player:'PRIVATE PLAYER',playerId:'secret-id'},{index:2,set:1,score:'1:1',side:'theirs',label:'Ошибка',alignment:'unlinked',seconds:null,player:'PRIVATE PLAYER'},{index:3,set:2,score:'0:1',side:'theirs',label:'Атака',alignment:'interpolated',seconds:90,outsideVideo:true}];
+ const notes=[{index:2,favorite:true,text:'PRIVATE NOTE'},{index:99,favorite:true,text:'NOT IN FILTER'}];
+ assert.deepEqual(summarizeVideoReview(rows,notes),{total:3,manual:1,estimated:1,unlinked:1,outsideVideo:1,favorites:1});
+ const csv=videoReviewCsv(rows,notes);assert.ok(csv.startsWith('\ufeff'));assert.match(csv,/"5,125";"Ручная точка"/);assert.match(csv,/"Ошибка";"";"Без привязки";"Нет";"Да"/);assert.match(csv,/"Интерполяция";"Да"/);
+ assert.doesNotMatch(csv,/PRIVATE|secret-id|NOT IN FILTER/);
+ const privateCsv=videoReviewCsv(rows,notes,{includePrivate:true});assert.match(privateCsv,/PRIVATE PLAYER/);assert.match(privateCsv,/PRIVATE NOTE/);assert.doesNotMatch(privateCsv,/secret-id|NOT IN FILTER/);
+ assert.throws(()=>videoReviewCsv([...rows,rows[0]],notes));assert.throws(()=>videoReviewCsv([{...rows[1],seconds:0}],notes));
+});
+test('Review CSV escapes spreadsheet formulas and multiline private text, handles all filtered rows beyond page limit',async()=>{
+ const {videoReviewCsv}=await import('../js/video-review.js');
+ const rows=Array.from({length:250},(_,i)=>({index:i+1,set:1,score:'1:0',side:'ours',label:'Эйс',alignment:'recorded',seconds:i,player:'  =SUM(1;2)'}));
+ const csv=videoReviewCsv(rows,[{index:1,text:'@formula',favorite:true},{index:250,text:'line "one"\nline two',favorite:false}],{includePrivate:true});
+ assert.ok(csv.includes('"\'  =SUM(1;2)"'));assert.ok(csv.includes('"\'@formula"'));assert.ok(csv.includes('"line ""one""\nline two"'));assert.match(csv,/"250";"1"/);
+});

@@ -2,6 +2,8 @@
 
 ## 8.0.0-rc.4
 
+- Подготовка RC5: сводка видеоразбора и локальный CSV всех событий по фильтрам. Неизвестное время не заполняется, происхождение отметок сохраняется; имена и заметки только по явному согласию.
+
 - Delta v3: pinned source/destination migration barrier, exact anchor, pending v11 checkpoint, separate activation/finalization, pre-activation signed rollback. Только кандидат и синтетическая приёмка.
 
 - Delta v3: отдельный HTTPS candidate, явный выбор протокола, независимые конфигурации, запрет snapshot fallback и проверки версии на wire. Не развёрнут; перенос существующих серверов и Firebase ещё открыты.

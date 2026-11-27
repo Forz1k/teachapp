@@ -670,6 +670,13 @@ try{
  await shown.getByLabel('Только привязанные события',{exact:true}).uncheck();
  await shown.locator('[data-review-rally="2"]').getByRole('button',{name:'☆ Добавить в подборку',exact:true}).click();await shown.locator('[data-review-rally="2"]').getByRole('button',{name:'★ Убрать из подборки',exact:true}).waitFor();
  await shown.getByLabel('Только подборка',{exact:true}).check();assert.equal(await shown.locator('[data-review-rally]').count(),1);assert.match(await shown.textContent(),/Без привязки/);
+ await shown.getByRole('heading',{name:'Отчёт по видеоразбору',exact:true}).waitFor();
+ assert.match(await shown.textContent(),/Розыгрышей: 1 · ручных: 0 · оценочных: 0 · без привязки: 1/);
+ assert.equal(await shown.getByRole('checkbox',{name:'Включить имена игроков и приватные заметки',exact:true}).isChecked(),false);
+ assert.equal(await shown.getByRole('button',{name:'Сохранить отчёт CSV',exact:true}).isEnabled(),true);
+ await shown.getByLabel('Только привязанные события',{exact:true}).check();
+ assert.equal(await shown.getByRole('button',{name:'Сохранить отчёт CSV',exact:true}).isDisabled(),true);
+ await shown.getByLabel('Только привязанные события',{exact:true}).uncheck();
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'historical video review overflow');
  await shown.getByRole('button',{name:'Закрыть',exact:true}).click();
  console.log('WEBKIT HISTORICAL VIDEO PASS: imported journal, manually saved anchors, unlinked seek disabled, favorite and linked filters, local-only UI.');
