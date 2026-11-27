@@ -21,6 +21,9 @@ export function opponentHistory(matches,teamId){
 }
 const errors=['serveError','attackError','receiveError','defenseError','setError','netError','otherError'];
 export const canAssist=kind=>['kill','tip'].includes(kind);
+export const timeoutDurationMs=30000;
+export const timeoutRemaining=(state,now=Date.now())=>state.activeTimeout?Math.max(0,Math.ceil((state.activeTimeout.deadline-now)/1000)):null;
+export const courtOrder=(d,s)=>((d.ourSide==='right')!==!!s.endsSwapped)?['theirs','ours']:['ours','theirs'];
 export const canPlace=kind=>['ace','kill','tip','receiveError','defenseError'].includes(kind);
 export const isError=k=>errors.includes(k);
 export const rallyActor=(winner,kind)=>isError(kind)?other(winner):winner;
@@ -84,12 +87,12 @@ export function replayDetailed(d,{capturePlayer=null}={}){
    validLine(d.lineup,d.ourPlayers)&&validLine(d.awayLineup,d.awayPlayers,true)&&(!d.awayPlayers.length||d.awayLineup.length===6)&&
    (d.libero===null||d.ourPlayers.some(p=>p.id===d.libero)&&!d.lineup.includes(d.libero))&&
    (d.libero2==null||d.libero&&d.libero2!==d.libero&&d.ourPlayers.some(p=>p.id===d.libero2)&&!d.lineup.includes(d.libero2))&&
-   validMatchFormat(d)&&sides.includes(d.firstServe)&&
+   validMatchFormat(d)&&sides.includes(d.firstServe)&&(d.ourSide===undefined||['left','right'].includes(d.ourSide))&&(d.liveTiming===undefined||d.liveTiming===true)&&
    (d.limits===undefined||validMatchLimits(d.limits))&&(d.boardColors===undefined||validBoardColors(d.boardColors))&&(d.boardLogos===undefined||validBoardLogos(d.boardLogos))&&['5-1','4-2','free'].includes(d.scheme)&&(d.substitutionMode===undefined||['simple','paired'].includes(d.substitutionMode))&&Array.isArray(d.events)&&d.events.length<=5000,'Проверьте параметры матча');
  const rosters={ours:d.ourPlayers,theirs:d.awayPlayers},assistCounts={ours:new Map(),theirs:new Map()};
- const s={lineup:[...d.lineup],awayLineup:[...d.awayLineup],liberoFor:null,liberoId:null,serve:d.firstServe,score:{ours:0,theirs:0},sets:[],setDetails:[],timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(d.lineup,d.awayLineup),rotations:{ours:0,theirs:0},sides:{ours:sideData(),theirs:sideData()},timeline:[],setEnded:false,finished:false,endsSwapped:false,endsAtBreak:false,deciderEndsChanged:false,rallyCount:0,lastLiberoRally:null,changeDue:false};
+ const s={lineup:[...d.lineup],awayLineup:[...d.awayLineup],liberoFor:null,liberoId:null,serve:d.firstServe,score:{ours:0,theirs:0},sets:[],setDetails:[],timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(d.lineup,d.awayLineup),rotations:{ours:0,theirs:0},sides:{ours:sideData(),theirs:sideData()},timeline:[],setEnded:false,finished:false,endsSwapped:false,activeTimeout:null,endsAtBreak:false,deciderEndsChanged:false,rallyCount:0,lastLiberoRally:null,changeDue:false};
  let setStarted=d.startedAt,lastAt=d.startedAt;
- const clock=createCourtClock(d.startedAt,{capturePlayer});
+ const clock=createCourtClock(d.startedAt,{capturePlayer});if(d.liveTiming)clockEvent(clock,{type:'clock',running:true});
  const setNo=()=>s.sets.length+1;
  const lineupFor=side=>side==='ours'?s.lineup:s.awayLineup;
  const visible=side=>lineupFor(side).map(id=>side==='ours'&&id===s.liberoFor?s.liberoId:id);
@@ -109,6 +112,7 @@ export function replayDetailed(d,{capturePlayer=null}={}){
  for(const ev of d.events){
   fail(ev&&typeof ev==='object'&&!s.finished&&timestamp(ev.at)&&Date.parse(ev.at)>=Date.parse(lastAt),'Некорректная последовательность событий');lastAt=ev.at;
   clockAdvance(clock,ev.at,clockLineups());
+  if(s.activeTimeout)fail(['timeoutEnd','sub','libero','sanction'].includes(ev.type),'Сначала завершите тайм-аут');
   if(ev.type==='clock'){
    fail(!s.setEnded,'Нельзя запускать время между партиями');clockEvent(clock,ev);timeline(ev);continue;
   }
@@ -116,7 +120,7 @@ export function replayDetailed(d,{capturePlayer=null}={}){
    fail(s.setEnded&&validLine(ev.lineup,d.ourPlayers)&&!liberoIds(d).some(id=>ev.lineup.includes(id))&&validLine(ev.awayLineup,d.awayPlayers,true)&&(!d.awayPlayers.length||ev.awayLineup.length===6)&&sides.includes(ev.serve),'Проверьте расстановку следующей партии');
    Object.assign(s,{lineup:[...ev.lineup],awayLineup:[...ev.awayLineup],liberoFor:null,liberoId:null,serve:ev.serve,score:{ours:0,theirs:0},timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(ev.lineup,ev.awayLineup),rotations:{ours:0,theirs:0},setEnded:false,endsAtBreak:false,deciderEndsChanged:false,lastLiberoRally:null});
    for(const side of sides){s.sides[side].run=0;flush(side);}
-   clockNext(clock);setStarted=ev.at;starting=startLineups();continue;
+   clockNext(clock);if(d.liveTiming)clockEvent(clock,{type:'clock',running:true});setStarted=ev.at;starting=startLineups();continue;
   }
   if(ev.type==='changeEnds'){
    clockPause(clock);s.endsSwapped=!s.endsSwapped;if(s.setEnded)s.endsAtBreak=true;
@@ -125,7 +129,11 @@ export function replayDetailed(d,{capturePlayer=null}={}){
   }
   fail(!s.setEnded,'Начните следующую партию');
   if(ev.type==='timeout'){
-   fail(sides.includes(ev.side)&&s.timeouts[ev.side]<matchLimits(d).timeouts,'Лимит тайм-аутов ('+matchLimits(d).timeouts+')');s.timeouts[ev.side]++;clockPause(clock);timeline(ev,{number:s.timeouts[ev.side]});continue;
+   fail(sides.includes(ev.side)&&s.timeouts[ev.side]<matchLimits(d).timeouts,'Лимит тайм-аутов ('+matchLimits(d).timeouts+')');s.timeouts[ev.side]++;const resume=clock.running;clockPause(clock);if(d.liveTiming)s.activeTimeout={side:ev.side,startedAt:ev.at,deadline:Date.parse(ev.at)+timeoutDurationMs,resume};timeline(ev,{number:s.timeouts[ev.side]});continue;
+  }
+  if(ev.type==='timeoutEnd'){
+   fail(d.liveTiming&&s.activeTimeout&&Object.keys(ev).every(k=>['type','at'].includes(k)),'Нет активного тайм-аута');
+   const {side,resume}=s.activeTimeout;s.activeTimeout=null;if(resume)clockEvent(clock,{type:'clock',running:true});timeline(ev,{side});continue;
   }
   if(ev.type==='sub'){
    fail(sides.includes(ev.side),'Выберите команду');
@@ -373,7 +381,7 @@ export function scoutSummary(timeline,side,{kind='all',set=0,active=[]}={}){
 /** Public-facing score only; no roster, individual stats or event data. */
 export function spectatorSnapshot(d,s=replayDetailed(d)){
  const won=s.sets.filter(x=>x.ours>x.theirs).length;
- return {teamName:d.teamName,opponent:d.opponent,score:{...s.score},sets:s.sets.map(x=>({...x})),setsWon:{ours:won,theirs:s.sets.length-won},set:s.setEnded?s.sets.length:s.sets.length+1,serve:s.serve,status:s.finished?'finished':s.setEnded?'break':'live',colors:{...(d.boardColors||defaultBoardColors)},logos:{...(d.boardLogos||{ours:null,theirs:null})}};
+ return {...(d.ourSide!==undefined?{order:courtOrder(d,s)}:{}),teamName:d.teamName,opponent:d.opponent,score:{...s.score},sets:s.sets.map(x=>({...x})),setsWon:{ours:won,theirs:s.sets.length-won},set:s.setEnded?s.sets.length:s.sets.length+1,serve:s.serve,status:s.finished?'finished':s.setEnded?'break':'live',colors:{...(d.boardColors||defaultBoardColors)},logos:{...(d.boardLogos||{ours:null,theirs:null})}};
 }
 
 export async function prepareLogo(file){

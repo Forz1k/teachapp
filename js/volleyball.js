@@ -73,7 +73,7 @@ export function validateLiveData(data){
  const linked=r=>typeof r.id==='string'&&teams.has(r.teamId)&&Array.isArray(r.roster)&&r.roster.every(id=>players.get(id)?.teamId===r.teamId);
  for(const p of data.coachLineups){
    assert(linked(p)&&typeof p.name==='string'&&p.name.trim()&&p.name.length<=200&&Object.hasOwn(schemes,p.scheme)&&validLineup(p.lineup,p.roster)&&unique(p.roster)&&
-    (p.libero===null||p.roster.includes(p.libero)&&!p.lineup.includes(p.libero)),'Проверьте сохранённую расстановку');
+    (p.libero===null||p.roster.includes(p.libero)&&!p.lineup.includes(p.libero))&&(p.purpose===undefined||['any','serve','receive'].includes(p.purpose)),'Проверьте сохранённую расстановку');
  }
  for(const d of data.coachLive){
    assert(linked(d)&&typeof d.opponent==='string'&&d.opponent.trim()&&d.opponent.length<=200&&typeof d.competition==='string'&&d.competition.length<=200&&
@@ -84,12 +84,12 @@ export function validateLiveData(data){
 
 /** Synthetic rehearsal: device-local, never enters coach stores, sync or public publishing. */
 export const rehearsalKey='teachapp.live.rehearsal.v1';
-export function makeRehearsal({short=false,now=new Date(),id=globalThis.crypto.randomUUID()}={}){
+export function makeRehearsal({short=false,now=new Date(),id=globalThis.crypto.randomUUID(),liveTiming=false,ourSide,firstServe='ours',winBy=2,bestOf=3}={}){
  const players=(side,label)=>Array.from({length:10},(_,i)=>({id:'test-'+side+'-'+(i+1),name:label+' '+(i+1),number:i+1}));
  const ourPlayers=players('a','Игрок А'),awayPlayers=players('b','Игрок Б');
  const d={id:'test-'+id,teamId:'test-rehearsal',mode:'dual',teamName:'ТЕСТ · Синие',opponent:'ТЕСТ · Красные',competition:'Учебный матч — неофициальный',venue:'Тестовая площадка',
- date:[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-'),startedAt:now.toISOString(),ourPlayers,awayPlayers,roster:ourPlayers.map(p=>p.id),lineup:ourPlayers.slice(0,6).map(p=>p.id),awayLineup:awayPlayers.slice(0,6).map(p=>p.id),libero:ourPlayers[8].id,libero2:ourPlayers[9].id,scheme:'5-1',substitutionMode:'paired',bestOf:3,target:short?5:25,decider:short?5:15,firstServe:'ours',events:[],revision:0,
- regulation:{name:short?'Ускоренный тест':'Тестовый регламент',winBy:2,pointCap:null,liberoInterval:'oneRally',ends:'manual',deciderSwitchAt:short?3:8},boardColors:{ours:'blue',theirs:'red'}};
+ date:[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-'),startedAt:now.toISOString(),ourPlayers,awayPlayers,roster:ourPlayers.map(p=>p.id),lineup:ourPlayers.slice(0,6).map(p=>p.id),awayLineup:awayPlayers.slice(0,6).map(p=>p.id),libero:ourPlayers[8].id,libero2:ourPlayers[9].id,scheme:'5-1',substitutionMode:'paired',bestOf,target:short?5:25,decider:short?5:15,firstServe,...(liveTiming?{liveTiming:true}:{}),...(ourSide!==undefined?{ourSide}:{}),events:[],revision:0,
+ regulation:{name:short?'Ускоренный тест':'Тестовый регламент',winBy,pointCap:null,liberoInterval:'oneRally',ends:'manual',deciderSwitchAt:short?3:8},boardColors:{ours:'blue',theirs:'red'}};
  replayDetailed(d);return d;
 }
 export function rehearsalStore(storage=globalThis.localStorage,locks=globalThis.navigator?.locks){
