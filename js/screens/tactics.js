@@ -58,7 +58,7 @@ export function openLineupAssistant(team,view,back=closeSheet){
  for(const n of [scheme,date,from,to,opponent,...Object.values(methods),...checks.map(x=>x.n)])n.onchange=clear;
  const gen=async()=>{
   try{
-   const data=await C.loadCoach(),fresh=C.teamView(data,team.id),opts={scheme:scheme.value,date:date.value,from:from.value,to:to.value,opponent:opponent.value,methods:Object.fromEntries(Object.entries(methods).map(([k,n])=>[k,n.value])),selected:checks.filter(x=>x.n.checked).map(x=>x.player.id)};
+   const {data}=await C.loadCoachTeamScope(team.id,'dossier'),fresh=C.teamView(data,team.id),opts={scheme:scheme.value,date:date.value,from:from.value,to:to.value,opponent:opponent.value,methods:Object.fromEntries(Object.entries(methods).map(([k,n])=>[k,n.value])),selected:checks.filter(x=>x.n.checked).map(x=>x.player.id)};
    const a=lineupOptions(fresh,opts),byId=new Map(fresh.players.map(p=>[p.id,p]));
    body.replaceChildren(p('Доступны для рассмотрения: '+a.available+' · не предложены по внесённым ограничениям: '+a.excluded.length+'. Это не медицинский допуск.'));
    body.append(p('Совместная игра: подробных матчей '+a.matchEvidence.detailed+' из '+a.matchEvidence.total+(opts.opponent?' против выбранного соперника':' по всем соперникам')+'. Тесты не фильтруются по сопернику.'));
@@ -67,7 +67,7 @@ export function openLineupAssistant(team,view,back=closeSheet){
     const name=inp('Вариант '+(i+1)+' · '+scheme.value),libero=select([['','Без либеро'],...a.liberos.map(id=>[id,labelPlayer(byId.get(id))])]);
     body.append(card('Вариант '+(i+1),[p('Точных амплуа: '+o.exact+'/6 · сопоставимых показателей: '+o.known+'/6 · пары с историей: '+o.paired),...o.ids.map((id,j)=>p('P'+(j+1)+' · '+roleNames[o.roles[j]]+' · '+labelPlayer(byId.get(id))+(o.evidence[j]?' · '+Math.round(o.evidence[j].value*10)/10+'% ('+o.evidence[j].attempts+' попыток)':' · без сравнимой выборки'))),field('Либеро',libero),field('Название шаблона',name),btn('Сохранить расстановку',async()=>{try{
       if(!await confirmDialog({title:'Сохранить предложенный шаблон?',text:'Проверьте состав, позиции и актуальные ограничения. Матч не запускается.',ok:'Сохранить'}))return;
-      const latest=C.teamView(await C.loadCoach(),team.id),recheck=lineupOptions(latest,opts);
+      const latest=C.teamView((await C.loadCoachTeamScope(team.id,'dossier')).data,team.id),recheck=lineupOptions(latest,opts);
       if(!recheck.options.some(x=>JSON.stringify(x.ids)===JSON.stringify(o.ids))||libero.value&&!recheck.liberos.includes(libero.value))throw Error('Состав или данные изменились. Сформируйте варианты заново');
       await C.saveLineup({teamId:team.id,name:name.value,scheme:opts.scheme,lineup:o.ids,roster:[...o.ids,...(libero.value?[libero.value]:[])],libero:libero.value||null});toast('Шаблон сохранён');back();
      }catch(e){toast(e.message);}},'primary')]));

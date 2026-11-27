@@ -118,7 +118,7 @@ export function openDetailedSetup(team,players,back,refresh,preset=null,{matches
    if(!V.validBoardColors(colors.get()))throw Error('Выберите два разных цвета команд');
    const rules=currentRules();if(!validMatchFormat(rules)||!V.validMatchLimits(rules.limits))throw Error('Проверьте формат и пользовательский регламент');
    await C.probeLiveStorage();
-   const readiness=Portal.portalInfo(team.id),existing=(await C.listLiveMatches()).filter(x=>x.teamId===team.id);
+   const readiness=Portal.portalInfo(team.id),existing=await C.listLiveMatches(team.id);
    const check='Локальная запись проверена. Заявка: '+eligible.length+' · старт: 6 · соперник: '+(awayPlayers.length||'без состава')+' · '+(navigator.onLine===false?'нет сети, счёт доступен офлайн':'сеть доступна по данным браузера')+'. '+(readiness.data.enabled?(readiness.conflict||readiness.data.publisherPaused?'Публичная отправка требует разрешения конфликта или возобновления.':readiness.connected?'Публичная страница подключена; отправка зависит от сети.':'Для публикации нужно войти в Firebase.'):'Публичная страница выключена.')+(existing.length?' Внимание: уже есть черновики ('+existing.length+').':'');
    if(!await ui.confirmDialog({title:'Начать матч?',text:check+' Подтвердите фактические составы и регламент.',ok:'Начать'}))return;
    const d=await C.startDetailedMatch({teamId:team.id,teamName:team.name,opponent:opp.value,date:date.value,competition:comp.value,venue:venue.value,
