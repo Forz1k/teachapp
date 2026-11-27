@@ -20,13 +20,15 @@ export function validateDeviceCheckpoints(rows){
   const area=areas.find(a=>row.id==='sync-checkpoint-'+a||row.id==='sync-checkpoint-status-'+a);
   check(area,'Неизвестная контрольная точка устройства');
   check(identity(row),'Некорректная идентичность контрольной точки');
-  if(row.id==='sync-checkpoint-'+area)check(exact(row,['id','endpoint','workspaceId','revision','envelope'])&&envelope(row.envelope),'Повреждённый конверт контрольной точки');
-  else check(exact(row,['id','endpoint','workspaceId','revision','successfulAt'])&&typeof row.successfulAt==='string'&&Number.isFinite(Date.parse(row.successfulAt)),'Повреждённое состояние синхронизации');
+  const protocol=Object.hasOwn(row,'protocol')?['protocol']:[];
+  if(protocol.length){const u=new URL(row.endpoint);check(row.protocol==='delta-v3'&&u.protocol==='https:'&&u.origin===row.endpoint&&!u.port&&!['localhost','127.0.0.1','[::1]'].includes(u.hostname),'Неизвестный протокол контрольной точки');}
+  if(row.id==='sync-checkpoint-'+area)check(exact(row,['id','endpoint','workspaceId','revision','envelope',...protocol])&&envelope(row.envelope),'Повреждённый конверт контрольной точки');
+  else check(exact(row,['id','endpoint','workspaceId','revision','successfulAt',...protocol])&&typeof row.successfulAt==='string'&&Number.isFinite(Date.parse(row.successfulAt)),'Повреждённое состояние синхронизации');
   byId.set(row.id,row);
  }
  for(const area of areas){
   const status=byId.get('sync-checkpoint-status-'+area),cp=byId.get('sync-checkpoint-'+area);
-  if(status)check(cp&&['endpoint','workspaceId','revision'].every(k=>cp[k]===status[k]),'Состояние синхронизации не совпадает с контрольной точкой');
+  if(status)check(cp&&['endpoint','workspaceId','revision','protocol'].every(k=>cp[k]===status[k]),'Состояние синхронизации не совпадает с контрольной точкой');
  }
  return structuredClone(rows);
 }

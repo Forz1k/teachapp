@@ -35,7 +35,7 @@ const sorted=rows=>copy(rows).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
 const keyOf=area=>'sync-checkpoint-'+area;
 // Small local-only metadata: excluded from backups and scoped cloud snapshots.
 const statusKey=area=>'sync-checkpoint-status-'+area;
-const successRecord=(area,cp)=>({id:statusKey(area),workspaceId:cp.workspaceId,revision:cp.revision,endpoint:cp.endpoint,successfulAt:new Date().toISOString()});
+const successRecord=(area,cp)=>({id:statusKey(area),workspaceId:cp.workspaceId,revision:cp.revision,endpoint:cp.endpoint,successfulAt:new Date().toISOString(),...(cp.protocol==='delta-v3'?{protocol:'delta-v3'}:{})});
 export const isSyncCheckpoint=r=>typeof r?.id==='string'&&r.id.startsWith('sync-checkpoint-');
 const validArea=a=>Object.hasOwn(syncAreas,a);
 const keysFor=area=>area==='school'?[...school,'workRecords','meta']:[...coach,'workRecords'];
@@ -1041,7 +1041,7 @@ export async function prepareSync({area,endpoint,password,client,data}){
   }
  }
  const draft=mergeScopes(base,local,remoteSnapshot,area);
- return {area,endpoint,workspaceId,revision:remote.revision,checkpoint,...(binding?{migrationBinding:binding}:{}),base,local,remote:remoteSnapshot,remoteEnvelope:remote.envelope,conflicts:draft.conflicts};
+ return {area,endpoint,workspaceId,revision:remote.revision,checkpoint,...(candidateAdapters.has(client)?{protocol:'delta-v3'}:{}),...(binding?{migrationBinding:binding}:{}),base,local,remote:remoteSnapshot,remoteEnvelope:remote.envelope,conflicts:draft.conflicts};
 }
 export function previewSync(current,plan,choices={}){
  if(!same(migrationBinding(current,plan.area),plan.migrationBinding??null))throw migrationGuardError();
@@ -1062,6 +1062,8 @@ export function createSyncExecutor(access){
  check(access&&typeof access.dumpAll==='function'&&typeof access.transaction==='function','Требуется явный backend синхронизации');
  return async function executeBoundSync({plan,choices,password,client,confirmed=false,reuseRemote=false,stillAllowed=()=>true}){
  check(confirmed,'Подтвердите синхронизацию');
+ check((plan.protocol==='delta-v3')===candidateAdapters.has(client),'Протокол предварительного просмотра изменился');
+ if(candidateAdapters.has(client))reuseRemote=true;
  guardSync(stillAllowed);
  const initial=await access.dumpAll();guardBinding(initial,plan.area,plan.endpoint,client);
  const preview=previewSync(initial,plan,choices);
@@ -1123,7 +1125,9 @@ export async function executeSync(options){const permitted=options.stillAllowed?
 // Automatic sync only for an already confirmed workspace; never auto-propagate deletions.
 export async function syncPersonalArea({area,endpoint,password,client,stillAllowed=()=>true,initialize=false}){
  const binding=await migrationBindingStatus(area);if(binding.status!=='none')return {area,status:'review',reason:'migration-binding'};
- if(!initialize&&!await syncStatus(area))return {area,status:'setup'};
+ const status=await syncStatus(area);
+ if(status?.protocol==='delta-v3'&&!candidateAdapters.has(client))return {area,status:'review',reason:'delta-version-barrier'};
+ if(!initialize&&!status)return {area,status:'setup'};
  if(!stillAllowed())return {area,status:'paused'};
  const plan=await prepareSync({area,endpoint,password,client});
  if(!stillAllowed())return {area,status:'paused'};
@@ -1140,7 +1144,7 @@ export async function syncPersonalArea({area,endpoint,password,client,stillAllow
 export async function syncStatus(area){
  check(validArea(area),'Выберите рабочую область');
  const cp=await db.get('meta',keyOf(area));
- return cp?{endpoint:cp.endpoint,revision:cp.revision}:null;
+ return cp?{endpoint:cp.endpoint,revision:cp.revision,...(cp.protocol==='delta-v3'?{protocol:cp.protocol}:{})}:null;
 }
 // Local read-only comparison, no relay calls and no upload of personal data.
 export async function localSyncState({area,endpoint,password,data}){
@@ -1162,6 +1166,7 @@ export async function disconnectSync(area,confirmed=false){
  check(validArea(area)&&confirmed,'Подтвердите отключение');
  await db.syncTransaction(['meta'],'readwrite',async s=>{
   if(await s.meta.get(migrationBindingKey(area)))throw migrationGuardError();
+  if((await s.meta.get(keyOf(area)))?.protocol==='delta-v3')throw Object.assign(Error('Delta v3 нельзя забыть без согласованного возврата и независимой копии'),{code:'delta-version-barrier'});
   await s.meta.delete(keyOf(area));
   await s.meta.delete(statusKey(area));
  });
