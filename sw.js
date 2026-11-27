@@ -71,7 +71,7 @@ const PRECACHE = [
   './js/screens/volleyball.js',
   './js/privacy.js','./js/backup-verify.js','./js/migration-preflight.js','./js/vault-layout.js','./js/device-checkpoint-migration.js',
   './js/retention.js',
-  './js/analytics.js','./js/school-review.js',
+  './js/analytics.js','./js/school-analytics-core.js','./js/school-review.js',
   './js/screens/analytics.js','./js/screens/school-review.js',
   './js/screens/coach.js',
   './js/screens/norms.js',

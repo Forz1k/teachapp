@@ -45,3 +45,35 @@ test('Player roster index preserves archive order, excludes unlisted stats and r
 import {schoolAnalytics} from '../js/analytics.js';
 import {todayIso} from '../js/model.js';
 test('Analytics reuses attendance indexes and preserves individual and total attendance',async()=>{await DB.clearAll();const today=todayIso();await DB.put('classes',{id:'c',name:'7A'});await DB.bulkPut('students',[{id:'p',classId:'c',fullName:'P'},{id:'q',classId:'c',fullName:'Q'}]);await DB.put('lessons',{id:'l',classId:'c',date:today,held:true});await DB.put('marks',{id:'m',lessonId:'l',studentId:'p',value:'5',source:'manual'});await S.load();const a=schoolAnalytics('c',today,today);assert.equal(a.held,1);assert.equal(a.rows.length,2);assert.equal(a.rows.find(r=>r.student.id==='p').mean,5);assert.equal(a.rows.find(r=>r.student.id==='q').att.unknown,1);assert.deepEqual(a.att,S.attendanceFor(S.lessonsInRange('c',today,today),S.studentsOfClass('c'),'c'));});
+
+import {calculateSchoolAnalytics} from '../js/school-analytics-core.js';
+test('School analytics shares one full-class evidence scan across period and KTP and uses explicit date',()=>{
+ const students=[{id:'p',fullName:'P'},{id:'q',fullName:'Q'}],allLessons=[
+  {id:'old',date:'2099-08-31',topicId:'old'},
+  {id:'a',date:'2099-09-01',topicId:'new'},
+  {id:'b',date:'2099-10-01',topicId:'new',held:true},
+  {id:'blank',date:'2099-10-02',topicId:'blank'},
+  {id:'future',date:'2099-10-20',topicId:'future',held:true}
+ ],topics=['old','new','blank','future'].map(id=>({id,name:id}));
+ const data=[
+  {lessonId:'old',studentId:'p',value:'5',source:'manual'},
+  {lessonId:'a',studentId:'p',value:'5',source:'manual'},
+  {lessonId:'a',studentId:'q',flag:'Н',source:'manual'},
+  {lessonId:'b',studentId:'p',value:'3',source:'manual'},
+  {lessonId:'b',studentId:'q',value:'4',source:'manual'},
+  {lessonId:'future',studentId:'p',value:'1',source:'manual'},
+  ...Array.from({length:2000},(_,i)=>({lessonId:'other'+i,studentId:'other',value:'1',source:'manual'}))
+ ];
+ let scans=0;
+ const marks=new Proxy(data,{get(target,key,receiver){if(key===Symbol.iterator)scans++;return Reflect.get(target,key,receiver);}});
+ const parts=[{lessonId:'a',studentId:'p',mode:'adapted'},{lessonId:'future',studentId:'p',mode:'normal'}];
+ const from='2099-09-01',to='2099-10-31',today='2099-10-05',input={students,allLessons,topics,marks,parts,finalGrades:[{studentId:'p',from,to,value:'4'}],normResults:[],from,to,today};
+ const a=calculateSchoolAnalytics(input);assert.equal(scans,1);
+ assert.deepEqual(a.rows.map(r=>[r.student.id,r.mean,r.count,r.final]),[['p',4,2,'4'],['q',4,1,null]]);
+ assert.deepEqual(a.trend,[{month:'2099-09',mean:5,count:1},{month:'2099-10',mean:3.5,count:2}]);
+ assert.deepEqual(a.ktp.map(t=>[t.name,t.done,t.inPeriod,t.planned]),[['old',true,0,0],['new',true,2,2],['blank',false,0,1],['future',false,0,1]]);
+ assert.deepEqual(a.att,{held:2,future:1,unconfirmed:1,unknown:0,present:3,absent:1,exempt:0,pct:75});
+ assert.deepEqual(a.participation,{normal:0,adapted:1,paused:0,unrecorded:3});
+ const only=calculateSchoolAnalytics({...input,studentId:'q'});assert.equal(scans,2);assert.equal(only.rows.length,1);assert.equal(only.att.pct,50);assert.equal(only.trend[0].mean,null);assert.deepEqual(only.ktp,a.ktp);
+ data[1].value='1';const changed=calculateSchoolAnalytics(input);assert.equal(scans,3);assert.equal(changed.rows[0].mean,2);assert.equal(changed.trend[0].mean,1);
+});
