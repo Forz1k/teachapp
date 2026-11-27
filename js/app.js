@@ -293,7 +293,8 @@ async function boot() {
   });
   try{syncSession=await openSyncSession();}catch{/* Manual sync remains available. */}
   await store.load();
-  const shortcut=location.hash.slice(1),resume=shortcut?null:readLiveResume();
+  const shortcut=location.hash.slice(1),hint=readLiveResume(),resume=['coach','journal','quick'].includes(shortcut)?null:hint;
+  if(hint&&!resume)clearLiveResume(hint);
   // Never run startup sync before restoring an interrupted LIVE screen.
   if(!resume)await maybeAutoSync(true);
   if(shortcut==='coach')navigation=saveNavigation({...navigation,workspace:'coach'});

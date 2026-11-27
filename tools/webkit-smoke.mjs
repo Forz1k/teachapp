@@ -332,8 +332,40 @@ try{
   assert.equal(await rp.evaluate(async()=>JSON.stringify(await (await import('./js/coach.js')).loadCoach())),before);
   assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events.length),0);
   assert.deepEqual(requests,[]);
+  // Use real IndexedDB in the isolated test browser. A concurrent writer must not
+  // be overwritten by the old screen. Recovery reopens the latest persisted score.
+  await rp.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
+  await rp.locator('.sheet.show').waitFor({state:'hidden'});
+  const liveId=await rp.evaluate(async()=>{
+   const C=await import('./js/coach.js'),V=await import('./js/screens/match-protocol.js'),M=await import('./js/model.js'),team=await C.saveTeam({name:'Synthetic recovery'}),players=[];
+   for(let i=0;i<6;i++)players.push(await C.savePlayer({teamId:team.id,name:'Synthetic '+i,number:i+1,position:'universal'}));
+   const roster=players.map(p=>p.id),d=await C.startDetailedMatch({teamId:team.id,date:M.todayIso(),teamName:team.name,opponent:'Synthetic opponent',roster,ourPlayers:players,awayPlayers:[],lineup:roster,awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours'});
+   V.openDetailedMatch(d,()=>{},async()=>{});return d.id;
+  });
+  await rp.getByRole('button',{name:'Быстрый',exact:true}).click();
+  await rp.evaluate(()=>{const b=document.querySelector('.vp-points .vp-ours');b.click();b.click();});
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
+  assert.equal(await rp.evaluate(async id=>(await (await import('./js/coach.js')).readLiveMatch(id)).events.length,liveId),1);
+  await rp.evaluate(async id=>{const C=await import('./js/coach.js'),d=await C.readLiveMatch(id);await C.changeLiveMatch(id,d.revision,{type:'rally',side:'ours',kind:'point'});},liveId);
+  await rp.waitForTimeout(400);await rp.locator('.vp-points .vp-ours').click();
+  await rp.getByText(/Запись не подтверждена; ввод остановлен/).waitFor();
+  assert.equal(await rp.locator('.vp-points .vp-ours').isDisabled(),true);
+  await rp.getByRole('button',{name:'Восстановить сохранённый черновик',exact:true}).click();
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='2');
+  assert.equal(await rp.evaluate(async id=>(await (await import('./js/coach.js')).readLiveMatch(id)).events.length,liveId),2);
+  await rp.waitForFunction(()=>!!navigator.serviceWorker.controller);
+  await rehearsalContext.setOffline(true);await rp.reload();
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='2');
+  assert.match(await rp.locator('[data-live-network]').textContent(),/Нет сети/);
+  await rehearsalContext.setOffline(false);
+  await rp.evaluate(async()=>{await (await import('./js/privacy-shield.js')).changeScreenLock({next:'384729'});});
+  await rp.reload();await rp.locator('.privacy-cover').waitFor();await rp.locator('.workspace-nav').waitFor();
+  assert.equal(await rp.locator('.vp-board-points').count(),0);
+  await rp.getByLabel('PIN или пароль разблокировки').fill('384729');await rp.getByRole('button',{name:'Разблокировать',exact:true}).click();
+  await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='2');
+  assert.deepEqual(requests,[]);
  }finally{await rehearsalContext.close();}
- console.log('WEBKIT LIVE REHEARSAL PASS: offline score, reload, undo, untouched coach data and no external requests.');
+ console.log('WEBKIT LIVE REHEARSAL PASS: offline score, automatic reload, undo, untouched coach data, real draft duplicate guard, stale revision recovery and locked startup.');
 
  const vpFixture=await page.evaluate(async rows=>{const C=await import('./js/coach.js'),V=await import('./js/volleypoint-import.js'),U=await import('./js/screens/volleypoint-import.js');const report=V.parseVolleyRows(rows),team=await C.saveTeam({name:'История VolleyPoint'}),mapping={};for(const p of report.teams[0].players){const r=await C.savePlayer({teamId:team.id,name:p.name,number:p.number,position:'universal'});mapping[p.number]=r.id;}const input={...V.buildVolleyImport(report,0,mapping),teamId:team.id};delete input.imported.timing;input.opponent='Старое имя соперника';const m=await C.saveVolleyImport(input),view=C.teamView(await C.loadCoach(),team.id);U.openImportedReport(m,view,()=>U.openVolleyImport(team,view,async()=>{},{matchId:m.id}));return {teamId:team.id,matchId:m.id,playerId:mapping[1]};},timingRows);
  await shown.getByRole('heading',{name:'Игровое время по PDF',exact:true}).waitFor();await shown.getByRole('button',{name:'Дополнить из исходного PDF',exact:true}).click();

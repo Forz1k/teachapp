@@ -184,12 +184,13 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
  const tickClock=()=>{if(!clockState||!body.isConnected)return;const t=V.courtTime(clockState,Date.now());for(const n of body.querySelectorAll('[data-court-time]')){const id=n.dataset.courtTime,side=n.dataset.courtSide||'ours',set=n.dataset.courtSet?t.sets[Number(n.dataset.courtSet)-1]:null;n.textContent=courtTimeLabel(set?(set.started?(id?set.players[side][id]||0:set.elapsedMs):null):id?(t.measured?t.players[side][id]||0:null):(t.measured?t.elapsedMs:null));}};
  const clockTicker=window.setInterval(tickClock,1000);
  const publish=(options={})=>{if(rehearsal)return false;try{return Portal.syncPortalMatch(d,options);}catch(e){toast('Публикация: '+e.message);return false;}};
- publish();const heartbeat=rehearsal?null:window.setInterval(()=>Portal.heartbeatPortal(d.teamId,d.id),30000);
+ publish();const heartbeat=rehearsal?null:window.setInterval(()=>{if(!blocked&&!stopped)Portal.heartbeatPortal(d.teamId,d.id);},30000);
  const unwatch=rehearsal?()=>{}:Portal.watchPortal(d.teamId,()=>{for(const n of body.querySelectorAll('.vp-portal-live-status'))n.textContent=Portal.portalInfo(d.teamId).status;});
- let saving=false,saveFailure='';
+ let saving=false,saveFailure='',savedScreenFailure=false;
  const updateSaveStatus=()=>{
-  const n=body.querySelector('[data-live-save-status]');if(n)n.textContent=saving?'Сохранение события…':saveFailure?(blocked?'Запись не подтверждена; ввод остановлен: ':'Действие отклонено: ')+saveFailure:'Сохранено на устройстве · событий '+d.events.length+' · рев. '+d.revision;
+  const n=body.querySelector('[data-live-save-status]');if(n)n.textContent=saving?'Сохранение события…':saveFailure?(savedScreenFailure?'Ввод остановлен: ':blocked?'Запись не подтверждена; ввод остановлен: ':'Действие отклонено: ')+saveFailure:'Сохранено на устройстве · событий '+d.events.length+' · рев. '+d.revision;
   const recovery=body.querySelector('[data-live-recovery]');if(recovery)recovery.hidden=!saveFailure;
+  if(blocked)for(const b of body.querySelectorAll('.vp-points button,.vp-timeout-button,.vp-author-grid button'))b.disabled=true;
   const net=body.querySelector('[data-live-network]');if(net)net.textContent=navigator.onLine===false?'Нет сети по данным браузера · локальная запись доступна':'Сеть доступна по данным браузера';
  };
  const refreshNetwork=()=>updateSaveStatus();
@@ -202,15 +203,15 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
  const stop=(preserve=false)=>{if(stopped)return;stopped=true;if(!preserve)clearLiveResume(marker);window.clearInterval(heartbeat);window.clearInterval(clockTicker);unwatch();if(spectator&&!spectator.closed)spectatorUpdate(V.replayDetailed(d),false);spectator=null;wake.stop();observer?.disconnect();window.removeEventListener('pagehide',pagehide);window.removeEventListener('online',online);window.removeEventListener('offline',refreshNetwork);};
  const pagehide=()=>stop(true);window.addEventListener('pagehide',pagehide);
  const readCurrent=async()=>rehearsal?rehearsal.read():C.readLiveMatch(d.id);
- const recover=async()=>{if(busy||stopped)return;busy=true;try{const current=await readCurrent();if(!current||current.id!==d.id){stop();await back();toast('Черновик отсутствует: возможно, матч уже завершён на другом экране.');return;}V.replayDetailed(current);d=current;blocked=false;saveFailure='';pointDraft=null;selected=null;nextDraft=null;historyEdit=null;section='match';publish();draw();toast('Восстановлена сохранённая ревизия '+d.revision);}catch(e){blocked=true;saveFailure=e.message||'Не удалось прочитать черновик';updateSaveStatus();toast(saveFailure);}finally{busy=false;}};
+ const recover=async()=>{if(busy||stopped)return;busy=true;try{const current=await readCurrent();if(!current||current.id!==d.id){stop();await back();toast('Черновик отсутствует: возможно, матч уже завершён на другом экране.');return;}V.replayDetailed(current);d=current;blocked=false;saveFailure='';savedScreenFailure=false;pointDraft=null;selected=null;nextDraft=null;historyEdit=null;section='match';publish();draw();toast('Восстановлена сохранённая ревизия '+d.revision);}catch(e){blocked=true;saveFailure=e.message||'Не удалось прочитать черновик';updateSaveStatus();toast(saveFailure);}finally{busy=false;}};
  const perform=async(event,after)=>{
-  if(busy||stopped||blocked)return;busy=true;saving=true;saveFailure='';updateSaveStatus();
+  if(busy||stopped||blocked)return;busy=true;saving=true;saveFailure='';savedScreenFailure=false;updateSaveStatus();
   const buttons=[...body.querySelectorAll('button')].filter(x=>!x.disabled);buttons.forEach(x=>x.disabled=true);
   try{
    let next;try{next=await (rehearsal?rehearsal.change(d.id,d.revision,event):C.changeLiveMatch(d.id,d.revision,event));}
    catch(e){saveFailure=e.message||'Неизвестная ошибка';try{const current=await readCurrent();blocked=!current||current.id!==d.id||current.revision!==d.revision;}catch{blocked=true;}toast(saveFailure);return;}
    d=next;saving=false;if(stopped)return;
-   try{if(event?.type!=='clock')publish();after?.();draw();}catch(e){blocked=true;saveFailure='Событие сохранено (рев. '+d.revision+'), но экран не обновился: '+e.message;toast(saveFailure);}
+   try{if(event?.type!=='clock')publish();after?.();draw();}catch(e){blocked=true;savedScreenFailure=true;saveFailure='Событие сохранено (рев. '+d.revision+'), но экран не обновился: '+e.message;toast(saveFailure);}
   }finally{saving=false;busy=false;buttons.forEach(x=>x.disabled=false);updateSaveStatus();}
  };
  let previousBoard=null,previousOverlay='';
