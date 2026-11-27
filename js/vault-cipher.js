@@ -21,7 +21,7 @@ const deriveMaterial=(material,salt)=>crypto.subtle.deriveKey({name:'PBKDF2',sal
 async function derive(password,salt){return deriveMaterial(await importMaterial(password),salt);}
 const aad=(header,slot)=>encoder.encode(JSON.stringify([domain,1,header.scope,header.vaultId,slot]));
 function validateHeader(h){
- check(plain(h)&&h.id==='header'&&h.version===1&&validScope(h.scope)&&idPattern.test(h.vaultId)&&bytes(h.salt,16)&&h.iterations===iterations,'Повреждён заголовок хранилища');
+ check(plain(h)&&Object.keys(h).sort().join('|')==='id|iterations|salt|scope|vaultId|version'&&h.id==='header'&&h.version===1&&validScope(h.scope)&&idPattern.test(h.vaultId)&&bytes(h.salt,16)&&h.iterations===iterations,'Повреждён заголовок хранилища');
 }
 // Refuse lossy JSON conversion rather than claiming an incomplete migration.
 function checkJson(value,stack=new Set()){
@@ -120,11 +120,15 @@ async function sealPartitionScope({scope,bundleId,password,data}){
 }
 function samePartitionCiphertext(a,b){return sameRows(a,b);}
 async function openPartitionKeySession({scope,bundleId,password,rows,assertActive=()=>{}}){
- assertActive();let material=await importMaterial(password);password=undefined;
- const close=()=>{material=null;};
+ assertActive();let material=await importMaterial(password),cachedKey=null,cachedHeader=null;password=undefined;
+ const close=()=>{material=null;cachedKey=null;cachedHeader=null;};
  const guard=()=>{check(material,'Сеанс LAB заблокирован');assertActive();};
  async function read(input){
-  try{guard();const value=await decodeSnapshot(input,{scope,material});guard();partitionIdentity(value.data,scope,bundleId);return value;}catch(e){close();throw e;}
+  try{guard();const header=input.find(r=>r.id==='header');validateHeader(header);check(header.scope===scope,'Другая область');
+   if(!cachedKey||cachedHeader.vaultId!==header.vaultId||!sameBytes(cachedHeader.salt,header.salt)){
+    const key=await deriveMaterial(material,header.salt);guard();cachedKey=key;cachedHeader=structuredClone(header);
+   }
+   const value=await decodeSnapshot(input,{scope,key:cachedKey,expectedHeader:cachedHeader});guard();partitionIdentity(value.data,scope,bundleId);return value;}catch(e){close();throw e;}
  }
  async function seal(data){
   try{guard();partitionIdentity(data,scope,bundleId);const value=await sealSnapshot({scope,data,material});guard();return value;}catch(e){close();throw e;}

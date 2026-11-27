@@ -6,7 +6,7 @@ import { validateBackup } from '../backup.js';
 import {verifyProtectedBackup} from '../backup-verify.js';
 import {inspectLocalMigration} from '../migration-preflight.js';
 import {isEncryptedStorage,dumpAll,encryptedStorageAllowed} from '../db.js';
-import {exportEncryptedRecoveryCopy} from '../encrypted-storage.js';
+import {exportEncryptedRecoveryCopy,rotateEncryptedStorage,migrationFileLimit} from '../encrypted-storage.js';
 /* screens/settings.js — настройки, импорт, экспорт, резервные копии, управление классами. */
 
 import { APP_VERSION } from '../version.js';
@@ -310,6 +310,7 @@ export function renderSettings(root, ctx = {}) {
   const secured=isEncryptedStorage();
   const securePanel=el('div',{class:'card-block'},[el('div',{class:'head',text:'Шифрование локальной базы · RC3'}),el('p',{text:secured?'Записи IndexedDB зашифрованы. Коды синхронизации действуют только в сеансе. Отдельные браузерные настройки и данные публичного портала не входят в это хранилище.':'Перенос экспериментальный; используйте только после независимой приёмки и сохранения проверенной копии.'}),el('button',{class:'btn wide',type:'button',text:secured?'Заблокировать защищённый сеанс':'Подготовить перенос в v11',onclick:()=>{if(secured)window.dispatchEvent(new Event('teachapp:lock-encrypted'));else{const u=new URL(location.href);u.searchParams.set('secure-migration','1');location.assign(u.href);}}})]);
   if(secured)securePanel.append(el('button',{class:'btn wide',type:'button',text:'Независимая копия v11',onclick:async()=>{let password=await ui.promptDialog({title:'Независимый пароль копии',text:'Отдельный пароль от 12 символов. Копия содержит локальные контрольные точки; восстановление только в новый профиль.',password:true,ok:'Создать'});if(password===null)return;try{const file=await exportEncryptedRecoveryCopy({data:await dumpAll(),backupPassword:password});if(encryptedStorageAllowed())ui.downloadBlob(new Blob([file],{type:'application/json'}),'teachapp-v11-recovery.json');}catch(e){if(encryptedStorageAllowed())ui.toast(e.message);}finally{password=undefined;}}}));
+  if(secured)securePanel.append(el('button',{class:'btn wide',type:'button',text:'Сменить три ключа хранилища',onclick:openEncryptedKeyRotation}));
   body.append(securePanel);
   const migrationStatus=el('p',{role:'status',text:'Предварительная локальная проверка. Не запускает шифрование, перенос или восстановление.'});
   const migrationLabels={schema:'неполная схема',integrity:'нарушение связей','active-delta-migration':'незавершённый Delta-перенос','non-json':'неподдерживаемые значения','record-limit':'выше лимита записей LAB','byte-limit':'выше лимита размера LAB','crypto-unavailable':'Web Crypto недоступен','locks-unavailable':'Web Locks недоступен','device-checkpoints':'обнаружены контрольные точки синхронизации','unmigrated-device-checkpoints':'перенос заблокирован: рабочая синхронизация ещё не подключена к зашифрованному хранилищу','checkpoint-invalid':'некорректная или неизвестная контрольная точка устройства','partition-roundtrip':'не удалось без потерь разделить и собрать три области','quota-unknown':'квота неизвестна','low-estimated-space':'мало оценочного свободного места','snapshot-not-loaded':'снимок не загружен из-за лимита; связи и контрольные точки не проверены'};
@@ -769,4 +770,22 @@ export function schoolHolidaysCard(){
       list,el('label',{class:'field'},['Начало каникул',from]),el('label',{class:'field'},['Окончание каникул',to]),save);
   };
   draw();return card;
+}
+
+function openEncryptedKeyRotation(){
+ const panel=el('div',{class:'coach-stack'},[el('h2',{text:'Смена ключей v11'}),el('p',{text:'Сначала создайте независимую копию v11 после последних изменений. Выберите файл и введите прежние и новые независимые ключи. Все вкладки будут заблокированы после успешной смены.'})]);
+ const make=(text,name)=>{const input=el('input',{type:'password',name,autocomplete:'off',maxlength:1024});panel.append(el('label',{class:'field'},[text,input]));return input;};
+ const old={},next={};for(const [scope,label] of [['school','Школа'],['coach','Тренер'],['workspace','Владелец']]){old[scope]=make('Прежний пароль · '+label,'old-'+scope);next[scope]=make('Новый пароль · '+label,'new-'+scope);}
+ const copyPassword=make('Независимый пароль копии','backup'),file=el('input',{type:'file',accept:'.json,application/json','aria-label':'Актуальная независимая копия'}),confirm=el('input',{type:'checkbox'}),status=el('p',{role:'status'});
+ panel.append(file,el('label',{},[confirm,' Я сохранил актуальную копию вне браузера.']),status);
+ const apply=el('button',{type:'button',class:'btn primary wide',text:'Сменить ключи',onclick:async()=>{
+  if(apply.disabled||!confirm.checked||!file.files[0]||file.files[0].size>migrationFileLimit){status.textContent='Выберите копию и подтвердите действие.';return;}
+  const take=inputs=>Object.fromEntries(Object.entries(inputs).map(([k,i])=>{const value=i.value;i.value='';return [k,value];}));
+  const passwords=take(old),newPasswords=take(next);let backupPassword=copyPassword.value;copyPassword.value='';apply.disabled=true;
+  const stillAllowed=()=>panel.isConnected&&encryptedStorageAllowed()&&document.visibilityState==='visible'&&!document.body.classList.contains('privacy-covered');
+  try{const content=await file.files[0].text();await rotateEncryptedStorage({passwords,newPasswords,backupPassword,file:content,confirmed:true,stillAllowed});window.dispatchEvent(new Event('teachapp:lock-encrypted'));}
+  catch(e){if(stillAllowed())status.textContent=e.message;}
+  finally{for(const set of [passwords,newPasswords])for(const k of Object.keys(set))set[k]=undefined;backupPassword=undefined;apply.disabled=false;}
+ }});
+ panel.append(apply);ui.openSheet(panel);
 }

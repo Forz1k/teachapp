@@ -546,3 +546,7 @@ Verified code backup refs created before changes. Static manifest and integrity 
 ### RC3 — owner lifecycle и native fence
 
 Отдельный login до загрузки приложения, закрываемые WebCrypto handles, терминальный отзыв доступа и новая страница, native fail-closed при изменении версии, тесты отказа и гонок. Реальный маршрут и миграция выключены; проверки по SHA.
+
+### RC3 — реальная интеграция v11 candidate
+
+Штатный bootstrap и неизменённые экраны, маршрутизация без native fallback, явный перенос/rotation/recovery, синхронизация с шифрованным checkpoint и session-only credentials. Тесты на fake IndexedDB и отдельном WebKit профиле с опубликованным статическим пакетом. Результаты сверять по SHA; production не развёрнут.

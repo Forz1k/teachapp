@@ -48,6 +48,9 @@ const validPasswords=p=>exact(p,scopes)&&scopes.every(s=>typeof p[s]==='string'&
 const independent=(p,backup)=>validPasswords(p)&&typeof backup==='string'&&backup.length>=12&&backup.length<=1024&&!scopes.some(s=>p[s]===backup);
 const samePart=(a,b)=>canonical(Object.fromEntries(Object.entries(a).map(([n,rows])=>[n,[...rows].sort((x,y)=>indexedDB.cmp(x.id,y.id))])))===canonical(Object.fromEntries(Object.entries(b).map(([n,rows])=>[n,[...rows].sort((x,y)=>indexedDB.cmp(x.id,y.id))])));
 const samePartitionCiphertextLab=cipher.samePartitionCiphertext;
+const storageMarker='teachapp.encrypted-storage.v11';
+function assertNoLostEncryptedSource(){check(globalThis.localStorage.getItem(storageMarker)===null,'Зашифрованная база отсутствует или заменена; native fallback запрещён');}
+function markEncrypted(){globalThis.localStorage.setItem(storageMarker,'active');check(globalThis.localStorage.getItem(storageMarker)==='active','Не удалось сохранить защитный маркер');}
 const schema=(db,list)=>db.objectStoreNames.length===list.length&&list.every(n=>db.objectStoreNames.contains(n));
 const storageError=()=>Error('Не удалось открыть защищённое хранилище. Не очищайте данные браузера.');
 function openExisting(version){
@@ -61,8 +64,8 @@ export function probeStorageMode(){
  return new Promise((resolve,reject)=>{
   const q=indexedDB.open(DB);let absent=false,blocked=false;
   q.onblocked=()=>{blocked=true;reject(storageError());};q.onupgradeneeded=e=>{absent=e.oldVersion===0;q.transaction.abort();};
-  q.onerror=()=>{if(absent&&!blocked)resolve('empty');else reject(storageError());};
-  q.onsuccess=()=>{const db=q.result,mode=db.version<=LEGACY?'native':db.version===VERSION&&schema(db,stores)?'encrypted':null;db.close();if(blocked)return;if(mode)resolve(mode);else reject(storageError());};
+  q.onerror=()=>{if(absent&&!blocked){try{assertNoLostEncryptedSource();resolve('empty');}catch(e){reject(e);}}else reject(storageError());};
+  q.onsuccess=()=>{const db=q.result,mode=db.version<=LEGACY?'native':db.version===VERSION&&schema(db,stores)?'encrypted':null;db.close();if(blocked)return;try{if(mode==='encrypted'){markEncrypted();resolve(mode);}else if(mode==='native'){assertNoLostEncryptedSource();resolve(mode);}else reject(storageError());}catch(e){reject(e);}};
  });
 }
 const using=async(version,fn)=>{const db=await openExisting(version);try{return await fn(db);}finally{db.close();}};
@@ -124,7 +127,7 @@ async function checkCheckpoints(data,passwords){
 }
 export async function prepareNativeEncryptionCopy({backupPassword}){
  check(typeof backupPassword==='string'&&backupPassword.length>=12&&backupPassword.length<=1024,'Независимый пароль копии от 12 символов');
- noPersistentSyncCredentials();const data=await sourceData();checkSource(data);
+ assertNoLostEncryptedSource();noPersistentSyncCredentials();const data=await sourceData();checkSource(data);
  const envelope=await encryptBackup({app:'teachapp-native-encryption-recovery',version:1,data},backupPassword),reopened=await decryptBackup(envelope,backupPassword);
  check(snapshotIdentity(reopened.data)===snapshotIdentity(data),'Проверка независимой копии не пройдена');
  const file=JSON.stringify(envelope);check(file.length<=migrationFileLimit,'Копия слишком велика');return file;
@@ -144,7 +147,7 @@ async function readRecovery(file,password){
  * Never delete/overwrite an existing v10, v11 or unknown database. */
 export async function recoverIntoEmptyEncryptedStorage({passwords,backupPassword,file,checkpointPasswords={},confirmed=false,stillAllowed=()=>true}){
  check(confirmed===true&&independent(passwords,backupPassword),'Требуются независимые пароли и подтверждение');
- const guard=()=>check(stillAllowed(),'Восстановление отменено');guard();noPersistentSyncCredentials();
+ const guard=()=>check(stillAllowed(),'Восстановление отменено');guard();assertNoLostEncryptedSource();noPersistentSyncCredentials();
  const data=await readRecovery(file,backupPassword);backupPassword=undefined;await checkCheckpoints(data,checkpointPasswords);checkpointPasswords=undefined;guard();
  const parts=partsFor(data),bundleId=crypto.randomUUID(),rows={};
  try{for(const s of scopes){rows[s]=await cipher.sealPartitionScope({scope:s,bundleId,password:passwords[s],data:withMeta(s,bundleId,parts[s])});guard();}}finally{passwords=undefined;}
@@ -153,7 +156,7 @@ export async function recoverIntoEmptyEncryptedStorage({passwords,backupPassword
   const q=indexedDB.open(DB,VERSION);let blocked=false,created=false,failure;
   q.onblocked=()=>{blocked=true;reject(storageError());};
   q.onupgradeneeded=e=>{const db=q.result,tx=q.transaction;try{guard();noPersistentSyncCredentials();check(!blocked&&e.oldVersion===0,'Восстановление возможно только в пустой профиль без базы TeachApp');for(const s of scopes){const table=db.createObjectStore(s,{keyPath:'id'});for(const row of rows[s])table.add(row);}db.createObjectStore('state',{keyPath:'id'}).add(pointer);created=true;}catch(e){failure=e;tx.abort();}};
-  q.onerror=()=>reject(failure||q.error||storageError());q.onsuccess=()=>{q.result.close();if(created&&!blocked)resolve(true);else reject(Error('База уже существует; перезапись запрещена'));};
+  q.onerror=()=>reject(failure||q.error||storageError());q.onsuccess=()=>{q.result.close();if(created&&!blocked){try{markEncrypted();resolve(true);}catch(e){reject(e);}}else reject(Error('База уже существует; перезапись запрещена'));};
  });
 }
 function upgrade(expected,pointer,rows,guard){
@@ -182,7 +185,7 @@ export async function activateNativeEncryption({passwords,backupPassword,file,ch
  check(confirmed===true&&independent(passwords,backupPassword)&&typeof file==='string'&&file.length<=migrationFileLimit,'Требуются независимые ключи, сохранённая копия и подтверждение');
  const locks=globalThis.navigator?.locks;check(locks?.request,'Web Locks недоступен');const guard=()=>check(stillAllowed(),'Перенос отменён');
  return locks.request('teachapp-encryption-migration-v11',{mode:'exclusive',ifAvailable:true},async lock=>{
-  check(lock,'Другой перенос уже выполняется');guard();noPersistentSyncCredentials();
+  check(lock,'Другой перенос уже выполняется');guard();assertNoLostEncryptedSource();noPersistentSyncCredentials();
   const data=await sourceData(),expected=checkSource(data);guard();
   const copy=await decryptBackup(JSON.parse(file),backupPassword);backupPassword=undefined;
   check(exact(copy,['app','version','data'])&&copy.app==='teachapp-native-encryption-recovery'&&copy.version===1&&checkSource(copy.data)===expected,'Копия не соответствует текущим данным');
@@ -191,7 +194,7 @@ export async function activateNativeEncryption({passwords,backupPassword,file,ch
   try{for(const scope of scopes){rows[scope]=await cipher.sealPartitionScope({scope,bundleId,password:passwords[scope],data:withMeta(scope,bundleId,parts[scope])});guard();}}
   finally{passwords=undefined;}
   const pointer={id:'active',bundleId,revisions:Object.fromEntries(scopes.map(s=>[s,rows[s][0].vaultId]))};
-  guard();return upgrade(expected,pointer,rows,guard);
+  guard();const result=await upgrade(expected,pointer,rows,guard);markEncrypted();return result;
  });
 }
 export async function openEncryptedStorage({passwords,stillAllowed=()=>true}){
@@ -220,4 +223,23 @@ export async function openEncryptedStorage({passwords,stillAllowed=()=>true}){
  }
  try{await read();}catch(e){close();throw e;}
  return Object.freeze({transaction:(n,m,fn)=>run(n,m,fn),syncTransaction:(n,m,fn)=>run(n,m,fn,true),close,isClosed:()=>closed});
+}
+
+/** Rotate all three partitions only after opening the exact current copy and
+ * authenticating every current key. No mutation of other browser storage. */
+export async function rotateEncryptedStorage({passwords,newPasswords,backupPassword,file,confirmed=false,stillAllowed=()=>true}){
+ check(confirmed===true&&independent(passwords,backupPassword)&&independent(newPasswords,backupPassword)&&new Set([...Object.values(passwords),...Object.values(newPasswords)]).size===6,'Требуются шесть разных ключей и независимый пароль копии');
+ const guard=()=>check(stillAllowed(),'Смена ключей отменена');
+ guard();const copy=await readRecovery(file,backupPassword);backupPassword=undefined;guard();
+ const snapshot=await current(),parts={};
+ try{
+  for(const scope of scopes){
+   guard();const key=await cipher.openPartitionKeySession({scope,bundleId:snapshot.pointer.bundleId,password:passwords[scope],rows:snapshot.rows[scope],assertActive:guard});
+   try{const {data}=await key.read(snapshot.rows[scope]),{bundleMeta,...part}=data;parts[scope]=part;}finally{key.close();}
+  }
+ }finally{passwords=undefined;}
+ check(snapshotIdentity(mergeParts(parts))===snapshotIdentity(copy),'Копия устарела. Сохраните новую независимую копию.');
+ const after={};
+ try{for(const scope of scopes){guard();after[scope]=await cipher.sealPartitionScope({scope,bundleId:snapshot.pointer.bundleId,password:newPasswords[scope],data:withMeta(scope,snapshot.pointer.bundleId,parts[scope])});}}finally{newPasswords=undefined;}
+ guard();await using(VERSION,db=>commitRotation(db,snapshot,after,scopes,guard));return true;
 }
