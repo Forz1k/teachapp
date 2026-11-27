@@ -325,9 +325,8 @@ export async function renderCoach(root,ctx={}){
       }else if(selectedSection==='matches'){
         if(!team.archived)body.append(competitionCard(team,data,refresh));
         body.append(card('Матчи и соревнования',[btn('Предматчевое досье',()=>openPreMatchDossier(team),'wide'),team.archived?null:btn('Площадка и live-матч',()=>openMatchCenter(team,refresh),'primary wide'),team.archived?null:btn('+ Результат матча',()=>matchForm(team,view,null,refresh),'wide'),team.archived?null:btn('Импорт PDF VolleyPoint',()=>openVolleyImport(team,view,refresh),'wide')]));
-        body.append(historyPanel(view.matches,m=>{
-          const s=C.matchScore(m);
-          return card(m.opponent+' · '+s.ours+':'+s.theirs,[p(fmtFull(m.date)+(m.competition?' · '+m.competition:'')),p(m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),p('Игроков в составе: '+m.roster.length),
+        body.append(historyPanel(view.matches,(m,s)=>{
+          return card(m.opponent+' · '+s.setsWon+':'+s.setsLost,[p(fmtFull(m.date)+(m.competition?' · '+m.competition:'')),p(m.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),p('Игроков в составе: '+m.roster.length),
             m.imported?btn('Импортированный протокол VolleyPoint',()=>openImportedReport(m,view,()=>openVolleyImport(team,view,refresh,{matchId:m.id})),'primary wide'):m.detail?btn('Протокол матча · PDF / печать',()=>openMatchReport(m,ui.closeSheet),'primary wide'):btn('Состав, партии и статистика',()=>matchForm(team,view,m,refresh),'wide'),m.detail?btn('Выводы и план работы',()=>openMatchDebrief(m),'wide'):null,m.detail?btn('Тактический разбор',()=>openMatchTactics(m),'wide'):null,m.detail||m.imported?btn('Видеоразбор',()=>openVideoReview(m,{players:view.players}),'wide'):null,team.archived?null:btn('Результат на зрительский сайт',()=>openPublicResult(team,m),'wide'),btn('Удалить матч',()=>confirm('Удалить матч?','Локальный результат и статистика будут удалены. Если он опубликован, уберите его отдельно в настройках зрительской страницы.',()=>C.removeEvent('coachMatches',m.id),refresh),'wide')]);
         }));
       }else{
