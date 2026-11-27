@@ -55,7 +55,7 @@ try{
   try{await unlockLabBackend(passwords);}catch{status.textContent='Не удалось открыть защищённый сеанс';submit.disabled=false;return;}
   finally{for(const k of Object.keys(passwords))passwords[k]=undefined;}
   app.replaceChildren();await import('/js/app.js');
-  const lock=document.createElement('button');lock.id='lab-lock';lock.textContent='Заблокировать все вкладки';lock.onclick=closeLabBackend;document.body.append(lock);
+  const lock=document.createElement('button');lock.id='lab-lock';lock.type='button';lock.textContent='Заблокировать все вкладки';lock.style.cssText='position:fixed;top:env(safe-area-inset-top, 0px);right:4px;z-index:2147483647;min-height:44px;background:#fff;color:#111;border:1px solid #555;border-radius:6px;padding:6px';lock.onclick=closeLabBackend;document.body.append(lock);
  });
  window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
  `;
