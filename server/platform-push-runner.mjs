@@ -18,7 +18,7 @@ export async function runPushDeliveryLab({adapter,memberId,revision,sequence,rea
   else{
    const sub=await adapter.subscription({memberId,ticket:structuredClone(ticket)});
    if(!sub||!await current())result={outcome:'cancelled',retryAfter:null};
-   else result=await deliverGenericPushLab({...sub,keyPair,now:Math.floor(time()/1000),expiresAt:Math.floor(Math.min(ticket.expiresAt,ticket.leaseUntil)/1000),readClock:()=>Math.floor(time()/1000),stillCurrent:current,transport});
+   else result=await deliverGenericPushLab({...sub,keyPair,now:Math.floor(time()/1000),expiresAt:Math.floor(ticket.expiresAt/1000),sendBefore:Math.floor(Math.min(ticket.expiresAt,ticket.leaseUntil)/1000),readClock:()=>Math.floor(time()/1000),stillCurrent:current,transport});
   }
  }catch{result=unknown;}
  if(!outcomes.has(result?.outcome))result=unknown;
