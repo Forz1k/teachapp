@@ -46,3 +46,16 @@ export function journalRectangle(a,b,rows,cols){
  if((bottom-top+1)*(right-left+1)>500)throw Error('Не более 500 ячеек');
  const result=[];for(let row=top;row<=bottom;row++)for(let col=left;col<=right;col++)result.push({row,col});return result;
 }
+
+// Only evidence shared by all rows can invalidate unchanged pupils' attendance.
+// Keep immutable identifiers, not references to mutable lesson or mark records.
+export function journalAttendanceSnapshot(lessons,held,today){
+ return {today,heldIds:new Set(lessons.filter(l=>held(l)).map(l=>l.id))};
+}
+export function journalRefreshPlan(previous,next,students,changedStudents,status='all'){
+ const heldChanged=previous.heldIds.size!==next.heldIds.size||[...previous.heldIds].some(id=>!next.heldIds.has(id));
+ const rebuild=previous.today!==next.today||heldChanged&&['held','pending'].includes(status);
+ const changed=new Set(changedStudents);
+ const rows=students.filter(s=>heldChanged||changed.has(s.id)).map(s=>s.id);
+ return {rebuild,rows,changed};
+}

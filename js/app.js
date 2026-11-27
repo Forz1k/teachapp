@@ -314,7 +314,7 @@ async function boot() {
   applyTheme(store.state.settings.theme || 'auto');
 
   store.subscribe((_state, changedStudents) => {
-    if (changedStudents && journalUpdate && routeKey() === renderedRoute) journalUpdate(changedStudents);
+    if (changedStudents && journalUpdate && routeKey() === renderedRoute) {if(journalUpdate(changedStudents)===false)render();}
     else render();
   });
   render();

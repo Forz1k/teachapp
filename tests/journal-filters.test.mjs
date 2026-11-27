@@ -11,3 +11,20 @@ test('Journal density is device-local, validated, and defaults safely',async()=>
 
 import {planJournalPaste} from '../js/journal-filters.js';
 test('Journal TSV respects explicit anchor and preserves blanks and same-day lesson IDs',()=>{const pupils=[{id:'p',fullName:'P'},{id:'q',fullName:'Q'}],plan=planJournalPaste('5\t\n\tН\n',pupils,rows,{studentId:'p',lessonId:'b'});assert.deepEqual(plan.entries.map(x=>[x.studentId,x.lessonId,x.value]),[['p','b','5'],['q','c','Н']]);assert.throws(()=>planJournalPaste('5\t4\n3',pupils,rows,{studentId:'p',lessonId:'b'}));assert.throws(()=>planJournalPaste('5\t4',pupils,rows,{studentId:'p',lessonId:'d'}));assert.throws(()=>planJournalPaste('=SUM(A1)',pupils,rows,{studentId:'p',lessonId:'b'}));});
+
+import {journalAttendanceSnapshot,journalRefreshPlan} from '../js/journal-filters.js';
+import {buildAttendanceIndex} from '../js/attendance-index.js';
+test('Journal incremental attendance refresh scopes ordinary edits and invalidates shared evidence and filters',()=>{
+ const today='2026-11-25',lessons=[{id:'a',date:'2026-11-20'},{id:'b',date:'2026-11-21',held:true},{id:'c',date:'2026-11-26'}],students=Array.from({length:30},(_,i)=>({id:'p'+i}));
+ const marks=[{lessonId:'b',studentId:'p0',value:'4',source:'manual'}],snapshot=(date=today)=>{const a=buildAttendanceIndex(lessons,lessons,marks,[],date);return {a,s:journalAttendanceSnapshot(lessons,a.held,date)};};
+ const before=snapshot();marks[0].value='5';const edit=snapshot(),plan=journalRefreshPlan(before.s,edit.s,students,['p0','p0','outside']);
+ assert.equal(plan.rebuild,false);assert.deepEqual(plan.rows,['p0']);assert.equal(plan.changed.size,2);
+ for(const st of students.slice(1))assert.deepEqual(before.a.forStudents([st]),edit.a.forStudents([st]));
+ marks.push({lessonId:'a',studentId:'p0',value:'5',source:'manual'});const first=snapshot();
+ assert.deepEqual(journalRefreshPlan(edit.s,first.s,students,['p0']).rows,students.map(s=>s.id));
+ assert.equal(first.a.forStudents([students[1]]).unknown,2);assert.equal(edit.a.forStudents([students[1]]).unknown,1);
+ for(const status of ['held','pending'])assert.equal(journalRefreshPlan(edit.s,first.s,students,['p0'],status).rebuild,true);
+ assert.equal(journalRefreshPlan(edit.s,first.s,students,['p0'],'all').rebuild,false);
+ marks.pop();const removed=snapshot();assert.deepEqual(journalRefreshPlan(first.s,removed.s,students,['p0']).rows,students.map(s=>s.id));
+ assert.equal(journalRefreshPlan(removed.s,snapshot('2026-11-26').s,students,['p0']).rebuild,true);
+});
