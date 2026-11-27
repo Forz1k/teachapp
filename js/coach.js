@@ -67,6 +67,7 @@ export function validateCoachData(data){
 }
 export async function readLiveMatch(id){const d=await db.get('coachLive',id);if(d)replay(d);return d||null;}
 export async function listLiveMatches(){return db.getAll('coachLive');}
+export async function listLineups(teamId){return db.transaction(['coachLineups'],'readonly',s=>s.coachLineups.index('teamId').getAll(teamId));}
 // One atomic write/delete probe. No committed dummy record or change to real data.
 export async function probeLiveStorage(){const id=uid('live-probe');await db.transaction(['coachLive'],'readwrite',async s=>{await s.coachLive.add({id});await s.coachLive.delete(id);});return true;}
 export async function loadCoach(){
@@ -286,7 +287,7 @@ export function attendanceCsv(view){
 }
 
 export async function saveLineup(input){
- const r={id:input.id||uid('lineup'),teamId:input.teamId,name:String(input.name||'').trim(),scheme:input.scheme,roster:[...input.roster],lineup:[...input.lineup],libero:input.libero||null,...(input.purpose!==undefined?{purpose:input.purpose}:{})};
+ const r={id:input.id||uid('lineup'),teamId:input.teamId,name:String(input.name||'').trim(),scheme:input.scheme,roster:[...input.roster],lineup:[...input.lineup],libero:input.libero||null,...(input.libero2?{libero2:input.libero2}:{}),...(input.purpose!==undefined?{purpose:input.purpose}:{})};
  return write('coachLineups',r,(d,old)=>teamGuard(d,old,r));
 }
 export async function deleteLineup(id){await db.del('coachLineups',id);}

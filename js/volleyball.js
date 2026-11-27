@@ -73,7 +73,7 @@ export function validateLiveData(data){
  const linked=r=>typeof r.id==='string'&&teams.has(r.teamId)&&Array.isArray(r.roster)&&r.roster.every(id=>players.get(id)?.teamId===r.teamId);
  for(const p of data.coachLineups){
    assert(linked(p)&&typeof p.name==='string'&&p.name.trim()&&p.name.length<=200&&Object.hasOwn(schemes,p.scheme)&&validLineup(p.lineup,p.roster)&&unique(p.roster)&&
-    (p.libero===null||p.roster.includes(p.libero)&&!p.lineup.includes(p.libero))&&(p.purpose===undefined||['any','serve','receive'].includes(p.purpose)),'Проверьте сохранённую расстановку');
+    (p.libero===null||p.roster.includes(p.libero)&&!p.lineup.includes(p.libero))&&(p.libero2==null||p.libero&&p.libero2!==p.libero&&p.roster.includes(p.libero2)&&!p.lineup.includes(p.libero2))&&(p.purpose===undefined||['any','serve','receive'].includes(p.purpose)),'Проверьте сохранённую расстановку');
  }
  for(const d of data.coachLive){
    assert(linked(d)&&typeof d.opponent==='string'&&d.opponent.trim()&&d.opponent.length<=200&&typeof d.competition==='string'&&d.competition.length<=200&&

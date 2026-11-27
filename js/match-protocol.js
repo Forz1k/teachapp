@@ -117,8 +117,9 @@ export function replayDetailed(d,{capturePlayer=null}={}){
    fail(!s.setEnded,'Нельзя запускать время между партиями');clockEvent(clock,ev);timeline(ev);continue;
   }
   if(ev.type==='next'){
-   fail(s.setEnded&&validLine(ev.lineup,d.ourPlayers)&&!liberoIds(d).some(id=>ev.lineup.includes(id))&&validLine(ev.awayLineup,d.awayPlayers,true)&&(!d.awayPlayers.length||ev.awayLineup.length===6)&&sides.includes(ev.serve),'Проверьте расстановку следующей партии');
+   fail(s.setEnded&&validLine(ev.lineup,d.ourPlayers)&&!liberoIds(d).some(id=>ev.lineup.includes(id))&&validLine(ev.awayLineup,d.awayPlayers,true)&&(!d.awayPlayers.length||ev.awayLineup.length===6)&&sides.includes(ev.serve)&&(ev.ourSide===undefined||['left','right'].includes(ev.ourSide)),'Проверьте расстановку следующей партии');
    Object.assign(s,{lineup:[...ev.lineup],awayLineup:[...ev.awayLineup],liberoFor:null,liberoId:null,serve:ev.serve,score:{ours:0,theirs:0},timeouts:{ours:0,theirs:0},subCounts:{ours:0,theirs:0},substitutionState:substitutionState(ev.lineup,ev.awayLineup),rotations:{ours:0,theirs:0},setEnded:false,endsAtBreak:false,deciderEndsChanged:false,lastLiberoRally:null});
+   if(ev.ourSide!==undefined)s.endsSwapped=(d.ourSide==='right')!==(ev.ourSide==='right');
    for(const side of sides){s.sides[side].run=0;flush(side);}
    clockNext(clock);if(d.liveTiming)clockEvent(clock,{type:'clock',running:true});setStarted=ev.at;starting=startLineups();continue;
   }
