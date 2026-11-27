@@ -61,7 +61,7 @@ export function identityPlan(current,input){
  const active=current.members.filter(m=>m.revokedAt===null&&m.expiresAt>now),bound=active.filter(m=>m.identityHash===identityHash);
  if(path==='identity/session'){
   if(!exact(body,[])||bound.length!==1)return {error:fail(401,'unauthorized')};
-  return {input:{...input,path:'session/rotate',body:{},auth:bound[0].tokenHash},bind:false};
+  return {input:{...input,path:input.candidate?'session/identity-refresh':'session/rotate',body:{},auth:bound[0].tokenHash},bind:false};
  }
  if(!['identity/bind','identity/redeem'].includes(path)||!exact(body,['credentialHash'])||!hash(body.credentialHash))return {error:fail(400,'packet')};
  if(bound.length)return {error:fail(409,'identity-bound')};
