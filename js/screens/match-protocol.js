@@ -182,18 +182,26 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
  const clockTicker=window.setInterval(tickClock,1000);
  const publish=(options={})=>{if(rehearsal)return false;try{return Portal.syncPortalMatch(d,options);}catch(e){toast('Публикация: '+e.message);return false;}};
  publish();const heartbeat=rehearsal?null:window.setInterval(()=>Portal.heartbeatPortal(d.teamId,d.id),30000);
- const unwatch=rehearsal?()=>{}:Portal.watchPortal(d.teamId,()=>{const n=body.querySelector('.vp-portal-live-status');if(n)n.textContent=Portal.portalInfo(d.teamId).status;});
+ const unwatch=rehearsal?()=>{}:Portal.watchPortal(d.teamId,()=>{for(const n of body.querySelectorAll('.vp-portal-live-status'))n.textContent=Portal.portalInfo(d.teamId).status;});
+ let saving=false,saveFailure='';
+ const updateSaveStatus=()=>{
+  const n=body.querySelector('[data-live-save-status]');if(n)n.textContent=saving?'Сохранение события…':saveFailure?'Запись не подтверждена: '+saveFailure:'Сохранено на устройстве · событий '+d.events.length;
+  const recovery=body.querySelector('[data-live-recovery]');if(recovery)recovery.hidden=!saveFailure;
+  const net=body.querySelector('[data-live-network]');if(net)net.textContent=navigator.onLine===false?'Нет сети по данным браузера · локальная запись доступна':'Сеть доступна по данным браузера';
+ };
+ const refreshNetwork=()=>updateSaveStatus();
+ window.addEventListener('online',refreshNetwork);window.addEventListener('offline',refreshNetwork);
  const liberoChange=async event=>{if(busy)return;const s=V.replayDetailed(d);if(V.liberoIntervalPending(d,s)){const reason=await ui.promptDialog({title:'Судейское исключение?',text:'Между записанными сменами либеро ещё не было розыгрыша. Только по фактическому решению судьи укажите причину (до 200 символов).',ok:'Записать исключение'});if(!reason)return;event={...event,exception:reason.trim()};}await perform(event,()=>selected=null);};
  const spectatorUpdate=(s,connected=true)=>{try{if(spectator&&!spectator.closed)renderSpectatorBoard(spectator.document,V.spectatorSnapshot(d,s),connected);else spectator=null;}catch{spectator=null;}};
  const spectatorOpen=()=>{try{if(!spectator||spectator.closed)spectator=window.open('','teachapp-score-'+d.id,'popup,width=1000,height=600');if(!spectator)return toast('Разрешите открытие отдельного окна');spectatorUpdate(V.replayDetailed(d));spectator?.focus?.();}catch{toast('Отдельное окно недоступно');}};
  let stopped=false;
- const stop=()=>{if(stopped)return;stopped=true;window.clearInterval(heartbeat);window.clearInterval(clockTicker);unwatch();if(spectator&&!spectator.closed)spectatorUpdate(V.replayDetailed(d),false);spectator=null;wake.stop();observer?.disconnect();window.removeEventListener('pagehide',stop);};
+ const stop=()=>{if(stopped)return;stopped=true;window.clearInterval(heartbeat);window.clearInterval(clockTicker);unwatch();if(spectator&&!spectator.closed)spectatorUpdate(V.replayDetailed(d),false);spectator=null;wake.stop();observer?.disconnect();window.removeEventListener('pagehide',stop);window.removeEventListener('online',refreshNetwork);window.removeEventListener('offline',refreshNetwork);};
  window.addEventListener('pagehide',stop);
  const perform=async(event,after)=>{
-  if(busy)return;busy=true;
+  if(busy||stopped)return;busy=true;saving=true;saveFailure='';updateSaveStatus();
   const buttons=[...body.querySelectorAll('button')].filter(x=>!x.disabled);buttons.forEach(x=>x.disabled=true);
-  try{d=await (rehearsal?rehearsal.change(d.id,d.revision,event):C.changeLiveMatch(d.id,d.revision,event));if(event?.type!=='clock')publish();after?.();draw();}
-  catch(e){toast(e.message);}finally{busy=false;buttons.forEach(x=>x.disabled=false);}
+  try{d=await (rehearsal?rehearsal.change(d.id,d.revision,event):C.changeLiveMatch(d.id,d.revision,event));saving=false;if(event?.type!=='clock')publish();after?.();draw();}
+  catch(e){saving=false;saveFailure=e.message||'Неизвестная ошибка';updateSaveStatus();toast(saveFailure);}finally{busy=false;buttons.forEach(x=>x.disabled=false);updateSaveStatus();}
  };
  let previousBoard=null,previousOverlay='';
  function draw(){
@@ -232,6 +240,11 @@ export function openDetailedMatch(initial,back,refresh,rehearsal=null){
   }));
   body.replaceChildren(el('div',{class:'vp-match-head'},[el('div',{class:'vp-match-title'},[el('span',{class:'match-live-label',text:(rehearsal?'ТЕСТ · ':'')+(s.finished?'ЗАВЕРШЁН':s.setEnded?'ПЕРЕРЫВ':'● LIVE')}),el('strong',{text:'Партия '+set})]),displayScore,el('div',{class:'match-sets'},s.sets.length?s.sets.map((x,i)=>el('span',{class:'match-set',text:(i+1)+' · '+score(x)})):[el('span',{text:'Первая партия'})])]),
    el('div',{class:'vp-tabs',role:'group','aria-label':'Раздел матча'},[['match','Матч'],['stats','Статистика'],['events','События']].map(([id,t])=>btn(t,()=>{section=id;historyEdit=null;draw();},section===id?'primary':''))));
+  const liveStatus=el('div',{class:'vp-stack','aria-label':'Состояние записи матча'},[
+   el('small',{'data-live-save-status':'',role:'status'}),el('small',{'data-live-network':''}),
+   !rehearsal&&Portal.portalInfo(d.teamId).data.enabled?el('small',{class:'vp-portal-live-status',role:'status',text:Portal.portalInfo(d.teamId).status}):null,
+   el('button',{type:'button',class:'btn wide','data-live-recovery':'',hidden:true,text:'Проверить сохранённый черновик',onclick:async()=>{if(busy)return;if(pointDraft&&!await ui.confirmDialog({title:'Проверить черновик?',text:'Незаписанное уточнение очка будет закрыто. Сохранённые события останутся.',ok:'Открыть центр матчей'}))return;stop();back();}})
+  ]);body.insertBefore(liveStatus,body.children[1]);updateSaveStatus();
   for(const [side,kind] of Object.entries(changes)){const n=displayScore.querySelector('[data-score-side="'+side+'"]');if(n){animateOnce(n,kind,{duration:280});if(kind==='score')animateOnce(n.parentElement,'pulse',{duration:210});}}
   if(rotation&&!pointDraft&&!scoutOpen)animatePositions(displayScore,oldPositions);
   if(newSetEnd)animateOnce(body.querySelector('.vp-match-title'),'enter',{duration:360});
