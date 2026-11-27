@@ -1,7 +1,7 @@
 /* Exact bundled HTTPS candidate in local workerd. All provider requests
  * intercepted; no cloud configuration, actual identity provider or real data. */
 import assert from 'node:assert/strict';
-import {Miniflare,Response,convertV4MiniflareOptions} from 'miniflare';
+import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {readdir,readFile,mkdtemp,rm} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -21,11 +21,12 @@ async function token(sub,extra={}){
  return unsigned+'.'+b64(await crypto.subtle.sign('RSASSA-PKCS1-v1_5',signing.privateKey,new TextEncoder().encode(unsigned)));
 }
 const endpoint='https://fcm.googleapis.com/fcm/send/synthetic-candidate',sent=[];
-const mf=new Miniflare(convertV4MiniflareOptions({name:'teachapp-platform-candidate',modules:true,script,compatibilityDate:'2026-11-01',bindings,durableObjects:{WORKSPACES:{className:'PlatformWorkspace',useSQLite:true},INGRESS:{className:'PlatformIngress',useSQLite:true}},ratelimits:{EDGE_LIMIT:{namespace_id:'80000601',simple:{limit:120,period:60}}},resourcePersistencePath:dir,enableDevRegistry:false,cf:{colo:'TST',country:'GB'},upstream:apiOrigin,verbose:true,outboundService:async req=>{
-  const bytes=new Uint8Array(await req.arrayBuffer());
-  sent.push({url:req.url,method:req.method,encoding:req.headers.get('Content-Encoding'),authorization:req.headers.get('Authorization'),bytes});
-  return new Response(null,{status:req.url===endpoint?201:403});
-}}));
+const mf=new Miniflare(convertV4MiniflareOptions({name:'teachapp-platform-candidate',modules:true,script,compatibilityDate:'2026-11-01',bindings,durableObjects:{WORKSPACES:{className:'PlatformWorkspace',useSQLite:true},INGRESS:{className:'PlatformIngress',useSQLite:true}},ratelimits:{EDGE_LIMIT:{namespace_id:'80000601',simple:{limit:120,period:60}}},resourcePersistencePath:dir,enableDevRegistry:false,cf:{colo:'TST',country:'GB'},upstream:apiOrigin,verbose:true,outboundService:{node:async(req,res)=>{
+  const chunks=[];for await(const chunk of req)chunks.push(chunk);
+  const url=new URL(req.url, 'https://'+req.headers.host).href,bytes=new Uint8Array(Buffer.concat(chunks));
+  sent.push({url,method:req.method,encoding:req.headers['content-encoding'],authorization:req.headers.authorization,bytes});
+  res.writeHead(url===endpoint?201:403);res.end();
+}}}));
 async function call(w,path,secret,method='GET',body){
  const res=await mf.dispatchFetch(apiOrigin+'/v1/workspaces/'+w+'/'+path,{method,headers:{Origin:origin,'CF-Connecting-IP':'192.0.2.10',Authorization:'Bearer '+secret,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});
  return {status:res.status,...await res.json()};
