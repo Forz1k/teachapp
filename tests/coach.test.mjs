@@ -92,3 +92,12 @@ test('Coach analytics is a storage-free module and legacy facade preserves expor
  assert.equal(stats.sums.points,5);assert.equal(stats.sums.attacks,null);
  assert.equal(analytics.indexPlayerRecords([{roster:['a','a','b']}]).get('a').length,1);
 });
+
+test('Match CSV preserves column count for matches with and without a roster',()=>{
+ const m={date:'2026-11-25',opponent:'X',competition:'Y',sets:[{ours:25,theirs:20}],stats:{}};
+ const lines=C.coachCsv({players:[{id:'p',name:'P'}],matches:[{...m,roster:[]},{...m,roster:['p']}] }).split('\r\n');
+ assert.equal(lines.length,3);
+ const width=lines[0].split(';').length;
+ assert.equal(lines[1].split(';').length,width);
+ assert.equal(lines[2].split(';').length,width);
+});

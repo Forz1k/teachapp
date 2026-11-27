@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';import test from 'node:test';import assert from 'no
 import {timingRows,timingPdf} from './fixtures/volleypoint-timing-fixture.mjs';
 import {extractVolleyPdf} from '../js/volleypoint-pdf.js';
 import {parseVolleyRows,buildVolleyImport,validateVolleyImport} from '../js/volleypoint-import.js';
-import {volleyPlayerTime,volleyTimeLabel} from '../js/volleypoint-time.js';
+import {volleyPlayerTime,volleyPlayerTimes,volleyTimeLabel} from '../js/volleypoint-time.js';
 import * as C from '../js/coach.js';import * as S from '../js/store.js';import * as db from '../js/db.js';import {projectScope} from '../js/sync.js';
 const mapped=(report,side=0)=>buildVolleyImport(report,side,Object.fromEntries(report.teams[side].players.map(p=>[p.number,'p'+p.number])));
 test('VolleyPoint historical duration: raw PDF, alias, wrapped substitution, libero, timeout, both sides',async()=>{
@@ -47,4 +47,24 @@ test('Re-import enriches same ID transactionally; preserves labels and mappings;
  const snapshot=await S.makeBackup();assert.equal(projectScope(snapshot.data,'school').coachMatches,undefined);assert.equal(projectScope(snapshot.data,'coach').coachMatches.length,1);
  await S.restoreBackup(snapshot);const data=await C.loadCoach(),view=C.teamView(data,team.id);assert.equal(view.matches.length,1);assert.equal(C.playerSeasonStats(view.matches,mapping[1]).playingTime.historicalMinMs,420000);
  assert.match(C.coachCsv(view),/VolleyPoint: время по длительности партий/);assert.match(C.coachCsv(view),/7:00/);
+});
+
+test('Batch imported playing time preserves individual evidence and reads substitutions once per set',()=>{
+ const m=mapped(parseVolleyRows(timingRows));
+ const expected=new Map(m.roster.map(id=>[id,volleyPlayerTime(m,id)]));
+ let reads=0;
+ const observed=structuredClone(m);
+ for(const s of observed.imported.timing.sets){
+  if(s.changes===null)continue;
+  s.changes=new Proxy(s.changes,{get(target,key,receiver){if(key===Symbol.iterator)reads++;return Reflect.get(target,key,receiver);}});
+ }
+ assert.deepEqual(volleyPlayerTimes(observed),expected);
+ assert.equal(reads,m.imported.timing.sets.filter(s=>s.lineup&&s.changes).length);
+ reads=0; C.coachCsv({players:[],matches:[observed]});
+ assert.equal(reads,m.imported.timing.sets.filter(s=>s.lineup&&s.changes).length);
+ const partial=structuredClone(m);partial.imported.timing.sets[0].changes=null;
+ assert.deepEqual(volleyPlayerTimes(partial),new Map(partial.roster.map(id=>[id,volleyPlayerTime(partial,id)])));
+ partial.imported.timing.sets[1].changes=null;
+ assert.ok([...volleyPlayerTimes(partial).values()].every(x=>x===null));
+ delete partial.imported.timing;assert.equal(volleyPlayerTimes(partial).size,0);
 });
