@@ -86,3 +86,14 @@ export async function removePublicMedia(target,token,etag,fetcher=fetch){
  if(after.exists)throw Object.assign(Error('Не удалось подтвердить удаление медиацентра'),{status:412});
  return after;
 }
+
+/** Build the exact public replacement before operator confirmation. */
+export function planMediaNews(value,draft){
+ const current=readMediaWire(value),item=newsProjection(draft),previous=current.news.find(n=>n.publicId===item.publicId)||null;
+ const next=mediaProjection({...current,news:[item,...current.news.filter(n=>n.publicId!==item.publicId)]});
+ return {previous,item,next,changed:!previous||JSON.stringify(previous)!==JSON.stringify(item)};
+}
+export function planMediaTournament(value,tournament){
+ const current=readMediaWire(value),item=readPublicTournament(tournament);
+ return {previous:current.tournament||null,item,next:mediaProjection({...current,tournament:item}),changed:JSON.stringify(current.tournament||null)!==JSON.stringify(item)};
+}

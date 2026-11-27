@@ -32,3 +32,21 @@ test('media write and purge verify readback, do not retry CAS or expose token to
  ignore=false;assert.equal((await removePublicMedia(target,'synthetic',next.etag,fetcher)).exists,false);
  const count=calls;await assert.rejects(writePublicMedia('https://evil.test/publicMedia/u/s.json',{news:[]},'synthetic','a',fetcher));await assert.rejects(fetchPublicMedia(target+'?auth=x',fetcher));assert.equal(calls,count);
 });
+
+import {planMediaNews,planMediaTournament} from '../js/public-media.js';
+test('media news preview binds exact replacement and preserves other public content',()=>{
+ const t=tournamentProjection(makeTournament({name:'Cup',system:'league',format:'score',bestOf:1,target:25,decider:15,names:['A','B']}));
+ const current=mediaProjection({news:[wireNews,{...wireNews,publicId:'b'}],tournament:t});
+ const plan=planMediaNews(current,{...wireNews,title:'New',teamId:'private'});
+ assert.equal(plan.previous.title,'Title');assert.equal(plan.item.title,'New');assert.equal(plan.item.teamId,undefined);assert.equal(plan.changed,true);
+ assert.deepEqual(plan.next.tournament,t);assert.equal(plan.next.news.length,2);assert.equal(current.news[0].title,'Title');
+ assert.equal(planMediaNews(current,wireNews).changed,false);
+ const full=mediaProjection({news:Array.from({length:20},(_,i)=>({...wireNews,publicId:'n'+i}))});
+ assert.throws(()=>planMediaNews(full,wireNews));assert.equal(planMediaNews(full,{...wireNews,publicId:'n0',title:'New'}).next.news.length,20);
+});
+test('tournament preview preserves news and identifies unchanged publication',()=>{
+ const t=tournamentProjection(makeTournament({name:'Cup',system:'league',format:'score',bestOf:1,target:25,decider:15,names:['A','B']}));
+ const current=mediaProjection({news:[wireNews],tournament:t});
+ assert.equal(planMediaTournament(current,t).changed,false);
+ const plan=planMediaTournament(current,{...t,name:'Final'});assert.equal(plan.previous.name,'Cup');assert.equal(plan.item.name,'Final');assert.deepEqual(plan.next.news,[wireNews]);assert.equal(current.tournament.name,'Cup');
+});
