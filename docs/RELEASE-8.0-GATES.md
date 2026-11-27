@@ -95,3 +95,5 @@ RC4: HTTPS source fence и pinned v3 destination gate, атомарный пер
 RC4: медиацентр — точный предпросмотр замены новости, сравнение с текущей публикацией, полный список игр турнира с датой и временем, привязка подтверждения к исходной версии, отсутствие повторной записи неизменённой публикации. Production и ручная приёмка открыты.
 
 RC4 media draft lifecycle: explicit unread/local/published/edited status; public actions disabled until confirmed server version, duplicate publication suppressed, active sheet controls locked during operations, real Chromium local draft editor and persistence regression. This does not deploy the candidate rules or replace physical acceptance.
+
+RC4 media recovery: owner-visible public-only JSON snapshot, portal binding and SHA-256 integrity; additive recovery preview with exact ETag, no overwrites, deletion, automatic retry or truncation. Hidden portal can export but not restore until explicitly published. Checksum is not a signature. Physical acceptance remains open.

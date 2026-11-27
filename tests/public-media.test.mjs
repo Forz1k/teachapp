@@ -62,3 +62,22 @@ test('media draft statuses distinguish unread, unpublished, identical and edited
  assert.equal(newsDraftStatus({...draft,publicId:'b'},version),'local');
  assert.throws(()=>newsDraftStatus(draft,{value:{schema:2}}));
 });
+
+import {createMediaBackup,verifyMediaBackup,planMediaRecovery} from '../js/public-media.js';
+test('public media backup is portal-bound, strict and checksum verified; recovery never overwrites or truncates',async()=>{
+ const address='https://demo.firebaseio.com/publicTeams/u/s.json',version={exists:true,etag:'a',value:mediaProjection({news:[wireNews]})};
+ const backup=await createMediaBackup(address,version);
+ assert.equal(backup.sha256.length,64);assert.equal(backup.etag,undefined);
+ assert.deepEqual((await verifyMediaBackup(address,backup)).value,version.value);
+ await assert.rejects(verifyMediaBackup(address.replace('/u/','/other/'),backup));
+ await assert.rejects(verifyMediaBackup(address,{...backup,value:{...backup.value,news:[{...wireNews,title:'Tampered'}]}}));
+ await assert.rejects(verifyMediaBackup(address,{...backup,private:'secret'}));
+ const empty={exists:false,etag:'b',value:mediaProjection(null)};
+ const plan=await planMediaRecovery(address,empty,backup);assert.equal(plan.changed,true);assert.deepEqual(plan.next.news,[wireNews]);
+ assert.equal((await planMediaRecovery(address,version,backup)).changed,false);
+ const changed={...version,value:mediaProjection({news:[{...wireNews,title:'Edited'}]})};
+ const conflict=await planMediaRecovery(address,changed,backup);assert.deepEqual(conflict.conflicts,['a']);assert.equal(conflict.next,null);
+ const full={...version,value:mediaProjection({news:Array.from({length:20},(_,i)=>({...wireNews,publicId:'n'+i}))})};
+ assert.equal((await planMediaRecovery(address,full,backup)).overLimit,true);
+ const emptyBackup=await createMediaBackup(address,empty);assert.equal((await planMediaRecovery(address,version,emptyBackup)).changed,false);
+});

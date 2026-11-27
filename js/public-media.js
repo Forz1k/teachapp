@@ -105,3 +105,43 @@ export function newsDraftStatus(draft,version){
  const old=readMediaWire(version.value).news.find(n=>n.publicId===item.publicId);
  return !old?'local':JSON.stringify(old)===JSON.stringify(item)?'published':'changed';
 }
+
+/** Portable public-only recovery snapshot, bound to the exact portal.
+ * Checksum detects accidental corruption, not a malicious file author. */
+async function mediaBackupDigest(value){
+ const bytes=new TextEncoder().encode(JSON.stringify(value));
+ return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+}
+export async function createMediaBackup(address,version){
+ const target=mediaTarget(address);
+ if(!version||typeof version.exists!=='boolean'||typeof version.etag!=='string'||!version.etag)throw Error('Сначала получите серверную версию');
+ const value=readMediaWire(version.value);
+ if(!version.exists&&(value.news.length||value.tournament))throw Error('Некорректная версия медиацентра');
+ const payload={format:'teachapp-public-media-backup',schema:1,target,exists:version.exists,value};
+ return {...payload,sha256:await mediaBackupDigest(payload)};
+}
+export async function verifyMediaBackup(address,backup){
+ wireFields(backup,['format','schema','target','exists','value','sha256']);
+ if(backup.format!=='teachapp-public-media-backup'||backup.schema!==1||backup.target!==mediaTarget(address)||typeof backup.exists!=='boolean'||typeof backup.sha256!=='string'||!/^[a-f0-9]{64}$/.test(backup.sha256))throw Error('Некорректная копия или другой портал');
+ const value=readMediaWire(backup.value);
+ if(!backup.exists&&(value.news.length||value.tournament))throw Error('Некорректная пустая копия');
+ const payload={format:backup.format,schema:1,target:backup.target,exists:backup.exists,value};
+ if(await mediaBackupDigest(payload)!==backup.sha256)throw Error('Контрольная сумма копии не совпадает');
+ return payload;
+}
+/** Restore is additive only. Never overwrite a changed public ID or tournament,
+ * silently truncate at the 20-news limit, or purge from an empty backup. */
+export async function planMediaRecovery(address,version,backup){
+ if(!version||typeof version.etag!=='string'||!version.etag)throw Error('Сначала получите серверную версию');
+ const saved=await verifyMediaBackup(address,backup),current=readMediaWire(version.value);
+ const news=current.news.slice(),added=[],conflicts=[];
+ for(const item of saved.value.news){
+  const old=news.find(n=>n.publicId===item.publicId);
+  if(!old){news.push(item);added.push(item);}
+  else if(JSON.stringify(old)!==JSON.stringify(item))conflicts.push(item.publicId);
+ }
+ const tournamentConflict=!!(current.tournament&&saved.value.tournament&&JSON.stringify(current.tournament)!==JSON.stringify(saved.value.tournament));
+ const addTournament=!current.tournament&&!!saved.value.tournament;
+ const blocked=conflicts.length>0||tournamentConflict||news.length>20;
+ return {added,conflicts,tournamentConflict,addTournament,overLimit:news.length>20,changed:!blocked&&(added.length>0||addTournament),next:blocked?null:mediaProjection({news,tournament:current.tournament||saved.value.tournament})};
+}
