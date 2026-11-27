@@ -38,13 +38,14 @@ try{
  assert.equal((await call('w','identity/bind',ownerJwt,'POST',{credential:owner.token})).status,401);
  assert.equal((await call('w','teams',owner.token,'POST',{id:'t',name:'Team',players:[{id:'p',name:'Player',number:1}]})).status,201);
  const invite=await call('w','invite',owner.token,'POST',{role:'athlete',teamId:'t',athleteId:'p',matchId:null});assert.equal(invite.status,201);
- const member=await call('w','identity/redeem',athleteJwt,'POST',{credential:invite.invite});assert.equal(member.status,201);assert.equal(member.member.role,'athlete');
+ let member=await call('w','identity/redeem',athleteJwt,'POST',{credential:invite.invite});assert.equal(member.status,201);assert.equal(member.member.role,'athlete');
  assert.equal((await call('w','members',member.token)).status,403);assert.equal((await call('other','identity/session',athleteJwt,'POST',{})).status,401);
  assert.equal((await call('w','notification-lab',member.token)).status,404);
  const state=await call('w','notification/provider',member.token);assert.equal(state.status,200);assert.equal(state.enabled,false);
  const receiver=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},false,['deriveBits']),sub={endpoint,p256dh:b64(await crypto.subtle.exportKey('raw',receiver.publicKey)),auth:b64(crypto.getRandomValues(new Uint8Array(16))),expirationTime:null};
  assert.equal((await call('w','notification/provider',member.token,'PUT',{expectedRevision:0,subscription:{...sub,endpoint:'https://other.invalid/synthetic'}})).status,400);
  const enabled=await call('w','notification/provider',member.token,'PUT',{expectedRevision:0,subscription:sub});assert.equal(enabled.status,200);assert.equal(enabled.enabled,true);
+ const refreshed=await call('w','identity/session',await token('athlete'),'POST',{});assert.equal(refreshed.status,200);assert.equal((await call('w','me',member.token)).status,401);member=refreshed;assert.equal((await call('w','notification/provider',member.token)).enabled,true);
  const profile={expectedRevision:0,goals:[{id:'g',name:'Synthetic goal',status:'active',to:'2026-12-01'}],assignments:[],schedule:[]};
  assert.equal((await call('w','teams/t/athletes/p',owner.token,'PUT',profile)).status,200);
  for(let i=0;i<100&&!sent.length;i++)await sleep(200);
