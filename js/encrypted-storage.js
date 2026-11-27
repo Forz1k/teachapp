@@ -5,7 +5,7 @@ import {splitDeviceSnapshot,joinDeviceSnapshot,validateDeviceCheckpoints} from '
 import {storageCipher as cipher} from './vault-cipher.js';
 import {prepareSchemaSnapshotTransaction} from './vault-snapshot-transaction.js';
 import {encryptBackup,decryptBackup,encryptedEnvelopeBytes} from './privacy.js';
-import {localSyncState} from './sync.js';
+import {localSyncState,verifyLocalCheckpoint} from './sync.js';
 import {inspectMigrationSnapshot,migrationLabLimits} from './migration-preflight.js';
 const DB='teachapp',LEGACY=10,VERSION=11,names=Object.keys(SCHEMA);
 const scopes=['school','coach','workspace'],stores=['state',...scopes];
@@ -125,6 +125,7 @@ async function checkCheckpoints(data,passwords){
  for(const area of ['school','coach']){
   const cp=device.find(r=>r.id==='sync-checkpoint-'+area);if(!cp)continue;
   check(typeof passwords?.[area]==='string'&&passwords[area].length>=12,'Требуется пароль существующего контура синхронизации');
+  if(device.some(r=>r.id==='sync-checkpoint-migration-'+area&&r.protocol==='delta-v3')){await verifyLocalCheckpoint({area,data,password:passwords[area]});continue;}
   const state=await localSyncState({area,endpoint:cp.endpoint,password:passwords[area],data});
   check(['clean','pending'].includes(state.status),'Контрольная точка не прошла аутентификацию');
  }

@@ -554,3 +554,7 @@ Verified code backup refs created before changes. Static manifest and integrity 
 ## 8.0.0-rc.4 — Delta v3 candidate
 
 Отдельная конфигурация без routes и секретов, точный HTTPS origin, отдельный протокол и явный клиентский adapter с маркировкой checkpoint. Не развёрнуто; существующие миграции закрыты до приёмки.
+
+### RC4 — gated migration candidate
+
+HTTPS source fence, fixed target gate, v11 checkpoint/binding transaction, manual activation/finalize and rollback with signed receipt. Test-only; production not deployed.

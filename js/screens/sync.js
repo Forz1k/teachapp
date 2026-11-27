@@ -3,7 +3,7 @@ import {openTrustedDevices} from './trusted-devices.js';
 import * as S from '../store.js';
 import * as db from '../db.js';
 import {ktpLinkIssues} from '../backup.js';
-import {syncAreas,normalizeEndpoint,relayClient,deltaCandidateSyncAdapter,prepareSync,previewSync,executeSync,syncStatus,localSyncState,describeSyncConflict,disconnectSync,localScopeUploadSize,syncUploadBytes,syncDeltaEstimate,defaultCloudflarePacketLimit,migrationBindingStatus} from '../sync.js';
+import {syncAreas,normalizeEndpoint,relayClient,deltaCandidateSyncAdapter,prepareSync,previewSync,executeSync,syncStatus,localSyncState,describeSyncConflict,disconnectSync,localScopeUploadSize,syncUploadBytes,syncDeltaEstimate,defaultCloudflarePacketLimit,migrationBindingStatus,cutoverDeltaCandidateDevice,finalizeDeltaCandidateDevice,rollbackDeltaCandidateDevice} from '../sync.js';
 import {createDeviceInvite,redeemDeviceInvite,parseInvite} from '../device-invite.js';
 import {autoSyncStatus,withSyncSession,runPersonalSync} from '../auto-sync.js';
 import {parsePersonalCode,personalCredentials,readPersonalCode,savePersonalCode,forgetPersonalCode} from '../personal-sync.js';
@@ -93,7 +93,7 @@ export function openSync(){
    const successes=report.areas.filter(r=>r.status==='synced'&&r.successfulAt).map(r=>syncAreas[r.area]+': '+new Date(r.successfulAt).toLocaleString('ru-RU')).join(' · ');
    personalStatus.textContent=saved?(readTrustedProfile()?'Индивидуальный профиль v2 сохранён.':'Личный код сохранён на этом устройстве.')+(report.phase==='offline'?' Нет сети.':report.phase==='running'?' Обмен выполняется.':report.phase==='interrupted'?' Обмен прерван.':'')+(report.at?' Последняя проверка: '+new Date(report.at).toLocaleString('ru-RU')+'. '+summary:'')+(successes?' Успешный обмен в последней попытке: '+successes:''):'Личный код не сохранён.';
    personalForget.hidden=!saved&&!hasTrustedProfileRecord();inviteCreate.hidden=!saved||!!readTrustedProfile();both.hidden=!saved;inviteImport.hidden=Boolean(saved)||hasTrustedProfileRecord();personalConnect.hidden=hasTrustedProfileRecord();
-   status.textContent=binding.status!=='none'?'Обмен этого контура остановлен: экспериментальный перенос Delta LAB. Не удаляйте контрольную точку и не восстанавливайте копию поверх базы.':cp?'Последняя подтверждённая ревизия: '+cp.revision+(cp.protocol==='delta-v3'?' · Delta v3':''):'Контур пока не подключён.';
+   status.textContent=binding.status==='v3-pending'?'Delta v3: устройство переключено, обычный обмен закрыт до активации или согласованного возврата.':binding.status!=='none'?'Обмен этого контура остановлен: экспериментальный перенос Delta LAB. Не удаляйте контрольную точку и не восстанавливайте копию поверх базы.':cp?'Последняя подтверждённая ревизия: '+cp.revision+(cp.protocol==='delta-v3'?' · Delta v3':''):'Контур пока не подключён.';
    detach.hidden=!cp||cp.protocol==='delta-v3'||binding.status!=='none';detach.style.display=detach.hidden?'none':'';
    localStatus.hidden=!saved;
    if(saved){
@@ -314,7 +314,37 @@ export function openSync(){
  area.onchange=()=>{clear();refresh();};
  protocol.onchange=()=>{clear();};
  for(const input of [endpoint,token,password])input.oninput=()=>{if(plan){plan=null;client=null;secret=null;choices={};results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}};
- const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p(db.isEncryptedStorage()?'Защищённый сеанс: коды и ключи синхронизации действуют до блокировки; повторно введите их после входа. Контрольные точки сохраняются в шифрованной базе.':'Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,localStatus,sizeCheck,sizeStatus,btn('Доверенные устройства v2',()=>openTrustedDevices(openSync)),personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,field('Протокол',protocol),field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
+ const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p(db.isEncryptedStorage()?'Защищённый сеанс: коды и ключи синхронизации действуют до блокировки; повторно введите их после входа. Контрольные точки сохраняются в шифрованной базе.':'Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,localStatus,sizeCheck,sizeStatus,btn('Доверенные устройства v2',()=>openTrustedDevices(openSync)),personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,...(db.isEncryptedStorage()?[btn('Перенос / возврат Delta v3 · RC4',()=>openDeltaCandidateDevice())]:[]),field('Протокол',protocol),field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
  openSheet(root,{fullHeight:true,onClose:()=>{closed=true;clear();}});
  refresh();
+}
+
+/** Device-only operator screen. No server-admin credentials or implicit cutover. */
+function openDeltaCandidateDevice(){
+ if(!db.isEncryptedStorage()||readSyncIdentity()){toast('Требуется защищённый тестовый v11 профиль без сохранённого обычного кода. Контрольные точки не удаляйте.');return;}
+ const root=el('div',{class:'coach-form'}),area=el('select',{},Object.entries(syncAreas).map(([value,text])=>el('option',{value,text}))),version=el('select',{},[el('option',{value:'1',text:'v1'}),el('option',{value:'2',text:'v2'})]),action=el('select',{},[el('option',{value:'cutover',text:'Переключить устройство (назначение ещё закрыто)'}),el('option',{value:'finalize',text:'Завершить переключение после активации'}),el('option',{value:'rollback',text:'Вернуть устройство после необратимого закрытия назначения'})]);
+ const input=(type='password')=>el('input',{type,autocomplete:'off',spellcheck:'false',maxlength:1024});
+ const sourceEndpoint=input('url'),destinationEndpoint=input('url'),sourceToken=input(),destinationToken=input(),sourcePassword=input(),destinationPassword=input(),backupPassword=input(),file=el('input',{type:'file',accept:'.json,application/json'}),status=el('p',{role:'status'});
+ const fields={sourceEndpoint,destinationEndpoint,sourceToken,destinationToken,sourcePassword,destinationPassword,backupPassword};
+ let closed=false,busy=false;
+ const allowed=()=>!closed&&root.isConnected&&db.encryptedStorageAllowed()&&document.visibilityState==='visible'&&navigator.onLine!==false&&!readSyncIdentity();
+ const clear=()=>{for(const key of ['sourceToken','destinationToken','sourcePassword','destinationPassword','backupPassword'])fields[key].value='';};
+ const run=btn('Проверить файл и выполнить выбранное действие',async()=>{
+  if(busy||!allowed())return;
+  if(!file.files[0]||file.files[0].size>90*1024*1024){status.textContent='Выберите проверенный файл переноса.';return;}
+  const fn={cutover:cutoverDeltaCandidateDevice,finalize:finalizeDeltaCandidateDevice,rollback:rollbackDeltaCandidateDevice}[action.value];
+  busy=true;run.disabled=true;const args={candidate:true,area:area.value,protocolVersion:Number(version.value),...Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,v.value])),stillAllowed:allowed};clear();
+  try{
+   args.file=JSON.parse(await file.files[0].text());if(!allowed())return;
+   const result=await withSyncSession(()=>fn(args));if(!result)throw Error('Закройте другие вкладки.');
+   if(!allowed())return;status.textContent='Контур: '+syncAreas[result.area]+', исходная ревизия '+result.sourceRevision+', ID '+result.migrationId;
+   if(!await confirmDialog({title:'Подтвердить точный результат проверки?',text:status.textContent+'. Независимая актуальная копия устройства сохранена вне браузера. Это тестовый контур; действие не заменяет записи пользователя.',ok:'Подтвердить',danger:true}))return;
+   if(!allowed())return;
+   const final=await withSyncSession(()=>fn({...args,confirmed:true,backupVerified:true,expectedMigrationId:result.migrationId,expectedSourceRevision:result.sourceRevision}));
+   if(!final)throw Error('Закройте другие вкладки.');if(allowed()){status.textContent='Устройство: '+final.status;await S.load();}
+  }catch(e){if(allowed())status.textContent=e.message;}
+  finally{for(const k of Object.keys(args))args[k]=undefined;busy=false;run.disabled=false;}
+ },'primary');
+ root.append(el('h2',{text:'Перенос устройства · Delta v3'}),p('Только синтетические данные. Администратор отдельно готовит проверенный файл, фиксирует источник и назначение. Не вводите административные ключи. Не удаляйте контрольные точки. После переноса сначала дождитесь активации всех устройств; возврат разрешён только после необратимого закрытия назначения.'),field('Действие',action),field('Контур',area),field('Исходный протокол',version),field('HTTPS источник',sourceEndpoint),field('HTTPS назначение',destinationEndpoint),field('Ключ устройства источника',sourceToken),field('Ключ устройства назначения',destinationToken),field('Пароль исходного контура',sourcePassword),field('Пароль назначения',destinationPassword),field('Независимый пароль файла переноса',backupPassword),field('Проверенный файл переноса',file),status,run,btn('Закрыть',()=>openSync()));
+ openSheet(root,{fullHeight:true,onClose:()=>{closed=true;clear();}});
 }

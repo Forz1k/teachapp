@@ -1164,6 +1164,13 @@ export async function syncStatus(area){
  return cp?{endpoint:cp.endpoint,revision:cp.revision,...(cp.protocol==='delta-v3'?{protocol:cp.protocol}:{})}:null;
 }
 // Local read-only comparison, no relay calls and no upload of personal data.
+/** Authenticate a retained checkpoint without clearing a pending migration barrier. */
+export async function verifyLocalCheckpoint({area,data,password}){
+ check(validArea(area),'Неверный контур');const cp=getCheckpoint(data,area);check(cp&&revision(cp.revision),'Нет контрольной точки');
+ const packet=await readPacket(cp.envelope,password,area,cp.revision);check(packet.workspaceId===cp.workspaceId,'Неверная общая ревизия');
+ const binding=migrationBinding(data,area);if(binding){check(binding.protocol==='delta-v3'&&cp.protocol==='delta-v3'&&binding.destinationWorkspaceId===cp.workspaceId&&binding.destinationRevision===cp.revision&&await scopeDigest(packet.snapshot,area)===binding.digest,'Контрольная точка переноса не прошла проверку');}
+ return true;
+}
 export async function localSyncState({area,endpoint,password,data}){
  check(validArea(area),'Выберите рабочую область');
  const current=data||await db.dumpAll(),cp=getCheckpoint(current,area);
@@ -1214,12 +1221,22 @@ export async function cutoverDeltaCandidateDevice(args){
  confirmCandidate(args,p);if(!replay)await candidateLocalTransaction(p,current,cp,binding,local,async meta=>{await meta.put(next);await meta.put(expected);await meta.delete(statusKey(p.area));},stillAllowed);
  return {...result,status:'cutover-completed'};
 }
+/** Freeze only after the saved file and separately pinned destination are verified. */
+export async function freezeDeltaCandidateSource(args){
+ check(args.candidate===true&&args.confirmed===true&&args.allDevicesReconciled===true,'Подтвердите проверенные копии и согласование всех устройств');
+ const p=await openDeltaMigration(args);confirmCandidate(args,p);const {sourceRead,target}=migrationClients(args);
+ const gate=await verifyCandidateGate(p,target,false);check(gate.revision===0&&!gate.seal,'Назначение должно быть пустым до блокировки источника');
+ const source=await sourceRead();check(source.revision===p.sourceRevision&&same(source.envelope,p.sourceEnvelope),'Источник изменился; нужен новый план');
+ const state=await deltaMigrationFenceClient(args).freeze({expectedRevision:p.sourceRevision,migrationId:p.workspaceId,confirmed:true,backupVerified:true,destinationAnchorCommitment:await migrationAnchorCommitment(p.envelope)});
+ await verifyRollbackSource(p,args,sourceRead);return {status:'source-frozen',area:p.area,migrationId:p.workspaceId,sourceRevision:state.revision};
+}
 export async function activateDeltaCandidateMigration(args){
  check(args.candidate===true&&args.confirmed===true&&args.allDevicesReconciled===true,'Подтвердите перенос всех устройств');
  const p=await openDeltaMigration(args);confirmCandidate(args,p);const {sourceRead}=migrationClients(args);
  check(typeof args.destinationSealToken==='string'&&![args.sourceToken,args.destinationToken,args.sourceFenceToken].includes(args.destinationSealToken),'Нужен отдельный ключ активации назначения');
  const target=deltaCandidateClient(p.destination,p.area,args.destinationToken,{confirmed:true,sealToken:args.destinationSealToken,fetcher:args.fetcher});
- await verifyRollbackSource(p,args,sourceRead);const state=await verifyCandidateGate(p,target,false);check(state.revision===1&&state.seal===null,'Назначение закрыто или изменилось');
+ await verifyRollbackSource(p,args,sourceRead);const gate=await target.migrationStatus();if(gate.gate?.active===true){await verifyCandidateGate(p,target,true);check(!gate.seal,'Назначение закрыто');return {status:'activated',area:p.area,migrationId:p.workspaceId,replayed:true};}
+ const state=await verifyCandidateGate(p,target,false);check(state.revision===1&&state.seal===null,'Назначение закрыто или изменилось');
  await verifyRollbackDestination(p,target,false);const result=await target.activateMigration({migrationId:p.workspaceId,anchorCommitment:await migrationAnchorCommitment(p.envelope)});check(result.gate?.active===true&&result.gate.migrationId===p.workspaceId&&result.seal===null,'Активация не подтверждена');
  return {status:'activated',area:p.area,migrationId:p.workspaceId};
 }

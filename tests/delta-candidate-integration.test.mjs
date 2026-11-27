@@ -15,6 +15,7 @@ test('Explicit v3 adapter preserves checkpoint and uses delta-only writes, no-op
   assert.ok(url.startsWith(endpoint+'/v3/delta/coach/'));assert.equal(init.headers.Authorization,'Bearer '+token);
   const p=url.split('/').at(-1);requests.push([p,init.method]);
   if(p==='head')return Response.json(head());
+  if(p==='migration-status')return Response.json({gate:null,revision:rows.length,seal:null});
   if(init.method==='GET')return Response.json(rows[Number(p)-1]);
   const body=JSON.parse(init.body);assert.equal(body.expectedRevision,rows.length);
   const kind=p==='anchor'?'anchor':'delta';rows.push({revision:rows.length+1,kind,envelope:body.envelope});
