@@ -60,7 +60,7 @@ export function identityPlan(current,input){
  if(!current)return {error:fail(401,'unauthorized')};
  const active=current.members.filter(m=>m.revokedAt===null&&m.expiresAt>now),bound=active.filter(m=>m.identityHash===identityHash);
  if(path==='identity/session'){
-  if(!exact(body,[])||bound.length!==1)return {error:fail(401,'unauthorized')};
+  if(!exact(body,[])||bound.length!==1||input.candidate&&bound[0].role==='owner'&&identityHash!==input.operatorIdentity)return {error:fail(401,'unauthorized')};
   return {input:{...input,path:input.candidate?'session/identity-refresh':'session/rotate',body:{},auth:bound[0].tokenHash},bind:false};
  }
  if(!['identity/bind','identity/redeem'].includes(path)||!exact(body,['credentialHash'])||!hash(body.credentialHash))return {error:fail(400,'packet')};
