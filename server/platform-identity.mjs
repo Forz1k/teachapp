@@ -35,8 +35,8 @@ export async function verifyIdentityAssertion(config,token,now=Date.now()){
   if(claims.nbf!==undefined&&(!Number.isSafeInteger(claims.nbf)||claims.nbf<0||claims.nbf>t||claims.nbf>=claims.exp))return null;
   const key=await crypto.subtle.importKey('jwk',config.key,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);
   if(!await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,decode(s,1024),enc.encode(h+'.'+p)))return null;
-  const bytes=await crypto.subtle.digest('SHA-256',enc.encode(JSON.stringify([claims.iss,claims.sub])));
-  return {identityHash:Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join(''),expiresAt:claims.exp*1000};
+  const digest=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(JSON.stringify(value)))),b=>b.toString(16).padStart(2,'0')).join('');
+  return {identityHash:await digest([claims.iss,claims.sub]),assertionHash:await digest(['teachapp-identity-exchange-v1',claims.iss,claims.sub,claims.jti]),expiresAt:claims.exp*1000};
  }catch{return null;}
 }
 export async function verifyIdentityAccessToken(config,token,now=Date.now()){return (await verifyIdentityAssertion(config,token,now))?.identityHash??null;}
