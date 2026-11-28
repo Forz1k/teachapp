@@ -1,5 +1,9 @@
 name: TeachApp Delta synthetic
 on:
+  push:
+    branches:
+      - 'roadmap/8.0-integration'
+      - main
   pull_request:
     paths:
       - 'package.json'
@@ -13,6 +17,8 @@ on:
       - 'js/privacy.js'
       - 'js/delta-anchor.js'
       - 'tools/delta-smoke.mjs'
+      - 'tools/delta-v3-migration-smoke.mjs'
+      - 'wrangler.delta-candidate.jsonc'
       - 'delta-dev/**'
       - 'platform-dev/platform.css'
       - 'wrangler.delta-dev.jsonc'
@@ -23,7 +29,7 @@ permissions:
 jobs:
   synthetic:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       WRANGLER_SEND_METRICS: 'false'
     steps:
@@ -32,7 +38,9 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci
-      - run: npm install --no-save --package-lock=false playwright@1.65.1
+      - run: npm install --no-save --package-lock=false playwright@1.65.1 wrangler@4.161.0
       - run: npx --yes wrangler@4.161.0 deploy --config wrangler.delta-dev.jsonc --dry-run --outdir "${RUNNER_TEMP}/delta-build"
       - run: npx --yes wrangler@4.161.0 deploy --config wrangler.migration-source-dev.jsonc --dry-run --outdir "${RUNNER_TEMP}/migration-source-build"
+      - run: npx --yes wrangler@4.161.0 deploy --config wrangler.delta-candidate.jsonc --dry-run --outdir "${RUNNER_TEMP}/delta-candidate-build"
+      - run: node tools/delta-v3-migration-smoke.mjs "$RUNNER_TEMP/migration-source-build" "$RUNNER_TEMP/delta-candidate-build"
       - run: node tools/delta-smoke.mjs

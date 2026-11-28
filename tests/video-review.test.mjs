@@ -41,3 +41,38 @@ test('Indexed playback navigation is equivalent to linear reference across ties,
  const source=[{index:1,seconds:2,alignment:'manual'},{index:2,seconds:2,alignment:'manual'}],cached=createVideoMarkerIndex(source);
  source[0].seconds=100;const returned=cached.adjacent(0,5,1);assert.equal(returned.index,1);returned.seconds=200;assert.equal(cached.adjacent(0,5,1).seconds,2);
 });
+
+test('Review summary and CSV retain filtered provenance, omit private fields by default and never invent PDF times',async()=>{
+ const {summarizeVideoReview,videoReviewCsv}=await import('../js/video-review.js');
+ const rows=[{index:1,set:1,score:'1:0',side:'ours',label:'Эйс',alignment:'manual',seconds:5.125,player:'PRIVATE PLAYER',playerId:'secret-id'},{index:2,set:1,score:'1:1',side:'theirs',label:'Ошибка',alignment:'unlinked',seconds:null,player:'PRIVATE PLAYER'},{index:3,set:2,score:'0:1',side:'theirs',label:'Атака',alignment:'interpolated',seconds:90,outsideVideo:true}];
+ const notes=[{index:2,favorite:true,text:'PRIVATE NOTE'},{index:99,favorite:true,text:'NOT IN FILTER'}];
+ assert.deepEqual(summarizeVideoReview(rows,notes),{total:3,manual:1,estimated:1,unlinked:1,outsideVideo:1,favorites:1});
+ const csv=videoReviewCsv(rows,notes);assert.ok(csv.startsWith('\ufeff'));assert.match(csv,/"5,125";"Ручная точка"/);assert.match(csv,/"Ошибка";"";"Без привязки";"Нет";"Да"/);assert.match(csv,/"Интерполяция";"Да"/);
+ assert.doesNotMatch(csv,/PRIVATE|secret-id|NOT IN FILTER/);
+ const privateCsv=videoReviewCsv(rows,notes,{includePrivate:true});assert.match(privateCsv,/PRIVATE PLAYER/);assert.match(privateCsv,/PRIVATE NOTE/);assert.doesNotMatch(privateCsv,/secret-id|NOT IN FILTER/);
+ assert.throws(()=>videoReviewCsv([...rows,rows[0]],notes));assert.throws(()=>videoReviewCsv([{...rows[1],seconds:0}],notes));
+});
+test('Review CSV escapes spreadsheet formulas and multiline private text, handles all filtered rows beyond page limit',async()=>{
+ const {videoReviewCsv}=await import('../js/video-review.js');
+ const rows=Array.from({length:250},(_,i)=>({index:i+1,set:1,score:'1:0',side:'ours',label:'Эйс',alignment:'recorded',seconds:i,player:'  =SUM(1;2)'}));
+ const csv=videoReviewCsv(rows,[{index:1,text:'@formula',favorite:true},{index:250,text:'line "one"\nline two',favorite:false}],{includePrivate:true});
+ assert.ok(csv.includes('"\'  =SUM(1;2)"'));assert.ok(csv.includes('"\'@formula"'));assert.ok(csv.includes('"line ""one""\nline two"'));assert.match(csv,/"250";"1"/);
+});
+
+test('Prepared video review projection filters provenance and notes without re-reading match evidence',async()=>{
+ const {projectVideoMarkers,calibratedMarkers,importedVideoMarkers,videoReviewBySet}=await import('../js/video-review.js');
+ const base=videoMarkers(detail,0),anchors=[{index:1,seconds:10},{index:2,seconds:25}],notes=[{index:2,text:'Private note',favorite:true}];
+ assert.deepEqual(projectVideoMarkers(base,{firstAt:20}),videoMarkers(detail,20));
+ assert.deepEqual(projectVideoMarkers(base,{anchors}),calibratedMarkers(detail,anchors));
+ assert.equal(projectVideoMarkers(base,{anchors,onlyNotes:true,notes})[0].index,2);
+ assert.equal(projectVideoMarkers(base,{anchors,provenance:'estimated'}).length,0);
+ assert.deepEqual(projectVideoMarkers(base,{provenance:'estimated'}),base);
+ const pdf={imported:{rallies:[{set:1,ours:1,theirs:0,kind:'aces',winner:'ours'},{set:2,ours:0,theirs:1,kind:'unknown',winner:'theirs'},{set:2,ours:1,theirs:1,kind:'unknown',winner:'ours'}]}};
+ const raw=importedVideoMarkers(pdf),points=[{index:1,seconds:2},{index:3,seconds:25}];
+ assert.deepEqual(projectVideoMarkers(raw,{imported:true,anchors:points,duration:10}),importedVideoMarkers(pdf,points,{duration:10}));
+ assert.deepEqual(projectVideoMarkers(raw,{imported:true,anchors:points,provenance:'unlinked'}).map(m=>[m.index,m.seconds]),[[2,null]]);
+ assert.deepEqual(projectVideoMarkers(raw,{imported:true,anchors:points,onlyLinked:true,duration:10}).map(m=>m.index),[1]);
+ const groups=videoReviewBySet(projectVideoMarkers(raw,{imported:true,anchors:points,duration:10}),notes);
+ assert.deepEqual(groups.map(s=>[s.set,s.total,s.manual,s.unlinked,s.outsideVideo,s.ours,s.theirs]),[[1,1,1,0,0,1,0],[2,2,1,1,1,1,1]]);
+ assert.equal(raw[1].seconds,null);assert.throws(()=>projectVideoMarkers(raw,{imported:true,anchors:[{index:4,seconds:1}]}));
+});

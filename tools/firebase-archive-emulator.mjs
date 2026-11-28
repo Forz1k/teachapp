@@ -1,8 +1,10 @@
 import './firebase-portal-emulator.mjs';
 import assert from 'node:assert/strict';
+import {readMediaVersion,writePublicMedia,removePublicMedia,fetchPublicMedia} from '../js/public-media.js';
+import {captureFrozenArchiveV3Backup,executeFrozenArchiveV3Copy,inspectArchiveV3Control,transitionArchiveV3,capturePublicMigrationBundle,verifyPublicMigrationBundle,preparePublicMigrationBundle,copyPublicMigrationBundle,activatePublicMigrationBundle} from '../js/public-archive.js';
 const user=async()=>{const r=await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:crypto.randomUUID()+'@example.test',password:crypto.randomUUID(),returnSecureToken:true})});assert.equal(r.status,200);return r.json();};
 const owner=await user(),other=await user(),page='publicTeams/'+owner.localId+'/team',archive='publicMatchArchive/'+owner.localId+'/team';
-async function call(method,path,value,token,expected,params={},headers={}){const u=new URL('http://127.0.0.1:9000/'+path+'.json');u.searchParams.set('ns','demo-teachapp-default-rtdb');for(const [k,v] of Object.entries(params))u.searchParams.set(k,v);if(token&&token!=='owner')u.searchParams.set('auth',token);const r=await fetch(u,{method,headers:{...headers,...(token==='owner'?{Authorization:'Bearer owner'}:{})},...(value===undefined?{}:{body:JSON.stringify(value)})});const data=await r.json();assert.equal(r.status,expected,method+' '+path+' '+JSON.stringify(data).slice(0,200));return {data,etag:r.headers.get('ETag')};}
+async function call(method,path,value,token,expected,params={},headers={}){const u=new URL('http://127.0.0.1:9000/'+(path?path+'.json':'.json'));u.searchParams.set('ns','demo-teachapp-default-rtdb');for(const [k,v] of Object.entries(params))u.searchParams.set(k,v);if(token&&token!=='owner')u.searchParams.set('auth',token);const r=await fetch(u,{method,headers:{...headers,...(token==='owner'?{Authorization:'Bearer owner'}:{})},...(value===undefined?{}:{body:JSON.stringify(value)})});const data=await r.json();assert.equal(r.status,expected,method+' '+path+' '+JSON.stringify(data).slice(0,200));return {data,etag:r.headers.get('ETag')};}
 await call('PUT','publishers/'+owner.localId,true,'owner',200);await call('PUT',page,{schema:1,team:'Synthetic',updatedAt:1},owner.idToken,200);
 const key=i=>String(1700000000000+i).padStart(16,'0')+'_r'+i,row=i=>({id:'r'+i,opponent:'Synthetic',startedAt:1700000000000+i,setsWon:{ours:1,theirs:0},sets:[{ours:25,theirs:19}]});
 for(let i=0;i<45;i++)await call('PUT',archive+'/'+key(i),row(i),owner.idToken,200);
@@ -20,7 +22,24 @@ const v=await call('GET',path,undefined,null,200,{}, {'X-Firebase-ETag':'true'})
 
 await call('PUT',page,{schema:1,team:'Synthetic',updatedAt:1},owner.idToken,200);
 const media='publicMedia/'+owner.localId+'/team',news={publicId:'news1',type:'announcement',title:'Synthetic announcement',body:'Synthetic text',date:'2026-11-25'},publicData={schema:1,news:[news],tournament:{name:'Synthetic tournament',system:'league',format:'score',rows:[{name:'Team A',place:1,group:0,played:1,won:1,draw:0,lost:0,points:3}],games:[{round:1,group:0,a:'Team A',b:'Team B',date:'2026-11-25',time:'10:00',venue:'Hall',status:'finished',score:'2:0'}]}};
-const mv=await call('GET',media,undefined,null,200,{}, {'X-Firebase-ETag':'true'});await call('PUT',media,publicData,owner.idToken,200,{}, {'If-Match':mv.etag});await call('GET',media,undefined,null,200);await call('PUT',media,publicData,other.idToken,401);await call('PUT',media,{...publicData,news:[{...news,privateNote:'secret'}]},owner.idToken,401);await call('PUT',media,{...publicData,news:Array(21).fill(news)},owner.idToken,401);await call('PUT',media,{...publicData,tournament:{...publicData.tournament,games:[{...publicData.tournament.games[0],studentId:'secret'}]}},owner.idToken,401);await call('PUT',media,publicData,owner.idToken,412,{}, {'If-Match':mv.etag});await call('DELETE',page,undefined,owner.idToken,200);await call('GET',media,undefined,null,401);console.log('PASS: bounded public media, no private fields, owner-only CAS, hidden on unpublish');
+const mv=await call('GET',media,undefined,null,200,{}, {'X-Firebase-ETag':'true'});await call('PUT',media,publicData,owner.idToken,200,{}, {'If-Match':mv.etag});await call('GET',media,undefined,null,200);await call('PUT',media,publicData,other.idToken,401);await call('PUT',media,{...publicData,news:[{...news,privateNote:'secret'}]},owner.idToken,401);await call('PUT',media,{...publicData,news:Array(21).fill(news)},owner.idToken,401);await call('PUT',media,{...publicData,tournament:{...publicData.tournament,games:[{...publicData.tournament.games[0],studentId:'secret'}]}},owner.idToken,401);await call('PUT',media,publicData,owner.idToken,412,{}, {'If-Match':mv.etag});
+const mediaUrl='https://demo-teachapp-default-rtdb.firebaseio.com/'+media+'.json';
+const mediaAdapter=(url,opts)=>{const u=new URL(url),local=new URL('http://127.0.0.1:9000'+u.pathname+u.search);local.searchParams.set('ns','demo-teachapp-default-rtdb');return fetch(local,opts);};
+const mediaBefore=await readMediaVersion(mediaUrl,mediaAdapter,owner.idToken);assert.equal(mediaBefore.exists,true);
+const mediaNext=await writePublicMedia(mediaUrl,{...publicData,news:[{...news,title:'Verified update'}]},owner.idToken,mediaBefore.etag,mediaAdapter);
+assert.equal(mediaNext.value.news[0].title,'Verified update');
+await assert.rejects(removePublicMedia(mediaUrl,owner.idToken,mediaBefore.etag,mediaAdapter),e=>e.status===412);
+await call('PATCH','',{[page]:null,[media]:publicData},owner.idToken,401);
+await call('DELETE',page,undefined,owner.idToken,200);await call('GET',media,undefined,null,401);
+await call('GET',media,undefined,other.idToken,401);await call('DELETE',media,undefined,other.idToken,401);
+await call('PUT',media,publicData,owner.idToken,401);
+const hidden=await readMediaVersion(mediaUrl,mediaAdapter,owner.idToken);assert.equal(hidden.exists,true);assert.equal(hidden.value.news[0].title,'Verified update');
+const purged=await removePublicMedia(mediaUrl,owner.idToken,hidden.etag,mediaAdapter);assert.equal(purged.exists,false);
+await call('PUT',page,{schema:1,team:'Synthetic',updatedAt:1},owner.idToken,200);
+assert.deepEqual(await fetchPublicMedia(mediaUrl,mediaAdapter),{schema:1,news:[]});
+await call('DELETE',page,undefined,owner.idToken,200);
+console.log('PASS: bounded public media, no private fields, owner-only CAS, verified hidden purge and no stale media on republish');
+
 
 await call('PUT',page,{schema:1,team:'Synthetic',updatedAt:1},owner.idToken,200);
 const v3='publicMatchArchiveV3/'+owner.localId+'/team',v3row=r=>({...r,sortKey:String(r.startedAt).padStart(16,'0')+'_'+r.id});
@@ -39,26 +58,58 @@ await call('PUT',parent,{schema:1,team:'Synthetic Migration',updatedAt:1},owner.
 for(let i=0;i<45;i++)await call('PUT',oldPath+'/'+key(i),row(i),owner.idToken,200);
 await call('GET',control,undefined,null,200);await call('PUT',control,{phase:'frozen',generation:1},other.idToken,401);await call('PUT',control,{phase:'v3',generation:1},owner.idToken,401);
 const initial=await call('GET',control,undefined,owner.idToken,200,{}, {'X-Firebase-ETag':'true'});assert.equal(initial.data,null);assert.ok(initial.etag);
-await call('PUT',control,{phase:'frozen',generation:1},owner.idToken,200,{}, {'If-Match':initial.etag});
+await call('PATCH','',{[control]:{phase:'frozen',generation:1},[oldPath+'/'+key(0)]:{...row(0),opponent:'Changed'}},owner.idToken,401);
+await call('PATCH','',{[control]:{phase:'frozen',generation:1},[newPath+'/r0']:v3row(row(0))},owner.idToken,401);
+const address='https://demo-teachapp-default-rtdb.firebaseio.com/'+parent+'.json';
+const adapter=(url,opts)=>{const u=new URL(url),local=new URL('http://127.0.0.1:9000'+u.pathname+u.search);local.searchParams.set('ns','demo-teachapp-default-rtdb');return fetch(local,opts);};
+const controlOpts={confirmed:true,getToken:async()=>owner.idToken,fetcher:adapter};
+const migrationMedia='publicMedia/'+owner.localId+'/'+slug;await call('PUT',migrationMedia,publicData,owner.idToken,200);
+await call('PATCH','',{[control]:{phase:'frozen',generation:1},[migrationMedia]:{...publicData,news:[]}},owner.idToken,401);
+const initialState=await inspectArchiveV3Control(address,controlOpts);assert.deepEqual(initialState,{phase:'legacy',generation:0});
+assert.deepEqual(await transitionArchiveV3(address,'freeze',{...controlOpts,expected:initialState}),{phase:'frozen',generation:1});
 await call('PUT',oldPath+'/'+key(1),{...row(1),opponent:'Changed'},owner.idToken,401);
 await call('DELETE',oldPath+'/'+key(2),undefined,owner.idToken,401);
-await call('PUT',newPath+'/r1',v3row({...row(1),opponent:'Fabricated'}),owner.idToken,401);
-await call('PUT',newPath+'/r1',v3row({...row(1),sets:[{ours:25,theirs:1}]}),owner.idToken,401);
-await call('PUT',newPath+'/r1',v3row(row(1)),owner.idToken,200);
+const marked=(i,generation)=>({...v3row(row(i)),migrationGeneration:generation});
+await call('PUT',newPath+'/r1',{...marked(1,1),opponent:'Fabricated'},owner.idToken,401);
+await call('PUT',newPath+'/r1',{...marked(1,1),sets:[{ours:25,theirs:1}]},owner.idToken,401);
 await call('PUT',newPath+'/r1',v3row(row(1)),owner.idToken,401);
+await call('PUT',newPath+'/r1',marked(1,2),owner.idToken,401);
+await call('PUT',newPath+'/r1',marked(1,1),other.idToken,401);
+await call('PUT',newPath+'/r1',marked(1,1),owner.idToken,200);
+await call('PUT',newPath+'/r1',marked(1,1),owner.idToken,401);
+// The same multi-location write may not thaw and copy using the old generation.
+await call('PATCH','',{[control]:{phase:'legacy',generation:2},[newPath+'/r2']:marked(2,1)},owner.idToken,401);
 await call('DELETE',newPath+'/r1',undefined,owner.idToken,401);
 await call('DELETE',control,undefined,owner.idToken,401);
 await call('PUT',control,{phase:'legacy',generation:1},owner.idToken,401);
 const frozen=await call('GET',control,undefined,owner.idToken,200,{}, {'X-Firebase-ETag':'true'});
-await call('PUT',control,{phase:'legacy',generation:2},owner.idToken,200,{}, {'If-Match':frozen.etag});
+assert.ok(frozen.etag);assert.deepEqual(await transitionArchiveV3(address,'thaw',{...controlOpts,expected:{phase:'frozen',generation:1}}),{phase:'legacy',generation:2});
+await call('PUT',newPath+'/r2',marked(2,1),owner.idToken,401);
 await call('PUT',oldPath+'/'+key(0),row(0),owner.idToken,200);
-await call('PUT',control,{phase:'frozen',generation:3},owner.idToken,200);
-for(let i=0;i<45;i++)if(i!==1){const current=await call('GET',newPath+'/r'+i,undefined,null,200,{}, {'X-Firebase-ETag':'true'});assert.equal(current.data,null);await call('PUT',newPath+'/r'+i,v3row(row(i)),owner.idToken,200,{}, {'If-Match':current.etag});}
+assert.deepEqual(await transitionArchiveV3(address,'freeze',{...controlOpts,expected:{phase:'legacy',generation:2}}),{phase:'frozen',generation:3});
+await call('PUT',newPath+'/r2',marked(2,1),owner.idToken,401);
+await call('PUT',migrationMedia,{...publicData,news:[]},owner.idToken,401);await call('DELETE',migrationMedia,undefined,owner.idToken,401);
+const bundle=await capturePublicMigrationBundle(address,controlOpts),bundleReport=await verifyPublicMigrationBundle(bundle);assert.equal(bundleReport.news,1);assert.equal(bundleReport.tournament,true);assert.equal(bundleReport.generation,3);
+const altered=structuredClone(bundle);altered.media.value.news[0].title='tampered';await assert.rejects(verifyPublicMigrationBundle(altered),/Контрольная сумма/);
+const backup=bundle.archive;
+await assert.rejects(transitionArchiveV3(address,'activate',{...controlOpts,expected:{phase:'frozen',generation:3},backup}),/не совпадают/);
+assert.deepEqual(await inspectArchiveV3Control(address,controlOpts),{phase:'frozen',generation:3});
+assert.equal(backup.source.length,45);assert.equal(backup.destination.length,1);
+const opts={confirmed:true,getToken:async()=>owner.idToken,fetcher:adapter,batchLimit:20};
+const firstCopy=await copyPublicMigrationBundle(address,bundle,opts);assert.equal(firstCopy.copied,20);assert.equal(firstCopy.remaining,24);
+const secondCopy=await executeFrozenArchiveV3Copy(address,backup,{...opts,batchLimit:50});assert.equal(secondCopy.copied,24);assert.equal(secondCopy.complete,true);
+const retryCopy=await executeFrozenArchiveV3Copy(address,backup,opts);assert.equal(retryCopy.copied,0);assert.equal(retryCopy.complete,true);
 const migrated=[];let cursor=null;
 for(;;){const page=(await call('GET',newPath,undefined,null,200,{orderBy:'"sortKey"',limitToLast:cursor?'41':'40',...(cursor?{endAt:JSON.stringify(cursor)}:{})})).data;const rows=Object.values(page||{}).sort((a,b)=>b.sortKey.localeCompare(a.sortKey));if(cursor)assert.equal(rows.shift()?.sortKey,cursor);migrated.push(...rows);if(rows.length<40)break;cursor=rows.at(-1).sortKey;}
-assert.equal(migrated.length,45);for(const v of migrated){const i=Number(v.id.slice(1));assert.deepEqual(v,v3row(row(i)));}
-const ready=await call('GET',control,undefined,owner.idToken,200,{}, {'X-Firebase-ETag':'true'});await call('PUT',control,{phase:'v3',generation:4},owner.idToken,200,{}, {'If-Match':ready.etag});
+assert.equal(migrated.length,45);for(const v of migrated){const i=Number(v.id.slice(1));assert.deepEqual(v,marked(i,i===1?1:3));}
+await assert.rejects(transitionArchiveV3(address,'activate',{...controlOpts,expected:{phase:'frozen',generation:1},backup}),/Поколение/);
+assert.equal((await preparePublicMigrationBundle(address,bundle,controlOpts)).complete,true);
+await call('PATCH','',{[control]:{phase:'v3',generation:4},[migrationMedia]:{...publicData,news:[]}},owner.idToken,401);
+assert.deepEqual(await activatePublicMigrationBundle(address,bundle,{...controlOpts,expected:{phase:'frozen',generation:3}}),{phase:'v3',generation:4});
+assert.deepEqual((await call('GET',migrationMedia,undefined,null,200)).data,publicData);await call('PUT',migrationMedia,{...publicData,news:[{...news,title:'After cutover'}]},owner.idToken,200);console.log('RC7 PUBLIC MIGRATION PASS: combined archive/media snapshot, frozen media fence, atomic multi-location rejection, copy and activation, media unchanged through cutover.');
 await call('PUT',oldPath+'/'+key(0),row(0),owner.idToken,401);await call('PUT',control,{phase:'legacy',generation:5},owner.idToken,401);
+await call('PUT',newPath+'/r999',marked(999,3),owner.idToken,401);
 await call('PUT',newPath+'/r1',v3row({...row(1),opponent:'Corrected'}),owner.idToken,200);
+assert.equal((await call('GET',newPath+'/r1',undefined,null,200)).data.migrationGeneration,undefined);
 await call('GET',oldPath+'/'+key(1),undefined,null,401);await call('GET',oldPath,undefined,null,401,{orderBy:'"$key"',limitToLast:'40'});assert.equal((await call('GET',oldPath+'/'+key(1),undefined,owner.idToken,200)).data.opponent,'Synthetic');assert.deepEqual((await call('GET',control,undefined,null,200)).data,{phase:'v3',generation:4});
 console.log('V3 MIGRATION BARRIER PASS: owner-only monotonic state, V2 freeze, exact create-only copies, 45 verified rows, pre-cutover thaw, irreversible activation and legacy owner recovery read; public stale path denied.');

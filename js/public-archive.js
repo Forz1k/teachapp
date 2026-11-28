@@ -1,5 +1,6 @@
 // Public archive v2: score-only projection. Never stores a private match record.
 import {viewerPageLink,resultOutcome} from './public-portal.js';
+import {mediaTarget,readMediaVersion,createMediaBackup,verifyMediaBackup} from './public-media.js';
 const id=/^[A-Za-z0-9_-]{1,100}$/,key=/^\d{16}_[A-Za-z0-9_-]{1,100}$/;
 const validScore=x=>Number.isInteger(x)&&x>=0&&x<=9999;
 export function archiveProjection(r){
@@ -129,7 +130,8 @@ function checkedV3Target(target){
  if(archiveV3Target(u.href.replace('/publicMatchArchiveV3/','/publicTeams/'))!==u.href)throw Error('Некорректный адрес архива V3');return u.href;
 }
 export function archiveV3Projection(row){const value=archiveProjection(row);return {...value,sortKey:archiveKey(value)};}
-function checkedV3Row(raw,recordId){const row=archiveV3Projection(raw);if(row.id!==recordId||raw.sortKey!==row.sortKey)throw Error('Некорректная запись архива V3');return row;}
+const validMigrationGeneration=n=>Number.isInteger(n)&&n>=1&&n<=1000000;
+function checkedV3Row(raw,recordId){const row=archiveV3Projection(raw);if(row.id!==recordId||raw.sortKey!==row.sortKey||Object.hasOwn(raw,'migrationGeneration')&&!validMigrationGeneration(raw.migrationGeneration))throw Error('Некорректная запись архива V3');return row;}
 export function archiveV3Page(raw,options={}){
  const index=Object.create(null);
  for(const [recordId,value] of Object.entries(raw||{})){const row=checkedV3Row(value,recordId);if(Object.hasOwn(index,row.sortKey))throw Error('Дубликат результата V3');index[row.sortKey]=row;}
@@ -154,8 +156,9 @@ export function planArchiveV3Migration(rows){const {rows:merged,conflicts}=merge
 function exactArchiveFields(value,fields){
  return !!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join('|')===fields.slice().sort().join('|');
 }
-function assertMigrationShape(value,version){
+function assertMigrationShape(value,version,{remote=false}={}){
  const allowed=version===2?['id','opponent','sets','setsWon','startedAt']:['id','opponent','sets','setsWon','sortKey','startedAt'];
+ if(remote&&version===3&&value&&Object.hasOwn(value,'migrationGeneration')&&validMigrationGeneration(value.migrationGeneration))allowed.push('migrationGeneration');
  if(!exactArchiveFields(value,allowed)||!exactArchiveFields(value.setsWon,['ours','theirs'])||
     !value.sets||typeof value.sets!=='object'||Object.values(value.sets).some(s=>!exactArchiveFields(s,['ours','theirs'])))
   throw Error('Некорректная запись при миграции');
@@ -164,7 +167,7 @@ function migrationRows(raw,version,limit){
  if(raw===null)return [];
  if(!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).length>limit)throw Error('Некорректная страница миграции');
  return Object.entries(raw).map(([k,value])=>{
-  assertMigrationShape(value,version);
+  assertMigrationShape(value,version,{remote:true});
   const r=version===2?archiveProjection(value):checkedV3Row(value,k);
   if(version===2&&archiveKey(r)!==k)throw Error('Некорректная запись при миграции');
   return {...archiveV3Projection(r)};
@@ -294,4 +297,144 @@ export async function routedArchiveFind(route,row,fetcher=fetch){
 export async function routedArchiveWrite(route,row,value,token,etag,fetcher=fetch){
  requireWritableArchive(route);
  return route.version===3?writeArchiveV3Record(route.target,row.id,value,token,etag,fetcher):writeArchiveRecord(route.target,archiveKey(row),value,token,etag,fetcher);
+}
+
+/** Read-only preflight for an operator-selected portal and a saved frozen
+ * backup. A resumed copy may have added exact records, but neither the source
+ * nor previously backed up destination records may have changed or vanished.
+ * This is not a lease: a later writer must enforce the generation on-server. */
+export async function prepareFrozenArchiveV3Copy(address,backup,{fetcher=fetch,maxRecords=5000}={}){
+ const saved=await verifyFrozenArchiveV3Backup(backup);
+ const canonical=archiveTarget(address).replace('/publicMatchArchive/','/publicTeams/');
+ if(saved.address!==canonical)throw Error('Резервная копия принадлежит другому порталу');
+ if(saved.requiresReview)throw Error('В резервной копии есть конфликты миграции');
+ const current=await captureFrozenArchiveV3Backup(canonical,{fetcher,maxRecords});
+ if(current.generation!==saved.generation)throw Error('Поколение миграции изменилось');
+ // Compare canonical verified records, not untrusted property ordering.
+ if(JSON.stringify(backupRows(backup.source))!==JSON.stringify(current.source))throw Error('Исходный архив изменился после резервирования');
+ const report=await verifyFrozenArchiveV3Backup(current);
+ if(report.requiresReview)throw Error('Обнаружены конфликты миграции');
+ const byId=new Map(current.destination.map(r=>[r.id,r]));
+ for(const previous of backupRows(backup.destination,{uniqueIds:true})){
+  if(!byId.has(previous.id)||!equalArchiveResult(previous,byId.get(previous.id)))throw Error('Целевой архив изменился после резервирования');
+ }
+ return {address:canonical,generation:current.generation,backupSha256:backup.sha256,currentSha256:current.sha256,sourceCount:report.sourceCount,destinationCount:report.destinationCount,ready:report.ready,identical:report.identical,complete:report.ready.length===0&&report.sourceCount===report.destinationCount};
+}
+
+/** Bounded, explicitly confirmed copy of score-only rows from a verified
+ * frozen backup. Every write is a create-only ETag CAS and carries the exact
+ * frozen generation, enforced by candidate Firebase rules. No activation,
+ * overwrite, delete, or automatic retry. Re-run preflight to resume. */
+export async function executeFrozenArchiveV3Copy(address,backup,{confirmed=false,getToken,fetcher=fetch,maxRecords=5000,batchLimit=50}={}){
+ if(confirmed!==true||typeof getToken!=='function')throw Error('Требуется явное подтверждение переноса и авторизация владельца');
+ if(!Number.isInteger(batchLimit)||batchLimit<1||batchLimit>50)throw Error('Некорректный размер партии переноса');
+ const plan=await prepareFrozenArchiveV3Copy(address,backup,{fetcher,maxRecords});
+ const target=archiveV3Target(plan.address);let copied=0;
+ for(const row of plan.ready.slice(0,batchLimit)){
+  // If another operator copied an exact row first, it can be acknowledged;
+  // conflicting data is never overwritten.
+  const route=await resolveArchiveRoute(plan.address,{fetcher});
+  if(route.phase!=='frozen'||route.generation!==plan.generation)throw Error('Поколение миграции изменилось');
+  const current=await readArchiveV3Version(target,row.id,fetcher);
+  if(current.value){
+   if(!equalArchiveResult(current.value,row))throw Error('Обнаружен конфликт миграции');
+   continue;
+  }
+  const token=await getToken();
+  if(typeof token!=='string'||!token)throw Error('Требуется авторизация владельца');
+  const url=new URL(v3RecordUrl(target,row.id));url.searchParams.set('auth',token);
+  await request(url.href,{method:'PUT',headers:{'If-Match':current.etag,'Content-Type':'application/json'},body:JSON.stringify({...archiveV3Projection(row),migrationGeneration:plan.generation})},fetcher);
+  copied++;
+ }
+ const after=await prepareFrozenArchiveV3Copy(plan.address,backup,{fetcher,maxRecords});
+ // Do not report an acknowledgement as success until the complete source
+ // and destination were checked again under the same frozen generation.
+ const remaining=after.ready.length;
+ const pending=new Set(after.ready.map(r=>r.id));
+ if(plan.ready.slice(0,batchLimit).some(r=>pending.has(r.id)))throw Error('Не удалось подтвердить копирование результатов');
+ return {address:plan.address,generation:plan.generation,copied,remaining,complete:after.complete,sourceCount:after.sourceCount,destinationCount:after.destinationCount};
+}
+
+/** Authenticated, fail-closed migration control read. Unlike viewer routing,
+ * permission errors are not treated as legacy. */
+async function readMigrationControl(address,getToken,fetcher){
+ if(typeof getToken!=='function')throw Error('Требуется авторизация владельца');
+ const url=new URL(archiveRouteTarget(address)),token=await getToken();
+ if(typeof token!=='string'||!token)throw Error('Требуется авторизация владельца');
+ url.searchParams.set('auth',token);
+ const {value,etag}=await request(url.href,{headers:{'X-Firebase-ETag':'true'}},fetcher);
+ if(!etag||value!==null&&(!exactArchiveFields(value,['phase','generation'])||!['legacy','frozen','v3'].includes(value.phase)||!validMigrationGeneration(value.generation)))throw Error('Некорректное состояние миграции');
+ return {state:value||{phase:'legacy',generation:0},etag};
+}
+export async function inspectArchiveV3Control(address,{getToken,fetcher=fetch}={}){
+ return (await readMigrationControl(address,getToken,fetcher)).state;
+}
+/** One explicit CAS transition; activation additionally requires the
+ * independent frozen backup and fresh full equality. No automatic retry. */
+export async function transitionArchiveV3(address,action,{expected,backup,confirmed=false,getToken,fetcher=fetch,maxRecords=5000}={}){
+ if(confirmed!==true||!['freeze','thaw','activate'].includes(action)||!exactArchiveFields(expected,['phase','generation'])||!Number.isInteger(expected.generation)||expected.generation<0||expected.generation>=1000000||!['legacy','frozen'].includes(expected.phase))throw Error('Требуется подтверждение и актуальное состояние миграции');
+ const nextPhase={freeze:'frozen',thaw:'legacy',activate:'v3'}[action];
+ if(expected.phase!==(action==='freeze'?'legacy':'frozen'))throw Error('Недопустимый переход миграции');
+ const canonical=archiveTarget(address).replace('/publicMatchArchive/','/publicTeams/');
+ const current=await readMigrationControl(canonical,getToken,fetcher);
+ if(current.state.phase!==expected.phase||current.state.generation!==expected.generation)throw Error('Поколение миграции изменилось');
+ if(action==='activate'){
+  const plan=await prepareFrozenArchiveV3Copy(canonical,backup,{fetcher,maxRecords});
+  if(plan.generation!==expected.generation||!plan.complete)throw Error('Архивы не совпадают полностью; активация запрещена');
+ }
+ const next={phase:nextPhase,generation:expected.generation+1};
+ const url=new URL(archiveRouteTarget(canonical)),token=await getToken();
+ if(typeof token!=='string'||!token)throw Error('Требуется авторизация владельца');
+ url.searchParams.set('auth',token);
+ await request(url.href,{method:'PUT',headers:{'If-Match':current.etag,'Content-Type':'application/json'},body:JSON.stringify(next)},fetcher);
+ const after=await readMigrationControl(canonical,getToken,fetcher);
+ if(after.state.phase!==next.phase||after.state.generation!==next.generation)throw Error('Не удалось подтвердить переход миграции');
+ return after.state;
+}
+
+// RC7: one independently saved public-only bundle for the frozen archive and
+// media center. Candidate rules fence media updates through both old/new
+// generation states. Existing score-only primitives remain available for
+// review and old backup inspection, not the operator's activation path.
+const publicMigrationFormat='teachapp-public-migration-rc7-1';
+async function readMigrationMedia(address,{getToken,fetcher=fetch}={}){
+ if(typeof getToken!=='function')throw Error('Требуется авторизация владельца');
+ const token=await getToken();if(typeof token!=='string'||!token)throw Error('Требуется авторизация владельца');
+ return createMediaBackup(address,await readMediaVersion(mediaTarget(address),fetcher,token));
+}
+export async function capturePublicMigrationBundle(address,opts={}){
+ const first=await inspectArchiveV3Control(address,opts);
+ if(first.phase!=='frozen')throw Error('Требуется замороженный архив и медиацентр');
+ const media=await readMigrationMedia(address,opts),archive=await captureFrozenArchiveV3Backup(address,opts),again=await readMigrationMedia(address,opts),last=await inspectArchiveV3Control(address,opts);
+ if(last.phase!=='frozen'||last.generation!==first.generation||archive.generation!==first.generation||media.sha256!==again.sha256)throw Error('Архив или медиацентр изменились во время резервирования');
+ const payload={format:publicMigrationFormat,archive,media};
+ return {...payload,sha256:await migrationChecksum({format:payload.format,archive:archive.sha256,media:media.sha256})};
+}
+export async function verifyPublicMigrationBundle(bundle){
+ if(!exactArchiveFields(bundle,['format','archive','media','sha256'])||bundle.format!==publicMigrationFormat||typeof bundle.sha256!=='string'||!/^[a-f0-9]{64}$/.test(bundle.sha256))throw Error('Требуется совместная копия архива и медиацентра RC7');
+ const archive=await verifyFrozenArchiveV3Backup(bundle.archive),media=await verifyMediaBackup(archive.address,bundle.media);
+ if(bundle.sha256!==await migrationChecksum({format:bundle.format,archive:bundle.archive.sha256,media:bundle.media.sha256}))throw Error('Контрольная сумма общей копии не совпадает');
+ return {address:archive.address,generation:archive.generation,sourceCount:archive.sourceCount,destinationCount:archive.destinationCount,news:media.value.news.length,tournament:!!media.value.tournament,requiresReview:archive.requiresReview};
+}
+export async function preparePublicMigrationBundle(address,bundle,opts={}){
+ const saved=await verifyPublicMigrationBundle(bundle),canonical=archiveTarget(address).replace('/publicMatchArchive/','/publicTeams/');
+ if(saved.address!==canonical)throw Error('Копия принадлежит другому порталу');
+ const before=await inspectArchiveV3Control(canonical,opts);
+ if(before.phase!=='frozen'||before.generation!==saved.generation)throw Error('Поколение миграции изменилось');
+ const plan=await prepareFrozenArchiveV3Copy(canonical,bundle.archive,opts),media=await readMigrationMedia(canonical,opts),after=await inspectArchiveV3Control(canonical,opts);
+ if(media.sha256!==bundle.media.sha256)throw Error('Медиацентр изменился после резервирования');
+ if(after.phase!=='frozen'||after.generation!==saved.generation)throw Error('Поколение миграции изменилось');
+ return {...plan,news:saved.news,tournament:saved.tournament,bundleSha256:bundle.sha256};
+}
+export async function copyPublicMigrationBundle(address,bundle,opts={}){
+ if(opts.confirmed!==true)throw Error('Требуется явное подтверждение переноса');
+ await preparePublicMigrationBundle(address,bundle,opts);
+ const result=await executeFrozenArchiveV3Copy(address,bundle.archive,opts);
+ await preparePublicMigrationBundle(address,bundle,opts);return result;
+}
+export async function activatePublicMigrationBundle(address,bundle,opts={}){
+ if(opts.confirmed!==true)throw Error('Требуется явное подтверждение переноса');
+ const plan=await preparePublicMigrationBundle(address,bundle,opts);
+ if(!plan.complete)throw Error('Архивы не совпадают полностью; активация запрещена');
+ return transitionArchiveV3(address,'activate',{...opts,backup:bundle.archive});
 }

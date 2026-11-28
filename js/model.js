@@ -71,6 +71,10 @@ export const endOfMonth = (y, m) => `${y}-${String(m).padStart(2, '0')}-${String
 /* ---------- учебный год и триместры ---------- */
 
 /** Значения по умолчанию. Реальный год учитель задаёт в настройках. */
+// Explicit school-owned settings. Unknown and device/owner fields stay outside
+// the school-key partition. Classifying fields is not a semantic data audit.
+export const schoolSettingsFields=Object.freeze(['year','trimesters','rules','holidays','healthGroups']);
+export const schoolSettingsProjection=settings=>({id:'settings',...Object.fromEntries(schoolSettingsFields.filter(k=>Object.hasOwn(settings||{},k)).map(k=>[k,structuredClone(settings[k])]))});
 export function defaultSettings() {
   return {
     id: 'settings',

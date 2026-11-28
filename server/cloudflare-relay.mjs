@@ -16,7 +16,7 @@ function json(status,body,extra={}){
  return new Response(JSON.stringify(body),{status,headers:{...headers,'Content-Type':'application/json; charset=utf-8',...extra}});
 }
 function config(env){
- let origin,hashes,adminHash=null,fenceHashes={},verifyKeys={};
+ let origin,hashes,adminHash=null,fenceHashes={},verifyKeys={},migrationMode=null,migrationEndpoint=null;
  try{
   const url=new URL(env.TEACHAPP_SYNC_ORIGIN);
   if(url.protocol!=='https:'||url.origin!==env.TEACHAPP_SYNC_ORIGIN)throw Error();
@@ -34,16 +34,19 @@ function config(env){
   // v2 is opt-in. A legacy shared token can never become the administrative token.
   if(validDeviceHash(admin)&&!seen.has(admin))adminHash=admin;
   if(!seen.size&&!adminHash)throw Error();
-  // Only the separately configured synthetic source may expose migration routes.
-  if(env.TEACHAPP_SYNC_MIGRATION_SYNTHETIC==='true'){
+  const synthetic=env.TEACHAPP_SYNC_MIGRATION_SYNTHETIC==='true',candidate=env.TEACHAPP_SYNC_MIGRATION_CANDIDATE==='true';
+  if(synthetic&&candidate)throw Error();
+  if(candidate){const endpoint=new URL(env.TEACHAPP_SYNC_MIGRATION_ENDPOINT);if(endpoint.protocol!=='https:'||endpoint.origin!==env.TEACHAPP_SYNC_MIGRATION_ENDPOINT||endpoint.port||loopback.includes(endpoint.hostname)||endpoint.origin===origin)throw Error();migrationEndpoint=endpoint.origin;}
+  if(synthetic||candidate){
+   migrationMode=candidate?'candidate':'lab';
    const f=JSON.parse(env.TEACHAPP_SYNC_FENCE_HASHES||'{}');
    if(!f||typeof f!=='object'||Array.isArray(f)||Object.keys(f).some(a=>!areas.includes(a)))throw Error();
    for(const [area,h] of Object.entries(f)){if(!validDeviceHash(h)||seen.has(h)||h===adminHash||!hashes[area].length&&!adminHash)throw Error();seen.add(h);fenceHashes[area]=h;}
    verifyKeys=normalizeReceiptKeys(JSON.parse(env.TEACHAPP_SYNC_ROLLBACK_VERIFY_KEYS||'{}'));
-   if(!verifyKeys||Object.keys(verifyKeys).some(a=>!fenceHashes[a]))throw Error();
+   if(!verifyKeys||Object.keys(verifyKeys).some(a=>!fenceHashes[a])||candidate&&(!Object.keys(fenceHashes).length||Object.keys(fenceHashes).some(a=>!verifyKeys[a])))throw Error();
   }
  }catch{return null;}
- return {origin,hashes,adminHash,fenceHashes,verifyKeys};
+ return {origin,hashes,adminHash,fenceHashes,verifyKeys,migrationMode,migrationEndpoint};
 }
 function equal(a,b){let diff=0;for(let i=0;i<64;i++)diff|=a.charCodeAt(i)^b.charCodeAt(i);return diff===0;}
 async function authorized(request,hashes){
@@ -94,7 +97,7 @@ export default {async fetch(request,env){
  const settings=config(env);
  if(!settings)return json(503,{error:'not-configured'});
  if((v2Snapshot||devices||pairV2||fenceStatus?.[1]==='2')&&!settings.adminHash)return json(404,{error:'route'});
- if((fence||resume||fenceStatus)&&(env.TEACHAPP_SYNC_MIGRATION_SYNTHETIC!=='true'||!loopback.includes(url.hostname)||url.protocol!=='http:'||!settings.fenceHashes[fence?.[1]??resume?.[1]??fenceStatus[2]]))return json(404,{error:'route'});
+ if((fence||resume||fenceStatus)&&(!(settings.migrationMode==='lab'&&loopback.includes(url.hostname)&&url.protocol==='http:'||settings.migrationMode==='candidate'&&url.origin===settings.migrationEndpoint)||!settings.fenceHashes[fence?.[1]??resume?.[1]??fenceStatus[2]]))return json(404,{error:'route'});
  if(resume&&!settings.verifyKeys[resume[1]])return json(404,{error:'route'});
  const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};
  if(origin&&origin!==settings.origin)return json(403,{error:'origin'});

@@ -2,6 +2,208 @@ import test from 'node:test';import assert from 'node:assert/strict';import {dis
 const root='a'.repeat(64);let seq=0;function fixture(){const work=new Map();let now=10000000;return {clock:n=>now+=n,call:(workspaceId,method,path,auth,body={})=>{const n=++seq,secret=n.toString(16).padStart(64,'0'),issued={id:'member-'+n,secret,hash:secret};const r=dispatchWorkspace(work.get(workspaceId),{workspaceId,method,path,auth,rootHash:root,body,issued,now});if(r.changed)work.set(workspaceId,r.state);return r;}};}
 test('workspace isolation, server-bound roles, single-use invitations and private projections',()=>{const f=fixture(),c=f.call,owner=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;assert.equal(c('other','GET','me',owner).status,401);assert.equal(c('w','GET','me',root).status,401);assert.equal(c('w','POST','teams',owner,{id:'t',name:'Team',players:[{id:'p',name:'Player',number:1},{id:'q',name:'Other',number:2}]}).status,201);assert.equal(c('w','POST','teams',owner,{id:'bad',name:'Team',players:[{id:'x',name:'Name',number:1,health:'PRIVATE'}]}).status,400);
 const a=c('w','POST','invite',owner,{role:'athlete',teamId:'t',athleteId:'p',matchId:null}).body.invite;assert.equal(c('other','POST','redeem',a).status,401);const p=c('w','POST','redeem',a).body;assert.equal(c('w','POST','redeem',a).status,401);assert.equal(c('w','GET','teams/t/roster',p.token).status,403);assert.equal(c('w','GET','teams/t/athletes/q',p.token).status,403);
-const record={expectedRevision:0,goals:[{id:'g',name:'Goal',status:'active',to:'2026-12-01'}],assignments:[{id:'a',name:'Assignment',due:'2026-12-01',status:'open'}],schedule:[]};assert.equal(c('w','PUT','teams/t/athletes/p',owner,record).status,200);assert.equal(c('w','PUT','teams/t/athletes/p',p.token,record).status,403);assert.equal(c('w','PUT','teams/t/athletes/p',owner,record).status,409);assert.equal(c('w','GET','teams/t/athletes/missing',p.token).status,403);assert.equal(c('w','GET','teams/t/athletes/p',p.token).body.record.goals[0].id,'g');assert.equal(c('w','POST','teams/t/athletes/p/respond',p.token,{assignmentId:'a',response:'ready'}).status,200);assert.equal(c('w','PUT','teams/t/athletes/p',owner,{...record,expectedRevision:1}).status,409);assert.equal(c('w','GET','teams',p.token).status,403);assert.equal(c('w','GET','members',p.token).status,403);assert.equal(c('w','POST','revoke',owner,{memberId:p.member.id}).status,200);assert.equal(c('w','GET','me',p.token).status,401);assert.ok(!JSON.stringify(c('w','GET','audit',owner).body).includes(p.token));});
+const record={expectedRevision:0,goals:[{id:'g',name:'Goal',status:'active',to:'2026-12-01'}],assignments:[{id:'a',name:'Assignment',due:'2026-12-01',status:'open'}],schedule:[]};assert.equal(c('w','PUT','teams/t/athletes/p',owner,record).status,200);assert.equal(c('w','PUT','teams/t/athletes/p',p.token,record).status,403);assert.equal(c('w','PUT','teams/t/athletes/p',owner,record).status,409);assert.equal(c('w','GET','teams/t/athletes/missing',p.token).status,403);assert.equal(c('w','GET','teams/t/athletes/p',p.token).body.record.goals[0].id,'g');assert.equal(c('w','POST','teams/t/athletes/p/respond',p.token,{assignmentId:'a',response:'ready',expectedRevision:1}).status,200);assert.equal(c('w','PUT','teams/t/athletes/p',owner,{...record,expectedRevision:1}).status,409);assert.equal(c('w','GET','teams',p.token).status,403);assert.equal(c('w','GET','members',p.token).status,403);assert.equal(c('w','POST','revoke',owner,{memberId:p.member.id}).status,200);assert.equal(c('w','GET','me',p.token).status,401);assert.ok(!JSON.stringify(c('w','GET','audit',owner).body).includes(p.token));});
 test('exclusive lease, CAS, idempotency and expiry fenced by generation',()=>{const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;c('w','POST','teams',o,{id:'t',name:'Team',players:[]});c('w','POST','matches',o,{id:'m',teamId:'t',opponent:'Other',bestOf:3,target:15,decider:15});const getAssistant=()=>c('w','POST','redeem',c('w','POST','invite',o,{role:'assistant',teamId:'t',athleteId:null,matchId:'m'}).body.invite).body;const a=getAssistant(),b=getAssistant(),path='matches/m/';let lease=c('w','POST',path+'acquire',a.token,{expectedRevision:0}).body.match;assert.equal(c('w','POST',path+'acquire',b.token,{expectedRevision:0}).status,409);let packet={expectedRevision:0,generation:lease.generation,opId:'op1',side:'ours'};assert.equal(c('w','POST',path+'score',a.token,packet).body.match.score.ours,1);assert.equal(c('w','POST',path+'score',a.token,packet).body.replayed,true);assert.equal(c('w','POST',path+'score',a.token,{...packet,side:'theirs'}).status,409);assert.equal(c('w','POST',path+'score',b.token,{...packet,opId:'other'}).status,409);f.clock(46000);const newLease=c('w','POST',path+'acquire',b.token,{expectedRevision:1}).body.match;assert.ok(newLease.generation>lease.generation);assert.equal(c('w','POST',path+'score',a.token,{...packet,expectedRevision:1,opId:'old'}).status,409);assert.equal(c('w','POST',path+'score',b.token,{...packet,expectedRevision:1,generation:newLease.generation,opId:'new'}).body.match.score.ours,2);assert.equal(c('w','POST','revoke',o,{memberId:b.member.id}).status,200);assert.equal(c('w','POST',path+'renew',b.token,{generation:newLease.generation}).status,401);assert.equal(c('w','POST',path+'acquire',o,{expectedRevision:2}).status,200);});
 test('expiry, role injection and bounds fail closed',()=>{const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;c('w','POST','teams',o,{id:'t',name:'Team',players:[]});assert.equal(c('w','POST','invite',o,{role:'owner',teamId:'t',athleteId:null,matchId:null}).status,400);const a=c('w','POST','invite',o,{role:'coach',teamId:'t',athleteId:null,matchId:null}).body.invite;f.clock(600001);assert.equal(c('w','POST','redeem',a).status,401);f.clock(7*86400000);assert.equal(c('w','GET','me',o).status,401);});
+
+test('Owner lists and cancels unused invitations without leaking token hashes',()=>{const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;c('w','POST','teams',o,{id:'t',name:'Team',players:[]});const invite=()=>c('w','POST','invite',o,{role:'coach',teamId:'t',athleteId:null,matchId:null}).body.invite;const used=invite(),coach=c('w','POST','redeem',used).body.token,active=invite();const list=c('w','GET','invites',o).body.invites;assert.equal(list.length,1);assert.ok(!JSON.stringify(list).includes(active));assert.equal(c('w','GET','invites',coach).status,403);assert.equal(c('w','POST','invites/cancel',coach,{inviteId:list[0].id}).status,403);assert.equal(c('w','POST','invites/cancel',o,{inviteId:list[0].id}).status,200);assert.equal(c('w','POST','redeem',active).status,401);assert.equal(c('w','GET','invites',o).body.invites.length,0);assert.equal(c('w','POST','invites/cancel',o,{inviteId:list[0].id}).status,404);});
+
+test('Athlete acknowledgement is revision-scoped and is invalidated when the assignment changes',()=>{const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;c('w','POST','teams',o,{id:'t',name:'T',players:[{id:'p',name:'P',number:1}]});const p=c('w','POST','redeem',c('w','POST','invite',o,{role:'athlete',teamId:'t',athleteId:'p',matchId:null}).body.invite).body.token,path='teams/t/athletes/p',body={expectedRevision:0,goals:[],assignments:[{id:'a',name:'First',due:'2026-12-01',status:'open'}],schedule:[]};assert.equal(c('w','PUT',path,o,body).status,200);assert.equal(c('w','POST',path+'/respond',p,{assignmentId:'a',response:'ready',expectedRevision:1}).status,200);assert.equal(c('w','PUT',path,o,{...body,expectedRevision:2,assignments:[{...body.assignments[0],name:'Revised'}]}).status,200);const current=c('w','GET',path,p).body;assert.equal(current.revision,3);assert.equal(current.responses.length,0);assert.equal(c('w','POST',path+'/respond',p,{assignmentId:'a',response:'ready',expectedRevision:1}).status,409);assert.equal(c('w','POST',path+'/respond',p,{assignmentId:'a',response:'ready',expectedRevision:3}).status,200);});
+
+test('Assistant roster access ends when assigned live match finishes',()=>{const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;c('w','POST','teams',o,{id:'t',name:'Team',players:[{id:'p',name:'P',number:1}]});c('w','POST','matches',o,{id:'m',teamId:'t',opponent:'Other',bestOf:3,target:15,decider:15});const a=c('w','POST','redeem',c('w','POST','invite',o,{role:'assistant',teamId:'t',athleteId:null,matchId:'m'}).body.invite).body.token;assert.equal(c('w','GET','teams/t/roster',a).status,200);assert.equal(c('w','GET','teams',a).body.teams.length,1);const path='matches/m/',m=c('w','POST',path+'acquire',o,{expectedRevision:0}).body.match;let revision=0;const op=(action,side)=>c('w','POST',path+action,o,{generation:m.generation,expectedRevision:revision,opId:'op'+revision++,...(side?{side}:{})});for(let i=0;i<15;i++)assert.equal(op('score','ours').status,200);assert.equal(op('next').status,200);for(let i=0;i<15;i++)assert.equal(op('score','ours').status,200);assert.equal(op('finish').status,200);assert.equal(c('w','GET','teams/t/roster',a).status,403);assert.equal(c('w','GET','teams',a).body.teams.length,0);assert.equal(c('w','GET','matches',a).body.matches.length,0);assert.equal(c('w','GET','teams/t/roster',o).status,200);});
+
+test('Workspace-specific recovery survives expiry, revokes previous owner and pending invites, and does not expose hashes',()=>{const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token,other=c('x','POST','bootstrap',root,{name:'Other'}).body.token,code='b'.repeat(64),next='c'.repeat(64);c('w','POST','teams',o,{id:'t',name:'Team',players:[]});c('w','POST','matches',o,{id:'m',teamId:'t',opponent:'Guest',bestOf:3,target:15,decider:15});const lease=c('w','POST','matches/m/acquire',o,{expectedRevision:0}).body.match,inv=c('w','POST','invite',o,{role:'coach',teamId:'t',athleteId:null,matchId:null}).body.invite;assert.equal(c('w','POST','owner/recovery',o,{recoveryHash:root,expectedVersion:0}).status,400);assert.equal(c('w','POST','owner/recovery',o,{recoveryHash:code,expectedVersion:0}).status,200);assert.deepEqual(c('w','GET','owner/recovery',o).body,{configured:true,version:1});assert.equal(c('w','POST','owner/recovery',o,{recoveryHash:next,expectedVersion:0}).status,409);assert.equal(c('x','POST','recover',code).status,401);assert.equal(c('w','GET','me',code).status,401);const recovered=c('w','POST','recover',code);assert.equal(recovered.status,201);const token=recovered.body.token;assert.equal(c('w','GET','me',o).status,401);assert.equal(c('w','POST','redeem',inv).status,401);const m=c('w','GET','matches/m',token).body.match;assert.equal(m.lease,null);assert.ok(m.generation>lease.generation);assert.equal(c('x','GET','me',other).status,200);assert.doesNotMatch(JSON.stringify(c('w','GET','audit',token).body),new RegExp(code));f.clock(8*86400000);assert.equal(c('w','GET','me',token).status,401);const renewed=c('w','POST','recover',code).body.token;assert.equal(c('w','POST','owner/recovery',renewed,{recoveryHash:next,expectedVersion:1}).status,200);assert.equal(c('w','POST','recover',code).status,401);assert.equal(c('w','POST','recover',next).status,201);});
+
+import {workspaceRatePolicy,consumeWorkspaceRate} from '../server/platform-api.mjs';
+test('Rate buckets are separate per authenticated member, operation class and workspace',()=>{
+ const now=10000000,auth='b'.repeat(64),other='c'.repeat(64),mk=(id,tokenHash)=>({id,tokenHash,expiresAt:now+1000,revokedAt:null}),s={members:[mk('a',auth),mk('b',other)],invites:[]};
+ const input={auth,rootHash:root,method:'GET',path:'me',now};const read=workspaceRatePolicy(s,input),write=workspaceRatePolicy(s,{...input,method:'POST',path:'matches/m/score'}),access=workspaceRatePolicy(s,{...input,method:'POST',path:'revoke'});
+ assert.deepEqual([read.limit,write.limit,access.limit],[240,180,24]);assert.notEqual(read.key,workspaceRatePolicy(s,{...input,auth:other}).key);assert.notEqual(read.key,write.key);
+ assert.equal(workspaceRatePolicy(s,{...input,auth:'d'.repeat(64)}),null);assert.equal(workspaceRatePolicy(null,input),null);assert.equal(workspaceRatePolicy(s,{...input,now:now+1000}),null);
+ let b=null;for(let i=0;i<access.limit;i++){b=consumeWorkspaceRate(access,b,now);assert.equal(b.allowed,true);}
+ assert.deepEqual(consumeWorkspaceRate(access,b,now),{allowed:false,start:now,count:24,retryAfter:60});assert.equal(consumeWorkspaceRate(access,b,now+59999).retryAfter,1);assert.equal(consumeWorkspaceRate(access,b,now+60000).count,1);assert.equal(consumeWorkspaceRate(access,b,now-1000).allowed,false);
+});
+test('Session revocation and explicit prune do not remove active members or match history',()=>{
+ const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;c('w','POST','teams',o,{id:'t',name:'T',players:[]});c('w','POST','matches',o,{id:'m',teamId:'t',opponent:'Guest',bestOf:3,target:15,decider:15});
+ const issue=()=>c('w','POST','redeem',c('w','POST','invite',o,{role:'assistant',teamId:'t',athleteId:null,matchId:'m'}).body.invite).body;
+ const a=issue(),b=issue(),lease=c('w','POST','matches/m/acquire',a.token,{expectedRevision:0}).body.match;
+ assert.equal(c('w','POST','session/revoke',o).status,409);assert.equal(c('w','POST','session/revoke',a.token).status,200);assert.equal(c('w','GET','me',a.token).status,401);assert.equal(c('w','GET','matches/m',o).body.match.lease,null);assert.ok(c('w','GET','matches/m',o).body.match.generation>lease.generation);
+ assert.deepEqual(c('w','GET','members/prunable',o).body.members.map(m=>m.id),[a.member.id]);
+ assert.equal(c('w','POST','members/prune',o,{memberIds:[a.member.id,b.member.id]}).status,409);assert.equal(c('w','POST','members/prune',b.token,{memberIds:[a.member.id]}).status,403);
+ assert.equal(c('w','POST','members/prune',o,{memberIds:[a.member.id]}).body.removed,1);assert.equal(c('w','GET','me',b.token).status,200);assert.equal(c('w','GET','members',o).body.members.length,2);assert.ok(c('w','GET','audit',o).body.events.some(e=>e.action==='session.revoke'));
+});
+
+test('Unauthorized match creation does not disclose existence of a foreign team',()=>{
+ const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ for(const id of ['mine','foreign'])assert.equal(c('w','POST','teams',o,{id,name:id,players:[{id:'p',name:'P',number:1}]}).status,201);
+ const redeem=(role,teamId,athleteId=null,matchId=null)=>c('w','POST','redeem',c('w','POST','invite',o,{role,teamId,athleteId,matchId}).body.invite).body.token;
+ const packet={id:'m',teamId:'mine',opponent:'Guest',bestOf:3,target:15,decider:15};
+ const coach=redeem('coach','mine'),athlete=redeem('athlete','mine','p');
+ assert.equal(c('w','POST','matches',coach,packet).status,201);
+ const assistant=redeem('assistant','mine',null,'m');
+ for(const actor of [coach,athlete,assistant]){
+  const foreign=c('w','POST','matches',actor,{...packet,id:'new',teamId:'foreign'}),missing=c('w','POST','matches',actor,{...packet,id:'new',teamId:'missing'});
+  assert.deepEqual(foreign,missing);assert.deepEqual(foreign,{status:403,body:{error:'forbidden'}});
+ }
+ assert.equal(c('w','POST','matches',o,{...packet,id:'new',teamId:'missing'}).status,404);
+ assert.equal(c('w','GET','matches',o).body.matches.length,1);
+});
+test('Finishing a match atomically invalidates only its outstanding assistant invitations',()=>{
+ const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ c('w','POST','teams',o,{id:'t',name:'T',players:[]});
+ for(const id of ['m','other'])assert.equal(c('w','POST','matches',o,{id,teamId:'t',opponent:'Other',bestOf:3,target:15,decider:15}).status,201);
+ const invite=matchId=>c('w','POST','invite',o,{role:'assistant',teamId:'t',athleteId:null,matchId}).body.invite;
+ const stale=invite('m'),unrelated=invite('other'),active= c('w','POST','redeem',invite('m')).body.token;
+ const path='matches/m/',lease=c('w','POST',path+'acquire',o,{expectedRevision:0}).body.match;
+ let rev=0;const op=(action,side)=>c('w','POST',path+action,o,{generation:lease.generation,expectedRevision:rev,opId:'finish-test-'+rev++,...(side?{side}:{})});
+ assert.equal(c('w','POST',path+'finish',o,{generation:lease.generation,expectedRevision:0,opId:'premature'}).status,409);
+ assert.equal(c('w','GET','invites',o).body.invites.length,2);
+ for(let i=0;i<15;i++)assert.equal(op('score','ours').status,200);assert.equal(op('next').status,200);
+ for(let i=0;i<15;i++)assert.equal(op('score','ours').status,200);assert.equal(op('finish').status,200);
+ assert.deepEqual(c('w','GET','invites',o).body.invites.map(i=>i.matchId),['other']);
+ assert.equal(c('w','POST','redeem',stale).status,401);assert.equal(c('w','GET','teams/t/roster',active).status,403);
+ assert.equal(c('w','POST','redeem',unrelated).status,201);assert.equal(c('w','GET','matches/m',o).body.match.status,'finished');
+});
+
+test('Synthetic notification subscriptions are explicit, CAS-bound to their own session, and never expose endpoint data',()=>{
+ const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ c('w','POST','teams',o,{id:'t',name:'Team',players:[{id:'p',name:'P',number:1}]});
+ c('w','POST','matches',o,{id:'m',teamId:'t',opponent:'Guest',bestOf:3,target:15,decider:15});
+ const member=(role,athleteId=null,matchId=null)=>c('w','POST','redeem',c('w','POST','invite',o,{role,teamId:'t',athleteId,matchId}).body.invite).body;
+ const a=member('athlete','p'),b=member('coach'),helper=member('assistant',null,'m');
+ const endpoint='https://push.example.invalid/sub/00000000-0000-4000-8000-000000000001';
+ const packet={expectedRevision:0,enabled:true,endpoint};
+ assert.deepEqual(c('w','GET','notification-lab',a.token).body,{revision:0,enabled:false,expiresAt:null});
+ for(const p of [{...packet,endpoint:'https://real.example/sub/id'},{...packet,memberId:b.member.id},{...packet,endpoint:endpoint+'?key=secret'},{...packet,enabled:false}])assert.equal(c('w','PUT','notification-lab',a.token,p).status,400);
+ const enabled=c('w','PUT','notification-lab',a.token,packet);
+ assert.equal(enabled.status,200);assert.equal(enabled.body.revision,1);assert.equal(enabled.body.enabled,true);assert.equal(enabled.body.expiresAt,a.member.expiresAt);
+ assert.equal(c('w','GET','notification-lab',b.token).body.enabled,false);
+ assert.equal(c('w','GET','notification-lab',helper.token).status,403);
+ assert.equal(c('w','PUT','notification-lab',helper.token,packet).status,403);
+ assert.equal(c('other','GET','notification-lab',a.token).status,401);
+ assert.equal(c('w','PUT','notification-lab',a.token,packet).status,409);
+ assert.equal(c('w','PUT','notification-lab',a.token,{...packet,expectedRevision:1}).changed,false);
+ for(const path of ['members','audit'])assert.doesNotMatch(JSON.stringify(c('w','GET',path,o).body),/push\.example\.invalid|notificationLab/);
+ assert.deepEqual(c('w','PUT','notification-lab',a.token,{expectedRevision:1,enabled:false,endpoint:null}).body,{revision:2,enabled:false,expiresAt:null});
+ const again=c('w','PUT','notification-lab',a.token,{...packet,expectedRevision:2});assert.equal(again.body.revision,3);
+ const revoked=c('w','POST','revoke',o,{memberId:a.member.id});assert.ok(!revoked.state.members.find(m=>m.id===a.member.id).notificationLab);
+ assert.equal(c('w','GET','notification-lab',a.token).status,401);
+ assert.equal(c('w','PUT','notification-lab',b.token,packet).status,200);
+ const self=c('w','POST','session/revoke',b.token);assert.ok(!self.state.members.find(m=>m.id===b.member.id).notificationLab);
+ assert.equal(c('w','GET','notification-lab',b.token).status,401);
+ const code='b'.repeat(64);assert.equal(c('w','POST','owner/recovery',o,{expectedVersion:0,recoveryHash:code}).status,200);
+ assert.equal(c('w','PUT','notification-lab',o,packet).status,200);
+ const recovered=c('w','POST','recover',code);assert.equal(recovered.status,201);assert.ok(!recovered.state.members.some(m=>m.notificationLab));
+ assert.equal(c('w','GET','notification-lab',recovered.body.token).body.enabled,false);
+ f.clock(8*86400000);assert.equal(c('w','GET','notification-lab',recovered.body.token).status,401);
+});
+
+test('Synthetic athlete notice is scoped, coalesced, expires and is revision-bound before acknowledgement',()=>{
+ const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ c('w','POST','teams',o,{id:'t',name:'Team',players:[{id:'p',name:'P',number:1},{id:'q',name:'Q',number:2}]});
+ c('w','POST','teams',o,{id:'other',name:'Other',players:[{id:'p',name:'P',number:1}]});
+ const member=(teamId,athleteId)=>c('w','POST','redeem',c('w','POST','invite',o,{role:'athlete',teamId,athleteId,matchId:null}).body.invite).body.token;
+ const a=member('t','p'),b=member('t','p'),q=member('t','q'),other=member('other','p');
+ const endpoint='https://push.example.invalid/sub/00000000-0000-4000-8000-000000000001';
+ const sub=(token,expectedRevision=0,enabled=true)=>c('w','PUT','notification-lab',token,{expectedRevision,enabled,endpoint:enabled?endpoint:null});
+ const read=token=>c('w','GET','notification-lab/inbox',token).body;
+ const ack=(token,expectedRevision,sequence)=>c('w','POST','notification-lab/ack',token,{expectedRevision,sequence});
+ const packet=expectedRevision=>({expectedRevision,goals:[],assignments:[{id:'assignment',name:'PRIVATE',due:'2026-12-01',status:'open'}],schedule:[]});
+ for(const token of [a,q,other])assert.equal(sub(token).status,200);
+ assert.equal(c('w','GET','notification-lab/inbox',o).status,403);
+ assert.equal(c('w','PUT','teams/t/athletes/p',o,packet(0)).status,200);
+ const first=read(a);assert.equal(first.pending,true);assert.equal(first.sequence,1);assert.deepEqual(first.notice,{title:'TeachApp',body:'В личном кабинете есть обновления.'});
+ assert.doesNotMatch(JSON.stringify(first),/PRIVATE|assignment|example.invalid/);
+ for(const token of [b,q,other])assert.equal(read(token).pending,false);
+ assert.equal(c('w','PUT','teams/t/athletes/p',o,packet(0)).status,409);assert.deepEqual(read(a),first);
+ assert.equal(sub(b).status,200);assert.equal(read(b).pending,false);
+ assert.equal(c('w','PUT','teams/t/athletes/p',o,packet(1)).status,200);
+ assert.equal(read(a).sequence,2);assert.equal(read(b).sequence,1);assert.equal(ack(a,1,1).status,409);
+ assert.equal(ack(a,1,2).body.pending,false);assert.equal(ack(a,1,2).changed,false);assert.equal(read(b).pending,true);
+ assert.equal(sub(b,1,false).status,200);assert.equal(sub(b,2).status,200);assert.equal(read(b).pending,false);assert.equal(ack(b,1,1).status,409);
+ assert.equal(c('w','PUT','teams/t/athletes/p',o,packet(2)).status,200);assert.equal(read(a).pending,true);
+ f.clock(86400000);assert.equal(read(a).pending,false);assert.equal(ack(a,1,3).status,409);
+ assert.equal(c('w','POST','session/revoke',a).status,200);assert.equal(c('w','GET','notification-lab/inbox',a).status,401);
+});
+
+test('Owner-only synthetic delivery claims persist atomically, are fenced and never acknowledge inbox',()=>{
+ const f=fixture(),c=f.call,o=c('delivery','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ c('delivery','POST','teams',o,{id:'t',name:'Team',players:[{id:'p',name:'P',number:1}]});
+ const athlete=c('delivery','POST','redeem',c('delivery','POST','invite',o,{role:'athlete',teamId:'t',athleteId:'p',matchId:null}).body.invite).body;
+ const endpoint='https://push.example.invalid/sub/00000000-0000-4000-8000-000000000001';
+ c('delivery','PUT','notification-lab',athlete.token,{expectedRevision:0,enabled:true,endpoint});
+ const update=expectedRevision=>c('delivery','PUT','teams/t/athletes/p',o,{expectedRevision,goals:[],assignments:[],schedule:[]});
+ const op=(route,body,token=o,workspace='delivery')=>c(workspace,'POST','notification-lab/delivery/'+route,token,body);
+ const packet={memberId:athlete.member.id,expectedRevision:1,sequence:1};
+ assert.equal(update(0).status,200);
+ assert.equal(op('claim',packet,athlete.token).status,403);assert.equal(op('claim',packet,o,'other').status,401);
+ assert.equal(op('claim',{...packet,endpoint}).status,400);
+ const a=op('claim',packet);assert.equal(a.body.status,'claimed');assert.equal(a.changed,true);assert.equal(a.state.members.find(m=>m.id===packet.memberId).notificationLab.notice.delivery.phase,'sending');
+ const ticket=a.body.ticket;
+ assert.equal(op('claim',packet).body.status,'busy');assert.deepEqual(op('check',{memberId:packet.memberId,ticket}).body,{current:true});
+ assert.equal(op('finish',{memberId:packet.memberId,ticket,outcome:'accepted',retryAfter:null}).body.status,'accepted');
+ assert.equal(op('claim',packet).body.status,'settled');
+ assert.equal(c('delivery','GET','notification-lab/inbox',athlete.token).body.pending,true);
+ assert.equal(update(1).status,200);
+ assert.equal(op('finish',{memberId:packet.memberId,ticket,outcome:'subscription-gone',retryAfter:null}).status,409);
+ const b=op('claim',{...packet,sequence:2}).body.ticket;
+ f.clock(30000);assert.equal(op('check',{memberId:packet.memberId,ticket:b}).body.current,false);
+ assert.equal(op('claim',{...packet,sequence:2}).body.status,'unknown');
+ assert.equal(op('claim',{...packet,sequence:2}).body.status,'settled');
+ assert.equal(op('finish',{memberId:packet.memberId,ticket:b,outcome:'accepted',retryAfter:null}).status,409);
+ assert.doesNotMatch(JSON.stringify(c('delivery','GET','audit',o).body),/example.invalid|leaseUntil|tokenHash/);
+});
+
+test('RC6 rotates session secret atomically without expanding role or absolute expiry',()=>{
+ const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ assert.equal(c('w','POST','session/rotate',o).status,409);
+ const recovery='b'.repeat(64);
+ assert.equal(c('w','POST','owner/recovery',o,{recoveryHash:recovery,expectedVersion:0}).status,200);
+ assert.equal(c('w','POST','teams',o,{id:'t',name:'Team',players:[{id:'p',name:'P',number:1}]}).status,201);
+ const invite=()=>c('w','POST','invite',o,{role:'coach',teamId:'t',athleteId:null,matchId:null}).body.invite;
+ const original=c('w','POST','redeem',invite()).body,pending=invite();
+ const endpoint='https://push.example.invalid/sub/00000000-0000-4000-8000-000000000001';
+ assert.equal(c('w','PUT','notification-lab',original.token,{expectedRevision:0,enabled:true,endpoint}).status,200);
+ assert.equal(c('w','POST','session/rotate',original.token,{role:'owner'}).status,400);
+ assert.equal(c('other','POST','session/rotate',original.token).status,401);
+ f.clock(1000);
+ const rotated=c('w','POST','session/rotate',original.token);
+ assert.equal(rotated.status,200);
+ assert.deepEqual(rotated.body.member,original.member);
+ assert.notEqual(rotated.body.token,original.token);
+ assert.equal(c('w','GET','me',original.token).status,401);
+ assert.equal(c('w','POST','session/rotate',original.token).status,401);
+ assert.equal(c('w','GET','members',rotated.body.token).status,403);
+ assert.deepEqual(c('w','GET','notification-lab',rotated.body.token).body,{revision:2,enabled:false,expiresAt:null});
+ assert.equal(c('w','PUT','notification-lab',rotated.body.token,{expectedRevision:1,enabled:true,endpoint}).status,409);
+ assert.equal(workspaceRatePolicy(rotated.state,{auth:rotated.body.token,rootHash:root,method:'POST',path:'session/rotate',now:10001000}).limit,24);
+ const owner=c('w','POST','session/rotate',o);
+ assert.equal(owner.status,200);
+ assert.equal(c('w','POST','redeem',pending).status,401);
+ assert.equal(c('w','GET','me',o).status,401);
+ assert.equal(c('w','GET','me',rotated.body.token).status,200);
+ const audit=JSON.stringify(c('w','GET','audit',owner.body.token).body);
+ assert.match(audit,/session.rotate/);
+ for(const secret of [o,original.token,rotated.body.token,owner.body.token,recovery])assert.ok(!audit.includes(secret));
+ f.clock(7*86400000);
+ assert.equal(c('w','POST','session/rotate',rotated.body.token).status,401);
+ assert.equal(c('w','POST','recover',recovery).status,201);
+});
+test('RC6 rotating an assistant fences the old LIVE lease and preserves score and scope',()=>{
+ const f=fixture(),c=f.call,o=c('w','POST','bootstrap',root,{name:'Synthetic'}).body.token;
+ c('w','POST','teams',o,{id:'t',name:'T',players:[]});
+ c('w','POST','matches',o,{id:'m',teamId:'t',opponent:'Guest',bestOf:3,target:15,decider:15});
+ const a=c('w','POST','redeem',c('w','POST','invite',o,{role:'assistant',teamId:'t',athleteId:null,matchId:'m'}).body.invite).body;
+ const path='matches/m/',lease=c('w','POST',path+'acquire',a.token,{expectedRevision:0}).body.match;
+ const score={expectedRevision:0,generation:lease.generation,opId:'r1',side:'ours'};
+ assert.equal(c('w','POST',path+'score',a.token,score).status,200);
+ const next=c('w','POST','session/rotate',a.token).body;
+ assert.deepEqual(next.member,a.member);
+ assert.equal(c('w','POST',path+'score',a.token,score).status,401);
+ const match=c('w','GET','matches/m',o).body.match;
+ assert.equal(match.score.ours,1);assert.equal(match.revision,1);assert.equal(match.lease,null);assert.ok(match.generation>lease.generation);
+ assert.equal(c('w','POST',path+'score',next.token,{...score,opId:'r2',expectedRevision:1}).status,409);
+ const renewed=c('w','POST',path+'acquire',next.token,{expectedRevision:1}).body.match;
+ assert.equal(c('w','POST',path+'score',next.token,{...score,opId:'r2',expectedRevision:1,generation:renewed.generation}).body.match.score.ours,2);
+ assert.equal(c('w','GET','members',next.token).status,403);
+});

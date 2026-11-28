@@ -151,3 +151,129 @@ test('Frozen archive backup refuses non-frozen state, changed generation and unk
  const bad=async()=>new Response(JSON.stringify({[archiveKey(a)]:a}));
  await assert.rejects(inspectArchiveV3Migration(address,{fetcher:bad}),/Некорректная запись/);
 });
+
+import {prepareFrozenArchiveV3Copy} from '../js/public-archive.js';
+test('V3 copy preflight verifies saved source and allows exact resumed copies without writing',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,source=Array.from({length:45},(_,i)=>row(i));
+ let generation=7,dest=source.slice(0,40),calls=0;
+ const fetcher=async(url,opt)=>{
+  calls++;assert.ok(!opt.method||opt.method==='GET');
+  if(new URL(url).pathname.includes('/archiveMigration/'))return new Response(JSON.stringify({phase:'frozen',generation}));
+  return migrationFetcher(source,dest)(url,opt);
+ };
+ const backup=await captureFrozenArchiveV3Backup(address,{fetcher});
+ dest=source.slice(0,43);
+ const plan=await prepareFrozenArchiveV3Copy(address,backup,{fetcher});
+ assert.equal(plan.generation,7);assert.equal(plan.backupSha256,backup.sha256);assert.equal(plan.ready.length,2);assert.equal(plan.identical.length,43);assert.equal(plan.complete,false);
+ dest=source.slice();assert.equal((await prepareFrozenArchiveV3Copy(address,backup,{fetcher})).complete,true);
+ const before=calls;const other=address.replace(/\/[^/]+\.json$/,'/other-team.json');
+ await assert.rejects(prepareFrozenArchiveV3Copy(other,backup,{fetcher}),/другому порталу/);assert.equal(calls,before);
+ generation++;await assert.rejects(prepareFrozenArchiveV3Copy(address,backup,{fetcher}),/Поколение/);
+ generation--;dest=source.slice(1);await assert.rejects(prepareFrozenArchiveV3Copy(address,backup,{fetcher}),/Целевой архив/);
+ dest=source.slice();source[44]={...source[44],opponent:'Changed'};
+ await assert.rejects(prepareFrozenArchiveV3Copy(address,backup,{fetcher}),/Исходный архив/);
+});
+test('V3 copy preflight rejects destination conflicts and corrupt backup before any network call',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,source=[row(1),row(2)];let dest=[row(1)],calls=0;
+ const fetcher=async(url,opt)=>{
+  calls++;assert.ok(!opt.method||opt.method==='GET');
+  if(new URL(url).pathname.includes('/archiveMigration/'))return new Response(JSON.stringify({phase:'frozen',generation:1}));
+  return migrationFetcher(source,dest)(url,opt);
+ };
+ const backup=await captureFrozenArchiveV3Backup(address,{fetcher}),bad=structuredClone(backup);bad.sha256='0'.repeat(64);
+ const before=calls;await assert.rejects(prepareFrozenArchiveV3Copy(address,bad,{fetcher}),/сумма/);assert.equal(calls,before);
+ dest=[row(1),row(99)];await assert.rejects(prepareFrozenArchiveV3Copy(address,backup,{fetcher}),/конфликты/);
+ dest=[{...row(1),opponent:'Changed'}];await assert.rejects(prepareFrozenArchiveV3Copy(address,backup,{fetcher}),/конфликты/);
+});
+
+import {executeFrozenArchiveV3Copy} from '../js/public-archive.js';
+test('V3 executor is explicit, bounded and generation-bound; resumes verified exact copies',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,source=[row(1),row(2),row(3)],dest=new Map();let generation=3,phase='frozen',writes=0,requests=0,ack=true;
+ const fetcher=async(url,opt)=>{
+  requests++;const u=new URL(url);
+  if(u.pathname.includes('/archiveMigration/'))return new Response(JSON.stringify({phase,generation}));
+  if(u.pathname.includes('/publicMatchArchiveV3/')&&/\/r\d+\.json$/.test(u.pathname)){
+   const rid=u.pathname.split('/').at(-1).slice(0,-5);
+   if(opt.method==='PUT'){
+    const body=JSON.parse(opt.body);assert.equal(body.id,rid);assert.equal(body.migrationGeneration,3);assert.equal(opt.headers['If-Match'],'null_etag');assert.equal(u.searchParams.get('auth'),'synthetic');assert.equal(opt.referrerPolicy,'no-referrer');assert.ok(!Object.hasOwn(body,'private'));
+    if(phase!=='frozen'||generation!==body.migrationGeneration)return new Response('{}',{status:401});
+    if(dest.has(rid))return new Response('{}',{status:412});
+    writes++;if(ack)dest.set(rid,body);return new Response(JSON.stringify(body));
+   }
+   return new Response(JSON.stringify(dest.get(rid)||null),{headers:{ETag:'null_etag'}});
+  }
+  if(u.pathname.includes('/publicMatchArchiveV3/')){
+   const rows=[...dest.values()].sort((a,b)=>a.sortKey.localeCompare(b.sortKey));
+   return new Response(JSON.stringify(rows.length?Object.fromEntries(rows.map(r=>[r.id,r])):null));
+  }
+  return migrationFetcher(source,[])(url,opt);
+ };
+ const backup=await captureFrozenArchiveV3Backup(address,{fetcher}),opts={confirmed:true,getToken:async()=> 'synthetic',fetcher,batchLimit:1};
+ const before=requests;await assert.rejects(executeFrozenArchiveV3Copy(address,backup,{...opts,confirmed:false}),/подтверждение/);assert.equal(requests,before);
+ const first=await executeFrozenArchiveV3Copy(address,backup,opts);assert.equal(first.copied,1);assert.equal(first.remaining,2);assert.equal(first.complete,false);
+ const second=await executeFrozenArchiveV3Copy(address,backup,{...opts,batchLimit:50});assert.equal(second.copied,2);assert.equal(second.complete,true);
+ assert.equal((await executeFrozenArchiveV3Copy(address,backup,opts)).copied,0);assert.equal(writes,3);
+ // A delayed write after the token is acquired is denied by the server.
+ dest.clear();await assert.rejects(executeFrozenArchiveV3Copy(address,backup,{...opts,getToken:async()=>{phase='legacy';generation=4;return 'synthetic';}}),e=>e.status===401);assert.equal(writes,3);
+ phase='frozen';generation=3;ack=false;await assert.rejects(executeFrozenArchiveV3Copy(address,backup,opts),/подтвердить копирование/);
+});
+test('V3 backup permits only known valid remote generation marker, never embeds it in score-only snapshot',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,a=archiveV3Projection(row(1));let marker=1;
+ const fetcher=async(url,opt)=>{
+  const u=new URL(url);if(u.pathname.includes('/archiveMigration/'))return new Response(JSON.stringify({phase:'frozen',generation:3}));
+  if(u.pathname.includes('/publicMatchArchiveV3/'))return new Response(JSON.stringify({[a.id]:{...a,migrationGeneration:marker}}));
+  return migrationFetcher([row(1)],[])(url,opt);
+ };
+ const backup=await captureFrozenArchiveV3Backup(address,{fetcher});assert.deepEqual(backup.destination,[a]);assert.equal((await verifyFrozenArchiveV3Backup(backup)).requiresReview,false);
+ for(const invalid of [0,1.5,'1',1000001]){marker=invalid;await assert.rejects(captureFrozenArchiveV3Backup(address,{fetcher}),/Некорректная запись/);}
+});
+
+import {inspectArchiveV3Control,transitionArchiveV3} from '../js/public-archive.js';
+test('V3 activation requires exact complete frozen backup and control CAS, never retries stale transition',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,source=[row(1),row(2)];let dest=[row(1)],state={phase:'frozen',generation:3},writes=0,calls=0,conflict=false;
+ const fetcher=async(url,opt)=>{
+  calls++;const u=new URL(url);
+  if(u.pathname.includes('/archiveMigration/')){
+   if(opt.method==='PUT'){
+    writes++;assert.equal(opt.headers['If-Match'],'control-3');assert.equal(u.searchParams.get('auth'),'synthetic');
+    if(conflict)return new Response('{}',{status:412});state=JSON.parse(opt.body);
+   }
+   return new Response(JSON.stringify(state),{headers:{ETag:'control-'+state.generation}});
+  }
+  return migrationFetcher(source,dest)(url,opt);
+ };
+ const backup=await captureFrozenArchiveV3Backup(address,{fetcher}),expected={...state},opts={confirmed:true,getToken:async()=> 'synthetic',fetcher,expected,backup};
+ const before=calls;await assert.rejects(transitionArchiveV3(address,'activate',{...opts,confirmed:false}),/подтверждение/);assert.equal(calls,before);
+ await assert.rejects(transitionArchiveV3(address,'activate',opts),/не совпадают/);assert.equal(writes,0);
+ dest=source.slice();conflict=true;await assert.rejects(transitionArchiveV3(address,'activate',opts),e=>e.status===412);assert.equal(writes,1);
+ conflict=false;assert.deepEqual(await transitionArchiveV3(address,'activate',opts),{phase:'v3',generation:4});assert.equal(writes,2);
+ await assert.rejects(transitionArchiveV3(address,'activate',opts),/Поколение/);assert.equal(writes,2);
+ await assert.rejects(inspectArchiveV3Control(address,{...opts,fetcher:async()=>new Response('{}',{status:401})}),e=>e.status===401);
+});
+test('V3 control freeze and thaw are explicit monotonic transitions using authenticated ETag',async()=>{
+ const address=viewerTarget('https://example.com/live/').address;let state=null,writes=0;
+ const fetcher=async(url,opt)=>{assert.equal(new URL(url).searchParams.get('auth'),'synthetic');if(opt.method==='PUT'){assert.equal(opt.headers['If-Match'],'tag');state=JSON.parse(opt.body);writes++;}return new Response(JSON.stringify(state),{headers:{ETag:'tag'}});};
+ const opts={confirmed:true,getToken:async()=> 'synthetic',fetcher},initial=await inspectArchiveV3Control(address,opts);assert.deepEqual(initial,{phase:'legacy',generation:0});
+ const frozen=await transitionArchiveV3(address,'freeze',{...opts,expected:initial});assert.deepEqual(frozen,{phase:'frozen',generation:1});
+ await assert.rejects(transitionArchiveV3(address,'freeze',{...opts,expected:initial}),/Поколение/);
+ assert.deepEqual(await transitionArchiveV3(address,'thaw',{...opts,expected:frozen}),{phase:'legacy',generation:2});assert.equal(writes,2);
+});
+
+import {capturePublicMigrationBundle,verifyPublicMigrationBundle,preparePublicMigrationBundle,activatePublicMigrationBundle} from '../js/public-archive.js';
+test('RC7 combined bundle refuses corrupt media, stale media, wrong generation and unconfirmed activation without writes',async()=>{
+ const address=viewerTarget('https://example.com/live/').address,source=[row(1)],dest=source.slice();
+ let state={phase:'frozen',generation:3},media={schema:1,news:[{publicId:'test',type:'news',title:'Synthetic',body:'Text',date:'2026-11-27'}]},calls=0,writes=0;
+ const fetcher=async(url,opt={})=>{calls++;const u=new URL(url);
+  if(u.pathname.includes('/archiveMigration/')){if(opt.method==='PUT'){writes++;state=JSON.parse(opt.body);}return new Response(JSON.stringify(state),{headers:{ETag:'control-'+state.generation}});}
+  if(u.pathname.includes('/publicMedia/')){assert.equal(u.searchParams.get('auth'),'synthetic');assert.notEqual(opt.method,'PUT');return new Response(JSON.stringify(media),{headers:{ETag:'media-tag'}});}
+  return migrationFetcher(source,dest)(url,opt);
+ };
+ const opts={getToken:async()=> 'synthetic',fetcher,confirmed:true,expected:{...state}},bundle=await capturePublicMigrationBundle(address,opts);
+ assert.equal((await verifyPublicMigrationBundle(bundle)).news,1);assert.equal((await preparePublicMigrationBundle(address,bundle,opts)).complete,true);
+ const bad=structuredClone(bundle);bad.media.value.news[0].title='Tampered';
+ const before=calls;await assert.rejects(activatePublicMigrationBundle(address,bad,opts),/Контрольная сумма/);assert.equal(calls,before);
+ await assert.rejects(activatePublicMigrationBundle(address,bundle,{...opts,confirmed:false}),/подтверждение/);assert.equal(calls,before);
+ const original=media;media={...media,news:[]};await assert.rejects(activatePublicMigrationBundle(address,bundle,opts),/Медиацентр изменился/);assert.equal(writes,0);
+ media=original;state={phase:'frozen',generation:5};await assert.rejects(activatePublicMigrationBundle(address,bundle,opts),/Поколение/);assert.equal(writes,0);
+ state=opts.expected;assert.deepEqual(await activatePublicMigrationBundle(address,bundle,opts),{phase:'v3',generation:4});assert.equal(writes,1);
+});

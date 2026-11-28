@@ -44,3 +44,60 @@ test('Сезон: интерфейс строит рейтинги, меняет
  assert.match(panel.textContent,/Сравнение игроков/);assert.match(panel.textContent,/Динамика · А/);assert.match(panel.textContent,/вне рейтинга/);
  dom.window.close();
 });
+
+test('Indexed seasonal test history equals individual scans for all methods, filters and edits',async()=>{
+ const {indexTestHistory,testHistory}=await import('../js/coach-tests.js');
+ const measure={kind:'measure',name:'Jump',protocol:'A',activityId:'jump',unit:'cm',direction:'higher'};
+ const other={...testPresets.serve,protocol:'Other'};
+ const sessions=[
+  s('z','2026-09-02',{a:result(10,7),b:result(5,5),outside:result(1,1)}),
+  s('a','2026-09-02',{a:result(20,15,true),c:result(10,10)}),
+  s('b','2026-09-01',{a:{status:'skipped'},b:{status:'restricted'}}),
+  s('q','2026-09-03',{a:result(10,0)},other),
+  s('m','2026-09-03',{a:{status:'done',adapted:false,value:40}},measure),
+  s('old','2026-08-01',{a:result(10,10)})
+ ];
+ const ids=['a','b','c','missing'];
+ for(const d of [testPresets.serve,other,measure])for(const range of [{},{from:'2026-09-02',to:'2026-09-03'},{from:'2027-01-01'}]){
+  const key=definitionKey(d),idx=indexTestHistory(sessions,ids,key,range);
+  assert.equal(idx.has('outside'),false);assert.equal(idx.size,4);
+  for(const id of ids)assert.deepEqual(idx.get(id),testHistory(sessions,id,range).filter(x=>definitionKey(x.definition)===key));
+ }
+ const key=definitionKey(testPresets.serve);
+ assert.deepEqual(indexTestHistory(sessions,[],key),new Map());
+ sessions[0]={...sessions[0],results:{b:result(5,5)}};
+ assert.deepEqual(indexTestHistory(sessions,ids,key).get('a'),testHistory(sessions,'a').filter(x=>definitionKey(x.definition)===key));
+ const comparison=testComparison({...view,tests:sessions},key,'success',{from:'2026-09-01',archived:true});
+ assert.equal(comparison.find(r=>r.player.id==='a').value,null);
+ assert.equal(comparison.find(r=>r.player.id==='c').value,100);
+});
+test('Seasonal history index enumerates each selected session result only once, never out-of-period or other methods',async()=>{
+ const {indexTestHistory}=await import('../js/coach-tests.js');
+ const players=Array.from({length:80},(_,i)=>'p'+i),key=definitionKey(testPresets.serve);
+ let scans=0;
+ const results=new Proxy(Object.fromEntries(players.slice(0,14).map(id=>[id,result(10,8)])),{ownKeys(target){scans++;return Reflect.ownKeys(target);}});
+ const sessions=Array.from({length:120},(_,i)=>s('s'+i,'2026-09-01',results,i%3===0?testPresets.serve:{...testPresets.serve,protocol:'Other'}));
+ sessions.push(s('old','2026-08-01',results));
+ const indexed=indexTestHistory(sessions,players,key,{from:'2026-09-01'});
+ assert.equal(scans,40);assert.equal(indexed.get('p0').length,40);assert.equal(indexed.get('p79').length,0);
+});
+
+test('Seasonal match comparison does not read detailed logs for excluded rosters',()=>{
+ const selected=m('2026-09-02',{a:{aces:3,points:5,serves:20,serveErrors:2}},{roster:['a']});
+ let detailReads=0;
+ const excluded=m('2026-09-02',{b:{points:8},c:{points:10}},{roster:['b','c']});
+ Object.defineProperty(excluded,'detail',{get(){detailReads++;return null;}});
+ const archive=Array.from({length:2000},()=>excluded);
+ const input={...view,matches:[...archive,selected]};
+ const filter={position:'setter',from:'2026-09-01'};
+ for(const metric of ['aces','points','assists','contribution','serveRate','pointsPer10','setPositiveRate','setErrorRate']){
+  assert.deepEqual(matchComparison(input,metric,filter),matchComparison({...input,matches:[selected]},metric,filter),metric);
+ }
+ assert.equal(detailReads,0,'no log reads for archived or position-excluded rosters');
+ assert.deepEqual(matchComparison(input,'pointsPer10',{position:'missing'}),[]);
+ assert.equal(detailReads,0);
+ // Including archived athletes brings their matches back into the calculation.
+ const included=matchComparison(input,'points',{...filter,archived:true});
+ assert.equal(included.find(r=>r.player.id==='c').total,archive.length);
+ assert.equal(included.find(r=>r.player.id==='c').value,20000);
+});

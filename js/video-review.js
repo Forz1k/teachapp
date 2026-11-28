@@ -13,12 +13,29 @@ export function validateVideoReview(r){
  const indices=new Set();for(const n of r.notes){if(!n||Object.keys(n).some(k=>!['index','text','favorite'].includes(k))||!Number.isInteger(n.index)||n.index<1||indices.has(n.index)||typeof n.text!=='string'||n.text.length>2000||typeof n.favorite!=='boolean')throw Error('Некорректная заметка');indices.add(n.index);}return r;
 }
 export function calibratedMarkers(detail,anchors=[],filters={}){
- const all=videoMarkers(detail,0,{});if(!anchors.length)return videoMarkers(detail,0,filters);validateVideoReview({id:'x',kind:'videoReview',matchId:'x',anchors,notes:[]});
- if(anchors.some(a=>a.index>all.length))throw Error('Контрольная точка отсутствует в протоколе');
- const points=anchors.map(a=>({...a,recorded:all[a.index-1].seconds}));for(let i=1;i<points.length;i++)if(points[i].recorded<=points[i-1].recorded)throw Error('Контрольные точки должны иметь различное время записи');
- const time=t=>{let a=points[0],b=points.at(-1);if(t<=a.recorded)return a.seconds+t-a.recorded;if(t>=b.recorded)return b.seconds+t-b.recorded;for(let i=1;i<points.length;i++){if(points[i].recorded>=t){a=points[i-1];b=points[i];break;}}return a.seconds+(t-a.recorded)*(b.seconds-a.seconds)/(b.recorded-a.recorded);};
- const exact=new Map(anchors.map(a=>[a.index,a.seconds]));
- const {kind='',side='',playerId='',duration=Infinity,set=0}=filters;return all.map(m=>({...m,seconds:exact.get(m.index)??time(m.seconds),alignment:exact.has(m.index)?'manual':m.index>anchors[0].index&&m.index<anchors.at(-1).index?'interpolated':'extrapolated'})).filter(m=>(!set||m.set===set)&&(!kind||m.kind===kind)&&(!side||m.side===side)&&(!playerId||m.playerId===playerId)&&m.seconds>=0&&m.seconds<=duration);
+ if(!anchors.length)return videoMarkers(detail,0,filters);
+ return projectVideoMarkers(videoMarkers(detail,0),{...filters,anchors});
+}
+// Project a view-local rally snapshot; PDF anchors never interpolate.
+export function projectVideoMarkers(base,{anchors=[],firstAt=0,imported=false,kind='',side='',playerId='',duration=Infinity,set=0,provenance='',notes=[],onlyNotes=false,onlyFavorites=false,onlyLinked=false}={}){
+ validateVideoReview({id:'x',kind:'videoReview',matchId:'x',anchors,notes:[]});
+ if(anchors.some(a=>a.index>base.length))throw Error('Контрольная точка отсутствует в протоколе');
+ if(!imported&&!anchors.length&&(!Number.isFinite(firstAt)||firstAt<0))throw Error('Введите время первого записанного события в видео, в секундах');
+ const exact=new Map(anchors.map(a=>[a.index,a.seconds])),byNote=new Map(notes.map(n=>[n.index,n]));
+ const points=imported?[]:anchors.map(a=>({...a,recorded:base[a.index-1].seconds}));
+ for(let i=1;i<points.length;i++)if(points[i].recorded<=points[i-1].recorded)throw Error('Контрольные точки должны иметь различное время записи');
+ const time=t=>{if(!points.length)return t+firstAt;let a=points[0],b=points.at(-1);if(t<=a.recorded)return a.seconds+t-a.recorded;if(t>=b.recorded)return b.seconds+t-b.recorded;for(let i=1;i<points.length;i++){if(points[i].recorded>=t){a=points[i-1];b=points[i];break;}}return a.seconds+(t-a.recorded)*(b.seconds-a.seconds)/(b.recorded-a.recorded);};
+ const rows=[];
+ for(const m of base){
+  if(set&&m.set!==set||kind&&m.kind!==kind||side&&m.side!==side||playerId&&m.playerId!==playerId)continue;
+  const n=byNote.get(m.index);if(onlyNotes&&!n?.text?.trim()||onlyFavorites&&!n?.favorite)continue;
+  const manual=exact.has(m.index),seconds=manual?exact.get(m.index):imported?null:time(m.seconds),alignment=manual?'manual':imported?'unlinked':!points.length?'recorded':m.index>points[0].index&&m.index<points.at(-1).index?'interpolated':'extrapolated';
+  if(!imported&&(seconds<0||seconds>duration))continue;
+  const outsideVideo=seconds!==null&&seconds>duration;
+  if(onlyLinked&&(seconds===null||outsideVideo)||provenance&&(provenance==='estimated'?!['recorded','interpolated','extrapolated'].includes(alignment):provenance!==alignment))continue;
+  rows.push({...m,seconds,alignment,...(imported?{outsideVideo}:{})});
+ }
+ return rows;
 }
 
 // Imported PDF contains a sequential score journal, but no timestamps per rally.
@@ -87,4 +104,56 @@ export function createVideoMarkerIndex(markers){
    const found=unique[i];return found&&found.seconds<=duration?{...found}:null;
   }
  };
+}
+
+/** Local review report of the exact current filters, never just the displayed page.
+ * Raw source video, internal IDs and personal text are not exported by default. */
+const reviewAlignmentLabels=Object.freeze({manual:'Ручная точка',interpolated:'Интерполяция',extrapolated:'Оценка вне контрольных точек',recorded:'Оценка по времени протокола',unlinked:'Без привязки'});
+function checkedReviewMarkers(markers){
+ if(!Array.isArray(markers)||markers.length>20000)throw Error('Слишком большая или некорректная подборка видеоразбора');
+ const seen=new Set();
+ for(const m of markers){
+  if(!m||!Number.isSafeInteger(m.index)||m.index<1||seen.has(m.index)||!Number.isInteger(m.set)||m.set<1||!Object.hasOwn(reviewAlignmentLabels,m.alignment)||typeof m.score!=='string'||typeof m.label!=='string'||!['ours','theirs'].includes(m.side)||m.alignment==='unlinked'&&m.seconds!==null||m.alignment!=='unlinked'&&(!Number.isFinite(m.seconds)||m.seconds<0))throw Error('Некорректная отметка видеоразбора');
+  seen.add(m.index);
+ }
+ return markers;
+}
+export function summarizeVideoReview(markers,notes=[]){
+ const rows=checkedReviewMarkers(markers),favorites=new Set(notes.filter(n=>n?.favorite===true).map(n=>n.index));
+ const result={total:rows.length,manual:0,estimated:0,unlinked:0,outsideVideo:0,favorites:0};
+ for(const m of rows){
+  if(m.alignment==='manual')result.manual++;
+  else if(m.alignment==='unlinked')result.unlinked++;
+  else result.estimated++;
+  if(m.outsideVideo)result.outsideVideo++;
+  if(favorites.has(m.index))result.favorites++;
+ }
+ return result;
+}
+// Quote every field; escape spreadsheet formula prefixes even after whitespace/control characters.
+const reviewCsvCell=value=>{
+ let s=String(value??'');
+ if(/^[\s\u0000-\u001f\u007f\ufeff]*[=+\-@]/u.test(s)||/^[\t\r\n]/.test(s))s="'"+s;
+ return '"'+s.replaceAll('"','""')+'"';
+};
+// Summary across the whole filtered selection, independent of pagination.
+export function videoReviewBySet(markers,notes=[]){
+ const rows=checkedReviewMarkers(markers),groups=new Map();
+ for(const m of rows){if(!groups.has(m.set))groups.set(m.set,[]);groups.get(m.set).push(m);}
+ return [...groups].sort((a,b)=>a[0]-b[0]).map(([set,items])=>({set,...summarizeVideoReview(items,notes),ours:items.filter(m=>m.side==='ours').length,theirs:items.filter(m=>m.side==='theirs').length}));
+}
+export function videoReviewCsv(markers,notes=[],{includePrivate=false}={}){
+ const rows=checkedReviewMarkers(markers),byIndex=new Map(notes.map(n=>[n.index,n]));
+ const columns=['Розыгрыш','Партия','Счёт','Сторона','Завершение','Время видео, с','Происхождение времени','Вне видео','В подборке'];
+ if(includePrivate===true)columns.push('Игрок','Приватная заметка');
+ const lines=[columns.map(reviewCsvCell).join(';')];
+ for(const m of rows){
+  const note=byIndex.get(m.index);
+  const values=[m.index,m.set,m.score,m.side==='ours'?'Наша команда':'Соперник',m.label,m.seconds===null?'':String(Math.round(m.seconds*1000)/1000).replace('.',','),reviewAlignmentLabels[m.alignment],m.outsideVideo?'Да':'Нет',note?.favorite?'Да':'Нет'];
+  if(includePrivate===true)values.push(m.player||'',note?.text||'');
+  lines.push(values.map(reviewCsvCell).join(';'));
+ }
+ const result='\ufeff'+lines.join('\r\n')+'\r\n';
+ if(new TextEncoder().encode(result).length>10000000)throw Error('Слишком большой отчёт видеоразбора');
+ return result;
 }

@@ -8,8 +8,9 @@ export function validateNormRetake(r){
  require(r&&typeof r==='object'&&!Array.isArray(r)&&Object.keys(r).sort().join(',')==='assignmentId,date,id,kind,revision,status,studentId,time'&&r.kind==='normRetake'&&str(r.id)&&str(r.assignmentId)&&str(r.studentId)&&validPeriod(r.date,null)&&typeof r.time==='string'&&(r.time===''||/^([01]\d|2[0-3]):[0-5]\d$/.test(r.time))&&Object.hasOwn(retakeStatuses,r.status)&&Number.isInteger(r.revision)&&r.revision>=0&&r.revision<=1000000,'Проверьте дату, время и статус пересдачи');
  require(r.status!=='held'||r.date<=todayIso(),'Нельзя подтвердить проведение в будущем');return r;
 }
-export async function saveNormRetake(input){
- return db.transaction(['workRecords','students','meta'],'readwrite',async s=>{
+export async function saveNormRetake(input){return writeNormRetake(db,input);}
+export async function writeNormRetake(access,input){
+ return access.transaction(['workRecords','students','meta'],'readwrite',async s=>{
   const old=input.id?await s.workRecords.get(input.id):null;
   require(!input.id||old?.kind==='normRetake'&&old.revision===input.revision&&old.assignmentId===input.assignmentId&&old.studentId===input.studentId,'Запись изменилась. Откройте заново');
   const a=await s.workRecords.get(input.assignmentId),student=await s.students.get(input.studentId),settings=await s.meta.get('settings');

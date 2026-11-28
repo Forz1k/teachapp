@@ -1,3 +1,4 @@
+import {migrationLabAllowed} from '../rollout-policy.js';
 import {privacyIdleOptions,readShieldPreferences,saveShieldPreferences,screenLockEnabled,changeScreenLock,PRIVACY_VISIBILITY_EVENT} from '../privacy-shield.js';
 import {openBriefings,openGymBoards} from './methodical.js';
 import {isEncryptedBackup,decryptBackup} from '../privacy.js';
@@ -5,6 +6,8 @@ import {retentionPreview,purgeExpired} from '../retention.js';
 import { validateBackup } from '../backup.js';
 import {verifyProtectedBackup} from '../backup-verify.js';
 import {inspectLocalMigration} from '../migration-preflight.js';
+import {isEncryptedStorage,dumpAll,encryptedStorageAllowed} from '../db.js';
+import {exportEncryptedRecoveryCopy,rotateEncryptedStorage,migrationFileLimit} from '../encrypted-storage.js';
 /* screens/settings.js — настройки, импорт, экспорт, резервные копии, управление классами. */
 
 import { APP_VERSION } from '../version.js';
@@ -305,18 +308,23 @@ export function renderSettings(root, ctx = {}) {
       diagnostics.textContent='Структура и связи корректны · записей '+Object.values(payload.data).reduce((n,a)=>n+a.length,0)+storage;
     }catch{diagnostics.textContent='Проверка не пройдена. Не удаляйте приложение и не очищайте хранилище. Сохраните защищённую копию для диагностики.';}finally{button.disabled=false;}
   }}),el('button',{class:'btn wide',type:'button',text:'Проверить и исправить КТП',onclick:openKtpDiagnostics})]));
+  const secured=isEncryptedStorage(),lab=migrationLabAllowed();
+  const securePanel=el('div',{class:'card-block'},[el('div',{class:'head',text:'Шифрование локальной базы · RC3'}),el('p',{text:secured?'Записи IndexedDB зашифрованы. Коды синхронизации действуют только в сеансе. Отдельные браузерные настройки и данные публичного портала не входят в это хранилище.':lab?'Перенос экспериментальный; используйте только после независимой приёмки и сохранения проверенной копии.':'В публичной предварительной версии перенос v11 отключён. Обычные данные не переносятся автоматически.'}),...(secured||lab?[el('button',{class:'btn wide',type:'button',text:secured?'Заблокировать защищённый сеанс':'Подготовить перенос в v11',onclick:()=>{if(secured)window.dispatchEvent(new Event('teachapp:lock-encrypted'));else{const u=new URL(location.href);u.searchParams.set('secure-migration','1');location.assign(u.href);}}})]:[])]);
+  if(secured)securePanel.append(el('button',{class:'btn wide',type:'button',text:'Независимая копия v11',onclick:async()=>{let password=await ui.promptDialog({title:'Независимый пароль копии',text:'Отдельный пароль от 12 символов. Копия содержит локальные контрольные точки; восстановление только в новый профиль.',password:true,ok:'Создать'});if(password===null)return;try{const file=await exportEncryptedRecoveryCopy({data:await dumpAll(),backupPassword:password});if(encryptedStorageAllowed())ui.downloadBlob(new Blob([file],{type:'application/json'}),'teachapp-v11-recovery.json');}catch(e){if(encryptedStorageAllowed())ui.toast(e.message);}finally{password=undefined;}}}));
+  if(secured)securePanel.append(el('button',{class:'btn wide',type:'button',text:'Сменить три ключа хранилища',onclick:openEncryptedKeyRotation}));
+  body.append(securePanel);
   const migrationStatus=el('p',{role:'status',text:'Предварительная локальная проверка. Не запускает шифрование, перенос или восстановление.'});
-  const migrationLabels={schema:'неполная схема',integrity:'нарушение связей','active-delta-migration':'незавершённый Delta-перенос','non-json':'неподдерживаемые значения','record-limit':'выше лимита записей LAB','byte-limit':'выше лимита размера LAB','crypto-unavailable':'Web Crypto недоступен','locks-unavailable':'Web Locks недоступен','device-checkpoints':'контрольные точки синхронизации требуют отдельного переноса','quota-unknown':'квота неизвестна','low-estimated-space':'мало оценочного свободного места','snapshot-not-loaded':'снимок не загружен из-за лимита; связи и контрольные точки не проверены'};
-  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Диагностика базы · подготовка миграции'}),migrationStatus,el('button',{class:'btn wide',type:'button',text:'Проверить условия переноса',onclick:async e=>{
+  const migrationLabels={schema:'неполная схема',integrity:'нарушение связей','active-delta-migration':'незавершённый Delta-перенос','non-json':'неподдерживаемые значения','record-limit':'выше лимита записей LAB','byte-limit':'выше лимита размера LAB','crypto-unavailable':'Web Crypto недоступен','locks-unavailable':'Web Locks недоступен','device-checkpoints':'обнаружены контрольные точки синхронизации','unmigrated-device-checkpoints':'потребуется аутентификация существующих контрольных точек при переносе','checkpoint-invalid':'некорректная или неизвестная контрольная точка устройства','partition-roundtrip':'не удалось без потерь разделить и собрать три области','quota-unknown':'квота неизвестна','low-estimated-space':'мало оценочного свободного места','snapshot-not-loaded':'снимок не загружен из-за лимита; связи и контрольные точки не проверены'};
+  if(!secured)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Диагностика базы · подготовка миграции'}),migrationStatus,el('button',{class:'btn wide',type:'button',text:'Проверить условия переноса',onclick:async e=>{
    const button=e.currentTarget;button.disabled=true;try{
     const result=await inspectLocalMigration();if(!migrationStatus.isConnected||document.body.classList.contains('privacy-covered'))return;
     const notes=[...result.blockers,...result.warnings].map(x=>migrationLabels[x]).filter(Boolean);
-    migrationStatus.textContent=(result.records===null?'Снимок не проверен.':'Записей: '+result.records+(result.bytes===null?' · объём не измерен. ':' · объём JSON строк: '+(result.bytes/1048576).toFixed(2)+' МБ. '))+(notes.length?'Замечания: '+notes.join('; ')+'. ':'Предварительных замечаний не найдено. ')+'Переключение недоступно; нужна независимая копия и приёмка.';
+    migrationStatus.textContent=(result.records===null?'Снимок не проверен.':'Записей: '+result.records+(result.bytes===null?' · объём не измерен. ':' · объём JSON строк: '+(result.bytes/1048576).toFixed(2)+' МБ. '))+(notes.length?'Замечания: '+notes.join('; ')+'. ':'Предварительных замечаний не найдено. ')+'Для переноса нужна независимая копия, явное подтверждение и приёмка.';
    }catch{if(migrationStatus.isConnected)migrationStatus.textContent='Проверка недоступна. Данные не изменены.';}finally{button.disabled=false;}
   }})]));
   const retention=el('input',{type:'number',min:0,max:3650,step:1,value:settings.retentionDays??0});
   body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Конфиденциальность и сроки хранения'}),
-    el('p',{text:'Экранная ширма не заменяет пароль устройства. Данные IndexedDB не шифруются. Срок действует только для истёкших сведений об ограничениях и группах; 0 — срок не задан. Автоматического удаления нет.'}),
+    el('p',{text:(isEncryptedStorage()?'IndexedDB зашифрована, экранная ширма не заменяет пароль устройства. ':'Экранная ширма не заменяет пароль устройства. Данные IndexedDB не шифруются. ')+'Срок действует только для истёкших сведений об ограничениях и группах; 0 — срок не задан. Автоматического удаления нет.'}),
     el('label',{class:'field'},['Хранить после окончания действия, дней',retention]),
     el('button',{class:'btn wide',type:'button',text:'Сохранить срок',onclick:async()=>{
       const days=Number(retention.value);if(retention.value===''||!Number.isInteger(days)||days<0||days>3650)return ui.toast('Введите 0–3650 дней');
@@ -337,7 +345,7 @@ export function renderSettings(root, ctx = {}) {
   const hideBackground=el('input',{type:'checkbox',checked:shield.hideOnBackground});
   body.append(el('div',{class:'card-block'},[
     el('div',{class:'head',text:'Конфиденциальность · автоширма'}),
-    el('p',{text:'Скрывает интерфейс при бездействии или уходе с вкладки. Если включён PIN или пароль, требуется разблокировка. Это не шифрование и не защита от доступа к браузерному профилю. Настройки действуют только на этом устройстве; системный снимок экрана при сворачивании не гарантируется.'}),
+    el('p',{text:secured?'Дополнительный тайм-аут закрытия защищённого сеанса. Для v11 всегда действует не более 5 минут бездействия и блокировка при скрытии страницы. Системный снимок экрана при сворачивании не гарантируется.':'Скрывает интерфейс при бездействии или уходе с вкладки. Если включён PIN или пароль, требуется разблокировка. Это не шифрование и не защита от доступа к браузерному профилю. Настройки действуют только на этом устройстве; системный снимок экрана при сворачивании не гарантируется.'}),
     el('label',{class:'field'},['Скрывать данные после бездействия',idle]),
     el('label',{class:'row-item'},[hideBackground,el('span',{text:'Скрывать при уходе с вкладки или приложения'})]),
     el('button',{class:'btn wide',type:'button',text:'Сохранить автоширму',onclick:()=>{
@@ -351,7 +359,7 @@ export function renderSettings(root, ctx = {}) {
     if(!await ui.confirmDialog({title:remove?'Отключить блокировку?':'Включить блокировку интерфейса?',text:remove?'Экранная ширма останется доступной без пароля.':'Блокировка будет требоваться при каждом новом открытии приложения и активации ширмы. Данные и резервные копии не меняются. Храните код безопасно.',ok:remove?'Отключить':'Включить'}))return;
     const enabled=await changeScreenLock({current,next});lockStatus.textContent=enabled?'PIN / пароль включён':'PIN / пароль не настроен';ui.toast('Настройка сохранена');
   }catch(e){ui.toast(e.message);}};
-  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Локальная блокировка интерфейса'}),lockStatus,el('p',{text:'Ограничивает случайный доступ через интерфейс, но не защищает IndexedDB от доступа к профилю браузера. Используйте пароль устройства и зашифрованные резервные копии.'}),el('button',{class:'btn wide',type:'button',text:'Настроить / изменить PIN или пароль',onclick:()=>lockChange()}),el('button',{class:'btn wide',type:'button',text:'Отключить PIN или пароль',onclick:()=>lockChange(true)})]));
+  if(!secured)body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Локальная блокировка интерфейса'}),lockStatus,el('p',{text:'Ограничивает случайный доступ через интерфейс, но не защищает IndexedDB от доступа к профилю браузера. Используйте пароль устройства и зашифрованные резервные копии.'}),el('button',{class:'btn wide',type:'button',text:'Настроить / изменить PIN или пароль',onclick:()=>lockChange()}),el('button',{class:'btn wide',type:'button',text:'Отключить PIN или пароль',onclick:()=>lockChange(true)})]));
   /* ---------- демо-данные ---------- */
   const demoBlock = el('div', { class: 'card-block' }, [el('div', { class: 'head', text: 'Демонстрационные данные' })]);
   const demoDesc = el('div', {
@@ -763,4 +771,22 @@ export function schoolHolidaysCard(){
       list,el('label',{class:'field'},['Начало каникул',from]),el('label',{class:'field'},['Окончание каникул',to]),save);
   };
   draw();return card;
+}
+
+function openEncryptedKeyRotation(){
+ const panel=el('div',{class:'coach-stack'},[el('h2',{text:'Смена ключей v11'}),el('p',{text:'Сначала создайте независимую копию v11 после последних изменений. Выберите файл и введите прежние и новые независимые ключи. Все вкладки будут заблокированы после успешной смены.'})]);
+ const make=(text,name)=>{const input=el('input',{type:'password',name,autocomplete:'off',maxlength:1024});panel.append(el('label',{class:'field'},[text,input]));return input;};
+ const old={},next={};for(const [scope,label] of [['school','Школа'],['coach','Тренер'],['workspace','Владелец']]){old[scope]=make('Прежний пароль · '+label,'old-'+scope);next[scope]=make('Новый пароль · '+label,'new-'+scope);}
+ const copyPassword=make('Независимый пароль копии','backup'),file=el('input',{type:'file',accept:'.json,application/json','aria-label':'Актуальная независимая копия'}),confirm=el('input',{type:'checkbox'}),status=el('p',{role:'status'});
+ panel.append(file,el('label',{},[confirm,' Я сохранил актуальную копию вне браузера.']),status);
+ const apply=el('button',{type:'button',class:'btn primary wide',text:'Сменить ключи',onclick:async()=>{
+  if(apply.disabled||!confirm.checked||!file.files[0]||file.files[0].size>migrationFileLimit){status.textContent='Выберите копию и подтвердите действие.';return;}
+  const take=inputs=>Object.fromEntries(Object.entries(inputs).map(([k,i])=>{const value=i.value;i.value='';return [k,value];}));
+  const passwords=take(old),newPasswords=take(next);let backupPassword=copyPassword.value;copyPassword.value='';apply.disabled=true;
+  const stillAllowed=()=>panel.isConnected&&encryptedStorageAllowed()&&document.visibilityState==='visible'&&!document.body.classList.contains('privacy-covered');
+  try{const content=await file.files[0].text();await rotateEncryptedStorage({passwords,newPasswords,backupPassword,file:content,confirmed:true,stillAllowed});window.dispatchEvent(new Event('teachapp:lock-encrypted'));}
+  catch(e){if(stillAllowed())status.textContent=e.message;}
+  finally{for(const set of [passwords,newPasswords])for(const k of Object.keys(set))set[k]=undefined;backupPassword=undefined;apply.disabled=false;}
+ }});
+ panel.append(apply);ui.openSheet(panel);
 }

@@ -1,11 +1,12 @@
 import {buildAttendanceIndex} from './attendance-index.js';
+import {baseMark,withCoverage,effectiveLessonLoad,lessonBatchReason,journalLessonSnapshot as snapshotJournalLesson,writeJournalPaste} from './journal-commands.js';
 import { BACKUP_VERSION, validateBackup, ktpLinkIssues } from './backup.js';
 /* store.js — состояние приложения и все команды записи.
    UI читает состояние отсюда и подписывается на изменения.
    Каждая мутация: сначала IndexedDB, потом обновление кэша и уведомление подписчиков.
    Автосохранение каждого тапа обеспечено самим фактом записи в базу. */
 
-import * as db from './db.js';
+import * as nativeDb from './db.js';
 import * as H from './health.js';
 import * as M from './model.js';
 import {appendGradeHistory,gradeState,finalState,lessonHistoryKey,finalHistoryKey,checkUndo} from './grade-history.js';
@@ -13,10 +14,16 @@ import * as A from './assessment.js';
 import {planNormImport} from './norm-import.js';
 import {recordKtpVersion,orderKtpTopics} from './ktp-history.js';
 
+export const schoolViewStores=Object.freeze(['meta','classes','students','lessons','topics','ktp','schedule','scheduleOverrides','marks','exemptions','studentHealthProfiles','activityRestrictions','activityCategories','monthly','participation','norms','normResults','finalGrades']);
+export {journalMarkSnapshot,journalReplacementReason,lessonBatchReason} from './journal-commands.js';
+
+/** One state/cache per fixed backend. No global switch and no implicit fallback. */
+function buildSchoolStore(db,{allowFullBackup=false,schoolSettingsOnly=false}={}){
+const settingsDefaults=()=>schoolSettingsOnly?M.schoolSettingsProjection(M.defaultSettings()):M.defaultSettings();
 /** Кэш в памяти. Грузим один раз при старте — база маленькая (сотни записей). */
-export const state = {
+const emptyState = () => ({
   ready: false,
-  settings: M.defaultSettings(),
+  settings: settingsDefaults(),
   classes: [],
   students: [],   // все ученики
   lessons: [],    // все уроки
@@ -39,13 +46,14 @@ export const state = {
   currentTrimesterId: null,
   currentTab: 'today',
   lastBackupAt: null,
-};
+});
+let state=emptyState(),revoked=false;
 
 const subs = new Set();
 let automaticPeriodId=null, manualPeriodId=null;
 
 /** Подписка на изменение состояния. Возвращает функцию отписки. */
-export function subscribe(fn) {
+function subscribe(fn) {
   subs.add(fn);
   return () => subs.delete(fn);
 }
@@ -53,7 +61,8 @@ export function subscribe(fn) {
 let _notifyScheduled = false;
 let pendingStudents = new Set();
 /** Уведомление подписчиков с дебаунсом — несколько записей подряд дают один рендер. */
-export function notify(studentId = null) {
+function notify(studentId = null) {
+  if(revoked)return;
   // Неизвестное или структурное изменение требует полной отрисовки.
   if (studentId === null) pendingStudents = null;
   else pendingStudents?.add(studentId);
@@ -61,6 +70,7 @@ export function notify(studentId = null) {
   _notifyScheduled = true;
   const flush = () => {
     _notifyScheduled = false;
+    if(revoked)return;
     const changedStudents = pendingStudents === null ? null : [...pendingStudents];
     pendingStudents = new Set();
     for (const fn of subs) {
@@ -77,14 +87,14 @@ export function notify(studentId = null) {
 
 /** School UI snapshot: coach archives and work records are read by their own
  * consumers, not deserialized at every school load. Backups remain complete. */
-export const schoolViewStores=Object.freeze(['meta','classes','students','lessons','topics','ktp','schedule','scheduleOverrides','marks','exemptions','studentHealthProfiles','activityRestrictions','activityCategories','monthly','participation','norms','normResults','finalGrades']);
-export async function load() {
+async function load() {
   return applySnapshot(await db.readSnapshot(schoolViewStores));
 }
 
 function applySnapshot({ meta: settingsArr, classes, students, lessons, topics, ktp, schedule, scheduleOverrides,
   marks, exemptions, studentHealthProfiles, activityRestrictions, activityCategories, monthly, participation, norms, normResults, finalGrades }) {
-  state.settings = { ...M.defaultSettings(), ...(settingsArr.find((s) => s.id === 'settings') || {}) };
+  const saved=settingsArr.find(s=>s.id==='settings')||{};
+  state.settings = { ...settingsDefaults(), ...(schoolSettingsOnly?M.schoolSettingsProjection(saved):saved) };
   state.settings.trimesters = (settingsArr.find((s) => s.id === 'settings')?.trimesters) || M.defaultSettings().trimesters;
   state.settings.rules = { ...M.defaultSettings().rules, ...(settingsArr.find((s) => s.id === 'settings')?.rules || {}) };
   rightOrderTrimesters(state.settings);
@@ -132,21 +142,21 @@ function rightOrderTrimesters(settings) {
 
 /* ---------- выборки (селекторы) ---------- */
 
-export const studentsOfClass = (classId) => state.students.filter((s) => s.classId === classId);
+const studentsOfClass = (classId) => state.students.filter((s) => s.classId === classId);
 
-export const lessonsOfClass = (classId) => state.lessons.filter((l) => l.classId === classId);
+const lessonsOfClass = (classId) => state.lessons.filter((l) => l.classId === classId);
 
 /** Уроки класса в диапазоне дат включительно. */
-export function lessonsInRange(classId, from, to) {
+function lessonsInRange(classId, from, to) {
   return lessonsOfClass(classId).filter((l) => M.inRange(l.date, from, to));
 }
 
 /** Триместр по id. */
-export const trimester = (id) => state.settings.trimesters.find((t) => t.id === id) || state.settings.trimesters[0];
+const trimester = (id) => state.settings.trimesters.find((t) => t.id === id) || state.settings.trimesters[0];
 
-export const currentTrimester = () => trimester(state.currentTrimesterId);
-export const actualSchoolPeriod = (date=M.todayIso()) => M.schoolPeriodForDate(state.settings.trimesters,date);
-export function refreshSchoolPeriod(date=M.todayIso()){
+const currentTrimester = () => trimester(state.currentTrimesterId);
+const actualSchoolPeriod = (date=M.todayIso()) => M.schoolPeriodForDate(state.settings.trimesters,date);
+function refreshSchoolPeriod(date=M.todayIso()){
   const actual=actualSchoolPeriod(date)?.id??null;
   if(automaticPeriodId!==actual)manualPeriodId=null;
   automaticPeriodId=actual;
@@ -156,7 +166,7 @@ export function refreshSchoolPeriod(date=M.todayIso()){
   state.currentTrimesterId=next;
   return changed;
 }
-export function selectSchoolPeriod(id){
+function selectSchoolPeriod(id){
   if(!state.settings.trimesters.some(p=>p.id===id))return false;
   automaticPeriodId=actualSchoolPeriod()?.id??null;
   manualPeriodId=id===automaticPeriodId?null:id;
@@ -165,7 +175,7 @@ export function selectSchoolPeriod(id){
 }
 
 /** Карта отметок по ключу lessonId|studentId — для быстрого рендера сетки. */
-export function markMap(classId) {
+function markMap(classId) {
   const lessonIds = new Set(lessonsOfClass(classId).map((l) => l.id));
   const map = new Map();
   for (const m of state.marks) {
@@ -175,10 +185,10 @@ export function markMap(classId) {
 }
 
 /** Освобождения ученика как массив. */
-export const exemptionsOfStudent = (studentId) => state.exemptions.filter((e) => e.studentId === studentId);
+const exemptionsOfStudent = (studentId) => state.exemptions.filter((e) => e.studentId === studentId);
 
 /** Действующее на дату освобождение ученика. */
-export function activeExemption(studentId, dateIso) {
+function activeExemption(studentId, dateIso) {
   return exemptionsOfStudent(studentId).find((e) => M.exemptionCovers(e, dateIso)) || null;
 }
 
@@ -186,27 +196,28 @@ export function activeExemption(studentId, dateIso) {
 const activeNow = (studentId) => exemptionsOfStudent(studentId).find((e) => M.exemptionActive(e)) || null;
 
 /** Все «сегодня освобождены» ученики класса. */
-export function currentlyExempt(classId) {
+function currentlyExempt(classId) {
   return studentsOfClass(classId).filter((s) => activeNow(s.id));
 }
 
 /** Месячная отметка ученика. */
-export function monthlyFor(studentId, year, month) {
+function monthlyFor(studentId, year, month) {
   return state.monthly.find((m) => m.studentId === studentId && m.year === year && m.month === month) || null;
 }
 
 /** Все уроки месяца для класса. */
-export function lessonsOfMonth(classId, year, month) {
+function lessonsOfMonth(classId, year, month) {
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
   return lessonsOfClass(classId).filter((l) => l.date.startsWith(prefix));
 }
 
 /* ---------- настройки ---------- */
 
-export async function saveSettings(patch) {
+async function saveSettings(patch) {
+  if(schoolSettingsOnly&&(!patch||Object.keys(patch).some(k=>!M.schoolSettingsFields.includes(k))))throw Error('Настройка недоступна в школьной области');
   const settings = await db.transaction(['meta'],'readwrite', async s => {
     const current = await s.meta.get('settings');
-    const next = { ...M.defaultSettings(), ...current, ...patch };
+    const next = { ...settingsDefaults(), ...(schoolSettingsOnly?M.schoolSettingsProjection(current):current), ...patch };
     rightOrderTrimesters(next);
     await s.meta.put(next);
     return next;
@@ -217,30 +228,30 @@ export async function saveSettings(patch) {
   notify();
 }
 
-export async function saveSchoolHolidays(holidays){
+async function saveSchoolHolidays(holidays){
   await saveSettings({holidays:M.validateSchoolHolidays(holidays)});
 }
 
-export async function savePeriods(periods) {
+async function savePeriods(periods) {
   await saveSettings({trimesters:A.validatePeriods(periods,state.settings.year)});
 }
 
-export async function setTrimesterRange(id, from, to) {
+async function setTrimesterRange(id, from, to) {
   const list = state.settings.trimesters.map((t) => (t.id === id ? { ...t, from, to } : t));
   await saveSettings({ trimesters: list });
 }
 
-export async function setYear(from, to) {
+async function setYear(from, to) {
   await saveSettings({ year: { from, to } });
 }
 
-export async function setRules(patch) {
+async function setRules(patch) {
   await saveSettings({ rules: { ...state.settings.rules, ...patch } });
 }
 
 /* ---------- классы и ученики ---------- */
 
-export async function addClass(name) {
+async function addClass(name) {
   const cls = { id: M.uid('cls'), name: name.trim() };
   await db.put('classes', cls);
   state.classes.push(cls);
@@ -249,7 +260,7 @@ export async function addClass(name) {
   return cls;
 }
 
-export async function renameClass(id, name) {
+async function renameClass(id, name) {
   const cls = state.classes.find((c) => c.id === id);
   if (!cls) return;
   cls.name = name.trim();
@@ -259,7 +270,7 @@ export async function renameClass(id, name) {
 }
 
 /** Удаление класса со всем содержимым. Команда destructive — вызывать только после подтверждения. */
-export async function deleteClass(id) {
+async function deleteClass(id) {
   const studentIds = new Set(studentsOfClass(id).map((s) => s.id));
   const lessonIds = new Set(lessonsOfClass(id).map((l) => l.id));
   const marks = state.marks.filter((m) => lessonIds.has(m.lessonId));
@@ -317,7 +328,7 @@ export async function deleteClass(id) {
   notify();
 }
 
-export async function addStudent(classId, fullName, number, normGroup=null) {
+async function addStudent(classId, fullName, number, normGroup=null) {
   if(!A.validNormGroup(normGroup))throw Error('Проверьте категорию нормативов');
   const st = {
     id: M.uid('stu'),
@@ -333,7 +344,7 @@ export async function addStudent(classId, fullName, number, normGroup=null) {
   return st;
 }
 
-export async function updateStudent(id, patch) {
+async function updateStudent(id, patch) {
   const st = state.students.find((s) => s.id === id);
   if (!st) return;
   if(Object.hasOwn(patch,'normGroup')&&!A.validNormGroup(patch.normGroup))throw Error('Проверьте категорию нормативов');
@@ -344,12 +355,12 @@ export async function updateStudent(id, patch) {
   notify();
 }
 
-export async function setClassNormLevel(classId,gradeLevel){
+async function setClassNormLevel(classId,gradeLevel){
   if(!A.validGradeLevel(gradeLevel))throw Error('Параллель должна быть от 1 до 11');
   const cls=state.classes.find(c=>c.id===classId);if(!cls)throw Error('Класс недоступен');
   const next={...cls,gradeLevel};await db.put('classes',next);Object.assign(cls,next);notify();
 }
-export async function saveNormGroups(classId,entries){
+async function saveNormGroups(classId,entries){
   const rows=await db.transaction(['students'],'readwrite',async s=>{
     const out=[];for(const [id,normGroup] of Object.entries(entries)){
       if(!A.validNormGroup(normGroup))throw Error('Проверьте категорию нормативов');
@@ -361,7 +372,7 @@ export async function saveNormGroups(classId,entries){
 }
 
 /** Удаление ученика вместе с его отметками — обычно нужно при ошибочном импорте. */
-export async function deleteStudent(id) {
+async function deleteStudent(id) {
   const marks = state.marks.filter((m) => m.studentId === id);
   const exemptions = state.exemptions.filter((e) => e.studentId === id);
   const monthly = state.monthly.filter((m) => m.studentId === id);
@@ -397,7 +408,7 @@ export async function deleteStudent(id) {
 
 /* ---------- уроки ---------- */
 
-export async function addLesson(classId, dateIso, topicId = null, note = '', {slot=null,time=''}={}) {
+async function addLesson(classId, dateIso, topicId = null, note = '', {slot=null,time=''}={}) {
   if(!M.validLessonSlot(slot)||!M.validLessonTime(time))throw Error('Проверьте номер и время урока');
   const lesson = { id: M.uid('les'), classId, date: dateIso, topicId, note,...(slot!=null?{slot}:{}),...(time?{time}:{}) };
   const result = await db.transaction(['lessons','students','exemptions','marks'],'readwrite',async s => {
@@ -422,7 +433,7 @@ export async function addLesson(classId, dateIso, topicId = null, note = '', {sl
   return result.lesson;
 }
 
-export async function updateLesson(id, patch) {
+async function updateLesson(id, patch) {
   const result = await db.transaction(['lessons','students','participation','exemptions','marks','normResults'],'readwrite',async s => {
     const previous = await s.lessons.get(id);
     if (!previous) return null;
@@ -463,7 +474,7 @@ export async function updateLesson(id, patch) {
   notify();
 }
 /** Удаление урока вместе с его отметками. Требует подтверждения в UI. */
-export async function deleteLesson(id) {
+async function deleteLesson(id) {
   const marks = state.marks.filter((m) => m.lessonId === id);
   const records = state.participation.filter(p => p.lessonId === id);
   const results=state.normResults.filter(r=>r.lessonId===id);
@@ -491,28 +502,6 @@ export async function deleteLesson(id) {
  */
 // Ручная запись до наложения автоматического ОСВ. Старые ручные ОСВ
 // без сведений об источнике сохраняются, пока учитель сам их не изменит.
-function baseMark(mark) {
-  if (!mark) return null;
-  if ('baseMark' in mark) return mark.baseMark;
-  if (mark.source !== 'auto-osv' && mark.source !== 'participation') return mark;
-  const { previousFlag, previousSource, participationId, ...rest } = mark;
-  const flag = previousFlag === 'ОСВ' && previousSource === 'auto-osv' ? null : previousFlag;
-  if (!mark.value && !flag && mark.flag !== 'Н') return null;
-  return { ...rest, flag: flag || (mark.flag === 'Н' ? 'Н' : null), source: previousSource === 'auto-osv' ? 'manual' : previousSource || 'manual' };
-}
-
-function withCoverage(base, mark, lesson, studentId, exemptions, participation) {
-  const covered = exemptions.some(e => e.studentId === studentId && M.exemptionCovers(e,lesson.date));
-  if (!covered && !participation?.full) return base;
-  const absent = base?.flag === 'Н';
-  const next = { ...base, id: base?.id || mark?.id || M.uid('mk'), studentId, lessonId: lesson.id,
-    value: base?.value ?? null, flag: absent ? 'Н' : 'ОСВ',
-    source: participation?.full ? 'participation' : 'auto-osv', baseMark: base };
-  if (absent) next.osv = true;
-  if (participation?.full) next.participationId = participation.id;
-  return next;
-}
-
 function cacheMarks(changes) {
   const ids = new Set(changes.map(c => c.id));
   state.marks = state.marks.filter(m => !ids.has(m.id)).concat(changes.filter(c => c.next).map(c => c.next));
@@ -551,7 +540,7 @@ async function editMark(studentId, lessonId, edit,source='manual',undoEventId=nu
     return result.priorBase;
   },'undo',result.audit?.id||null) };
 }
-export async function undoGradeHistory(studentId,lessonId,eventId,confirmed=false){
+async function undoGradeHistory(studentId,lessonId,eventId,confirmed=false){
   if(!confirmed)throw Error('Подтвердите отмену изменения');
   const hist=await db.get('workRecords',lessonHistoryKey(studentId,lessonId));
   const event=hist?.events.at(-1);
@@ -565,7 +554,7 @@ export async function undoGradeHistory(studentId,lessonId,eventId,confirmed=fals
     return next;
   },'undo',eventId);
 }
-export function setMark(studentId,lessonId,{value = null,flag = null,weight,osv = false} = {}) {
+function setMark(studentId,lessonId,{value = null,flag = null,weight,osv = false} = {}) {
   return editMark(studentId,lessonId,(base,previous) => {
     if (flag === 'ОСВ' && !value) value = base?.value ?? null;
     const normalized = M.normalizeMark({value,flag});
@@ -580,7 +569,7 @@ export function setMark(studentId,lessonId,{value = null,flag = null,weight,osv 
   });
 }
 
-export function setMarkWeight(studentId,lessonId,weight) {
+function setMarkWeight(studentId,lessonId,weight) {
   return editMark(studentId,lessonId,base => {
     if (!base?.value) return base;
     const next = {...base};
@@ -627,20 +616,20 @@ async function changeExemption(id,studentId,edit) {
     }) };
 }
 
-export function addExemption({studentId,dateFrom,dateTo,reason = ''}) {
+function addExemption({studentId,dateFrom,dateTo,reason = ''}) {
   const id = M.uid('exm');
   return changeExemption(id,studentId,() => ({id,studentId,dateFrom,dateTo:dateTo || null,reason,createdAt:new Date().toISOString()}));
 }
 
-export function updateExemption(id,patch) {
+function updateExemption(id,patch) {
   return changeExemption(id,null,prev => prev ? {...prev,...patch,id,studentId:prev.studentId} : null);
 }
 
-export function removeExemption(id) {
+function removeExemption(id) {
   return changeExemption(id,null,() => null);
 }
 
-export function countOsvAffected(studentId,from,to,id) {
+function countOsvAffected(studentId,from,to,id) {
   const current = state.exemptions.find(e => e.id === id);
   if (!current) return 0;
   const other = state.exemptions.filter(e => e.studentId === studentId && e.id !== id);
@@ -659,7 +648,7 @@ export function countOsvAffected(studentId,from,to,id) {
  * Принять месячную отметку вручную (overriddenByTeacher = true).
  * Такая ячейка больше не пересчитывается автоматически.
  */
-export async function setMonthlyOverride(studentId, year, month, value) {
+async function setMonthlyOverride(studentId, year, month, value) {
   const existing = monthlyFor(studentId, year, month);
   const mm = {
     id: existing?.id || M.uid('mon'),
@@ -679,7 +668,7 @@ export async function setMonthlyOverride(studentId, year, month, value) {
 }
 
 /** Убрать ручное переопределение — ячейка снова считается автоматически. */
-export async function clearMonthlyOverride(studentId, year, month) {
+async function clearMonthlyOverride(studentId, year, month) {
   const existing = monthlyFor(studentId, year, month);
   if (!existing) return;
   if (existing.id) await db.del('monthly', existing.id);
@@ -688,7 +677,7 @@ export async function clearMonthlyOverride(studentId, year, month) {
 }
 
 /** Записать автоматически рассчитанную отметку (после «Принять рассчитанное»). */
-export async function setMonthlyComputed(studentId, year, month, value) {
+async function setMonthlyComputed(studentId, year, month, value) {
   const existing = monthlyFor(studentId, year, month);
   const mm = {
     id: existing?.id || M.uid('mon'),
@@ -708,7 +697,7 @@ export async function setMonthlyComputed(studentId, year, month, value) {
 }
 
 /** Массовое применение месячных отметок — одной транзакцией. */
-export async function bulkSetMonthly(items) {
+async function bulkSetMonthly(items) {
   const records = items.map((it) => {
     const existing = monthlyFor(it.studentId, it.year, it.month);
     return {
@@ -735,22 +724,22 @@ export async function bulkSetMonthly(items) {
 /* ---------- КТП ---------- */
 
 /** Список КТП. */
-export const allKtp = () => state.ktp;
+const allKtp = () => state.ktp;
 
 /** КТП, привязанные к классу (по classIds). */
-export function ktpOfClass(classId) {
+function ktpOfClass(classId) {
   return state.ktp.filter((k) => Array.isArray(k.classIds) && k.classIds.includes(classId));
 }
 
 /** Темы конкретного КТП, по порядку. */
-export function topicsOfKtp(ktpId) {
+function topicsOfKtp(ktpId) {
   return state.topics
     .filter((t) => t.ktpId === ktpId)
      .sort((a,b)=>(a.ktpOrder||0)-(b.ktpOrder||0)||a.id.localeCompare(b.id));
 }
 
 /** Все темы, доступные для класса (из всех его КТП), плюс общие без КТП. */
-export function topicsForClass(classId) {
+function topicsForClass(classId) {
   const lists = ktpOfClass(classId);
   const ids = new Set(lists.map((k) => k.id));
   return state.topics
@@ -762,7 +751,7 @@ export function topicsForClass(classId) {
  * Создать КТП и сразу привязать к классам.
  * @param {{name: string, classIds: string[]}} p
  */
-export async function addKtp({ name, classIds = [] }) {
+async function addKtp({ name, classIds = [] }) {
   const k = {
     id: M.uid('ktp'),
     name: name.trim(),
@@ -776,7 +765,7 @@ export async function addKtp({ name, classIds = [] }) {
   return k;
 }
 
-export async function updateKtp(id, patch) {
+async function updateKtp(id, patch) {
   const k = state.ktp.find((x) => x.id === id);
   if (!k) return;
   Object.assign(k, patch);
@@ -786,13 +775,13 @@ export async function updateKtp(id, patch) {
 }
 
 /** Привязать/отвязать класс к КТП. */
-export async function setKtpClasses(ktpId, classIds) {
+async function setKtpClasses(ktpId, classIds) {
   const ids=[...new Set(classIds)];
   if(ids.some(id=>!state.classes.some(c=>c.id===id)))throw Error('Выберите существующие классы');
   await updateKtp(ktpId, { classIds: ids });
 }
 // Explicitly repair only the selected plan's metadata; never delete a plan, class, topic or lesson.
-export async function repairKtpPlan(expected, name, classIds, confirmed=false){
+async function repairKtpPlan(expected, name, classIds, confirmed=false){
  if(!confirmed)throw Error('Подтвердите исправление КТП');
  if(typeof name!=='string'||!name.trim()||!Array.isArray(classIds))throw Error('Укажите название и классы');
  await db.transaction(['ktp','classes'],'readwrite',async s=>{
@@ -807,7 +796,7 @@ export async function repairKtpPlan(expected, name, classIds, confirmed=false){
 }
 
 /** Never detach a topic from an existing lesson. Snapshot before deletion. */
-export async function deleteKtp(id) {
+async function deleteKtp(id) {
   await db.transaction(['ktp','topics','lessons','workRecords'],'readwrite',async s=>{
     const plan=await s.ktp.get(id);if(!plan)throw Error('КТП недоступно');
     const topics=await s.topics.index('ktpId').getAll(id),ids=new Set(topics.map(t=>t.id));
@@ -819,7 +808,7 @@ export async function deleteKtp(id) {
   await load();notify();
 }
 
-export async function addTopic(name, ktpOrder, ktpId = null) {
+async function addTopic(name, ktpOrder, ktpId = null) {
   const t = {
     id: M.uid('top'),
     name: name.trim(),
@@ -833,7 +822,7 @@ export async function addTopic(name, ktpOrder, ktpId = null) {
   return t;
 }
 
-export async function updateTopic(id, patch) {
+async function updateTopic(id, patch) {
   const t = state.topics.find((x) => x.id === id);
   if (!t) return;
   Object.assign(t, patch);
@@ -842,7 +831,7 @@ export async function updateTopic(id, patch) {
   notify();
 }
 
-export async function deleteTopic(id) {
+async function deleteTopic(id) {
   await db.transaction(['ktp','topics','lessons','workRecords'],'readwrite',async s=>{
     const topic=await s.topics.get(id);if(!topic)throw Error('Тема недоступна');
     if((await s.lessons.getAll()).some(l=>l.topicId===id))throw Error('Тема используется в уроках. Удаление запрещено: сохраните историю уроков.');
@@ -855,7 +844,7 @@ export async function deleteTopic(id) {
   await load();notify();
 }
 /** Reorder by an explicit full permutation; stale order from another tab is rejected. */
-export async function reorderKtpTopics(ktpId,expectedIds,nextIds){
+async function reorderKtpTopics(ktpId,expectedIds,nextIds){
   if(!Array.isArray(expectedIds)||!Array.isArray(nextIds)||expectedIds.length!==nextIds.length||new Set(nextIds).size!==nextIds.length||nextIds.some(id=>!expectedIds.includes(id)))throw Error('Некорректный порядок тем');
   await db.transaction(['ktp','topics'],'readwrite',async s=>{
     if(!await s.ktp.get(ktpId))throw Error('КТП недоступно');
@@ -872,7 +861,7 @@ function importedTopics(items){
   if(!Array.isArray(items)||items.length<1||items.length>5000)throw new Error('Импорт должен содержать от 1 до 5000 тем');
   return items.map(it=>{const name=String(it?.name??'').trim();if(!name||name.length>500)throw new Error('Проверьте название темы (до 500 символов)');return name;});
 }
-export async function replaceKtpTopics(ktpId, items) {
+async function replaceKtpTopics(ktpId, items) {
   const names=importedTopics(items);
   const created=await db.transaction(['ktp','topics','lessons','workRecords'],'readwrite',async s=>{
     const plan=await s.ktp.get(ktpId);if(!plan)throw new Error('КТП недоступен');
@@ -889,7 +878,7 @@ export async function replaceKtpTopics(ktpId, items) {
 }
 
 /** Add in source order without overlapping existing sequence numbers. */
-export async function appendKtpTopics(ktpId, items) {
+async function appendKtpTopics(ktpId, items) {
   if(Array.isArray(items)&&!items.length)return 0;
   const names=importedTopics(items);
   const created=await db.transaction(['ktp','topics'],'readwrite',async s=>{
@@ -906,20 +895,20 @@ export async function appendKtpTopics(ktpId, items) {
 /* ---------- расписание ---------- */
 
 /** Записи расписания на день недели. */
-export function scheduleOfDay(weekday) {
+function scheduleOfDay(weekday) {
   return state.schedule
     .filter((r) => r.weekday === weekday)
     .sort((a, b) => (a.slot || 0) - (b.slot || 0) || ((M.parseTime(a.time) ?? 0) - (M.parseTime(b.time) ?? 0)));
 }
 
 /** Расписание на конкретную дату с учётом переопределений. */
-export function scheduleForDate(dateIso) {
+function scheduleForDate(dateIso) {
   if(M.isSchoolHoliday(dateIso,state.settings.holidays||[]))return [];
   return M.scheduleForDate(state.schedule, state.scheduleOverrides, dateIso);
 }
 
 /** Добавить или обновить урок в расписании (по дню недели и номеру). */
-export async function setScheduleEntry({ id = null, weekday, slot, classId, time }) {
+async function setScheduleEntry({ id = null, weekday, slot, classId, time }) {
   const existing = id
     ? state.schedule.find((r) => r.id === id)
     : state.schedule.find((r) => r.weekday === weekday && r.slot === slot);
@@ -939,7 +928,7 @@ export async function setScheduleEntry({ id = null, weekday, slot, classId, time
   return record;
 }
 
-export async function deleteScheduleEntry(id) {
+async function deleteScheduleEntry(id) {
   await db.del('schedule', id);
   state.schedule = state.schedule.filter((r) => r.id !== id);
   // заодно снимаем переопределения, ссылавшиеся на эту запись
@@ -951,7 +940,7 @@ export async function deleteScheduleEntry(id) {
 }
 
 /** Массовая замена расписания (импорт из Excel). */
-export async function replaceSchedule(items) {
+async function replaceSchedule(items) {
   const old = [...state.schedule];
   const oldOverrides = [...state.scheduleOverrides];
   const created = items.map((it) => ({
@@ -978,7 +967,7 @@ export async function replaceSchedule(items) {
  * Переопределение расписания на дату.
  * action: 'cancel' | 'move' | 'add'
  */
-export async function setScheduleOverride(patch) {
+async function setScheduleOverride(patch) {
   const {date,action,ruleId = null} = patch;
   const record = await db.transaction(['scheduleOverrides'],'readwrite',async s => {
     const table = s.scheduleOverrides;
@@ -1001,14 +990,14 @@ export async function setScheduleOverride(patch) {
   return record;
 }
 
-export async function deleteScheduleOverride(id) {
+async function deleteScheduleOverride(id) {
   await db.del('scheduleOverrides', id);
   state.scheduleOverrides = state.scheduleOverrides.filter((o) => o.id !== id);
   notify();
 }
 
 /** Стереть ВСЕ переопределения на дату — «вернуть как в расписании». */
-export async function clearOverridesForDate(dateIso) {
+async function clearOverridesForDate(dateIso) {
   const list = state.scheduleOverrides.filter((o) => o.date === dateIso);
   if (!list.length) return 0;
   await db.transaction(['scheduleOverrides'], 'readwrite', (s) => {
@@ -1021,13 +1010,14 @@ export async function clearOverridesForDate(dateIso) {
 }
 
 /** Переопределения на конкретную дату. */
-export function overridesOfDate(dateIso) {
+function overridesOfDate(dateIso) {
   return state.scheduleOverrides.filter((o) => o.date === dateIso);
 }
 
 /* ---------- резервная копия ---------- */
 
-export async function makeBackup() {
+async function makeBackup() {
+  if(!allowFullBackup)throw Error('Полная копия недоступна в школьном сеансе');
   const data = await db.dumpAll();
   // Device-specific encrypted sync checkpoints are never portable backup data.
   data.meta=data.meta.filter(r=>!r.id.startsWith('sync-checkpoint-'));
@@ -1040,7 +1030,8 @@ export async function makeBackup() {
   return payload;
 }
 
-export async function restoreBackup(payload) {
+async function restoreBackup(payload) {
+  if(!allowFullBackup)throw Error('Полное восстановление недоступно в школьном сеансе');
   if(payload?.scope)throw Error('Это выборочная копия. Используйте выборочное восстановление; полная замена запрещена');
   const copy = typeof structuredClone === 'function' ? structuredClone(payload) : JSON.parse(JSON.stringify(payload));
   const snapshot = validateBackup(copy);
@@ -1051,7 +1042,7 @@ export async function restoreBackup(payload) {
 }
 
 /** Удалить все демо-записи (классы с isDemo и всё, что к ним относится). */
-export async function clearDemo() {
+async function clearDemo() {
   const demoClasses = state.classes.filter((c) => c.isDemo);
   for (const cls of demoClasses) {
     await deleteClass(cls.id);
@@ -1059,16 +1050,16 @@ export async function clearDemo() {
   return demoClasses.length;
 }
 
-export const hasDemo = () => state.classes.some((c) => c.isDemo);
+const hasDemo = () => state.classes.some((c) => c.isDemo);
 
-export const participationModes = {
+const participationModes = {
   normal: 'Обычная нагрузка',
   adapted: 'Облегчённая нагрузка',
   paused: 'Временно не выполняет упражнения',
 };
 
 /** Режим и основание относятся только к выбранной паре ученик/урок. */
-export async function saveParticipation(studentId, lessonId, input, expectedRevision) {
+async function saveParticipation(studentId, lessonId, input, expectedRevision) {
   if (input && (!Object.hasOwn(participationModes, input.mode)
       || !['none', 'parent', 'document'].includes(input.basis)
       || (input.full && (input.basis !== 'document' || input.mode !== 'paused')))) {
@@ -1104,18 +1095,15 @@ export async function saveParticipation(studentId, lessonId, input, expectedRevi
   return () => saveParticipation(studentId, lessonId, result.previous, result.record?.revision ?? null);
 }
 
-export const activities = () => [...H.catalog, ...state.activityCategories];
-export const healthGroups = () => [...new Set([...H.groups, ...(state.settings.healthGroups || [])])];
-function effectiveLessonLoad(lesson,topic){
-  return {...lesson,activityIds:lesson.activityIds??topic?.activityIds,activitiesConfirmed:lesson.activityIds==null&&topic?.activitiesConfirmed===false?false:lesson.activitiesConfirmed};
-}
-export function lessonCheck(lesson) {
+const activities = () => [...H.catalog, ...state.activityCategories];
+const healthGroups = () => [...new Set([...H.groups, ...(state.settings.healthGroups || [])])];
+function lessonCheck(lesson) {
   const topic = state.topics.find(t => t.id === lesson.topicId);
   return H.checkLessonRestrictions({ lesson: effectiveLessonLoad(lesson,topic),
     activities: activities(), students: state.students, restrictions: state.activityRestrictions });
 }
 
-export async function saveProfiles(ids, group, dateFrom, dateTo) {
+async function saveProfiles(ids, group, dateFrom, dateTo) {
   if (!ids.length || !ids.every(id => state.students.some(s => s.id === id))
       || (group && !healthGroups().includes(group)) || !H.validPeriod(dateFrom,dateTo)) throw new Error('Проверьте группу, учеников и даты');
   const records = ids.map(id => ({ id, group, dateFrom, dateTo: dateTo || null, updatedAt: new Date().toISOString() }));
@@ -1124,7 +1112,7 @@ export async function saveProfiles(ids, group, dateFrom, dateTo) {
   notify();
 }
 
-export async function saveRestriction(input) {
+async function saveRestriction(input) {
   const existing = input.id && state.activityRestrictions.find(r => r.id === input.id);
   if (!state.students.some(s => s.id === input.studentId) || !activities().some(a => a.id === input.activityId)
       || !Object.hasOwn(H.types,input.type) || !H.validPeriod(input.dateFrom,input.dateTo)
@@ -1140,7 +1128,7 @@ export async function saveRestriction(input) {
   return record;
 }
 
-export async function addActivity(name, parents) {
+async function addActivity(name, parents) {
   const known = activities();
   if (!name.trim() || known.some(a => a.name.toLowerCase() === name.trim().toLowerCase())
       || !parents.every(id => known.some(a => a.id === id))) throw new Error('Проверьте название и категории');
@@ -1151,13 +1139,13 @@ export async function addActivity(name, parents) {
   return record;
 }
 
-export function lessonHeld(lesson) {
+function lessonHeld(lesson) {
   return lesson.date <= M.todayIso() && (lesson.held || state.participation.some(p => p.lessonId === lesson.id)
     || state.marks.some(m => m.lessonId === lesson.id && (m.source === 'manual' || m.baseMark?.source === 'manual')));
 }
 
 /** Перенос содержания между запланированными уроками. Записи журнала остаются на своих датах. */
-export async function transferTopic(sourceId,targetId) {
+async function transferTopic(sourceId,targetId) {
   const records = await db.transaction(['lessons','marks','participation'],'readwrite',async s => {
     const [source,target] = await Promise.all([s.lessons.get(sourceId),s.lessons.get(targetId)]);
     if (!source?.topicId || !target || source.classId !== target.classId || sourceId === targetId) throw new Error('Выберите другой урок этого класса');
@@ -1175,18 +1163,18 @@ export async function transferTopic(sourceId,targetId) {
   notify();
 }
 
-export function attendanceContext(lessons,classId,today=M.todayIso()){
+function attendanceContext(lessons,classId,today=M.todayIso()){
   return buildAttendanceIndex(lessons,lessonsOfClass(classId),state.marks,state.participation,today);
 }
-export function attendanceFor(lessons,students,classId){return attendanceContext(lessons,classId).forStudents(students);}
-export async function saveNorm(input){
+function attendanceFor(lessons,students,classId){return attendanceContext(lessons,classId).forStudents(students);}
+async function saveNorm(input){
   const n={id:input.id||M.uid('norm'),name:input.name.trim(),activityId:input.activityId,unit:input.unit,direction:input.direction};
   if(input.scales!==undefined)n.scales=input.scales.map(r=>({classId:r.classId??null,gradeLevel:r.gradeLevel??null,group:r.group,scale:[...r.scale]}));
   else n.scale=[...input.scale];
   A.validateNorm(n,new Set(activities().map(a=>a.id)));
   await db.put('norms',n);state.norms=state.norms.filter(x=>x.id!==n.id).concat(n);notify();return n;
 }
-export function normCheck(norm,lesson,studentId){
+function normCheck(norm,lesson,studentId){
   const review=lessonCheck({...lesson,activityIds:[norm.activityId,'test'],activitiesConfirmed:true});
   return [...review.matches,...review.potentialMatches].filter(m=>m.studentId===studentId);
 }
@@ -1217,16 +1205,16 @@ async function writeNormResults(normId,lessonId,entries,batch){
   });
   state.normResults.push(...records);notify();return records;
 }
-export async function saveNormResult(input){
+async function saveNormResult(input){
   return (await writeNormResults(input.normId,input.lessonId,[input],false))[0];
 }
-export async function saveNormResultsBatch(normId,lessonId,entries,confirmed=false){
+async function saveNormResultsBatch(normId,lessonId,entries,confirmed=false){
   if(!confirmed)throw Error('Подтвердите сохранение результатов');
   if(!Array.isArray(entries)||!entries.length||entries.length>500||new Set(entries.map(r=>r.studentId)).size!==entries.length)throw Error('Проверьте список учеников');
   return writeNormResults(normId,lessonId,entries,true);
 }
 
-export async function importNormScales(rows,{replace=false,confirmed=false,expected=null}={}){
+async function importNormScales(rows,{replace=false,confirmed=false,expected=null}={}){
   if(!confirmed)throw Error('Подтвердите импорт');
   const result=await db.transaction(['norms'],'readwrite',async s=>{
     const existing=await s.norms.getAll();
@@ -1238,8 +1226,8 @@ export async function importNormScales(rows,{replace=false,confirmed=false,expec
   });
   const map=new Map(result.records.map(n=>[n.id,n]));state.norms=state.norms.filter(n=>!map.has(n.id)).concat(result.records);notify();return result.counts;
 }
-export async function deleteNormResult(id){await db.del('normResults',id);state.normResults=state.normResults.filter(r=>r.id!==id);notify();}
-export async function transferNormGrade(id,confirmed=false){
+async function deleteNormResult(id){await db.del('normResults',id);state.normResults=state.normResults.filter(r=>r.id!==id);notify();}
+async function transferNormGrade(id,confirmed=false){
   if(!confirmed)throw Error('Подтвердите перенос оценки');
   const r=state.normResults.find(x=>x.id===id),lesson=state.lessons.find(l=>l.id===r?.lessonId);
   if(!r||!lesson||r.status!=='done'||!r.grade||lesson.date!==r.date||lesson.date>M.todayIso())throw Error('Оценка недоступна для переноса');
@@ -1251,7 +1239,7 @@ export async function transferNormGrade(id,confirmed=false){
 }
 
 /* Итоговая оценка сохраняется отдельно. Границы периода — исторический снимок. */
-export async function saveFinalGrade(studentId,periodId,value,confirmed=false){
+async function saveFinalGrade(studentId,periodId,value,confirmed=false){
   if(!confirmed)throw Error('Подтвердите изменение итоговой отметки');
   const p=state.settings.trimesters.find(t=>t.id===periodId);
   if(!p||!H.validPeriod(p.from,p.to)||!p.to||p.to>M.todayIso()||!(value===null||['1','2','3','4','5'].includes(value)))throw Error('Выберите завершённый период и отметку 1–5');
@@ -1267,7 +1255,7 @@ export async function saveFinalGrade(studentId,periodId,value,confirmed=false){
   notify();return result.next;
 }
 
-export async function undoFinalHistory(studentId,from,to,eventId,confirmed=false){
+async function undoFinalHistory(studentId,from,to,eventId,confirmed=false){
  if(!confirmed)throw Error('Подтвердите отмену итоговой оценки');
  const result=await db.transaction(['students','finalGrades','workRecords'],'readwrite',async s=>{
   if(!await s.students.get(studentId)||!H.validPeriod(from,to)||!to||to>M.todayIso())throw Error('Ученик или период недоступен');
@@ -1283,15 +1271,7 @@ export async function undoFinalHistory(studentId,from,to,eventId,confirmed=false
 
 /* Массовые действия урока: только явно выбранные ученики, без перезаписи.
    Проверяем актуальные данные в той же транзакции, что и сохранение. */
-export function lessonBatchReason(action,mark,part,covered,matched){
-  if(mark)return 'В журнале уже есть отметка';
-  if(action==='absent')return part?'Уже зафиксировано участие':'';
-  if(covered)return 'Действует освобождение';
-  if(matched)return 'Есть ограничение нагрузки';
-  if(part&&(action==='normal'||part.mode!=='normal'))return 'Уже зафиксировано участие';
-  return '';
-}
-export async function applyLessonBatch(lessonId,studentIds,action,value=null,confirmed=false){
+async function applyLessonBatch(lessonId,studentIds,action,value=null,confirmed=false){
   if(!confirmed)throw Error('Подтвердите массовое действие');
   if(!Array.isArray(studentIds)||!studentIds.length||studentIds.length>500||new Set(studentIds).size!==studentIds.length||
     !['grade','normal','absent'].includes(action)||(action==='grade'&&!['1','2','3','4','5'].includes(value)))throw Error('Проверьте выбранных учеников и действие');
@@ -1327,7 +1307,7 @@ export async function applyLessonBatch(lessonId,studentIds,action,value=null,con
 }
 
 
-export async function repairLessonTopics(classId,changes){
+async function repairLessonTopics(classId,changes){
   if(!Array.isArray(changes)||!changes.length)return;
   if(new Set(changes.map(c=>c.id)).size!==changes.length)throw Error('Повторяющиеся уроки');
   const topics=new Set(topicsForClass(classId).map(t=>t.id));
@@ -1349,41 +1329,96 @@ export async function repairLessonTopics(classId,changes){
   notify();
 }
 
-/** Atomic import into empty journal cells. Identity and load constraints are rechecked in the write transaction. */
-export const journalMarkSnapshot=mark=>JSON.stringify(mark??null);
-/** Freeze the lesson context shown during preview, including inherited topic load. */
-export function journalLessonSnapshot(lesson,topic=state.topics.find(t=>t.id===lesson.topicId)){
- const effective=effectiveLessonLoad(lesson,topic);
- return JSON.stringify({id:lesson.id,classId:lesson.classId,date:lesson.date,slot:lesson.slot??null,time:lesson.time||'',topicId:lesson.topicId??null,topicName:topic?.name??null,held:lesson.held??null,activityIds:effective.activityIds??null,activitiesConfirmed:effective.activitiesConfirmed??null,note:lesson.note??''});
+/** Maintain the public store API; only the native facade updates the application cache. */
+function journalLessonSnapshot(lesson,topic=state.topics.find(t=>t.id===lesson.topicId)){
+ return snapshotJournalLesson(lesson,topic);
 }
-export function journalReplacementReason(mark){
- if(!mark)return '';
- if(mark.source!=='manual'||!['1','2','3','4','5'].includes(mark.value)||mark.flag||mark.osv||mark.baseMark||mark.participationId)return 'Отметка связана с особым участием или нормативом';
- return '';
-}
-export async function applyJournalPaste(classId,entries,confirmed=false,{replace=false,requireLessonSnapshot=false}={}){
- if(replace&&(!Array.isArray(entries)||entries.some(e=>!e||typeof e.expectedMark!=='string'||e.expectedMark.length>4000||!['1','2','3','4','5'].includes(e.value))))throw Error('Для замены необходим предпросмотр обычных оценок');
- if(!confirmed||typeof classId!=='string'||!Array.isArray(entries)||!entries.length||entries.length>500||entries.some(e=>!e||typeof e.studentId!=='string'||typeof e.studentName!=='string'||typeof e.lessonId!=='string'||typeof e.date!=='string'||!['1','2','3','4','5','Н'].includes(e.value))||new Set(entries.map(e=>JSON.stringify([e.studentId,e.lessonId]))).size!==entries.length)throw Error('Проверьте блок и подтвердите вставку');
- if(requireLessonSnapshot&&entries.some(e=>typeof e.expectedLesson!=='string'||e.expectedLesson.length>20000))throw Error('Требуется актуальный предпросмотр уроков');
- // The caller cannot alter the confirmed plan while IndexedDB is reading.
- entries=structuredClone(entries);
- const next=await db.transaction(['students','lessons','topics','marks','participation','exemptions','activityRestrictions','activityCategories','workRecords'],'readwrite',async s=>{
-  const [students,lessons,exemptions,restrictions,custom]=await Promise.all([s.students.index('classId').getAll(classId),s.lessons.index('classId').getAll(classId),s.exemptions.getAll(),s.activityRestrictions.getAll(),s.activityCategories.getAll()]);
-  const pupilMap=new Map(students.map(p=>[p.id,p])),lessonMap=new Map(lessons.map(l=>[l.id,l])),byLesson=new Map(),records=[];
-  for(const entry of entries){const l=lessonMap.get(entry.lessonId),p=pupilMap.get(entry.studentId);if(!l||!p||p.fullName!==entry.studentName||l.date!==entry.date||(l.slot??null)!==entry.slot||(l.time||'')!==entry.time||l.date>M.todayIso())throw Error('Ученик, урок или дата изменились. Обновите предпросмотр');if(!byLesson.has(l.id))byLesson.set(l.id,[]);byLesson.get(l.id).push(entry);}
-  for(const [lessonId,rows] of byLesson){const l=lessonMap.get(lessonId),[marks,parts,topic]=await Promise.all([s.marks.index('lessonId').getAll(lessonId),s.participation.index('lessonId').getAll(lessonId),l.topicId?s.topics.get(l.topicId):Promise.resolve(null)]);const byMark=new Map(marks.map(m=>[m.studentId,m])),byPart=new Map(parts.map(p=>[p.studentId,p]));
-   const lessonSnapshot=journalLessonSnapshot(l,topic??null);
-   if(rows.some(e=>(requireLessonSnapshot||e.expectedLesson!==undefined)&&e.expectedLesson!==lessonSnapshot))throw Error('Тема, нагрузка или состояние урока изменились. Обновите предпросмотр');
-   const review=H.checkLessonRestrictions({lesson:effectiveLessonLoad(l,topic),students,activities:[...H.catalog,...custom],restrictions}),restricted=new Set([...review.matches,...review.potentialMatches].map(m=>m.studentId));
-   for(const e of rows){const id=e.studentId,action=e.value==='Н'?'absent':'grade',old=byMark.get(id)||null,covered=exemptions.some(x=>x.studentId===id&&M.exemptionCovers(x,l.date));
-    if(replace&&journalMarkSnapshot(old)!==e.expectedMark)throw Error('Отметка изменилась. Обновите предпросмотр');
-    const reason=(replace?journalReplacementReason(old):'')||lessonBatchReason(action,replace?null:old,byPart.get(id),covered,restricted.has(id));
-    if(reason)throw Error('Вставка отменена: '+e.studentName+' · '+M.lessonLabel(l)+' · '+reason);
-    const m={...(replace&&old?old:{}),id:replace&&old?old.id:M.uid('mk'),studentId:id,lessonId,value:action==='grade'?e.value:null,flag:action==='absent'?'Н':null,source:'manual'};
-    records.push({old:replace?old:null,next:withCoverage(m,null,l,id,exemptions,null)});}
-  }
-  for(const {old,next:m} of records){if(old)await s.marks.put(m);else await s.marks.add(m);await appendGradeHistory(s.workRecords,{scope:'lesson',studentId:m.studentId,lessonId:m.lessonId},gradeState(baseMark(old)),gradeState(baseMark(m)),'batch');}
-  return records.map(r=>r.next);
- });
+async function applyJournalPaste(classId,entries,confirmed=false,options={}){
+ const next=await writeJournalPaste(db,classId,entries,confirmed,options);
  cacheMarks(next.map(m=>({id:m.id,next:m})));for(const id of new Set(next.map(m=>m.studentId)))notify(id);return next.length;
+}
+function revoke(){
+ if(revoked)return;
+ revoked=true;subs.clear();pendingStudents=new Set();automaticPeriodId=null;manualPeriodId=null;
+ // Detach pending continuations before scrubbing the publicly shared state object.
+ const old=state;state=emptyState();Object.assign(old,emptyState());
+}
+return {get state(){return state;},revoke,
+  subscribe,notify,load,studentsOfClass,lessonsOfClass,lessonsInRange,trimester,
+  currentTrimester,actualSchoolPeriod,refreshSchoolPeriod,selectSchoolPeriod,markMap,exemptionsOfStudent,activeExemption,
+  currentlyExempt,monthlyFor,lessonsOfMonth,saveSettings,saveSchoolHolidays,savePeriods,setTrimesterRange,
+  setYear,setRules,addClass,renameClass,deleteClass,addStudent,updateStudent,
+  setClassNormLevel,saveNormGroups,deleteStudent,addLesson,updateLesson,deleteLesson,undoGradeHistory,
+  setMark,setMarkWeight,addExemption,updateExemption,removeExemption,countOsvAffected,setMonthlyOverride,
+  clearMonthlyOverride,setMonthlyComputed,bulkSetMonthly,allKtp,ktpOfClass,topicsOfKtp,topicsForClass,
+  addKtp,updateKtp,setKtpClasses,repairKtpPlan,deleteKtp,addTopic,updateTopic,
+  deleteTopic,reorderKtpTopics,replaceKtpTopics,appendKtpTopics,scheduleOfDay,scheduleForDate,setScheduleEntry,
+  deleteScheduleEntry,replaceSchedule,setScheduleOverride,deleteScheduleOverride,clearOverridesForDate,overridesOfDate,makeBackup,
+  restoreBackup,clearDemo,hasDemo,participationModes,saveParticipation,activities,healthGroups,
+  lessonCheck,saveProfiles,saveRestriction,addActivity,lessonHeld,transferTopic,attendanceContext,
+  attendanceFor,saveNorm,normCheck,saveNormResult,saveNormResultsBatch,importNormScales,deleteNormResult,
+  transferNormGrade,saveFinalGrade,undoFinalHistory,applyLessonBatch,repairLessonTopics,journalLessonSnapshot,applyJournalPaste
+};
+}
+
+const native=buildSchoolStore(nativeDb,{allowFullBackup:true});
+// Terminal for this document only. A reload starts with a new store instance.
+export const revokeNativeView=()=>native.revoke();
+export const {state,
+  subscribe,notify,load,studentsOfClass,lessonsOfClass,lessonsInRange,trimester,
+  currentTrimester,actualSchoolPeriod,refreshSchoolPeriod,selectSchoolPeriod,markMap,exemptionsOfStudent,activeExemption,
+  currentlyExempt,monthlyFor,lessonsOfMonth,saveSettings,saveSchoolHolidays,savePeriods,setTrimesterRange,
+  setYear,setRules,addClass,renameClass,deleteClass,addStudent,updateStudent,
+  setClassNormLevel,saveNormGroups,deleteStudent,addLesson,updateLesson,deleteLesson,undoGradeHistory,
+  setMark,setMarkWeight,addExemption,updateExemption,removeExemption,countOsvAffected,setMonthlyOverride,
+  clearMonthlyOverride,setMonthlyComputed,bulkSetMonthly,allKtp,ktpOfClass,topicsOfKtp,topicsForClass,
+  addKtp,updateKtp,setKtpClasses,repairKtpPlan,deleteKtp,addTopic,updateTopic,
+  deleteTopic,reorderKtpTopics,replaceKtpTopics,appendKtpTopics,scheduleOfDay,scheduleForDate,setScheduleEntry,
+  deleteScheduleEntry,replaceSchedule,setScheduleOverride,deleteScheduleOverride,clearOverridesForDate,overridesOfDate,makeBackup,
+  restoreBackup,clearDemo,hasDemo,participationModes,saveParticipation,activities,healthGroups,
+  lessonCheck,saveProfiles,saveRestriction,addActivity,lessonHeld,transferTopic,attendanceContext,
+  attendanceFor,saveNorm,normCheck,saveNormResult,saveNormResultsBatch,importNormScales,deleteNormResult,
+  transferNormGrade,saveFinalGrade,undoFinalHistory,applyLessonBatch,repairLessonTopics,journalLessonSnapshot,applyJournalPaste
+}=native;
+
+const sessionStores=new Set([...schoolViewStores,'workRecords']);
+const queuedSchoolMethods=new Set(["load","saveSettings","saveSchoolHolidays","savePeriods","setTrimesterRange","setYear","setRules","addClass","renameClass","deleteClass","addStudent","updateStudent","setClassNormLevel","saveNormGroups","deleteStudent","addLesson","updateLesson","deleteLesson","undoGradeHistory","setMonthlyOverride","clearMonthlyOverride","setMonthlyComputed","bulkSetMonthly","addKtp","updateKtp","setKtpClasses","repairKtpPlan","deleteKtp","addTopic","updateTopic","deleteTopic","reorderKtpTopics","replaceKtpTopics","appendKtpTopics","setScheduleEntry","deleteScheduleEntry","replaceSchedule","setScheduleOverride","deleteScheduleOverride","clearOverridesForDate","clearDemo","saveParticipation","saveProfiles","saveRestriction","addActivity","transferTopic","saveNorm","saveNormResult","saveNormResultsBatch","importNormScales","deleteNormResult","transferNormGrade","saveFinalGrade","undoFinalHistory","applyLessonBatch","repairLessonTopics","applyJournalPaste","setMark","setMarkWeight","addExemption","updateExemption","removeExemption"]);
+
+/** Explicit, revocable school instance. Owns its supplied access handle.
+ * Full backup/restore stay in the native singleton; no raw IDB access.
+ * A caller must wire close() to its session lifecycle lock callback. */
+export function createSchoolSession(access){
+ if(!access||typeof access.close!=='function'||['transaction','readSnapshot','get','put','del','bulkPut'].some(k=>typeof access[k]!=='function'))throw TypeError('Требуется явный интерфейс школьного сеанса');
+ let closed=false,tail=Promise.resolve(),core;
+ const guard=()=>{if(closed)throw Error('Школьный сеанс заблокирован');};
+ const close=()=>{if(closed)return;closed=true;try{core.revoke();}finally{access.close();}};
+ const scoped=Object.freeze(Object.fromEntries(['transaction','readSnapshot','get','put','del','bulkPut'].map(method=>[method,async(names,...args)=>{
+  guard();
+  const tables=Array.isArray(names)?names:[names];
+  if(!tables.length||tables.some(n=>!sessionStores.has(n)))throw Error('Хранилище недоступно в школьном сеансе');
+  const result=await access[method](names,...args);guard();return result;
+ }])));
+ core=buildSchoolStore(scoped,{schoolSettingsOnly:access.settingsScope==='school'});
+ function enqueue(fn,args,load=false){
+  guard();const input=structuredClone(args);
+  const job=tail.then(async()=>{
+   guard();if(!load&&!core.state.ready)throw Error('Загрузите школьный сеанс');
+   try{
+    const result=await fn(...input);guard();
+    if(typeof result==='function')return (...a)=>enqueue(result,a);
+    if(result&&typeof result.undo==='function')return {...result,undo:(...a)=>enqueue(result.undo,a)};
+    return result;
+   }catch(e){close();throw e;}
+  });
+  tail=job.then(()=>undefined,()=>undefined);return job;
+ }
+ const api={get state(){guard();return core.state;},close,isClosed:()=>closed};
+ for(const name of Object.keys(core)){
+  if(['state','revoke','makeBackup','restoreBackup'].includes(name))continue;
+  const value=core[name];
+  if(typeof value!=='function'){api[name]=Object.freeze({...value});continue;}
+  if(queuedSchoolMethods.has(name))api[name]=(...args)=>enqueue(value,args,name==='load');
+  else api[name]=(...args)=>{guard();if(!['subscribe','notify'].includes(name)&&!core.state.ready)throw Error('Загрузите школьный сеанс');return value(...args);};
+ }
+ return Object.freeze(api);
 }

@@ -20,8 +20,9 @@ export function validateBoard(b){
  check(Array.isArray(b.arrows)&&b.arrows.length<=100&&b.arrows.every(a=>only(a,['id','style','from','to'])&&text(a.id)&&['move','ball'].includes(a.style)&&only(a.from,['x','y'])&&only(a.to,['x','y'])&&point(a.from)&&point(a.to)&&(a.from.x!==a.to.x||a.from.y!==a.to.y))&&new Set(b.arrows.map(a=>a.id)).size===b.arrows.length,'Проверьте стрелки');
  return b;
 }
-export async function saveBoard(input){
- return db.transaction(['workRecords','coachTeams'],'readwrite',async s=>{
+export async function saveBoard(input){return writeBoard(db,input);}
+export async function writeBoard(access,input){
+ return access.transaction(['workRecords','coachTeams'],'readwrite',async s=>{
   const old=input.id?await s.workRecords.get(input.id):null,team=await s.coachTeams.get(input.teamId);
   check(team&&(!team.archived||old),'Команда недоступна');
   check(!input.id||old?.kind==='tacticBoard'&&old.teamId===input.teamId&&old.revision===input.revision,'Схема изменена. Откройте её заново');

@@ -799,3 +799,8 @@ test('Journal paste preview does not write, rejects a filled cell and permits va
 
 test('Journal selection mode selects explicit cells without opening individual sheet, clears on search',async()=>{await seed();store.state.currentTrimesterId='t1';const screen=doc.createElement('div');renderJournal(screen,{onOpenClassPicker(){},onOpenExemptions(){},onOpenLessonPlanner(){}});const toggle=[...screen.querySelectorAll('button')].find(b=>b.textContent==='Выбрать ячейки'),apply=[...screen.querySelectorAll('button')].find(b=>b.textContent==='Изменить выбранные');toggle.click();const cell=screen.querySelector('td.cell');cell.click();assert.ok(cell.classList.contains('journal-selected'));assert.equal(apply.disabled,false);cell.dispatchEvent(new window.KeyboardEvent('keydown',{key:' ',bubbles:true}));assert.equal(apply.disabled,true);cell.click();const search=screen.querySelector('input[aria-label="Найти ученика в журнале"]');search.value='нет';search.dispatchEvent(new window.Event('input'));assert.equal(apply.disabled,true);assert.ok(!cell.classList.contains('journal-selected'));});
 
+test('Sheet content change event is synchronous and emitted on open, replace and close',()=>{
+ const events=[];const listener=()=>events.push('change');window.addEventListener('teachapp:sheet-content',listener);
+ try{ui.openSheet(doc.createElement('div'));ui.replaceSheetContent(()=>doc.createElement('div'));ui.closeSheet();assert.deepEqual(events,['change','change','change']);}
+ finally{window.removeEventListener('teachapp:sheet-content',listener);}
+});

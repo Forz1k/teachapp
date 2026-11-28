@@ -1,5 +1,9 @@
 name: TeachApp Firebase archive
 on:
+  push:
+    branches:
+      - 'roadmap/8.0-integration'
+      - main
   pull_request:
     paths:
       - 'package.json'

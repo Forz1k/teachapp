@@ -1,0 +1,9 @@
+# Synthetic Web Push transport LAB
+
+Combines the RFC 8291 encryption and RFC 8292 VAPID helpers into a single injected POST transport. Only the reserved push.example.invalid endpoint is accepted; no default fetch or real network. Fixed generic topic and message, independent signing/encryption keys, TTL limited by signal expiry and 24 hours, VAPID expiry at most ten minutes. The caller supplies an explicit current-consent/revision predicate; absent consent cancels, rechecked after crypto before transport. A request already accepted by transport cannot be recalled.
+
+201/202 means accepted by the synthetic transport, not displayed/read. 404/410 suggests subscription removal by a future revision-bound caller; 401/403 and 413 are explicit errors; 429/503 gives a bounded retry hint (Retry-After delta or HTTP date); ambiguous 5xx/network failure stays unknown, never retried automatically. No actual subscription cleanup, queue mutation, scheduler, timeout or external sender. Tests assert one attempt, fixed headers, encrypted record, cancellation, no response-body access and status classification.
+
+### Time and consent fence
+
+Inputs are copied before awaiting the consent predicate; only literal true is consent and a rejected/throwing guard fails closed. An injected seconds clock is checked before crypto, immediately before the one transport call, and after response; expiration of either signal or VAPID prevents sending, TTL is recalculated at send time and a retry hint is bounded by remaining lifetime at response time. A clock failure after an attempted delivery cannot label it cancelled. Default clock remains fixed at supplied now for deterministic rehearsals; a real caller must supply a live trusted clock and atomic revision/consent guards. This does not eliminate the race once a request is handed to transport. No real sender or network.

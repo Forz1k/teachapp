@@ -1,10 +1,10 @@
 /* LAB only: cooperative cross-tab fence for the migration rehearsal.
  * All callers must use this router; raw IndexedDB connections bypass Web Locks.
  * No live database, application switch, persistent password or plaintext fallback. */
-import {SCHEMA} from '../../js/db.js';
+import {SCHEMA,createDataAccess} from '../../js/db.js';
 import {BACKUP_VERSION,validateBackup} from '../../js/backup.js';
 import {encryptBackup,decryptBackup} from '../../js/privacy.js';
-import {openVaultLab,readVaultLab} from './local-vault.mjs';
+import {openVaultLab,readVaultLab,openVaultWritableKeySessionLab} from './local-vault.mjs';
 import {schemaVaultAdapter} from './vault-schema-adapter.mjs';
 import {openPlainSchemaLab,readPlainSchemaLab,stageSchemaMigrationLab,verifySchemaMigrationLab,restoreSchemaMigrationLab,plainSchemaTransactionLab} from './vault-migration-rehearsal.mjs';
 const check=(ok,msg)=>{if(!ok)throw Error(msg);};
@@ -83,7 +83,7 @@ export function vaultRouterLab(id,{locks=globalThis.navigator?.locks}={}){
  const state=async db=>{const s=await readState(db);check(validState(s),'Маршрут LAB отсутствует или повреждён; fallback запрещён');return s;};
  const expect=(s,p)=>check(s.phase===p,'Недопустимый этап переключения LAB');
  const next=(s,phase)=>({id:'active',generation:s.generation+1,phase});
- const adapter=async(vault,password,fn)=>{const a=schemaVaultAdapter(vault,{password});try{return await fn(a);}finally{a.close();}};
+ const adapter=async(vault,password,fn,assertActive,keySession)=>{const a=schemaVaultAdapter(vault,{password,assertActive,keySession});try{return await fn(a);}finally{a.close();}};
  return {
   initialize:()=>guarded(async db=>{
    check((await readState(db))===undefined,'Маршрут LAB уже существует');
@@ -96,10 +96,18 @@ export function vaultRouterLab(id,{locks=globalThis.navigator?.locks}={}){
    const s=await state(db);
    return s.phase==='vault'?encrypted(v=>adapter(v,password,a=>a.snapshot())):plain(s.phase,readPlainSchemaLab);
   }),
-  transaction:(storeNames,mode,fn,{password,expectedGeneration}={})=>guarded(async db=>{
+  openKeySession:({password,assertActive=()=>{}})=>guarded(async db=>{
+   assertActive();const s=await state(db);
+   check(s.generation===2&&s.phase==='vault','Маршрут LAB изменился; откройте данные заново');
+   assertActive();return encrypted(v=>openVaultWritableKeySessionLab(v,{scope:'workspace',password,assertActive}));
+  }),
+  transaction:(storeNames,mode,fn,{password,expectedGeneration,assertActive,keySession}={})=>guarded(async db=>{
+   if(keySession)check(expectedGeneration===2&&password===undefined,'Требуется зашифрованное поколение LAB');
+   // Lifecycle guards are accepted only on the encrypted generation, never on a plaintext route.
+   if(assertActive!==undefined){check(typeof assertActive==='function'&&expectedGeneration===2,'Требуется зашифрованное поколение LAB');assertActive();}
    const s=await state(db);
    check(expectedGeneration===undefined||expectedGeneration===s.generation,'Маршрут LAB изменился; откройте данные заново');
-   return s.phase==='vault'?encrypted(v=>adapter(v,password,a=>a.transaction(storeNames,mode,fn))):plain(s.phase,p=>plainSchemaTransactionLab(p,storeNames,mode,fn));
+   return s.phase==='vault'?encrypted(v=>adapter(v,password,a=>a.transaction(storeNames,mode,fn),assertActive,keySession)):plain(s.phase,p=>plainSchemaTransactionLab(p,storeNames,mode,fn));
   }),
   put:(table,row,{password}={})=>{
    check(Object.hasOwn(SCHEMA,table)&&typeof row?.id==='string'&&row.id.length>0,'Некорректная запись LAB');
@@ -169,4 +177,21 @@ export function vaultRouterLab(id,{locks=globalThis.navigator?.locks}={}){
    const n=next(s,'rollback');await setState(db,s,n);return n;
   })
  };
+}
+
+/** Generation-pinned facade for an explicit LAB route. A stale handle cannot
+ * silently move to another phase; neither native open nor raw IDB is exposed.
+ * Password lives only in the handle closure. Not a production unlock session. */
+export function routedDataAccessLab(router,{expectedGeneration,password}={}){
+ check(typeof router?.transaction==='function'&&Number.isInteger(expectedGeneration)&&expectedGeneration>=1&&expectedGeneration<=3,'Требуется явное поколение LAB');
+ if(expectedGeneration===2)check(typeof password==='string'&&password.length>0,'Требуется пароль vault LAB');
+ else check(password===undefined,'Пароль разрешён только для vault LAB');
+ let closed=false,secret=password;
+ const access=createDataAccess(async(names,mode,fn)=>{
+  check(!closed,'Интерфейс LAB закрыт');
+  // Check again when queued work enters the router callback. Already submitted
+  // write transactions cannot be retroactively revoked by close().
+  return router.transaction(names,mode,stores=>{check(!closed,'Интерфейс LAB закрыт');return fn(stores);},{expectedGeneration,password:secret});
+ });
+ return Object.freeze({...access,close(){closed=true;secret=undefined;}});
 }

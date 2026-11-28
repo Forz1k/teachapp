@@ -1,4 +1,5 @@
-import {resultLink,archiveKey} from '../public-archive.js';
+import {migrationLabAllowed} from '../rollout-policy.js';
+import {resultLink,archiveKey,verifyPublicMigrationBundle} from '../public-archive.js';
 import {openStudio} from './studio.js';
 import {openMediaCenter} from './public-media.js';
 import * as P from '../public-publisher.js';
@@ -17,8 +18,9 @@ const card=(title,...children)=>el('section',{class:'card-block vb-stack'},[el('
 export function openPublicPortal(team,back=closeSheet){
  const id=team.id,body=el('div',{class:'vb-stack'});let editing=null,busy=false;
  function draw(){
-  const {data:d,connected,status}=P.portalInfo(id),publicName=input('text',d.team||team.name,{maxlength:100}),origin=input('url',d.origin||primaryPortal.origin,{placeholder:'https://...firebaseio.com',autocomplete:'off',readonly:d.origin?true:null}),api=input('text',d.apiKey||primaryPortal.apiKey,{placeholder:'Web API Key',autocomplete:'off'}),email=input('email','',{autocomplete:'username'}),password=input('password','',{autocomplete:'current-password'}),slug=input('text',d.slug||P.defaultPageCode(id),{placeholder:'Оставьте пустым для новой ссылки',readonly:d.slug?true:null,maxlength:100});
-  const statusLine=el('p',{class:'vp-portal-status',role:'status',text:status});
+  const {data:d,connected,status,running,dirty,conflict}=P.portalInfo(id),publicName=input('text',d.team||team.name,{maxlength:100}),origin=input('url',d.origin||primaryPortal.origin,{placeholder:'https://...firebaseio.com',autocomplete:'off',readonly:d.origin?true:null}),api=input('text',d.apiKey||primaryPortal.apiKey,{placeholder:'Web API Key',autocomplete:'off'}),email=input('email','',{autocomplete:'username'}),password=input('password','',{autocomplete:'current-password'}),slug=input('text',d.slug||P.defaultPageCode(id),{placeholder:'Оставьте пустым для новой ссылки',readonly:d.slug?true:null,maxlength:100});
+  const statusLine=el('p',{class:'vp-portal-status',role:'status',text:status}),inspection=el('div',{class:'vb-stack','aria-live':'polite'});
+  const verify=btn('Проверить опубликованный счёт',async()=>{verify.disabled=true;try{const s=await P.inspectPortal(id);inspection.replaceChildren(p(s.exists?'Сервер: '+(s.match?s.match.opponent+' · партия '+s.match.set+' · '+s.match.score.ours+':'+s.match.score.theirs:'нет активного матча'):'Страница не опубликована'),p('Обновлено: '+(s.updatedAt==null?'—':date(s.updatedAt))+' · '+(s.contentEqual?'Совпадает с локальной публичной версией':'Отличается от локальной публичной версии')),p(s.pending?'Есть ожидающие изменения.':s.conflict?'Конфликт: запись заблокирована.':s.paused?'Отправка остановлена.':'Проверка только читает сервер.'));}catch(e){inspection.replaceChildren(p(e.message));}finally{verify.disabled=false;}},'wide');
   const link=P.portalLink(id),linkInput=input('url',link,{readonly:true,'aria-label':'Постоянная ссылка зрителей'});
   const opponent=input('text',editing?.opponent||'',{maxlength:100,placeholder:'Название соперника'}),when=input('datetime-local',editing?localInput(editing.startAt):'');
   const logoFile=()=>input('file','',{accept:'image/png,image/jpeg,image/webp'});
@@ -27,11 +29,11 @@ export function openPublicPortal(team,back=closeSheet){
   const run=async fn=>{if(busy)return;busy=true;const buttons=[...body.querySelectorAll('button')];buttons.forEach(x=>x.disabled=true);try{await fn();draw();}catch(e){toast(e.message);}finally{busy=false;buttons.forEach(x=>x.disabled=false);}};
   const check=(label,k)=>{const cb=el('input',{type:'checkbox'});cb.checked=d.settings[k];cb.disabled=!!d.publisherPaused;cb.onchange=async()=>{if(k==='permanent'&&!await confirmDialog({title:cb.checked?'Сохранять результаты для постоянного архива?':'Отключить очередь?',text:cb.checked?'Только результаты, которые вы уже публикуете на сайте. Отправка очереди требует отдельного подтверждения; имена, время игроков и тактика не передаются.':'Неотправленная очередь будет очищена. Уже опубликованные записи останутся в архиве.',ok:'Подтвердить'})){cb.checked=!cb.checked;return;}if(k==='numbers'&&cb.checked&&!await confirmDialog({title:'Публиковать номера игроков?',text:'Номера могут позволять знакомым опознать учащихся. Включайте только при наличии необходимых разрешений. Имена, здоровье и тактическая разведка никогда не публикуются.',ok:'Разрешить'})){cb.checked=false;return;}try{P.setPortalSettings(id,{[k]:cb.checked});}catch(e){cb.checked=!cb.checked;toast(e.message);}};return el('label',{class:'vp-portal-check'},[cb,el('span',{text:label})]);};
   body.replaceChildren(el('h2',{text:'Публичная страница · '+team.name}),p('Одна постоянная ссылка для зрителей. Публикация отдельна от локального журнала, выключена по умолчанию.'),
-   card('Подключение',statusLine,connected?btn('Принять опубликованную версию',()=>run(async()=>{if(!await confirmDialog({title:'Принять версию сервера?',text:'Локальный черновик публичной страницы будет заменён текущей публикацией. Локальные записи матчей и статистика сохранятся. Автозапуск трансляции будет выключен.',ok:'Принять',danger:true}))return;await P.acceptRemotePortal(id);}), 'wide'):null,connected?btn('Отключить учётную запись',()=>run(()=>P.disconnectPortal(id)),'wide'):el('div',{class:'vb-stack'},[field('Почта тренера',email),field('Пароль Firebase',password),el('details',{},[el('summary',{text:'Настройки страницы и проекта'}),field('Код страницы',slug),field('Адрес Realtime Database',origin),field('Web API Key',api)]),btn('Подключить Firebase',()=>run(async()=>{await P.connectPortal(id,{origin:origin.value,apiKey:api.value.trim(),email:email.value.trim(),password:password.value,slug:slug.value.trim(),team:publicName.value});password.value='';}),'primary wide'),btn('Получить письмо для установки пароля',()=>run(async()=>{await resetPortalPassword(api.value.trim(),email.value.trim());toast('Проверьте почту тренера');}),'wide')])),
+   card('Подключение',statusLine,p('Управление публикацией доступно только владельцу разрешённой учётной записи Firebase. Зрительская ссылка — только для чтения. Передача между устройствами требует явного подтверждения и совпадения черновика.'),connected?verify:null,inspection,connected?btn('Повторить ожидающую отправку',()=>run(()=>{if(!P.retryPortal(id))toast('Нет ожидающей отправки или обмен уже выполняется');}),'wide'):null,connected?btn('Принять опубликованную версию',()=>run(async()=>{if(!await confirmDialog({title:'Принять версию сервера?',text:'Локальный черновик публичной страницы будет заменён текущей публикацией. Локальные записи матчей и статистика сохранятся. Автозапуск трансляции будет выключен.',ok:'Принять',danger:true}))return;await P.acceptRemotePortal(id);}), 'wide'):null,connected?btn('Отключить учётную запись',()=>run(()=>P.disconnectPortal(id)),'wide'):el('div',{class:'vb-stack'},[field('Почта тренера',email),field('Пароль Firebase',password),el('details',{},[el('summary',{text:'Настройки страницы и проекта'}),field('Код страницы',slug),field('Адрес Realtime Database',origin),field('Web API Key',api)]),btn('Подключить Firebase',()=>run(async()=>{await P.connectPortal(id,{origin:origin.value,apiKey:api.value.trim(),email:email.value.trim(),password:password.value,slug:slug.value.trim(),team:publicName.value});password.value='';}),'primary wide'),btn('Получить письмо для установки пароля',()=>run(async()=>{await resetPortalPassword(api.value.trim(),email.value.trim());toast('Проверьте почту тренера');}),'wide')])),
    card('Постоянная ссылка',field('Публичное название команды',publicName),btn('Сохранить название',()=>run(()=>P.setPublicTeamName(id,publicName.value)),'wide'),link?field('Ссылка для зрителей',linkInput):p('Ссылка появится после подключения Firebase.'),
     link?btn('Скопировать ссылку',async()=>{try{await navigator.clipboard.writeText(link);toast('Ссылка скопирована');}catch{linkInput.focus();linkInput.select();toast('Скопируйте выделенную ссылку');}},'wide'):null,
     link?el('a',{class:'btn wide',href:link,target:'_blank',rel:'noopener noreferrer',text:'Открыть страницу зрителя'}):null,
-    btn(d.enabled?'Снять страницу с публикации':'Опубликовать страницу',()=>run(async()=>{if(!await confirmDialog({title:d.enabled?'Снять публикацию?':'Опубликовать страницу?',text:d.enabled?'Основная страница будет удалена; расширенный архив скрывается, но его записи остаются и могут снова стать доступны при повторной публикации. Неотправленная очередь очищается.':'Расписание и выбранные публичные данные будут доступны всем, у кого есть ссылка. Проверьте разрешения на публикацию.',ok:d.enabled?'Снять':'Опубликовать',danger:d.enabled}))return;P.setPortalEnabled(id,!d.enabled,publicName.value);}),d.enabled?'wide':'primary wide')),
+    btn(d.enabled?'Снять страницу с публикации':'Опубликовать страницу',()=>run(async()=>{if(!await confirmDialog({title:d.enabled?'Снять публикацию?':'Опубликовать страницу?',text:d.enabled?'Основная страница будет удалена; расширенный архив и медиацентр скрываются, но их записи остаются и могут снова стать доступны при повторной публикации. Неотправленная очередь очищается. Медиацентр можно отдельно удалить после снятия страницы.':'Расписание и выбранные публичные данные будут доступны всем, у кого есть ссылка. Ранее сохранённые архив и медиацентр могут снова открыться. Проверьте их и разрешения на публикацию.',ok:d.enabled?'Снять':'Опубликовать',danger:d.enabled}))return;P.setPortalEnabled(id,!d.enabled,publicName.value);}),d.enabled?'wide':'primary wide')),
    card('Предстоящие матчи',p('Время вводится в часовом поясе устройства тренера. У зрителя отображается его местное время.'),
     field('Соперник',opponent),field('Дата и время',when),el('details',{},[el('summary',{text:'Эмблемы команд'}),field('Наша команда',ours),field('Соперник',theirs)]),btn(editing?'Сохранить изменения':'+ Добавить матч',()=>run(async()=>{if(!when.value)throw Error('Укажите дату и время');P.saveFixture(id,{id:editing?.id||uid('fixture'),opponent:opponent.value,startAt:new Date(when.value).getTime(),logos:{ours:await fixtureLogo(ours,'ours'),theirs:await fixtureLogo(theirs,'theirs')}});editing=null;}),'primary wide'),
     editing?btn('Отмена редактирования',()=>{editing=null;draw();},'wide'):null,
@@ -101,5 +103,55 @@ async function openExtendedArchive(team,back){
    return card(r.opponent+' · '+r.setsWon.ours+':'+r.setsWon.theirs,p(date(r.startedAt)),p(r.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),link?el('a',{class:'btn wide',href:resultLink(link,r),target:'_blank',rel:'noopener noreferrer',text:'Постоянная ссылка матча'}):null,remove);
   }),cursor?more:null,loaded&&!rows.length?p('Архив пуст.'):null);
  }
- body.append(el('h2',{text:'Расширенный архив'}),p('Расширенная история хранится отдельно от последних 20 матчей. Снятие страницы с публикации скрывает архив; повторная публикация снова открывает оставленные записи. Чтобы удалить результат полностью, уберите его из обоих публичных списков.'),notice,pending,send,refresh,copy,list,btn('Назад',back,'wide'));openSheet(body,{fullHeight:true});await run(()=>load());
+ body.append(el('h2',{text:'Расширенный архив'}),p('Расширенная история хранится отдельно от последних 20 матчей. Снятие страницы с публикации скрывает архив; повторная публикация снова открывает оставленные записи. Чтобы удалить результат полностью, уберите его из обоих публичных списков.'),notice,pending,send,refresh,copy,...(migrationLabAllowed()?[btn('Миграция архива V3 · кандидат',()=>openArchiveMigration(team,()=>openExtendedArchive(team,back)),'wide')]:[]),list,btn('Назад',back,'wide'));openSheet(body,{fullHeight:true});await run(()=>load());
+}
+
+/** Explicit operator workflow. The saved backup must be re-imported from a file. */
+function openArchiveMigration(team,back){
+ if(!migrationLabAllowed()){toast('Миграция V3 отключена на публичном адресе.');return;}
+ const id=team.id,body=el('div',{class:'vb-stack'}),notice=el('p',{role:'status'}),controls=el('div',{class:'vb-stack'});
+ let state=null,backup=null,plan=null,busy=false;
+ const op=(name,options={})=>P.archiveMigrationOperation(id,name,options);
+ const run=async fn=>{if(busy)return;busy=true;draw();try{await fn();}catch(e){plan=null;notice.textContent=e.message;}finally{busy=false;draw();}};
+ const refresh=async()=>{state=await op('inspect');if(backup&&backup.archive.generation!==state.generation)backup=null;plan=null;notice.textContent='Состояние подтверждено сервером.';};
+ const change=(action,title,text,ok)=>run(async()=>{
+  const expected={...state};
+  if(!await confirmDialog({title,text,ok,danger:true}))return;
+  state=await op(action,{expected,backup,confirmed:true});backup=null;plan=null;notice.textContent='Переход подтверждён сервером: '+state.phase;
+ });
+ const verify=async()=>{plan=await op('verify',{backup});notice.textContent='Сверено: V2 '+plan.sourceCount+' · V3 '+plan.destinationCount+' · осталось '+plan.ready.length+' · новости '+plan.news+' · турнир '+(plan.tournament?'есть':'нет');};
+ function draw(){
+  const items=[p(state?'Фаза: '+state.phase+' · поколение '+state.generation:'Сначала проверьте подключение и состояние.'),btn('Проверить состояние',()=>run(refresh),'wide')];
+  if(state?.phase==='legacy')items.push(btn('Заморозить архив V2',()=>change('freeze','Заморозить архив?','Постоянный архив и медиацентр будут закрыты для изменений. Согласуйте остановку публикации с другими устройствами.','Заморозить'),'wide'));
+  if(state?.phase==='frozen'){
+   items.push(btn('Сохранить независимую JSON-копию',()=>run(async()=>{
+    const saved=await op('backup'),url=URL.createObjectURL(new Blob([JSON.stringify(saved,null,2)],{type:'application/json'})),a=el('a',{href:url,download:'teachapp-archive-v3-g'+saved.archive.generation+'.json'});
+    document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+    notice.textContent='Сохраните файл отдельно, затем выберите его ниже. SHA-256: '+saved.sha256;
+   }),'wide'));
+   const file=input('file','',{accept:'.json,application/json','aria-label':'Независимая копия архива'});
+   file.onchange=()=>run(async()=>{
+    backup=null;plan=null;const f=file.files?.[0];if(!f)return;
+    if(f.size>10000000)throw Error('Файл слишком большой');
+    const value=JSON.parse(await f.text()),report=await verifyPublicMigrationBundle(value);
+    if(report.generation!==state.generation)throw Error('Поколение миграции изменилось');
+    plan=await op('verify',{backup:value});backup=value;
+    notice.textContent='Сверено: V2 '+plan.sourceCount+' · V3 '+plan.destinationCount+' · осталось '+plan.ready.length+' · новости '+plan.news+' · турнир '+(plan.tournament?'есть':'нет');
+   });
+   items.push(field('Загрузить сохранённую копию',file),p(backup?'Копия проверена: '+backup.sha256:'Копия не загружена.'));
+   if(backup){
+    items.push(btn('Повторить полную сверку',()=>run(verify),'wide'));
+    if(plan&&!plan.complete)items.push(btn('Копировать до 50 результатов',()=>run(async()=>{
+     if(!await confirmDialog({title:'Копировать результаты?',text:'Только отсутствующие публичные счета. Записи не заменяются.',ok:'Копировать'}))return;
+     const result=await op('copy',{backup,confirmed:true});await verify();notice.textContent='Скопировано: '+result.copied+' · осталось: '+result.remaining;
+    }),'primary wide'));
+    if(plan?.complete)items.push(btn('Активировать V3',()=>change('activate','Активировать архив V3?','Оба архива и медиацентр будут повторно сверены. Переход необратим: старые клиенты V2 требуют обновления.','Активировать'),'primary wide'));
+   }
+   items.push(btn('Отменить заморозку',()=>change('thaw','Вернуться к V2?','Скопированные записи V3 останутся. Для нового переноса потребуется новая копия.','Отменить заморозку'),'wide'));
+  }
+  if(state?.phase==='v3')items.push(p('V3 активен. Автоматический откат недоступен.'));
+  controls.replaceChildren(...items);for(const node of controls.querySelectorAll('button,input'))node.disabled=busy;
+ }
+ body.append(el('h2',{text:'Миграция Firebase Archive V3 и медиа'}),p('Кандидат: используйте только согласованный тестовый контур с правилами V3. Не развёртывает правила и не переносит частные матчи. Активация необратима.'),notice,controls,btn('Назад',()=>{if(!busy)back();},'wide'));
+ openSheet(body,{fullHeight:true});draw();
 }

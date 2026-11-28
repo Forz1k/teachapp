@@ -25,8 +25,9 @@ export function validateSchoolCompetition(r){
  check(r.status==='completed'||r.participants.every(p=>p.status==='registered'||p.status==='withdrawn'),'Фактические результаты вносятся после проведения');check(r.status!=='completed'||r.date<=todayIso(),'Нельзя отметить будущее мероприятие проведённым');
  return r;
 }
-export async function saveSchoolCompetition(input){
- return db.transaction(['workRecords','students','classes'],'readwrite',async s=>{
+export async function saveSchoolCompetition(input){return writeSchoolCompetition(db,input);}
+export async function writeSchoolCompetition(access,input){
+ return access.transaction(['workRecords','students','classes'],'readwrite',async s=>{
   const old=input.id?await s.workRecords.get(input.id):null;check(!input.id||old?.kind==='schoolCompetition'&&old.revision===input.revision,'Запись изменилась. Откройте заново');
   check(input.previousStageId===undefined||input.previousStageId===old?.previousStageId,'Связь создаётся через переход на следующий этап');
   check(input.seriesId===undefined||input.seriesId===old?.seriesId,'Связь серии нельзя менять вручную');
@@ -39,9 +40,10 @@ export async function saveSchoolCompetition(input){
  });
 }
 // Explicit selection of participants is not a qualification decision by the app.
-export async function advanceOlympiad({sourceId,revision:expected,studentIds,date,applicationDeadline=null,confirmed=false}){
+export async function advanceOlympiad(input){return writeAdvanceOlympiad(db,input);}
+export async function writeAdvanceOlympiad(access,{sourceId,revision:expected,studentIds,date,applicationDeadline=null,confirmed=false}){
  check(confirmed&&Array.isArray(studentIds)&&studentIds.length>0&&studentIds.length<=500&&new Set(studentIds).size===studentIds.length,'Подтвердите список участников следующего этапа');
- return db.transaction(['workRecords','students','classes'],'readwrite',async s=>{
+ return access.transaction(['workRecords','students','classes'],'readwrite',async s=>{
   const source=await s.workRecords.get(sourceId);validateSchoolCompetition(source);
   const stage=olympiadNextStage[source.stage];
   check(source.revision===expected&&source.eventType==='olympiad'&&source.status==='completed'&&stage,'Этап изменился или переход недоступен');
@@ -66,8 +68,9 @@ export function validateOlympiadSeries(rows){
 export function validateTeacherPortfolio(r){
  check(only(r,['id','kind','category','name','date','result','evidence','note','revision'])&&r.kind==='teacherPortfolio'&&text(r.id)&&Object.hasOwn(portfolioKinds,r.category)&&text(r.name)&&validPeriod(r.date,null)&&r.date<=todayIso()&&opt(r.result,1000)&&opt(r.evidence,1000)&&opt(r.note)&&revision(r.revision),'Проверьте запись портфолио');return r;
 }
-export async function saveTeacherPortfolio(input){
- return db.transaction(['workRecords'],'readwrite',async s=>{const old=input.id?await s.workRecords.get(input.id):null;check(!input.id||old?.kind==='teacherPortfolio'&&old.revision===input.revision,'Запись изменилась. Откройте заново');const r={...input,kind:'teacherPortfolio',id:input.id||uid('teacherPortfolio'),revision:old?old.revision+1:0};validateTeacherPortfolio(r);await s.workRecords.put(r);return r;});
+export async function saveTeacherPortfolio(input){return writeTeacherPortfolio(db,input);}
+export async function writeTeacherPortfolio(access,input){
+ return access.transaction(['workRecords'],'readwrite',async s=>{const old=input.id?await s.workRecords.get(input.id):null;check(!input.id||old?.kind==='teacherPortfolio'&&old.revision===input.revision,'Запись изменилась. Откройте заново');const r={...input,kind:'teacherPortfolio',id:input.id||uid('teacherPortfolio'),revision:old?old.revision+1:0};validateTeacherPortfolio(r);await s.workRecords.put(r);return r;});
 }
 export function schoolCompetitionCalendar(rows,from,to){
  return rows.flatMap(r=>{

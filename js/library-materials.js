@@ -2,7 +2,7 @@
 import * as db from './db.js';
 import {uid} from './model.js';
 import {catalog} from './health.js';
-import {validateBoard,saveBoard} from './tactics.js';
+import {validateBoard,writeBoard} from './tactics.js';
 import {documentTypes} from './documents.js';
 import {normalizePreset,savePreset} from './document-presets.js';
 export const materialKinds=['ktpMaterial','tacticMaterial','documentMaterial'];
@@ -35,14 +35,18 @@ export function tacticMaterial(board){
 export function documentMaterial(type,preset){
  return validateMaterial({id:uid('documentMaterial'),kind:'documentMaterial',name:documentTypes[type],version:1,type,preset:normalizePreset(preset)});
 }
-export async function saveMaterial(r){validateMaterial(r);await db.transaction(['workRecords'],'readwrite',s=>s.workRecords.add(r));return r;}
-export async function instantiateMaterial(r,{name=r.name,teamId,confirmed=false,storage}={}){
+export async function saveMaterial(r){return writeMaterial(db,r);}
+export async function writeMaterial(access,r){validateMaterial(r);await access.transaction(['workRecords'],'readwrite',s=>s.workRecords.add(r));return r;}
+export async function instantiateMaterial(r,options){return applyMaterial(db,r,options,true);}
+// Local document presets are not a vault-backed store. Only the native wrapper enables them.
+export async function applyMaterial(access,r,{name=r.name,teamId,confirmed=false,storage}={},allowLocalPreset=false){
  check(confirmed,'Сначала подтвердите применение материала');validateMaterial(r);check(text(name),'Введите название');
  if(r.kind==='ktpMaterial'){
   const k={id:uid('ktp'),name,classIds:[],createdAt:new Date().toISOString()};
   const topics=r.topics.map((t,i)=>({id:uid('top'),name:t.name,ktpId:k.id,ktpOrder:i+1,activityIds:[...t.activityIds],activitiesConfirmed:false}));
-  await db.transaction(['ktp','topics'],'readwrite',async s=>{await s.ktp.add(k);for(const t of topics)await s.topics.add(t);});return k;
+  await access.transaction(['ktp','topics'],'readwrite',async s=>{await s.ktp.add(k);for(const t of topics)await s.topics.add(t);});return k;
  }
- if(r.kind==='tacticMaterial')return saveBoard({teamId,name,note:r.note,markers:structuredClone(r.markers),arrows:structuredClone(r.arrows)});
+ if(r.kind==='tacticMaterial')return writeBoard(access,{teamId,name,note:r.note,markers:structuredClone(r.markers),arrows:structuredClone(r.arrows)});
+ check(allowLocalPreset===true,'Локальные реквизиты недоступны в защищённом сеансе');
  return savePreset(r.type,r.preset,storage);
 }

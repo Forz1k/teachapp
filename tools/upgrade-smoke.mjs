@@ -5,9 +5,9 @@ import {readFile} from 'node:fs/promises';
 import {resolve,sep,extname} from 'node:path';
 import {webkit,devices} from 'playwright';
 
-const candidate=process.cwd(),baseline=resolve(process.argv[2]||'');
-const readVersion=async root=>JSON.parse(await readFile(resolve(root,'package.json'),'utf8')).version;
-const baselineVersion=await readVersion(baseline);assert.ok(['5.1.0','5.1.1','6.0.0'].includes(baselineVersion));
+const candidate=resolve(process.argv[3]||process.cwd()),baseline=resolve(process.argv[2]||'');
+const readVersion=async root=>{const raw=await readFile(resolve(root,'js/version.js'),'utf8'),m=/^export const APP_VERSION = '([^']+)';\s*$/.exec(raw);assert.ok(m,'Missing packaged application version');return m[1];};
+const baselineVersion=await readVersion(baseline);assert.ok(['5.1.0','5.1.1','6.0.0','6.0.2','6.0.6','6.0.7'].includes(baselineVersion));
 const expected=await readVersion(candidate);assert.notEqual(expected,baselineVersion);
 let root=baseline;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png'};
@@ -32,7 +32,7 @@ try{
  await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller),undefined,{timeout:45000});
  const installed=await page.evaluate(async()=>({version:(await import('./js/version.js')).APP_VERSION,db:(await (await import('./js/db.js')).open()).version,caches:await caches.keys()}));
  assert.equal(installed.version,baselineVersion);assert.equal(installed.db,10);assert.ok(installed.caches.some(x=>x.endsWith(':v'+baselineVersion)));
- const fixture=await page.evaluate(async()=>{
+ const fixture=await page.evaluate(async baseline=>{
   const S=await import('./js/store.js'),M=await import('./js/model.js'),C=await import('./js/coach.js'),W=await import('./js/workbench.js'),db=await import('./js/db.js'),sync=await import('./js/sync.js'),{encryptBackup}=await import('./js/privacy.js');
   const date=M.todayIso(),from=date.slice(0,4)+'-01-01',to=date.slice(0,4)+'-12-31';await S.setYear(from,to);
   const cls=await S.addClass('7А'),p=await S.addStudent(cls.id,'Синтетический ученик',1,'girls');
@@ -45,8 +45,11 @@ try{
   const ids=players.map(x=>x.id);
   await C.saveTraining({teamId:team.id,date,time:'10:00',title:'Синтетическая тренировка',minutes:60,exercises:[],roster:ids,held:true,attendance:{[ids[0]]:'present'},effort:{[ids[0]]:{minutes:55,rpe:4}}});
   await C.saveMatch({teamId:team.id,date,opponent:'Тестовые гости',competition:'',sets:[{ours:25,theirs:18}],roster:ids,stats:{}});
-  let d=await C.startDetailedMatch({teamId:team.id,date,teamName:team.name,opponent:'Тестовый черновик',competition:'',venue:'',ourPlayers:players,awayPlayers:[],roster:ids,lineup:ids,awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours'});
-  d=await C.changeLiveMatch(d.id,d.revision,{type:'rally',side:'ours',kind:'point'});
+  let d=await C.startDetailedMatch({teamId:team.id,date,teamName:team.name,opponent:'Тестовый черновик',competition:'',venue:'',ourPlayers:players,awayPlayers:[],roster:ids,lineup:ids,awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours',...(baseline==='6.0.7'?{liveTiming:true,ourSide:'right'}:{})});
+  if(baseline==='6.0.7'){await C.saveLineup({teamId:team.id,name:'Подача',scheme:'5-1',roster:ids,lineup:ids,libero:null,purpose:'serve'});await C.saveLineup({teamId:team.id,name:'Приём',scheme:'5-1',roster:ids,lineup:[...ids.slice(1),ids[0]],libero:null,purpose:'receive'});}
+  d=await C.changeLiveMatch(d.id,d.revision,['6.0.6','6.0.7'].includes(baseline)?{type:'rally',side:'ours',kind:'kill',player:ids[0],assist:ids[1]}:{type:'rally',side:'ours',kind:'point'});
+  let rehearsal=null;if(['6.0.6','6.0.7'].includes(baseline)){const {rehearsalStore}=await import('./js/volleyball.js'),test=rehearsalStore();const draft=await test.start({short:true});rehearsal=await test.change(draft.id,draft.revision,{type:'rally',side:'ours',kind:'kill',player:'test-a-1',assist:'test-a-2'});}
+  if(baseline==='6.0.7')d=await C.changeLiveMatch(d.id,d.revision,{type:'timeout',side:'theirs'});
   const password='synthetic-upgrade-password',endpoint='https://synthetic.example.test',area='school';
   let remote={revision:0,envelope:null};const client={get:async()=>structuredClone(remote),put:async(revision,envelope)=>{if(revision!==remote.revision)throw Error('CAS');remote={revision:revision+1,envelope};return structuredClone(remote);}};
   const plan=await sync.prepareSync({area,endpoint,password,client});await sync.executeSync({plan,choices:{},password,client,confirmed:true});
@@ -63,8 +66,8 @@ try{
   const futureVersion=backup.version+1,futureEnvelope=await encryptBackup({...oldPacket,backupVersion:futureVersion},password);
   let oldRejected=false;try{await sync.verifySyncSnapshot({revision:1,envelope:futureEnvelope},password,area);}catch{oldRejected=true;}
   let oldBackupRejected=false;try{(await import('./js/backup.js')).validateBackup({...backup,version:futureVersion});}catch{oldBackupRejected=true;}
-  return {profile,data:await db.dumpAll(),backupData:backup.data,protectedBackup:await encryptBackup(backup,password),remote,matchId:d.id,password,endpoint,futureEnvelope,futureVersion,oldRejected,oldBackupRejected};
- });
+  return {rehearsal,assist:['6.0.6','6.0.7'].includes(baseline)?ids[1]:null,profile,data:await db.dumpAll(),backupData:backup.data,protectedBackup:await encryptBackup(backup,password),remote,matchId:d.id,password,endpoint,futureEnvelope,futureVersion,oldRejected,oldBackupRejected};
+ },baselineVersion);
  assert.equal(fixture.oldRejected,true,'old published client must reject a newer sync format');assert.equal(fixture.oldBackupRejected,true,'old client must reject a newer backup format');
  assert.equal(fixture.remote.revision,1);assert.equal(fixture.data.lessons.length,2);assert.equal(fixture.data.coachLive.length,1);
  assert.equal(fixture.backupData.meta.some(x=>x.id.startsWith('sync-checkpoint-')),false);
@@ -85,6 +88,7 @@ try{
  assert.equal(newDocument.old,false);assert.notEqual(newDocument.time,oldDocument);assert.equal(newDocument.version,expected);
  const upgraded=await page.evaluate(async()=>{const db=await import('./js/db.js');return {data:await db.dumpAll(),version:(await db.open()).version,caches:await caches.keys(),pref:localStorage.getItem('teachapp.upgrade-test'),profile:(await import('./js/device-trust.js')).readTrustedProfile()};});
  assert.deepEqual(upgraded.data,fixture.data,'upgrade must preserve every stored record including checkpoint and draft');
+ if(fixture.rehearsal){const verified=await page.evaluate(async id=>{const V=await import('./js/volleyball.js'),C=await import('./js/coach.js');return {rehearsal:V.rehearsalStore().read(),draft:await C.readLiveMatch(id)};},fixture.matchId);assert.deepEqual(verified.rehearsal,fixture.rehearsal);assert.equal(verified.draft.events[0].assist,fixture.assist);assert.ok(!JSON.stringify(upgraded.data).includes('test-rehearsal'));console.log('LIVE UPGRADE PASS: '+baselineVersion+' assist, real revision and isolated rehearsal preserved.');}
  assert.equal(upgraded.version,10);assert.equal(upgraded.pref,'local-preference');assert.ok(upgraded.caches.some(x=>x.endsWith(':v'+expected)));assert.ok(!upgraded.caches.some(x=>x.endsWith(':v'+baselineVersion)));assert.deepEqual(upgraded.profile,fixture.profile,'v2 profile must remain exactly unchanged');assert.equal(upgraded.data.meta.some(x=>x.id==='sync-checkpoint-coach'),false,'upgrade must not initialize unconfirmed scope');
  const reconcile=await page.evaluate(async({remote,password,endpoint})=>{
   const sync=await import('./js/sync.js');let writes=0;const client={get:async()=>remote,put:async()=>{writes++;throw Error('Unnecessary write');}};
@@ -100,15 +104,52 @@ try{
  await context.setOffline(true);await page.reload();await page.locator('.workspace-nav').waitFor();
  const offline=await page.evaluate(async id=>{
   const db=await import('./js/db.js'),C=await import('./js/coach.js'),{replayDetailed}=await import('./js/match-protocol.js'),draft=await db.get('coachLive',id);
-  const previous=replayDetailed(draft);const next=await C.changeLiveMatch(id,draft.revision,{type:'rally',side:'ours',kind:'point'});const score=replayDetailed(next);
+  const previous=replayDetailed(draft);let ready=draft;if(draft.liveTiming){if(!previous.activeTimeout||previous.serve!=='ours'||draft.ourSide!=='right')throw Error('Timed LIVE was not preserved');ready=await C.changeLiveMatch(id,ready.revision,{type:'timeoutEnd'});}const next=await C.changeLiveMatch(id,ready.revision,{type:'rally',side:'ours',kind:'point'});const score=replayDetailed(next);
   return {version:(await import('./js/version.js')).APP_VERSION,previous:previous.ours,score:score.ours,marks:(await db.getAll('marks')).length};
  },fixture.matchId);
  assert.deepEqual(offline,{version:expected,previous:1,score:2,marks:2});
- await context.setOffline(false);await context.close();
+ // Reverse compatibility is only rehearsed for the current stable schema and
+ // actual 6.0.6. Capture the *latest* data, not the pre-upgrade backup.
+ let latest=null;
+ if(['6.0.6','6.0.7'].includes(baselineVersion)){
+  latest=await page.evaluate(async({id,password})=>{
+   const S=await import('./js/store.js'),C=await import('./js/coach.js'),V=await import('./js/volleyball.js'),db=await import('./js/db.js'),{encryptBackup,decryptBackup}=await import('./js/privacy.js');
+   const draft=await C.readLiveMatch(id),next=await C.changeLiveMatch(id,draft.revision,{type:'rally',side:'ours',kind:'kill',player:draft.lineup[0],assist:draft.lineup[1]});
+   const marks=await db.getAll('marks'),m=marks[0];await S.setMark(m.studentId,m.lessonId,{value:'3'});
+   const store=V.rehearsalStore(),test=store.read();const rehearsal=await store.change(test.id,test.revision,{type:'rally',side:'theirs',kind:'point'});
+   const backup=await S.makeBackup(),protectedBackup=await encryptBackup(backup,password);
+   const decoded=await decryptBackup(protectedBackup,password);
+   return {data:await db.dumpAll(),backupData:backup.data,verified:JSON.stringify(decoded)===JSON.stringify(backup),protectedBackup,rehearsal,revision:next.revision,assist:next.events.at(-1).assist};
+  },{id:fixture.matchId,password:fixture.password});
+  assert.equal(latest.verified,true);assert.equal(latest.revision,baselineVersion==='6.0.7'?5:3);assert.equal(latest.assist,fixture.assist);
+ }
+ await context.setOffline(false);
  const restoredContext=await browser.newContext({...devices['iPhone 13'],locale:'ru-RU',serviceWorkers:'allow'}),fresh=await restoredContext.newPage();fresh.on('pageerror',e=>errors.push(e.message));
  await fresh.goto(origin+'/index.html');await fresh.locator('.workspace-nav').waitFor();
  const restored=await fresh.evaluate(async({protectedBackup,password})=>{const S=await import('./js/store.js'),db=await import('./js/db.js'),{decryptBackup}=await import('./js/privacy.js');await S.restoreBackup(await decryptBackup(protectedBackup,password));return db.dumpAll();},fixture);
  assert.deepEqual(restored,fixture.backupData,'old encrypted backup must restore in a separate new-version context');
  assert.deepEqual(errors,[]);await restoredContext.close();
+ if(latest){
+  // Same origin, real service-worker controllerchange; no clearing of storage.
+  root=baseline;
+  await page.evaluate(async()=>{const r=await navigator.serviceWorker.getRegistration();if(!r)throw Error('No registration');await r.update();});
+  await page.getByRole('button',{name:'Обновить',exact:true}).waitFor({timeout:45000});
+  const beforeRollback=await page.evaluate(()=>performance.timeOrigin);
+  await Promise.all([page.waitForNavigation({waitUntil:'load',timeout:45000}),page.getByRole('button',{name:'Обновить',exact:true}).click()]);
+  await page.locator('.workspace-nav').waitFor();await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller),undefined,{timeout:45000});
+  const rolled=await page.evaluate(async id=>{const db=await import('./js/db.js'),C=await import('./js/coach.js'),V=await import('./js/volleyball.js');return {data:await db.dumpAll(),draft:await C.readLiveMatch(id),rehearsal:V.rehearsalStore().read(),version:(await import('./js/version.js')).APP_VERSION,dbVersion:(await db.open()).version,time:performance.timeOrigin,caches:await caches.keys()};},fixture.matchId);
+  assert.equal(rolled.version,baselineVersion);assert.equal(rolled.dbVersion,10);assert.notEqual(rolled.time,beforeRollback);assert.deepEqual(rolled.data,latest.data,'rollback preserves edits made after upgrade and the sync checkpoint');assert.deepEqual(rolled.rehearsal,latest.rehearsal);assert.equal(rolled.draft.revision,latest.revision);assert.equal(rolled.draft.events.at(-1).assist,latest.assist);assert.ok(rolled.caches.some(x=>x.endsWith(':v'+baselineVersion)));assert.ok(!rolled.caches.some(x=>x.endsWith(':v'+expected)));
+  await context.setOffline(true);await page.reload();await page.locator('.workspace-nav').waitFor();
+  const score=await page.evaluate(async id=>{const C=await import('./js/coach.js'),V=await import('./js/volleyball.js'),d=await C.readLiveMatch(id);return V.replay(d).ours;},fixture.matchId);assert.equal(score,3);
+  await context.setOffline(false);
+  // The latest independent encrypted copy also restores on 6.0.6 in a
+  // different browser context. Failure to authenticate must not mutate it.
+  const recovery=await browser.newContext({...devices['iPhone 13'],locale:'ru-RU',serviceWorkers:'allow'}),rp=await recovery.newPage();rp.on('pageerror',e=>errors.push(e.message));
+  await rp.goto(origin+'/index.html');await rp.locator('.workspace-nav').waitFor();
+  const recovered=await rp.evaluate(async({protectedBackup,password})=>{const S=await import('./js/store.js'),D=await import('./js/db.js'),{decryptBackup}=await import('./js/privacy.js'),before=await D.dumpAll();let rejected=false;try{await S.restoreBackup(await decryptBackup(protectedBackup,'wrong-password'));}catch{rejected=true;}const untouched=JSON.stringify(before)===JSON.stringify(await D.dumpAll());await S.restoreBackup(await decryptBackup(protectedBackup,password));return {rejected,untouched,data:await D.dumpAll()};},{protectedBackup:latest.protectedBackup,password:fixture.password});
+  assert.equal(recovered.rejected,true);assert.equal(recovered.untouched,true);assert.deepEqual(recovered.data,latest.backupData);await recovery.close();assert.deepEqual(errors,[]);
+  console.log('PWA ROLLBACK PASS: '+expected+' → '+baselineVersion+', exact latest records and checkpoint retained, assist and isolated rehearsal retained, offline reload, latest encrypted copy restored in a separate context; wrong password unchanged.');
+ }
+ await context.close();
  console.log('PWA UPGRADE PASS: actual '+baselineVersion+' → '+expected+'; preserved v2 identity, no automatic initialization, IndexedDB v10, both lesson slots and grades, norm assignment, team/training/match, unfinished score, preserved encrypted checkpoint, zero redundant PUT, previous cache removed, offline edit, encrypted backup restored independently.');
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

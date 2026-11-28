@@ -1,6 +1,8 @@
 /* app.js — точка входа: маршрутизация между табами, инициализация, service worker. */
 
 import * as store from './store.js';
+import {NATIVE_STORAGE_FENCED_EVENT,isEncryptedStorage,encryptedStorageAllowed} from './db.js';
+import {scrubPrivateDocument} from './vault-owner-lifecycle.js';
 import {displayClassName} from './model.js';
 import * as ui from './ui.js';
 import { renderAnalytics } from './screens/analytics.js';
@@ -24,6 +26,8 @@ import {animateOnce} from './motion.js';
 import {readSyncIdentity} from './device-trust.js';
 import {installPrivacyShield,screenLockEnabled} from './privacy-shield.js';
 import {openSyncSession,runPersonalSync,autoSyncStatus,syncRetryDelay} from './auto-sync.js';
+import {installReminders} from './reminder-controller.js';
+import {calendarReminderEntries} from './screens/work-calendar.js';
 const { el, icon } = ui;
 
 const TABS = [
@@ -37,6 +41,11 @@ const TABS = [
 
 const appRoot = document.getElementById('app');
 let tabbarEl = null;
+let storageRevoked=false;
+window.addEventListener(NATIVE_STORAGE_FENCED_EVENT,()=>{
+ if(storageRevoked)return;storageRevoked=true;store.revokeNativeView();scrubPrivateDocument();location.reload();
+});
+window.addEventListener('teachapp:encrypted-locked',()=>{storageRevoked=true;clearAutoRetry(true);store.revokeNativeView();});
 let syncSession=null,autoBusy=false,autoAttempt=0;
 let syncHint='',autoRetryTimer=null,autoRetryCount=0;
 function clearAutoRetry(reset=false){if(autoRetryTimer!==null)clearTimeout(autoRetryTimer);autoRetryTimer=null;if(reset)autoRetryCount=0;}
@@ -50,7 +59,7 @@ function safeAutoRoute(){
  return store.state.currentTab==='today'||store.state.currentTab==='coach'&&navigation.coach==='home';
 }
 async function maybeAutoSync(initial=false,manual=false,retry=false){
- if(!readSyncIdentity()||autoBusy||document.body.classList.contains('privacy-covered'))return;
+ if(storageRevoked||!encryptedStorageAllowed()||!readSyncIdentity()||autoBusy||document.body.classList.contains('privacy-covered'))return;
  if(!syncSession||navigator.onLine===false||document.visibilityState==='hidden'){
   if(manual)ui.toast(navigator.onLine===false?'Нет интернета. Изменения сохранены на устройстве.':'Откройте синхронизацию в настройках для ручного обмена.');return;
  }
@@ -59,7 +68,7 @@ async function maybeAutoSync(initial=false,manual=false,retry=false){
  const oldTabbar=tabbarEl;
  ui.setUnderlyingInert(appRoot,true);ui.setUnderlyingInert(oldTabbar,true);
  try{
-  const result=await syncSession.exclusive(()=>runPersonalSync({permitted:()=>document.visibilityState!=='hidden'&&!document.body.classList.contains('privacy-covered')}));
+  const result=await syncSession.exclusive(()=>runPersonalSync({permitted:()=>!storageRevoked&&encryptedStorageAllowed()&&document.visibilityState!=='hidden'&&!document.body.classList.contains('privacy-covered')}));
   if(result?.areas.some(x=>x.changed))await store.load();
   syncHint=result?'':'Другая вкладка открыта · обмен отложен';
    const delay=syncRetryDelay(result,autoRetryCount),code=readSyncIdentity();
@@ -82,6 +91,7 @@ const routeKey = () => [store.state.currentTab,store.state.currentTab==='coach'?
 
 /** Перерисовка текущего таба. Вызывается на любое изменение состояния. */
 function render() {
+ if(storageRevoked)return;
   if (!store.state.ready) return;
 
   const route = routeKey();
@@ -100,7 +110,7 @@ function render() {
   const switcher=el('div',{class:'workspace-switch',role:'group','aria-label':'Рабочее пространство'},[
     ...[['school','Учитель'],['coach','Тренер']].map(([id,label])=>el('button',{type:'button',class:'workspace-option'+(workspace===id?' selected':''),'aria-pressed':String(workspace===id),text:label,onclick:()=>switchWorkspace(id)}))
   ]);
-  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('img',{class:'brand-mark',src:'./icons/brand.svg',alt:'',width:32,height:32}),el('span',{text:'TeachApp'})]),switcher,readSyncIdentity()?el('button',{class:'icon-btn plain personal-sync-action',type:'button','aria-label':'Синхронизировать сейчас',onclick:()=>void maybeAutoSync(false,true)},[icon('refresh')]):null,el('button',{class:'icon-btn plain search-action',type:'button','aria-label':'Поиск',title:'Поиск',onclick:()=>openSearch(workspace)},[icon('search')]),el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':'Скрыть данные',title:'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
+  appRoot.append(el('header',{class:'app-shell'},[el('div',{class:'app-brand'},[el('img',{class:'brand-mark',src:'./icons/brand.svg',alt:'',width:32,height:32}),el('span',{text:'TeachApp'})]),switcher,readSyncIdentity()?el('button',{class:'icon-btn plain personal-sync-action',type:'button','aria-label':'Синхронизировать сейчас',onclick:()=>void maybeAutoSync(false,true)},[icon('refresh')]):null,el('button',{class:'icon-btn plain search-action',type:'button','aria-label':'Поиск',title:'Поиск',onclick:()=>openSearch(workspace)},[icon('search')]),el('button',{class:'icon-btn plain privacy-action',type:'button','aria-label':isEncryptedStorage()?'Заблокировать защищённый сеанс':'Скрыть данные',title:isEncryptedStorage()?'Заблокировать защищённый сеанс':'Скрыть данные',onclick:()=>ui.coverPrivacy()},[icon('shield')])]),screen);
 
   updateSyncIndicator();
   const tab = store.state.currentTab;
@@ -271,14 +281,14 @@ function openClassPicker() {
 /* ---------- инициализация ---------- */
 
 async function boot() {
-  if(screenLockEnabled())ui.coverPrivacy();
+  if(screenLockEnabled()&&!isEncryptedStorage())ui.coverPrivacy();
   // Тема — до первой отрисовки, чтобы не было вспышки белого
   try {
     const db = await import('./db.js');
     const meta = await db.get('meta', 'settings');
     applyTheme(meta?.theme || 'auto');
   } catch (error) {
-    if (error?.name === 'DatabaseBlockedError') throw error;
+    if (['DatabaseBlockedError','NativeStorageFencedError'].includes(error?.name)) throw error;
     applyTheme('auto');
   }
 
@@ -304,7 +314,7 @@ async function boot() {
   applyTheme(store.state.settings.theme || 'auto');
 
   store.subscribe((_state, changedStudents) => {
-    if (changedStudents && journalUpdate && routeKey() === renderedRoute) journalUpdate(changedStudents);
+    if (changedStudents && journalUpdate && routeKey() === renderedRoute) {if(journalUpdate(changedStudents)===false)render();}
     else render();
   });
   render();
@@ -335,7 +345,7 @@ async function boot() {
   // Горячие клавиши для отладки на десктопе: 1-5 — табы
   window.addEventListener('keydown', (e) => {
     if(autoBusy)return;
-    if(e.altKey && e.code==='KeyH'){e.preventDefault();ui.coverPrivacy();return;}
+    if(e.altKey && e.code==='KeyH'){e.preventDefault();if(isEncryptedStorage())window.dispatchEvent(new Event('teachapp:lock-encrypted'));else ui.coverPrivacy();return;}
     if(document.body.classList.contains('privacy-covered'))return;
     if (e.target.matches('input, textarea, select')) return;
     if (e.key === 'Escape') { ui.closeSheet(); return; }
@@ -346,6 +356,7 @@ async function boot() {
   window.addEventListener('beforeunload', () => { /* данные уже в IndexedDB */ });
 
   registerServiceWorker();
+  installReminders({load:calendarReminderEntries});
 }
 
 /** Регистрация service worker для офлайна. */
@@ -385,7 +396,9 @@ function registerServiceWorker() {
 
 boot().catch((err) => {
   console.error('[teachapp] ошибка запуска');
-  const message = err?.name === 'DatabaseBlockedError'
+  const message = err?.name === 'NativeStorageFencedError'
+    ? 'Версия локального хранилища изменилась. Эта сборка не открывает новую или зашифрованную базу. Не очищайте данные браузера; используйте совместимую версию и проверенную копию.'
+    : err?.name === 'DatabaseBlockedError'
     ? 'Обновление локальной базы заблокировано. Закройте другие вкладки и окна TeachApp, затем перезагрузите страницу. Не очищайте данные браузера.'
     : 'Не удалось запустить приложение. Попробуйте перезагрузить страницу. Не очищайте данные браузера без резервной копии.';
   appRoot.replaceChildren(el('div',{class:'empty',role:'alert'},[el('p',{text:message}),el('button',{class:'btn',type:'button',text:'Перезагрузить',onclick:()=>location.reload()})]));

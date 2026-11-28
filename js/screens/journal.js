@@ -1,4 +1,4 @@
-import {filterJournalLessons,lessonFilterLabels,periodMarks,journalDensityLabels,readJournalDensity,saveJournalDensity,planJournalPaste,journalNavigation,journalRectangle} from '../journal-filters.js';
+import {filterJournalLessons,lessonFilterLabels,periodMarks,journalDensityLabels,readJournalDensity,saveJournalDensity,planJournalPaste,journalNavigation,journalRectangle,journalAttendanceSnapshot,journalRefreshPlan} from '../journal-filters.js';
 import {animateOnce} from '../motion.js';
 import { openHealth, warning, checkGrade } from './health.js';
 /* screens/journal.js — сетка журнала класса: ученики × даты уроков.
@@ -62,6 +62,7 @@ export function renderJournal(root, ctx) {
   const periodLessons = store.lessonsInRange(classId, tr.from, tr.to);
   const today = M.todayIso();
   const attendanceIndex=store.attendanceContext(periodLessons,classId,today),markMap=attendanceIndex.marks;
+  let attendanceSnapshot=journalAttendanceSnapshot(periodLessons,attendanceIndex.held,today);
   const topicsById = new Map(store.state.topics.map(t => [t.id,t]));
   const filterKey='teachapp.journal.filters.'+classId+'.'+tr.id;let filters={status:'all',from:'',to:'',query:''};try{const raw=JSON.parse(sessionStorage.getItem(filterKey)||'null');if(raw&&Object.hasOwn(lessonFilterLabels,raw.status))filters={...filters,...raw};}catch{}
   const lessons=filterJournalLessons(periodLessons,filters,{today,topics:topicsById,held:attendanceIndex.held});
@@ -116,11 +117,15 @@ export function renderJournal(root, ctx) {
    lessonSelect.value=chosen.id;let studentIndex=0;
    const cards=el('div',{class:'journal-mobile-cards'}),filtered=()=>students.filter(st=>st.fullName.toLocaleLowerCase('ru').includes(search.value.trim().toLocaleLowerCase('ru')));
    const nav=delta=>{const list=filtered();studentIndex=Math.max(0,Math.min(list.length-1,studentIndex+delta));draw();};
-   function draw(){const list=filtered();studentIndex=Math.max(0,Math.min(list.length-1,studentIndex));const st=list[studentIndex],l=lessons.find(x=>x.id===lessonSelect.value)||chosen;cards.replaceChildren();if(!st){cards.append(el('p',{class:'empty',text:'Ученики не найдены'}));return;}const marks=store.attendanceContext(periodLessons,classId).marks,mark=marks.get(l.id+'|'+st.id),head=el('article',{class:'card-block journal-pupil-card'},[el('p',{class:'profile-note',text:'Ученик '+(studentIndex+1)+' из '+list.length}),el('h2',{text:st.fullName}),el('p',{text:M.lessonLabel(l)+' · '+(topicsById.get(l.topicId)?.name||'Без темы')}),badgeFor(mark),warning(l,st.id),el('button',{type:'button',class:'btn primary wide',text:'Поставить или изменить отметку',onclick:()=>openMarkSheet(st.id,l.id,classId)}),el('button',{type:'button',class:'btn wide',text:'Карточка ученика',onclick:()=>openStudentSheet(st.id,classId)})]);
+   function draw(currentMarks){const list=filtered();studentIndex=Math.max(0,Math.min(list.length-1,studentIndex));const st=list[studentIndex],l=lessons.find(x=>x.id===lessonSelect.value)||chosen;cards.replaceChildren();if(!st){cards.append(el('p',{class:'empty',text:'Ученики не найдены'}));return;}const marks=currentMarks??store.attendanceContext(periodLessons,classId).marks,mark=marks.get(l.id+'|'+st.id),head=el('article',{class:'card-block journal-pupil-card'},[el('p',{class:'profile-note',text:'Ученик '+(studentIndex+1)+' из '+list.length}),el('h2',{text:st.fullName}),el('p',{text:M.lessonLabel(l)+' · '+(topicsById.get(l.topicId)?.name||'Без темы')}),badgeFor(mark),warning(l,st.id),el('button',{type:'button',class:'btn primary wide',text:'Поставить или изменить отметку',onclick:()=>openMarkSheet(st.id,l.id,classId)}),el('button',{type:'button',class:'btn wide',text:'Карточка ученика',onclick:()=>openStudentSheet(st.id,classId)})]);
     const prev=el('button',{type:'button',class:'btn',text:'← Предыдущий',disabled:studentIndex===0,onclick:()=>nav(-1)}),next=el('button',{type:'button',class:'btn primary',text:'Следующий →',disabled:studentIndex===list.length-1,onclick:()=>nav(1)});
     cards.append(head,el('div',{class:'journal-card-nav'},[prev,next]),el('div',{class:'journal-card-list'},list.map((p,i)=>el('button',{type:'button',class:'btn wide'+(i===studentIndex?' primary':''),text:p.fullName+' · '+(marks.get(l.id+'|'+p.id)?.value||marks.get(l.id+'|'+p.id)?.flag||'—'),onclick:()=>{studentIndex=i;draw();}}))));
    }
-   lessonSelect.onchange=()=>{try{sessionStorage.setItem(storageKey,lessonSelect.value);}catch{}draw();};search.oninput=()=>{studentIndex=0;draw();};root.append(topbar,el('div',{class:'journal-card-select'},[lessonSelect]),cards);draw();return ()=>draw();
+   lessonSelect.onchange=()=>{try{sessionStorage.setItem(storageKey,lessonSelect.value);}catch{}draw();};search.oninput=()=>{studentIndex=0;draw();};root.append(topbar,el('div',{class:'journal-card-select'},[lessonSelect]),cards);draw(markMap);return changedStudents=>{
+    const date=M.todayIso(),index=store.attendanceContext(periodLessons,classId,date),next=journalAttendanceSnapshot(periodLessons,index.held,date);
+    if(journalRefreshPlan(attendanceSnapshot,next,students,changedStudents,filters.status).rebuild)return false;
+    attendanceSnapshot=next;draw(index.marks);
+   };
   }
 
   /* ---- сетка ---- */
@@ -277,8 +282,11 @@ export function renderJournal(root, ctx) {
   window.requestAnimationFrame?.(()=>{if(wrap.isConnected)syncScroll();});
   // При ручной отметке сохраняем DOM таблицы, прокрутку и остальные строки.
   return changedStudents => {
-    const currentAttendance=store.attendanceContext(periodLessons,classId),latest=currentAttendance.marks;
-    for (const id of new Set(changedStudents)) {
+    const date=M.todayIso(),currentAttendance=store.attendanceContext(periodLessons,classId,date),latest=currentAttendance.marks;
+    const next=journalAttendanceSnapshot(periodLessons,currentAttendance.held,date),plan=journalRefreshPlan(attendanceSnapshot,next,students,changedStudents,filters.status);
+    if(plan.rebuild)return false;
+    attendanceSnapshot=next;
+    for (const id of plan.changed) {
       const row = rowByStudent.get(id);
       if (!row) continue;
       const cells = row.querySelectorAll('.cell');
@@ -292,17 +300,12 @@ export function renderJournal(root, ctx) {
         cell.setAttribute('aria-label',studentById.get(id).fullName+' · '+M.lessonLabel(lesson)+' · '+(mark?.value||mark?.flag||'нет отметки'));
         if(old!==cell.getAttribute('aria-label'))animateOnce(cell.firstChild,'pulse',{duration:180});
       });
-      const [avg,attendance] = row.querySelectorAll('.col-sum');
+      const avg = row.querySelector('.col-sum');
       const whole=periodMarks(periodLessons,latest,id);avg.textContent = whole===null?'—':M.fmtAvg(whole);
-      const att = currentAttendance.forStudents([studentById.get(id)]);
-      attendance.title=attTitle(att);
-      attendance.textContent = att.pct === null ? '—' : String(att.pct).replace('.',',') + '%';
-      attendance.style.color = att.pct !== null && att.pct < 80 ? 'var(--mark-2)' : '';
     }
-    for(const st of students){
-      if(changedStudents.includes(st.id))continue;
-      const attendance=rowByStudent.get(st.id).querySelectorAll('.col-sum')[1];
-      const att=currentAttendance.forStudents([st]);
+    for(const id of plan.rows){
+      const attendance=rowByStudent.get(id).querySelectorAll('.col-sum')[1];
+      const att=currentAttendance.forStudents([studentById.get(id)]);
       attendance.title=attTitle(att);
       attendance.textContent=att.pct===null?'—':String(att.pct).replace('.',',')+'%';
       attendance.style.color=att.pct!==null&&att.pct<80?'var(--mark-2)':'';

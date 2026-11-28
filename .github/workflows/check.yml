@@ -15,12 +15,31 @@ jobs:
       - run: npm test
       - run: npm run validate
       - run: node tools/build-static-release.mjs "${RUNNER_TEMP}/teachapp-static"
+      - name: Record and verify exact static package integrity
+        run: |
+          node tools/release-package-integrity.mjs --create "$RUNNER_TEMP/teachapp-static" "$(git rev-parse HEAD)" "$RUNNER_TEMP/teachapp-static-manifest.json"
+          node tools/release-package-integrity.mjs --verify "$RUNNER_TEMP/teachapp-static" "$(git rev-parse HEAD)" "$RUNNER_TEMP/teachapp-static-manifest.json"
+      - name: RC8 archive integrity rehearsal
+        env:
+          TEACHAPP_STATIC_REHEARSAL: ${{ runner.temp }}/teachapp-static
+          TEACHAPP_MANIFEST_REHEARSAL: ${{ runner.temp }}/teachapp-static-manifest.json
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m unittest discover -s tests -p 'test_release_artifacts.py'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teachapp-static-manifest
+          path: ${{ runner.temp }}/teachapp-static-manifest.json
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: teachapp-static-review
           path: ${{ runner.temp }}/teachapp-static/
           include-hidden-files: true
           retention-days: 7
+      - name: Verify deployed public Pages bytes (main push only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        timeout-minutes: 6
+        run: node tools/pages-public-verify.mjs "$(git rev-parse HEAD)" "$RUNNER_TEMP/teachapp-static-manifest.json"
       - run: node tools/performance-benchmark.mjs
       - run: npm run test:browser
       - uses: actions/upload-artifact@v4

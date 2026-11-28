@@ -1,5 +1,9 @@
 name: TeachApp Platform synthetic
 on:
+  push:
+    branches:
+      - 'roadmap/8.0-integration'
+      - main
   pull_request:
     paths:
       - 'package.json'
@@ -7,6 +11,10 @@ on:
       - 'server/workspace-policy.mjs'
       - 'js/platform-client.js'
       - 'platform-dev/**'
+      - 'platform-candidate/**'
+      - 'wrangler.platform-candidate.jsonc'
+      - 'tools/platform-candidate-smoke.mjs'
+      - 'tools/prototypes/push-transport-lab.mjs'
       - 'wrangler.platform-dev.jsonc'
       - 'tools/platform-smoke.mjs'
       - '.github/workflows/platform.yml'
@@ -16,7 +24,7 @@ permissions:
 jobs:
   synthetic:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       WRANGLER_SEND_METRICS: 'false'
     steps:
@@ -25,6 +33,8 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci
-      - run: npm install --no-save --package-lock=false playwright@1.65.1
+      - run: npm install --no-save --package-lock=false playwright@1.65.1 wrangler@4.161.0
       - run: npx --yes wrangler@4.161.0 deploy --config wrangler.platform-dev.jsonc --dry-run --outdir "${RUNNER_TEMP}/platform-build"
       - run: node tools/platform-smoke.mjs
+      - run: npx --yes wrangler@4.161.0 deploy --config wrangler.platform-candidate.jsonc --dry-run --outdir "${RUNNER_TEMP}/platform-candidate-build"
+      - run: node tools/platform-candidate-smoke.mjs "$RUNNER_TEMP/platform-candidate-build"

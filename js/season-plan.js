@@ -16,9 +16,10 @@ export function validateSeasonPlan(r){
  }
  return r;
 }
-export async function saveSeasonPlan(input){
+export async function saveSeasonPlan(input){return writeSeasonPlan(db,input);}
+export async function writeSeasonPlan(access,input){
  input=structuredClone(input);
- return db.transaction(['workRecords','coachTeams'],'readwrite',async s=>{
+ return access.transaction(['workRecords','coachTeams'],'readwrite',async s=>{
   const old=input.id?await s.workRecords.get(input.id):null,team=await s.coachTeams.get(input.teamId);
   check(team&&(!team.archived||old),'Команда недоступна');
   check(!input.id||old?.kind==='seasonPlan'&&old.teamId===input.teamId&&old.revision===input.revision,'План изменился. Откройте его заново');
@@ -26,9 +27,10 @@ export async function saveSeasonPlan(input){
   validateSeasonPlan(record);await s.workRecords.put(record);return record;
  });
 }
-export async function deleteSeasonPlan(id,expectedRevision){
+export async function deleteSeasonPlan(id,expectedRevision){return removeSeasonPlan(db,id,expectedRevision);}
+export async function removeSeasonPlan(access,id,expectedRevision){
  check(text(id)&&bounded(expectedRevision,1000000),'Требуется исходная версия плана');
- return db.transaction(['workRecords'],'readwrite',async s=>{
+ return access.transaction(['workRecords'],'readwrite',async s=>{
   const old=await s.workRecords.get(id);
   check(old?.kind==='seasonPlan'&&old.revision===expectedRevision,'План изменился или удалён. Откройте его заново');
   await s.workRecords.delete(id);
@@ -36,12 +38,18 @@ export async function deleteSeasonPlan(id,expectedRevision){
 }
 export function seasonPlanProgress(plan,trainings,matches,today=todayIso()){
  validateSeasonPlan(plan);
- const sessions=trainings.filter(t=>t.teamId===plan.teamId&&inRange(t.date,plan.from,plan.to));
- const games=matches.filter(m=>m.teamId===plan.teamId&&m.date<=today&&inRange(m.date,plan.from,plan.to));
- const range=(from,to)=>{
-  const rows=sessions.filter(t=>inRange(t.date,from,to)),held=rows.filter(t=>t.held&&t.date<=today);
-  return {scheduled:rows.length,held:held.length,unconfirmed:rows.filter(t=>!t.held&&t.date<today).length,future:rows.filter(t=>t.date>today||t.date===today&&!t.held).length,recordedMinutes:held.reduce((n,t)=>n+t.minutes,0),matches:games.filter(m=>inRange(m.date,from,to)).length};
- };
+ const days=new Map(),keys=['scheduled','held','unconfirmed','future','recordedMinutes','matches'];
+ const zero=()=>Object.fromEntries(keys.map(k=>[k,0]));
+ const get=date=>{if(!days.has(date))days.set(date,zero());return days.get(date);};
+ for(const t of trainings){if(t.teamId!==plan.teamId)continue;const date=t.date;if(!inRange(date,plan.from,plan.to))continue;
+  const row=get(date);row.scheduled++;if(t.held&&date<=today){row.held++;row.recordedMinutes+=t.minutes;}
+  if(!t.held&&date<today)row.unconfirmed++;if(date>today||date===today&&!t.held)row.future++;
+ }
+ for(const m of matches){if(m.teamId!==plan.teamId)continue;const date=m.date;if(date<=today&&inRange(date,plan.from,plan.to))get(date).matches++;}
+ const dates=[...days.keys()].sort(),prefix=[zero()];
+ for(const d of dates){const prev=prefix.at(-1),row=days.get(d);prefix.push(Object.fromEntries(keys.map(k=>[k,prev[k]+row[k]])));}
+ const bound=(date,upper=false)=>{let lo=0,hi=dates.length;while(lo<hi){const mid=(lo+hi)>>>1;if(dates[mid]<date||upper&&dates[mid]===date)lo=mid+1;else hi=mid;}return lo;};
+ const range=(from,to)=>{const a=prefix[bound(from)],b=prefix[bound(to,true)];return Object.fromEntries(keys.map(k=>[k,b[k]-a[k]]));};
  const targetProgress=(actual,target)=>({target,actual,remaining:Math.max(0,target-actual),over:Math.max(0,actual-target),percent:target?Math.round(100*actual/target):null});
  const phases=plan.phases.map(p=>{
   const actual=range(p.from,p.to),status=today<p.from?'future':today>p.to?'completed':'active';

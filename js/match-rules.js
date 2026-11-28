@@ -24,7 +24,8 @@ export function isSetWon(d,index,score){
 export function validateMatchRegulation(r){
  check(exact(r,['id','kind','bestOf','target','decider','substitutionMode','limits','regulation'])&&r.kind==='matchRegulation'&&text(r.id,200)&&r.regulation!==undefined&&validMatchFormat(r)&&['simple','paired'].includes(r.substitutionMode)&&exact(r.limits,['substitutions','timeouts'])&&integer(r.limits.substitutions,0,20)&&integer(r.limits.timeouts,0,5),'Проверьте пользовательский регламент');return r;
 }
-export async function saveMatchRegulation(input){
+export async function saveMatchRegulation(input){return writeMatchRegulation(db,input);}
+export async function writeMatchRegulation(access,input){
  const r=validateMatchRegulation({id:uid('rules'),kind:'matchRegulation',bestOf:input.bestOf,target:input.target,decider:input.decider,substitutionMode:input.substitutionMode,limits:structuredClone(input.limits),regulation:structuredClone(input.regulation)});
- return db.transaction(['workRecords'],'readwrite',async s=>{const rows=await s.workRecords.index('kind').getAll('matchRegulation');check(rows.length<100,'Не более 100 регламентов');check(!rows.some(x=>x.regulation.name.toLocaleLowerCase('ru')===r.regulation.name.toLocaleLowerCase('ru')),'Регламент с таким названием уже существует');await s.workRecords.add(r);return r;});
+ return access.transaction(['workRecords'],'readwrite',async s=>{const rows=await s.workRecords.index('kind').getAll('matchRegulation');check(rows.length<100,'Не более 100 регламентов');check(!rows.some(x=>x.regulation.name.toLocaleLowerCase('ru')===r.regulation.name.toLocaleLowerCase('ru')),'Регламент с таким названием уже существует');await s.workRecords.add(r);return r;});
 }

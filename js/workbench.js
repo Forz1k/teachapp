@@ -1,23 +1,28 @@
-import {validateMatchRegulation} from './match-rules.js';
-import {validateLessonAlternative} from './lesson-alternatives.js';
-import {validateKtpVersion} from './ktp-history.js';
-import {validateNormRetake} from './norm-retakes.js';
+import {validateMatchRegulation,writeMatchRegulation} from './match-rules.js';
+import {validateLessonAlternative,writeLessonAlternative,readLessonAlternatives} from './lesson-alternatives.js';
+import {validateKtpVersion,writeKtpVersion,readKtpVersions,writeKtpVersionCopy,removeKtpVersion} from './ktp-history.js';
+import {validateNormRetake,writeNormRetake} from './norm-retakes.js';
 import {validateNewsDraft} from './public-media-drafts.js';
-import {validateSchoolCompetition,validateTeacherPortfolio} from './teacher-portfolio.js';
-import {validateStudentGoal} from './student-goals.js';
+import {validateSchoolCompetition,validateTeacherPortfolio,writeSchoolCompetition,writeAdvanceOlympiad,writeTeacherPortfolio} from './teacher-portfolio.js';
+import {validateStudentGoal,writeStudentGoal} from './student-goals.js';
 import {validateMaterial,materialKinds} from './library-materials.js';
 import {validateOpponentNote} from './coach-opponents.js';
 import {validateVideoReview,videoMarkers,importedVideoMarkers} from './video-review.js';
-import {validateBriefing,validateGymBoard} from './methodical.js';
-import * as db from './db.js';
+import {validateBriefing,validateGymBoard,writeBriefing,writeGymBoard} from './methodical.js';
+import * as nativeDb from './db.js';
+import {workRecordScope} from './work-scope.js';
+import {writeBoard} from './tactics.js';
+import {writeGoal} from './coach-goals.js';
+import {writeInventory,writeInventoryMovement,writeAchievement} from './resources.js';
+import {writeMaterial,applyMaterial} from './library-materials.js';
 import {uid,exemptionCovers} from './model.js';
 import {validateGradeHistory} from './grade-history.js';
 import {validateInventory,validateAchievement,equipmentStatus} from './resources.js';
 import {validateBoard} from './tactics.js';
 import {validateGoal} from './coach-goals.js';
-import {validateSeasonPlan} from './season-plan.js';
+import {validateSeasonPlan,writeSeasonPlan,removeSeasonPlan} from './season-plan.js';
 import {validateRubric,validateNormAssignment,assignmentsOverlap} from './school-tools.js';
-import {validateTournament} from './tournaments.js';
+import {validateTournament,writeTournament,writeTournamentGame,writeGroupSeeds} from './tournaments.js';
 import {validateEvent} from './work-calendar.js';
 import {catalog,checkLessonRestrictions} from './health.js';
 export const exerciseCategories={warmup:'Разминка',athletics:'Лёгкая атлетика',gymnastics:'Гимнастика',volleyball:'Волейбол',games:'Игры',fitness:'ОФП / СФП',cooldown:'Заминка',other:'Другое'};
@@ -76,51 +81,6 @@ export function validateWorkRecord(r){
  }
  throw Error('Неизвестный вид рабочей записи');
 }
-export async function listWork(kind){return db.transaction(['workRecords'],'readonly',s=>s.workRecords.index('kind').getAll(kind));}
-export async function saveWork(input){
- require(['exercise','plan','event','rubric','normAssignment','videoReview','opponentNote','publicNewsDraft'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
- const r=structuredClone({...input,id:input.id||uid(input.kind)});validateWorkRecord(r);
- return db.transaction(r.kind==='normAssignment'?['workRecords','classes','students','norms','meta']:['workRecords'],'readwrite',async s=>{
-  const old=await s.workRecords.get(r.id);require(!old||old.kind===r.kind,'Нельзя изменить тип записи');if(input.id)require(old,'Запись уже удалена');
-  if(r.kind==='normAssignment'){
-   require(!old||(old.revision??0)===(input.revision??0),'Назначение изменилось. Откройте заново');
-   const year=(await s.meta.get('settings'))?.year;
-   require(await s.classes.get(r.classId)&&await s.norms.get(r.normId)&&(!year||year.from===r.yearFrom&&year.to===r.yearTo),'Класс, норматив или учебный год недоступны');
-   if(r.studentIds){const pupils=new Set((await s.students.index('classId').getAll(r.classId)).map(p=>p.id));require(r.studentIds.every(id=>pupils.has(id)),'Выберите учеников этого класса');}
-   const others=await s.workRecords.index('kind').getAll('normAssignment');require(!others.some(a=>a.id!==r.id&&assignmentsOverlap(a,r)),'Для этого класса и норматива уже есть пересекающееся назначение');
-   if(old){const linked=(await s.workRecords.index('kind').getAll('normRetake')).filter(x=>x.assignmentId===r.id&&x.status!=='cancelled');require(!linked.length||old.classId===r.classId&&old.normId===r.normId&&old.yearFrom===r.yearFrom&&old.yearTo===r.yearTo&&linked.every(x=>!r.studentIds||r.studentIds.includes(x.studentId)),'Есть планы пересдач: нельзя изменить класс, норматив или исключить их участников');}
-   r.revision=old?(old.revision??0)+1:0;validateNormAssignment(r);
-  }
-  await s.workRecords.put(r);return r;
- });
-}
-/** Compare-and-save for the video editor. No schema or revision migration:
- * expected is the exact previously read record, or null for a new review. */
-export async function saveVideoReview(input,expected){
- require(expected===null||expected?.kind==='videoReview'&&expected.id===input?.id&&expected.matchId===input?.matchId,'Требуется исходный снимок видеоразбора');
- require(input?.kind==='videoReview'&&(expected!==null||!input.id),'Проверьте новую запись видеоразбора');
- const next=structuredClone({...input,id:input.id||uid('videoReview')}),baseline=structuredClone(expected);
- validateVideoReview(next);
- return db.transaction(['workRecords','coachMatches'],'readwrite',async s=>{
-  const reviews=(await s.workRecords.index('kind').getAll('videoReview')).filter(r=>r.matchId===next.matchId);
-  require(reviews.length<=1,'Найдены дубликаты видеоразбора. Требуется проверка данных');
-  const actual=reviews[0]??null;
-  require(JSON.stringify(actual)===JSON.stringify(baseline),'Видеоразбор изменился в другой вкладке. Откройте его заново');
-  const match=await s.coachMatches.get(next.matchId);
-  require(match&&(match.detail||match.imported),'Протокол матча недоступен');
-  const markers=match.detail?videoMarkers(match.detail,0):importedVideoMarkers(match,[]);
-  const count=markers.length;
-  require([...next.anchors,...next.notes].every(x=>x.index<=count),'Розыгрыш отсутствует в протоколе');
-  if(match.detail&&next.anchors.length) {
-   // Validate increasing recorded times as well as manual video times.
-   const byIndex=new Map(markers.map(m=>[m.index,m.seconds]));
-   require(next.anchors.every((a,i)=>i===0||byIndex.get(a.index)>byIndex.get(next.anchors[i-1].index)),'Контрольные точки должны иметь различное время записи');
-  }
-  if(actual)await s.workRecords.put(next);else await s.workRecords.add(next);
-  return next;
- });
-}
-export async function deleteWork(id,kind){return db.transaction(kind==='archive'?['workRecords','students','lessons']:['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');if(kind==='schoolCompetition')require(!(await s.workRecords.index('kind').getAll('schoolCompetition')).some(x=>x.previousStageId===id),'Сначала удалите связанный следующий этап');if(kind==='archive'){const pupils=new Set(old.snapshot.students.map(p=>p.id)),lessons=new Set(old.snapshot.lessons.map(l=>l.id));for(const p of await s.students.getAll())pupils.delete(p.id);for(const l of await s.lessons.getAll())lessons.delete(l.id);for(const r of await s.workRecords.index('kind').getAll('gradeHistory'))if(pupils.has(r.studentId)||lessons.has(r.lessonId))await s.workRecords.delete(r.id);}await s.workRecords.delete(id);});}
 export const fallbackReasons={weather:'Погода / перенос в зал',space:'Зал занят / мало места',equipment:'Недостаточно инвентаря',load:'Изменение нагрузки',other:'Другая причина'};
 /** Independent draft in the existing plan format. No new record type or schema.
  * The teacher must revise equipment and exercises before explicitly saving. */
@@ -142,10 +102,6 @@ export function validateStationTemplate(r){
  validateExercise(r.exercise);
  require(new Set(r.resources.map(x=>x.itemId)).size===r.resources.length&&r.resources.every(x=>only(x,['itemId','name','unit','qty'])&&txt(x.itemId)&&txt(x.name)&&txt(x.unit,30)&&Number.isInteger(x.qty)&&x.qty>0&&x.qty<=1000000),'Проверьте инвентарь станции');
  return r;
-}
-export async function saveStationTemplate(input){
- const r=structuredClone({...input,kind:'stationTemplate',id:input.id||uid('stationTemplate'),revision:input.id?input.revision+1:0});validateStationTemplate(r);
- return db.transaction(['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(r.id);require(input.id?old?.kind==='stationTemplate'&&old.revision===input.revision:!old,'Шаблон изменился. Откройте заново');await s.workRecords.put(r);return r;});
 }
 export function stationFromTemplate(r){validateStationTemplate(r);return structuredClone({exercise:r.exercise,capacity:r.capacity,notes:r.notes,resources:r.resources});}
 export function circuitDraft({name,minutes:duration,rounds,work,transition,warmup,cooldown,stations,pupilCount,inventory=[]}){
@@ -223,4 +179,97 @@ export function alternativeExerciseCandidates(lesson,studentId,exercises,{studen
   return {exercise,matches:check.matches,needsReview:check.needsReview};
  }).filter(r=>!r.needsReview&&!r.matches.length);
  return {full,rows,theoretical:['Разбор правил и техники упражнения','Наблюдение и запись последовательности действий','Анализ схемы или учебного материала без физической нагрузки']};
+}
+
+function buildWorkCommands(db,scope=null){
+ const allow=r=>require(!scope||workRecordScope(r)===scope,'Рабочая запись недоступна в этой области');
+async function listWork(kind){
+ if(scope){require(typeof kind==='string'&&kind.length>0&&kind.length<=100,'Требуется точный тип рабочей записи');if(kind==='archive')throw Error('Архив недоступен в ограниченном сеансе');}
+ return db.transaction(['workRecords'],'readonly',async s=>{const rows=await s.workRecords.index('kind').getAll(kind);return scope?rows.filter(r=>r.kind===kind&&workRecordScope(r)===scope):rows;});
+}
+async function saveWork(input){
+ require(['exercise','plan','event','rubric','normAssignment','videoReview','opponentNote','publicNewsDraft'].includes(input.kind),'Для этого вида записи используйте специальную операцию');
+ const r=structuredClone({...input,id:input.id||uid(input.kind)});validateWorkRecord(r);allow(r);
+ return db.transaction(r.kind==='normAssignment'?['workRecords','classes','students','norms','meta']:['workRecords'],'readwrite',async s=>{
+  const old=await s.workRecords.get(r.id);if(old)allow(old);require(!old||old.kind===r.kind,'Нельзя изменить тип записи');if(input.id)require(old,'Запись уже удалена');
+  if(r.kind==='normAssignment'){
+   require(!old||(old.revision??0)===(input.revision??0),'Назначение изменилось. Откройте заново');
+   const year=(await s.meta.get('settings'))?.year;
+   require(await s.classes.get(r.classId)&&await s.norms.get(r.normId)&&(!year||year.from===r.yearFrom&&year.to===r.yearTo),'Класс, норматив или учебный год недоступны');
+   if(r.studentIds){const pupils=new Set((await s.students.index('classId').getAll(r.classId)).map(p=>p.id));require(r.studentIds.every(id=>pupils.has(id)),'Выберите учеников этого класса');}
+   const others=await s.workRecords.index('kind').getAll('normAssignment');require(!others.some(a=>a.id!==r.id&&assignmentsOverlap(a,r)),'Для этого класса и норматива уже есть пересекающееся назначение');
+   if(old){const linked=(await s.workRecords.index('kind').getAll('normRetake')).filter(x=>x.assignmentId===r.id&&x.status!=='cancelled');require(!linked.length||old.classId===r.classId&&old.normId===r.normId&&old.yearFrom===r.yearFrom&&old.yearTo===r.yearTo&&linked.every(x=>!r.studentIds||r.studentIds.includes(x.studentId)),'Есть планы пересдач: нельзя изменить класс, норматив или исключить их участников');}
+   r.revision=old?(old.revision??0)+1:0;validateNormAssignment(r);
+  }
+  await s.workRecords.put(r);return r;
+ });
+}
+/** Compare-and-save for the video editor. No schema or revision migration:
+ * expected is the exact previously read record, or null for a new review. */
+async function saveVideoReview(input,expected){
+ require(expected===null||expected?.kind==='videoReview'&&expected.id===input?.id&&expected.matchId===input?.matchId,'Требуется исходный снимок видеоразбора');
+ require(input?.kind==='videoReview'&&(expected!==null||!input.id),'Проверьте новую запись видеоразбора');
+ const next=structuredClone({...input,id:input.id||uid('videoReview')}),baseline=structuredClone(expected);
+ validateVideoReview(next);allow(next);
+ return db.transaction(['workRecords','coachMatches'],'readwrite',async s=>{
+  const reviews=(await s.workRecords.index('kind').getAll('videoReview')).filter(r=>r.matchId===next.matchId);
+  require(reviews.length<=1,'Найдены дубликаты видеоразбора. Требуется проверка данных');
+  const actual=reviews[0]??null;
+  require(JSON.stringify(actual)===JSON.stringify(baseline),'Видеоразбор изменился в другой вкладке. Откройте его заново');
+  const match=await s.coachMatches.get(next.matchId);
+  require(match&&(match.detail||match.imported),'Протокол матча недоступен');
+  const markers=match.detail?videoMarkers(match.detail,0):importedVideoMarkers(match,[]);
+  const count=markers.length;
+  require([...next.anchors,...next.notes].every(x=>x.index<=count),'Розыгрыш отсутствует в протоколе');
+  if(match.detail&&next.anchors.length) {
+   // Validate increasing recorded times as well as manual video times.
+   const byIndex=new Map(markers.map(m=>[m.index,m.seconds]));
+   require(next.anchors.every((a,i)=>i===0||byIndex.get(a.index)>byIndex.get(next.anchors[i-1].index)),'Контрольные точки должны иметь различное время записи');
+  }
+  if(actual)await s.workRecords.put(next);else await s.workRecords.add(next);
+  return next;
+ });
+}
+async function deleteWork(id,kind){if(scope&&kind==='ktpVersion')throw Error('Подтвердите удаление версии КТП специальной командой');if(scope&&kind==='seasonPlan')throw Error('Используйте удаление плана с проверкой ревизии');if(scope&&kind==='archive')throw Error('Архив недоступен в ограниченном сеансе');return db.transaction(kind==='archive'?['workRecords','students','lessons']:['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(id);require(old?.kind===kind,'Запись не найдена');allow(old);if(kind==='schoolCompetition')require(!(await s.workRecords.index('kind').getAll('schoolCompetition')).some(x=>x.previousStageId===id),'Сначала удалите связанный следующий этап');if(kind==='archive'){const pupils=new Set(old.snapshot.students.map(p=>p.id)),lessons=new Set(old.snapshot.lessons.map(l=>l.id));for(const p of await s.students.getAll())pupils.delete(p.id);for(const l of await s.lessons.getAll())lessons.delete(l.id);for(const r of await s.workRecords.index('kind').getAll('gradeHistory'))if(pupils.has(r.studentId)||lessons.has(r.lessonId))await s.workRecords.delete(r.id);}await s.workRecords.delete(id);});}
+async function saveStationTemplate(input){
+ const r=structuredClone({...input,kind:'stationTemplate',id:input.id||uid('stationTemplate'),revision:input.id?input.revision+1:0});validateStationTemplate(r);allow(r);
+ return db.transaction(['workRecords'],'readwrite',async s=>{const old=await s.workRecords.get(r.id);require(input.id?old?.kind==='stationTemplate'&&old.revision===input.revision:!old,'Шаблон изменился. Откройте заново');await s.workRecords.put(r);return r;});
+}
+ return Object.freeze({listWork,saveWork,saveVideoReview,deleteWork,saveStationTemplate});
+}
+export const {listWork,saveWork,saveVideoReview,deleteWork,saveStationTemplate}=buildWorkCommands(nativeDb);
+
+/** Explicit row-scoped access to mixed workRecords. No generic table handle.
+ * Workspace records are owner-only, not a wildcard. Cross-scope archives and
+ * localStorage document presets are deliberately outside this API. */
+export function createWorkSession(access,scope){
+ require(['school','coach','workspace'].includes(scope)&&typeof access?.transaction==='function'&&typeof access.close==='function','Требуется явный интерфейс рабочей области');
+ let closed=false,tail=Promise.resolve();
+ const guard=()=>require(!closed,'Рабочий сеанс заблокирован');
+ const close=()=>{if(closed)return;closed=true;access.close();};
+ const tables=new Set(['workRecords',...(scope==='school'?['classes','students','norms','meta','ktp','topics','lessons','activityCategories','activityRestrictions','exemptions']:scope==='coach'?['coachTeams','coachPlayers','coachMatches']:[])]);
+ const db=Object.freeze({async transaction(names,mode,fn){
+  guard();require(Array.isArray(names)&&names.length&&names.every(n=>tables.has(n)),'Хранилище недоступно в этой области');
+  const result=await access.transaction(names,mode,fn);guard();return result;
+ }});
+ const core={...buildWorkCommands(db,scope),saveMaterial:r=>{require(workRecordScope(r)===scope,'Рабочая запись недоступна в этой области');return writeMaterial(db,r);}};
+ if(scope==='school')Object.assign(core,{saveBriefing:(...args)=>writeBriefing(db,...args),saveGymBoard:input=>writeGymBoard(db,input),saveStudentGoal:input=>writeStudentGoal(db,input),saveSchoolCompetition:input=>writeSchoolCompetition(db,input),advanceOlympiad:input=>writeAdvanceOlympiad(db,input),saveTeacherPortfolio:input=>writeTeacherPortfolio(db,input),saveNormRetake:input=>writeNormRetake(db,input),saveLessonAlternative:(...args)=>writeLessonAlternative(db,...args),lessonAlternatives:id=>readLessonAlternatives(db,id),saveKtpVersion:(...a)=>writeKtpVersion(db,...a),listKtpVersions:(...a)=>readKtpVersions(db,...a),restoreKtpVersionCopy:(...a)=>writeKtpVersionCopy(db,...a),deleteKtpVersion:(...a)=>removeKtpVersion(db,...a)});
+ if(scope==='coach')Object.assign(core,{saveBoard:input=>writeBoard(db,input),saveGoal:input=>writeGoal(db,input),saveSeasonPlan:input=>writeSeasonPlan(db,input),deleteSeasonPlan:(...args)=>removeSeasonPlan(db,...args),saveMatchRegulation:input=>writeMatchRegulation(db,input)});
+ if(scope!=='workspace')Object.assign(core,{saveAchievement:input=>writeAchievement(db,input,scope),instantiateMaterial:(r,options)=>{
+  require(r?.kind===(scope==='school'?'ktpMaterial':'tacticMaterial'),'Материал недоступен в этой области защищённого сеанса');
+  return applyMaterial(db,r,options);
+ }});
+ if(scope==='workspace')Object.assign(core,{saveInventory:input=>writeInventory(db,input),inventoryMovement:(...a)=>writeInventoryMovement(db,...a),createTournament:input=>writeTournament(db,input),saveGame:(...a)=>writeTournamentGame(db,...a),saveGroupSeeds:(...a)=>writeGroupSeeds(db,...a)});
+ const api={scope,close,isClosed:()=>closed};
+ for(const [name,fn] of Object.entries(core)){
+  api[name]=async(...args)=>{
+   guard();const input=structuredClone(args);
+   const job=tail.then(async()=>{
+    guard();
+    try{const result=await fn(...input);guard();return result;}catch(e){close();throw e;}
+   });
+   tail=job.then(()=>undefined,()=>undefined);return job;
+  };
+ }
+ return Object.freeze(api);
 }

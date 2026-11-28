@@ -1,9 +1,10 @@
-/* Isolated local-only delta relay. No production routes or snapshot bindings. */
+/* Delta ledger: isolated LAB and separately configured HTTPS v3 candidate. */
+import {deltaMode,deltaRequestAllowed} from './delta-mode.mjs';
 import {DurableObject} from 'cloudflare:workers';
 import {LIMIT,digestToken} from './cloudflare-protocol.mjs';
 import {normalizeDeltaWrite,decideDeltaWrite,MAX_DELTA_ENTRIES,MAX_LEDGER_BYTES} from './delta-ledger.mjs';
 import {normalizeAnchorManifest,anchorUploadId,verifyAnchorPart,singleDeltaAnchorCommitment} from '../js/delta-anchor.js';
-import {normalizeReceiptKeys,signRollbackReceipt} from './migration-receipt.mjs';
+import {normalizeReceiptKeys,signRollbackReceipt,validAnchorCommitment} from './migration-receipt.mjs';
 const UPLOAD_TTL=10*60*1000,utf8=new TextEncoder();
 const migrationId=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const multipartRoute=/^\/multipart\/(anchor|compact|rotate)\/([a-f0-9]{64})\/(begin|commit|abort|part\/(0|[1-9]\d?))$/;
@@ -14,8 +15,9 @@ const H={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-
 const json=(status,body,cors={})=>new Response(JSON.stringify(body),{status,headers:{...H,...cors}});
 function config(env,url){
  try{
-  const origin=new URL(env.TEACHAPP_DELTA_ORIGIN),hashes=JSON.parse(env.TEACHAPP_DELTA_TOKEN_HASHES||'{}'),compactors=JSON.parse(env.TEACHAPP_DELTA_COMPACT_HASHES||'{}'),rotators=JSON.parse(env.TEACHAPP_DELTA_ROTATE_HASHES||'{}'),sealers=JSON.parse(env.TEACHAPP_DELTA_SEAL_HASHES||'{}'),seen=new Set();
-  if(env.TEACHAPP_DELTA_SYNTHETIC!=='true'||!loopback.includes(url.hostname)||origin.protocol!=='http:'||!loopback.includes(origin.hostname)||origin.origin!==env.TEACHAPP_DELTA_ORIGIN||!hashes||typeof hashes!=='object'||Array.isArray(hashes)||Object.keys(hashes).some(k=>!areas.includes(k)))return null;
+  const mode=deltaMode(env);if(!mode||url&&!deltaRequestAllowed(mode,url))return null;
+  const hashes=JSON.parse(env.TEACHAPP_DELTA_TOKEN_HASHES||'{}'),compactors=JSON.parse(env.TEACHAPP_DELTA_COMPACT_HASHES||'{}'),rotators=JSON.parse(env.TEACHAPP_DELTA_ROTATE_HASHES||'{}'),sealers=JSON.parse(env.TEACHAPP_DELTA_SEAL_HASHES||'{}'),seen=new Set();
+  if(!hashes||typeof hashes!=='object'||Array.isArray(hashes)||Object.keys(hashes).some(k=>!areas.includes(k)))return null;
   for(const area of areas){
    const list=hashes[area]??[];
    if(!Array.isArray(list)||list.length>32)return null;
@@ -35,7 +37,10 @@ function config(env,url){
   for(const area of areas){const h=sealers[area];if(h===undefined)continue;if(typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)||seen.has(h)||!hashes[area].length)return null;seen.add(h);}
   const signKeys=normalizeReceiptKeys(JSON.parse(env.TEACHAPP_DELTA_ROLLBACK_SIGN_KEYS||'{}'),true);
   if(!signKeys||Object.keys(signKeys).some(a=>!sealers[a]))return null;
-  return readCount?{origin:origin.origin,hashes,compactors,rotators,sealers,signKeys,reserved:[...seen]}:null;
+  const migrations=JSON.parse(env.TEACHAPP_DELTA_MIGRATION_GATES||'{}');
+  if(!migrations||typeof migrations!=='object'||Array.isArray(migrations)||Object.keys(migrations).some(a=>!areas.includes(a))||mode.kind==='lab'&&Object.keys(migrations).length)return null;
+  for(const [area,m] of Object.entries(migrations)){if(!exact(m,['migrationId','anchorCommitment'])||!migrationId.test(m.migrationId)||!validAnchorCommitment(m.anchorCommitment)||!sealers[area]||!signKeys[area])return null;}
+  return readCount?{...mode,hashes,compactors,rotators,sealers,signKeys,migrations,reserved:[...seen]}:null;
  }catch{return null;}
 }
 function equal(a,b){let d=0;for(let i=0;i<64;i++)d|=a.charCodeAt(i)^b.charCodeAt(i);return d===0;}
@@ -54,17 +59,18 @@ export default {async fetch(request,env){
  if(u.pathname==='/healthz'&&request.method==='GET'){
   const origin=request.headers.get('Origin');
   if(origin&&origin!==settings?.origin)return json(403,{error:'origin'});
-  return json(settings?200:503,{status:settings?'synthetic-ready':'disabled'},origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{});
+  return json(settings?200:503,{status:settings?(settings.kind==='lab'?'synthetic-ready':'candidate-ready'):'disabled'},origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{});
  }
  if(!settings)return json(503,{error:'disabled'});
- const route=/^\/v1\/delta\/(school|coach)(\/.*)$/.exec(u.pathname);
- if(!route||u.search)return json(404,{error:'route'});
- const [,area,internal]=route,path=internal.slice(1),multi=multipartRoute.exec(internal),part=partRoute.exec(internal);
- if(!multi&&!part&&!/^(head|anchor|append|compact|rollback-seal|rollback-status|rollback-receipt|revision\/[1-9]\d{0,14})$/.test(path))return json(404,{error:'route'});
+ const route=/^\/(v1|v3)\/delta\/(school|coach)(\/.*)$/.exec(u.pathname);
+ if(!route||route[1]!==settings.pathVersion||u.search)return json(404,{error:'route'});
+ const [,,area,internal]=route,path=internal.slice(1),multi=multipartRoute.exec(internal),part=partRoute.exec(internal);
+ if(!multi&&!part&&!/^(head|anchor|append|compact|rollback-seal|rollback-status|rollback-receipt|migration-status|migration-activate|revision\/[1-9]\d{0,14})$/.test(path))return json(404,{error:'route'});
  const origin=request.headers.get('Origin'),cors=origin===settings.origin?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};
  if(origin&&origin!==settings.origin)return json(403,{error:'origin'});
  if(request.method==='OPTIONS')return origin===settings.origin?new Response(null,{status:204,headers:{...cors,'Access-Control-Allow-Methods':'GET, PUT, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'300'}}):json(403,{error:'origin'});
- const write=!!multi||['anchor','append','compact','rollback-seal'].includes(path);
+ if(path.startsWith('migration-')&&settings.kind!=='candidate')return json(404,{error:'route'},cors);
+ const write=!!multi||['anchor','append','compact','rollback-seal','migration-activate'].includes(path);
  if(request.method!==(write?'PUT':'GET'))return json(405,{error:'method'},cors);
  try{
   const token=/^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(request.headers.get('Authorization')||'');
@@ -79,15 +85,25 @@ export default {async fetch(request,env){
 }};
 export class DeltaLedger extends DurableObject{
  constructor(ctx,env){
-  super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;this.settings=config(env,new URL('http://localhost'));
+  super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;this.settings=config(env);
   this.sql.exec('CREATE TABLE IF NOT EXISTS revisions (revision INTEGER PRIMARY KEY, kind TEXT NOT NULL, envelope TEXT NOT NULL, bytes INTEGER NOT NULL)');
   this.sql.exec('CREATE TABLE IF NOT EXISTS staged_anchor (id TEXT PRIMARY KEY, manifest TEXT NOT NULL, expires INTEGER NOT NULL)');
   this.sql.exec('CREATE TABLE IF NOT EXISTS staged_parts (id TEXT NOT NULL, part INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(id,part))');
   this.sql.exec('CREATE TABLE IF NOT EXISTS anchor_parts (revision INTEGER NOT NULL, part INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(revision,part))');
   this.sql.exec('CREATE TABLE IF NOT EXISTS credential_state (id INTEGER PRIMARY KEY CHECK(id=1), epoch INTEGER NOT NULL, hashes TEXT NOT NULL, compact TEXT NOT NULL)');
   this.sql.exec('CREATE TABLE IF NOT EXISTS retired_hashes (hash TEXT PRIMARY KEY)');
+  this.sql.exec('CREATE TABLE IF NOT EXISTS migration_gate (id INTEGER PRIMARY KEY CHECK(id=1), migration_id TEXT NOT NULL, commitment TEXT NOT NULL, active INTEGER NOT NULL CHECK(active IN (0,1)))');
   this.sql.exec('CREATE TABLE IF NOT EXISTS rollback_seal (id INTEGER PRIMARY KEY CHECK(id=1), migration_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision=1))');
  }
+ migrationGate(){const r=this.sql.exec('SELECT migration_id,commitment,active FROM migration_gate WHERE id=1').toArray()[0];return r?{migrationId:r.migration_id,anchorCommitment:r.commitment,active:r.active===1}:null;}
+ ensureMigrationGate(area){
+  const configured=this.settings.migrations[area],old=this.migrationGate();
+  if(old)return !!configured&&old.migrationId===configured.migrationId&&old.anchorCommitment===configured.anchorCommitment;
+  if(!configured)return true;
+  if(this.head().revision!==0||this.stage()||this.seal())return false;
+  this.sql.exec('INSERT INTO migration_gate(id,migration_id,commitment,active) VALUES(1,?,?,0)',configured.migrationId,configured.anchorCommitment);return true;
+ }
+ migrationWriteAllowed(kind,commitment){const gate=this.migrationGate();return !gate||gate.active||kind==='anchor'&&gate.anchorCommitment===commitment;}
  credentials(area){
   const r=this.sql.exec('SELECT epoch,hashes,compact FROM credential_state WHERE id=1').toArray()[0];
   return r?{epoch:r.epoch,readHashes:JSON.parse(r.hashes),compactHash:r.compact}:{epoch:0,readHashes:this.settings.hashes[area],compactHash:this.settings.compactors[area]};
@@ -127,6 +143,7 @@ export class DeltaLedger extends DurableObject{
    const packet=this.packet(m,id);
    return this.storage.transactionSync(()=>{
     if(!this.allowed(area,digest,kind))return json(401,{error:'unauthorized'});
+    if(!this.migrationWriteAllowed(kind,'multipart:'+id))return json(423,{error:'migration-pending'});
     if(this.seal())return json(423,{error:'rollback-sealed'});
     const h=this.head();this.pruneStage(h);
     const d=decideDeltaWrite(h,kind,packet,this.last(h.revision));
@@ -144,6 +161,7 @@ export class DeltaLedger extends DurableObject{
    if(!exact(input,[]))return json(400,{error:'packet'});
    return this.storage.transactionSync(()=>{
     if(!this.allowed(area,digest,kind))return json(401,{error:'unauthorized'});
+    if(!this.migrationWriteAllowed(kind,'multipart:'+id))return json(423,{error:'migration-pending'});
     if(this.seal())return json(423,{error:'rollback-sealed'});
     const h=this.head();this.pruneStage(h);
     const last=this.last(h.revision),stored=last&&JSON.parse(last.serialized);
@@ -172,6 +190,7 @@ export class DeltaLedger extends DurableObject{
   try{await verifyAnchorPart(m,index,input.data);}catch{return json(400,{error:'part'});}
   return this.storage.transactionSync(()=>{
    if(!this.allowed(area,digest,kind))return json(401,{error:'unauthorized'});
+   if(!this.migrationWriteAllowed(kind,'multipart:'+id))return json(423,{error:'migration-pending'});
    if(this.seal())return json(423,{error:'rollback-sealed'});
    const h=this.head();this.pruneStage(h);
    const s=this.stage();
@@ -185,10 +204,12 @@ export class DeltaLedger extends DurableObject{
  head(){return this.sql.exec('SELECT COALESCE(MAX(revision),0) AS revision, COALESCE(MIN(revision),0) AS anchorRevision, COUNT(*) AS count, COALESCE(SUM(bytes),0) AS bytes FROM revisions').toArray()[0];}
  async fetch(request){
   const path=new URL(request.url).pathname,area=request.headers.get('X-Delta-Area'),digest=request.headers.get('X-Delta-Digest'),multi=multipartRoute.exec(path);
-  const role=multi?.[1]|| (path==='/rollback-seal'?'seal':path==='/compact'?'compact':'read');
+  const role=multi?.[1]|| (['/rollback-seal','/migration-activate'].includes(path)?'seal':path==='/compact'?'compact':'read');
   try{
    if(!this.settings||!areas.includes(area)||!this.allowed(area,digest,role))return json(401,{error:'unauthorized'});
+   if(!this.storage.transactionSync(()=>this.ensureMigrationGate(area)))return json(503,{error:'migration-configuration-changed'});
    if(request.method==='GET'){
+    if(path==='/migration-status'&&this.settings.kind==='candidate')return json(200,{gate:this.migrationGate(),revision:this.head().revision,seal:this.seal()});
     if(path==='/rollback-status')return json(200,{revision:this.head().revision,seal:this.seal()});
     if(path==='/rollback-receipt'){
      const key=this.settings.signKeys[area];if(!key)return json(404,{error:'receipt-disabled'});
@@ -207,7 +228,7 @@ export class DeltaLedger extends DurableObject{
      return json(200,receipt);
     }
     if(path==='/head'){
-     const h=this.head();return json(200,{revision:h.revision,anchorRevision:h.anchorRevision,count:h.count,bytes:h.bytes,maxEntries:MAX_DELTA_ENTRIES+1,maxBytes:MAX_LEDGER_BYTES,keyEpoch:this.credentials(area).epoch});
+     const h=this.head();return json(200,{revision:h.revision,anchorRevision:h.anchorRevision,count:h.count,bytes:h.bytes,maxEntries:MAX_DELTA_ENTRIES+1,maxBytes:MAX_LEDGER_BYTES,keyEpoch:this.credentials(area).epoch,...(this.settings.kind==='candidate'?{protocolVersion:3}:{})});
     }
     const part=partRoute.exec(path);
     if(part){
@@ -221,12 +242,23 @@ export class DeltaLedger extends DurableObject{
     if(row){const e=JSON.parse(row.envelope);return json(200,{revision:row.revision,kind:row.kind,...(e.multipart?e:{envelope:e})});}
     const h=this.head();return h.anchorRevision&&Number(m[1])<h.anchorRevision?json(410,{error:'compacted',anchorRevision:h.anchorRevision}):json(404,{error:'revision'});
    }
+   if(request.method==='PUT'&&path==='/migration-activate'&&this.settings.kind==='candidate'){
+    const input=await request.json();if(!exact(input,['migrationId','anchorCommitment','expectedRevision'])||input.expectedRevision!==1||!migrationId.test(input.migrationId)||!validAnchorCommitment(input.anchorCommitment))return json(400,{error:'packet'});
+    return this.storage.transactionSync(()=>{
+     if(!this.allowed(area,digest,'seal'))return json(401,{error:'unauthorized'});
+     const gate=this.migrationGate(),h=this.head();if(!gate||gate.migrationId!==input.migrationId||gate.anchorCommitment!==input.anchorCommitment||this.seal())return json(409,{error:'migration-gate'});
+     if(gate.active)return json(200,{gate,revision:h.revision,seal:null});
+     if(h.revision!==1||h.anchorRevision!==1||h.count!==1||this.credentials(area).epoch!==0)return json(409,{error:'migration-anchor'});
+     this.sql.exec('UPDATE migration_gate SET active=1 WHERE id=1');return json(200,{gate:this.migrationGate(),revision:1,seal:null});
+    });
+   }
    if(request.method==='PUT'&&path==='/rollback-seal'){
     const input=await request.json();
     if(!exact(input,['expectedRevision','migrationId'])||input.expectedRevision!==1||typeof input.migrationId!=='string'||!migrationId.test(input.migrationId))return json(400,{error:'packet'});
     return this.storage.transactionSync(()=>{
      if(!this.allowed(area,digest,'seal'))return json(401,{error:'unauthorized'});
-     const h=this.head(),old=this.seal();
+     const h=this.head(),old=this.seal(),gate=this.migrationGate();
+     if(gate&&(gate.active||gate.migrationId!==input.migrationId))return json(409,{error:'migration-gate'});
      if(old)return old.migrationId===input.migrationId?json(200,{revision:h.revision,seal:old}):json(423,{error:'rollback-sealed'});
      // Never discard a committed delta, compaction or rotation. The seal races
      // all other commits inside the same synchronous transaction.
@@ -238,14 +270,17 @@ export class DeltaLedger extends DurableObject{
    }
    if(request.method==='PUT'&&multi){
     if(this.seal())return json(423,{error:'rollback-sealed'});
+    if(!this.migrationWriteAllowed(multi[1],'multipart:'+multi[2]))return json(423,{error:'migration-pending'});
     return await this.multipart(multi,await request.json(),area,digest);
    }
    if(request.method!=='PUT'||!['/anchor','/append','/compact'].includes(path))return json(404,{error:'route'});
    const packet=normalizeDeltaWrite(await request.json()),kind=path==='/anchor'?'anchor':path==='/compact'?'compact':'delta';
    if(!packet)return json(400,{error:'packet'});
+   const commitment=kind==='anchor'?await singleDeltaAnchorCommitment(JSON.parse(packet.serialized)):null;
    const result=this.storage.transactionSync(()=>{
     if(!this.allowed(area,digest,role))return {status:401,error:'unauthorized'};
     if(this.seal())return {status:423,error:'rollback-sealed'};
+    if(!this.migrationWriteAllowed(kind,commitment))return {status:423,error:'migration-pending'};
     const h=this.head(),last=this.last(h.revision);this.pruneStage(h);
     const decision=decideDeltaWrite(h,kind,packet,last);
     if(decision.status===201){

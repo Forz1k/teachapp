@@ -40,15 +40,22 @@ export function buildNextYear(data,year,transfers,kind='trimester',today=M.today
  next.meta=data.meta.filter(x=>x.id!=='settings').concat({...old,id:'settings',year:{...year},trimesters:A.periodDraft(kind,year),holidays:[],lastBackupAt:null});
  validateBackup(payload(next));return next;
 }
-export async function rollSchoolYear({year,transfers,kind,expected,confirmed=false}){
+/** Shared, side-effect-free preparation; persistence belongs to the caller.
+ * Archive and new year must be committed in the same transaction. */
+export function prepareSchoolYearRollover(data,existing,{year,transfers,kind,expected,confirmed=false}){
  require(confirmed&&typeof expected==='string','Подтвердите перевод после предварительного просмотра');
+ require(archivePreview(data).token===expected,'Данные изменились. Откройте предварительный просмотр заново');
+ const old=settingsOf(data).year;
+ require(!existing.some(a=>a.year.from===old.from&&a.year.to===old.to),'Этот учебный год уже в архиве');
+ const next=buildNextYear(data,year,transfers,kind);
+ const record={id:M.uid('archive'),kind:'archive',year:{...old},createdAt:new Date().toISOString(),snapshot:structuredClone(data)};validateArchive(record);
+ return {next,record};
+}
+export async function rollSchoolYear(input){
+ require(input?.confirmed&&typeof input.expected==='string','Подтвердите перевод после предварительного просмотра');
  const result=await db.transaction([...schoolStores,'workRecords'],'readwrite',async s=>{
   const data=Object.fromEntries(await Promise.all(schoolStores.map(async n=>[n,await s[n].getAll()])));
-  require(archivePreview(data).token===expected,'Данные изменились. Откройте предварительный просмотр заново');
-  const old=settingsOf(data).year,existing=await s.workRecords.index('kind').getAll('archive');
-  require(!existing.some(a=>a.year.from===old.from&&a.year.to===old.to),'Этот учебный год уже в архиве');
-  const next=buildNextYear(data,year,transfers,kind);
-  const record={id:M.uid('archive'),kind:'archive',year:{...old},createdAt:new Date().toISOString(),snapshot:data};validateArchive(record);
+  const {next,record}=prepareSchoolYearRollover(data,await s.workRecords.index('kind').getAll('archive'),input);
   await s.workRecords.add(record);
   for(const n of schoolStores){await s[n].clear();for(const row of next[n])await s[n].add(row);}
   return {record,classes:next.classes.length,students:next.students.length};

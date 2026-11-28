@@ -2,6 +2,7 @@ import * as db from './db.js';
 import {uid,todayIso} from './model.js';
 import {validPeriod} from './health.js';
 import {lineageOf} from './school-tools.js';
+import {workRecordScope} from './work-scope.js';
 const check=(ok,m)=>{if(!ok)throw Error(m);};
 const text=(s,max=200)=>typeof s==='string'&&s.trim().length>0&&s.length<=max;
 const opt=(s,max=2000)=>typeof s==='string'&&s.length<=max;
@@ -29,8 +30,9 @@ export function validateInventory(r){
  check(only(r,['id','kind','name','category','unit','location','minimum','initial','movements','archived','revision'])&&r.kind==='inventory'&&text(r.id)&&text(r.name)&&text(r.category)&&text(r.unit,30)&&opt(r.location,200)&&qty(r.minimum)&&typeof r.archived==='boolean'&&Number.isInteger(r.revision)&&r.revision>=0&&r.revision<=1000000,'Проверьте карточку инвентаря');
  inventoryBalance(r);return r;
 }
-export async function saveInventory(input){
- return db.transaction(['workRecords'],'readwrite',async s=>{
+export async function saveInventory(input){return writeInventory(db,input);}
+export async function writeInventory(access,input){
+ return access.transaction(['workRecords'],'readwrite',async s=>{
   const old=input.id?await s.workRecords.get(input.id):null;
   check(!input.id||old?.kind==='inventory'&&old.revision===input.revision,'Карточка изменена. Откройте заново');
   if(old&&(old.movements.length||Object.values(old.initial).some(n=>n>0)))check(input.unit===old.unit,'Нельзя изменить единицу измерения существующего остатка');
@@ -38,9 +40,10 @@ export async function saveInventory(input){
   validateInventory(record);await s.workRecords.put(record);return record;
  });
 }
-export async function inventoryMovement(id,revision,input,confirmed=false){
+export async function inventoryMovement(id,revision,input,confirmed=false){return writeInventoryMovement(db,id,revision,input,confirmed);}
+export async function writeInventoryMovement(access,id,revision,input,confirmed=false){
  check(confirmed,'Подтвердите операцию');
- return db.transaction(['workRecords'],'readwrite',async s=>{
+ return access.transaction(['workRecords'],'readwrite',async s=>{
   const old=await s.workRecords.get(id);check(old?.kind==='inventory'&&!old.archived&&old.revision===revision,'Карточка изменена или в архиве');
   const record={...old,revision:old.revision+1,movements:[...old.movements,{...input,id:uid('movement')}]};validateInventory(record);await s.workRecords.put(record);return record;
  });
@@ -69,11 +72,16 @@ export function achievementSubjects(school,coach,archives=[]){
  }
  return [...out.values()];
 }
-export async function saveAchievement(input){
- return db.transaction(['workRecords','classes','students','coachTeams','coachPlayers'],'readwrite',async s=>{
+export async function saveAchievement(input){return writeAchievement(db,input);}
+export async function writeAchievement(access,input,scope=null){
+ check(scope===null||['school','coach'].includes(scope)&&workRecordScope({kind:'achievement',subjectType:input.subjectType})===scope,'Достижение недоступно в этой области');
+ const tables=['workRecords',...(scope==='coach'?[]:['classes','students']),...(scope==='school'?[]:['coachTeams','coachPlayers'])];
+ return access.transaction(tables,'readwrite',async s=>{
   const old=input.id?await s.workRecords.get(input.id):null;
   check(!input.id||old?.kind==='achievement'&&old.revision===input.revision,'Достижение изменено. Откройте заново');
-  const [classes,students,coachTeams,coachPlayers,archives]=await Promise.all([s.classes.getAll(),s.students.getAll(),s.coachTeams.getAll(),s.coachPlayers.getAll(),s.workRecords.index('kind').getAll('archive')]);
+  check(!scope||!old||workRecordScope(old)===scope,'Достижение недоступно в этой области');
+  // Only the legacy native path can read the mixed archive and both domains.
+  const [classes,students,coachTeams,coachPlayers,archives]=await Promise.all([scope==='coach'?[]:s.classes.getAll(),scope==='coach'?[]:s.students.getAll(),scope==='school'?[]:s.coachTeams.getAll(),scope==='school'?[]:s.coachPlayers.getAll(),scope===null?s.workRecords.index('kind').getAll('archive'):[]]);
   const subjects=achievementSubjects({classes,students},{coachTeams,coachPlayers},archives);
   check(subjects.some(x=>x.type===input.subjectType&&x.id===input.subjectId)||old&&old.subjectId===input.subjectId&&old.subjectType===input.subjectType,'Участник недоступен');
   const record={...input,id:input.id||uid('achievement'),kind:'achievement',revision:old?old.revision+1:0};

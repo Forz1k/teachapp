@@ -393,3 +393,182 @@ PR #94 не объединён, новый релиз не опубликова�
 ## 6.0.2 — scoped personal release candidate
 
 Selected compatible 6.1–6.9 changes from the integration branch and verified video marker index/static review package. New Platform 7.x and notification features remain in the integration branch; no server migrations. See docs/RELEASE-6.0.2-ACCEPTANCE.md.
+
+## 6.0.1 — стабилизация (кандидат)
+
+База main: f7066c1c57cfe63bdfc98b10d8e8b7f6f52d9b22, 6.0.0. Открытый PR #88 расходится с main (один изменённый фрагмент health.js); актуальная формулировка main учитывает и возможные ограничения, поэтому старый вариант не переносится. Исправлен экспорт календаря: стабильный UID при переносе встречи, экранирование CR/LF, перенос строк по UTF-8, проверка ID и даты. Добавлена регрессия. Локальное клонирование недоступно (DNS GitHub); полная приёмка по GitHub Actions и физическая проверка отдельно. Статус не DONE.
+
+## 6.1 — Security, checkpoint 1 (не полный выпуск)
+
+Исправлены fail-open при недоступном хранилище настроек, проверка устаревшего верификатора после PBKDF2 и защита от большинства конкурентных изменений во вкладках; добавлены тесты. Это локальная экранная блокировка, не шифрование IndexedDB и не полноценная межвкладочная транзакция. Полная защита данных и работа с ключами остаются отдельными этапами. Версия приложения не повышается до 6.1 до приёмки.
+
+## 6.2 — Sync 2.0, checkpoint 1 (не полный выпуск)
+
+Общий ограниченный декодер ответов snapshot/Delta LAB, строгий UTF-8, проверка фактического размера, отмена чтения при ошибке; неопределённое подтверждение PUT помечается без записи локального checkpoint. Регрессии на синтетических данных. Не меняется протокол рабочего сервера, Delta остаётся LAB. Переход на production, барьер версий, ротация и независимая физическая приёмка остаются обязательными.
+
+## 6.3 — Teacher UX, checkpoint 1
+
+Журнал получил три локальных режима плотности таблицы. Переключение сохраняет DOM ячеек, значения и закреплённые столбцы; настройки не отправляются в синхронизацию. Регрессии для хранения настройки и UI. Массовое выделение и импорт оценок ещё требуют отдельной проверки ограничений и атомарности. Не полный выпуск 6.3.
+
+## 6.4 — Teacher Intelligence, checkpoint 1
+
+В проверку периода добавлен сценарный расчёт следующей оценки с весом и количества одинаковых отметок до выбранного предложения (до 10). Основан на существующем алгоритме округления, не меняет журнал, не гарантирует итог. Тесты расчёта. Остальные документы и расширение аналитики не завершены.
+
+## 6.5 — Volleyball Intelligence, checkpoint 1
+
+Добавлена локальная шкала измеренных интервалов спортсменки по партии, включая замены и либеро. Паузы исключены; при неполном измерении есть пометка. Расчёт выполняется только при раскрытии конкретного матча и не меняет публичную проекцию, импорт PDF или хранилище. Тест совпадения итогов, замен и пауз. Полная статистика попыток ещё не реализована.
+
+## 6.6 — Coach Pro, checkpoint 1
+
+Добавлен локальный замедленный просмотр видео 0.25–2× и шаг по времени ±0.1/1 с. Команды перехода и смены скорости недоступны во время записи клипа; после подтверждения проверяется тот же локальный источник. Не обещается точность номера кадра или облачное хранение. Тесты границ. Видеоаналитика и индивидуальное планирование остаются в работе.
+
+## 6.7 — Live Portal, checkpoint 1
+
+Зрительский архив не выбирает произвольный результат при конфликтующих ключах одного ID: конфликт исключается из сводки, если нет актуальной публикации; текущая публикация сохраняет приоритет без неоднозначной постоянной ссылки. Показано предупреждение, добавлены unit и DOM регрессии. Это не серверная гарантия уникальности; production Firebase и миграция не изменены.
+
+### 6.8 Studio — checkpoint
+- Adjustable photo opacity and left/right/hidden logo placement, persisted only as presentation settings; legacy style files remain compatible. Added renderer and style validation tests. Full freeform layers are not yet implemented.
+
+### 6.9 Performance — checkpoint
+- School analytics now reuses attendance contexts, indexes final grades and topic counts, and resolves student names via a map. Added result equivalence test; no device latency claim. Remaining module decomposition is open.
+
+### 7.0 Platform — checkpoint (synthetic LAB only)
+- Owner-only listing and cancellation of unused invitations with audit entries, without revealing token hashes. Added authorization and redemption regression tests. Production identity/recovery and deployment remain open.
+
+### 7.1 Athlete — checkpoint (synthetic LAB only)
+- Assignment acknowledgements require the profile revision; changed assignment name/deadline invalidates earlier acknowledgement. The athlete cabinet sends the current revision. Added stale-response regression tests. No production student accounts.
+
+### 7.2 Assistant — checkpoint (synthetic LAB only)
+- Assistant roster access ends with the assigned live match; selection edits stop automatic lease renewals and stale UI loads are discarded. Added end-of-match authorization regression test. No real-account rollout.
+
+### 7.3 Notifications — checkpoint
+- Explicit opt-in to generic foreground system reminders while calendar is open and visible; deduplicate due events in session, stop on sheet close, fallback to ICS if unavailable. No background delivery or push backend, no private names in notification payload. Added calculation test.
+
+### 8.0 Ecosystem — integrated checkpoint, not release
+- Consolidated all preceding checkpoints against main for full CI, with cross-feature regression covering public results, conflict handling, Studio export, reminder privacy and stable calendar identities. Hardened screen lock against a throwing global storage getter, and stopped stale calendar/assistant UI responses from continuing after navigation. Version remains 6.0.1 candidate. No production migration or release claim.
+
+### 6.3 follow-up in integration branch
+- Added explicit-anchor multi-cell TSV journal paste with preview, empty-cell-only writes, grade/absence values and atomic rejection of conflicts, future or changed lessons, invalid class membership and restrictions. Added pure parser and IndexedDB regressions. No clipboard permission or bulk overwrite.
+
+### 7.0 follow-up in integration branch
+- Workspace-specific owner recovery in synthetic LAB: separately saved 256-bit recovery code, hashed server storage, CAS rotation, owner session/invite revocation and release of prior owner's match leases. Added pure and real workerd restart tests. Not production account recovery.
+
+### 6.5 follow-up — PRO data quality and player profile
+- Added terminal-action/author and serve/receive consistency auditing. Historical conflicting observations stay readable but are excluded from complete-sample rates; newly submitted conflicting complete records are rejected. Per-player season profile shows attempt counts, points/errors and weighted efficiency from checked full PRO sequences only, separate from PDFs/manual records.
+
+### 6.8 follow-up — editable overlay layers
+- Local Studio editor adds up to six text/rectangle overlay layers with normalized position, bounds, color, size, opacity and ordering. Clipped rendering, PNG and multi-format ZIP support; layer contents never go into style presets, publication TXT or combined match kit. Existing styles remain compatible. Also exclude conflicting complete captures from recorded setter/attacker connections.
+
+### 6.4 follow-up — multi-year school analytics
+- Added a consistent read-only snapshot of current school year and archives, with cohort/grade-level comparison, actual grade weight denominators and attendance opportunities. Future records excluded, duplicate years flagged rather than silently combined. No individual or teacher performance ranking, no changes to historical records.
+
+### 6.3 follow-up — selected-cell grade editing
+- Arbitrary grid selection (click/keyboard), preview, explicit confirmation, compare-and-swap against observed mark, single transaction; preserves weights and IDs of ordinary manual grades. Existing absence, exemption, norm-derived marks and restricted lessons are protected. Added IndexedDB and UI tests.
+
+### 6.7 follow-up — immutable-ID archive V3 candidate
+- Separate candidate rules and CAS client keyed by public ID; sort-key pagination, migration preview and emulator race test for concurrent date corrections. V2 and production config unchanged; no cutover or live publication.
+
+### Upgrade acceptance follow-up
+- Added pinned published 6.0.0 WebKit PWA upgrade alongside 5.1.1, including exact IndexedDB comparison, encrypted checkpoint preservation and no unnecessary write, old/new backup version fences, offline edit and independent restore. Added mobile Studio layer interactions to WebKit smoke.
+
+### Контрольный пакет: сезон и надёжность подтверждения синхронизации
+- План сезона: факт/цель, остаток и превышение, статус этапов, отдельные дни вне этапов; только подтверждённые тренировки, без вычисления нагрузки спортсменок по карточкам.
+- Обмен: любой неопределённый исход отправленного PUT маркируется как возможная запись на сервере; подтверждённые отклонения 401/403/409/413/423 не маркируются. Локальная ревизия не меняется до корректного подтверждения. Добавлены регрессии.
+
+### Security 6.1: изолированное LAB-хранилище
+- Реализована атомарная запись отдельно зашифрованных записей и манифеста в отдельную IndexedDB, проверка повторным открытием, отказ при неверном пароле, подмене, пропуске и лишней записи. Тесты синтетические; живой журнал не изменён.
+
+### Security LAB — revision CAS and independent recovery
+- Whole-snapshot authenticated byte CAS, fresh salt per revision, password rotation, ciphertext-only portable backup and explicit restore to empty independent LAB. Added synthetic concurrent-write and tampered recovery tests. No production adapter or database migration.
+
+### Documents — year comparison and season plan reports
+- Two new local document templates: aggregated school-year comparison (optional class breakdown, export confirmation), and season plan attainment including weeks and uncovered dates. Uses existing calculations, excludes individual names, health data and private phase notes; preserves unknown denominators and duplicate-year conflict rows. Word/Excel/print reuse the existing export pipeline.
+
+### Archive V3 — read-only migration inventory
+- Strict bounded pagination across both paths with repeated scans, boundary and corruption checks; reports copy-ready, identical, conflicting and destination-only IDs. Does not write or guarantee snapshot isolation: a publication freeze remains required.
+
+### Documents — browser acceptance
+- Prevent stale async previews after closing/changing template and duplicate preview activation. Real WebKit UI scenarios for both new templates, privacy and viewport width.
+
+- WebKit first run for the new report controls exposed an exact accessible-label lookup failure for the team selector. Added explicit aria-labels to all document-generator selects and a diagnostic for the actual form; rerun required.
+
+### Platform LAB — session lifecycle and rate budgets
+- Persistent per-principal operation-class limits in workspace DO, 429 Retry-After, self-revocation with recovery guard, explicit inactive-session pruning and capacity check on redeem. Synthetic unit and HTTP tests; external IP/edge quotas and production onboarding remain separate.
+
+### Reminders — opt-in app-wide foreground delivery
+- Local source preferences, explicit permission, polling only in visible/uncovered TeachApp, stale consent rechecked after each asynchronous read, generic count only, per-tab dedup and scoped notification click. No network, subscription endpoint or promise of background push. Device testing still required.
+
+- First integrated reminder run failed syntax check in calendar openSheet call; corrected closing parenthesis. Added WebKit app-wide UI test with mocked OS notification transport (not physical device permission).
+
+### Coach Pro — method-specific team skill map
+- Read-only team view by method/date and optional archived athletes, weighted skill attempts, separate physical measurement trends, visible insufficient/excluded/missing coverage, minimum sample choice. No fabricated ranking or zero substitution. No new schema or public projection.
+
+### Video review — independent A/B rehearsal loop
+- Local 0.5–120 second repeat with point capture, pause-aware seek, media-end handling. Reset on source change, manual step, rally seek and clip export; no persistence or automatic video upload. Added range and playback policy tests.
+
+### Security — full-schema encrypted transaction baseline (LAB)
+- Validate portable current-format backup, schema-aware table/index operations and uniqueness, atomic snapshot CAS, abort/conflict and independent encrypted recovery. Reject lossy JSON values and sync checkpoints. A single workspace key for this synthetic baseline, no live DB switch; separate scope keys and efficient storage remain gates.
+
+### Archive V3 — candidate server migration barrier
+- Owner-only monotonic migration phase. Freeze V2; permit only exact missing V3 copies while frozen; explicit pre-cutover thaw and irreversible activation; preserve old links read-only. Emulator migrates 45 records and checks permissions, stale generations, altered results and verified counts. Production not deployed.
+
+### Archive V3 — client routing and old-link compatibility
+- Public phase/generation lookup, explicit frozen write refusal, V3 list/record/CAS, legacy URL ID resolution across date corrections, pagination reset. Public V2 reads closed after V3 to avoid stale deleted records; owner recovery reads retained. Existing production rule denial falls back to V2. No production switch.
+
+## 6.0.3-rc.1 — reconciliation candidate (not released)
+
+Reconciles published main 6.0.2 (d4cb5bb) with combined review candidate (3d3ec44, PR #175). Preserves published release history and Window-realm privacy event constructors, retains notification lifecycle and both browser test suites. Version and cache identity updated consistently; no production deployment. Combined exact-SHA verification pending.
+
+## 8.0.0-rc.1 — cumulative integration (not released)
+
+Merge parents: roadmap 6f6d083 and LIVE candidate d513984 (main 6.0.6 ancestor). Native and backend-bound coach commands share LIVE read/probe via transaction; no LAB fallback to native. All existing browser scenarios retained. Added actual 6.0.6 upgrade with assist and isolated rehearsal, plus routed coach-session tests. OBS excluded. CI to be verified on exact SHA. No manual acceptance or production cutover claimed.
+
+## 8.0.0-rc.2 — release package and reversible stable-format rehearsal
+
+Verified code backup refs created before changes. Static manifest and integrity check, package-based PWA upgrade, synthetic rollback from candidate to 6.0.6 preserving latest edits and independent recovery. No production cutover; manual acceptance stays pending. Exact SHA CI required.
+
+### 8.0.0-rc.3 — Security 6.1, контрольная точка подготовки
+
+Общий чистый layout для диагностики живой схемы и LAB, проверка roundtrip без потерь, точная native-схема и явный отказ при неперенесённых sync checkpoints. Регрессии добавлены; статус CI сверять по точному SHA. Рабочая БД остаётся native v10, production не переключается. Полная интеграция и физическая приёмка открыты.
+
+### RC3 — device-local migration rehearsal
+
+Обычные checkpoint/status сохраняются в отдельном school-v3-device-migrated LAB, изолированы от API областей и обычных копий, проверены миграция/ротация/откат. Состояние Delta и неизвестные форматы отклоняются. Production sync и UI остаются native; CI сверять по точному SHA.
+
+### RC3 — общий исполнитель синхронизации
+
+Фиксированный backend LAB запускает существующую команду обмена с полным CAS шифротекстов, сохранением других областей, без native fallback. Синтетическая гонка после PUT и повтор без PUT покрыты тестами. Не переключает production auto-sync/UI.
+
+### RC3 — репетиция настоящего интерфейса
+
+Отдельный WebKit профиль, реальный index.html и неизменённые экраны с явно фиксированным owner backend; проверка оценки, истории, тренерской команды, сохранности после reload, запрет raw DB и изменения checkpoint через общий UI. Результаты — по CI точного SHA; не production маршрутизация.
+
+### RC3 — owner lifecycle и native fence
+
+Отдельный login до загрузки приложения, закрываемые WebCrypto handles, терминальный отзыв доступа и новая страница, native fail-closed при изменении версии, тесты отказа и гонок. Реальный маршрут и миграция выключены; проверки по SHA.
+
+### RC3 — реальная интеграция v11 candidate
+
+Штатный bootstrap и неизменённые экраны, маршрутизация без native fallback, явный перенос/rotation/recovery, синхронизация с шифрованным checkpoint и session-only credentials. Тесты на fake IndexedDB и отдельном WebKit профиле с опубликованным статическим пакетом. Результаты сверять по SHA; production не развёрнут.
+
+## 8.0.0-rc.4 — Delta v3 candidate
+
+Отдельная конфигурация без routes и секретов, точный HTTPS origin, отдельный протокол и явный клиентский adapter с маркировкой checkpoint. Не развёрнуто; существующие миграции закрыты до приёмки.
+
+### RC4 — gated migration candidate
+
+HTTPS source fence, fixed target gate, v11 checkpoint/binding transaction, manual activation/finalize and rollback with signed receipt. Test-only; production not deployed.
+
+
+## 8.0.0-rc.6 — контрольный код Platform
+
+Отдельный HTTPS-кандидат, проверка подписанной identity, ролевые короткие сессии, edge/ingress rate limit, шифрованный backup/restore и фоновый Push. Автоматическая проверка на синтетическом workerd с перехватом провайдера; фактические HTTPS-маршруты, IdP, ключи, физические устройства и аудит — отдельные обязательные условия. Не production deploy.
+
+
+## 8.0.0-rc.7 — миграции и совместимость
+
+RC7: сохранены новые LIVE-события, регламенты и расстановки 6.0.7 и ограниченные чтения RC5. История стабильной ветки и итоговый RC6 включены в родительские коммиты без отката версии. Независимая проверка v11-копии, проверка Delta pending checkpoint, единая замороженная копия публичного архива и медиа Firebase. Проверки перед интеграцией обязательны. Производственная миграция, реальные ключи, физические устройства и 18 ручных актов не подтверждены.
+
+## 8.0.0-rc.8 — безопасность и финальная приёмка
+
+Отдельная ветка RC8 поверх RC7, резервный кодовый ref. Durable replay fence, epoch для opaque сессий при смене конфигурации identity, раздельные ключи и origin, read-only проверка актуального base/head и артефактов, ZIP-проверяющий инструмент, уникальные ID актов, операционный runbook. Автоматические проверки не закрывают 18 ручных актов и не разрешают production deploy.

@@ -7,3 +7,7 @@
 ## Масштаб фотографии
 
 Фоновое фото масштабируется от 100 до 200% относительно cover, с сохранением выбранной точки фокуса и без пустых полей. Параметр одинаков для предпросмотра, PNG, пакетного ZIP и комплекта матча. Сохраняется только числовой масштаб в стиле/пресете, старые JSON получают 100%. Фото и слои по-прежнему не сохраняются. Проверки охватывают все форматы, границы, импорт старого стиля и сохранение в WebKit.
+
+## Подготовка RC5 — точное положение фотографии и эллипсы
+
+Custom focus: two independent 0–100% coordinates for cover crop, with neutral 50% defaults for older style files. Coordinates affect preview, PNG, batch and match kit identically, remain in local styles/presets and contain no image data. Preset positions still work. Ellipse is a transient editable graphic layer with the same normalized bounds, color, opacity, stacking and duplication as rectangles. Layers remain excluded from style JSON, TXT and match kit. No new network or database schema. Physical PNG/ZIP download acceptance remains open.

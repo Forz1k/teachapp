@@ -120,3 +120,46 @@ test('Studio photo zoom is portable, bounded and keeps cover alignment in every 
  assert.deepEqual(draws[0],[img,-540,-270,1620,1620]);
  assert.ok(studioMatchKit({team:'A',opponent:'B',score:'2:0',photoZoom:150},'Hall').every(c=>c.photoZoom===150));
 });
+
+test('Fine photo positioning is bounded, backward-compatible and used for every render format',()=>{
+ const raw={focus:'custom',photoX:25,photoY:75,photoZoom:150};
+ assert.deepEqual(studioCrop(200,100,100,100,'custom',150,25,75),{x:-50,y:-37.5,width:300,height:150});
+ assert.throws(()=>studioCrop(200,100,100,100,'custom',150,-1,75));
+ assert.deepEqual(parseStudioStyleFile(studioStyleFile(raw)),studioStyle(raw));
+ const old=JSON.parse(studioStyleFile({}));delete old.style.photoX;delete old.style.photoY;
+ assert.equal(parseStudioStyleFile(JSON.stringify(old)).photoX,50);
+ old.style.photoY=101;assert.throws(()=>parseStudioStyleFile(JSON.stringify(old)));
+ for(const [w,h] of Object.values(formats))for(const x of [0,25,100])for(const y of [0,75,100]){
+  const r=studioCrop(320,240,w,h,'custom',150,x,y);
+  assert.ok(r.x<=0&&r.y<=0&&r.x+r.width>=w-1e-8&&r.y+r.height>=h-1e-8);
+ }
+ const draws=[],ctx={measureText:s=>({width:s.length*10}),fillRect(){},fillText(){},drawImage(...args){draws.push(args);}},canvas={getContext:()=>ctx},img={width:200,height:100};
+ paintStudio(canvas,raw,{backgroundImage:img});const crop=studioCrop(200,100,1080,1080,'custom',150,25,75);
+ assert.deepEqual(draws[0],[img,crop.x,crop.y,crop.width,crop.height]);
+ assert.ok(studioMatchKit({...raw,team:'A',opponent:'B',score:'2:0'},'Hall').every(c=>c.photoX===25&&c.photoY===75));
+});
+test('Ellipse layer stays inside normalized canvas bounds and is excluded from styles and match kits',()=>{
+ const ellipse={kind:'ellipse',x:80,y:90,width:50,height:30,opacity:40,color:'#123456'};
+ const [l]=studioLayers([ellipse]);assert.equal(l.width,20);assert.equal(l.height,10);
+ const draws=[],ctx={save(){},restore(){},beginPath(){},rect(){},clip(){},ellipse(...a){draws.push(a);},fill(){draws.push([this.globalAlpha,this.fillStyle]);}};
+ paintStudioLayers(ctx,[ellipse],1000,2000);
+ assert.deepEqual(draws,[[900,1900,100,100,0,0,2*Math.PI],[.4,'#123456']]);
+ assert.equal(duplicateStudioLayer([ellipse],0)[1].kind,'ellipse');
+ assert.doesNotMatch(studioStyleFile({layers:[ellipse]}),/ellipse|123456/);
+ assert.ok(studioMatchKit({team:'A',opponent:'B',score:'2:0',layers:[ellipse]},'Hall').every(m=>m.layers.length===0));
+});
+
+test('Studio alignment and pointer hit testing preserve size, order, format independence and transient privacy',async()=>{
+ const {positionStudioLayer,studioCanvasPoint,studioLayerAt}=await import('../js/media-studio.js');
+ const rows=[{kind:'rect',x:10,y:20,width:40,height:30,opacity:100},{kind:'ellipse',x:20,y:25,width:20,height:20,opacity:100}];
+ const aligned=positionStudioLayer(rows,0,{horizontal:'center',vertical:'bottom'});
+ assert.deepEqual([aligned[0].x,aligned[0].y,aligned[0].width,aligned[0].height],[30,70,40,30]);assert.equal(rows[0].x,10);
+ const moved=positionStudioLayer(rows,0,{x:999,y:-5});assert.deepEqual([moved[0].x,moved[0].y,moved[0].width,moved[0].height],[60,0,40,30]);
+ assert.equal(studioLayerAt(rows,{x:30,y:35}),1);assert.equal(studioLayerAt(rows,{x:20,y:25}),0);assert.equal(studioLayerAt(rows,{x:0,y:0}),-1);
+ assert.equal(studioLayerAt([rows[0],{...rows[1],opacity:0}],{x:30,y:35}),0);
+ const rect={left:100,top:50,width:300,height:300};
+ assert.deepEqual(studioCanvasPoint(250,200,rect,1920,1080),{x:50,y:50});
+ assert.equal(studioCanvasPoint(250,55,rect,1920,1080),null);assert.deepEqual(studioCanvasPoint(250,55,rect,1920,1080,{clamped:true}),{x:50,y:0});
+ assert.deepEqual(studioCanvasPoint(250,200,rect,1080,1920),{x:50,y:50});
+ assert.throws(()=>positionStudioLayer(rows,0,{horizontal:'invalid'}));assert.ok(!studioStyleFile({layers:aligned}).includes('ellipse'));
+});

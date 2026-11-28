@@ -66,3 +66,25 @@ test('IndexedDB opening: concurrent callers, blocked upgrade, retry and connecti
     else delete globalThis.indexedDB;
   }
 });
+
+
+test('Newer schema and actual versionchange terminally fence this document, including a subsequent deletion',async()=>{
+ const original=Object.getOwnPropertyDescriptor(globalThis,'indexedDB'),originalWindow=Object.getOwnPropertyDescriptor(globalThis,'window'),requests=[];
+ const window=new EventTarget();let events=0;
+ Object.defineProperty(globalThis,'window',{configurable:true,value:window});
+ Object.defineProperty(globalThis,'indexedDB',{configurable:true,value:{open(){const q={};requests.push(q);return q;}}});
+ try{
+  const D=await import('../js/db.js?native-fence-test');window.addEventListener(D.NATIVE_STORAGE_FENCED_EVENT,()=>events++);
+  const opening=D.open(),connection={close(){}};requests[0].result=connection;requests[0].onsuccess();await opening;
+  connection.onversionchange({newVersion:11});assert.equal(events,1);
+  await assert.rejects(D.open(),{name:'NativeStorageFencedError'});assert.equal(requests.length,1);
+  const E=await import('../js/db.js?native-fence-version-error');const failed=E.open();
+  requests[1].error=new DOMException('newer','VersionError');requests[1].onerror();
+  await assert.rejects(failed,{name:'NativeStorageFencedError'});await assert.rejects(E.open(),{name:'NativeStorageFencedError'});assert.equal(requests.length,2);
+  const F=await import('../js/db.js?native-fence-deletion');const third=F.open();const deleted={close(){}};requests[2].result=deleted;requests[2].onsuccess();await third;
+  deleted.onversionchange({newVersion:null});await assert.rejects(F.open(),{name:'NativeStorageFencedError'});assert.equal(events,2);
+ }finally{
+  if(original)Object.defineProperty(globalThis,'indexedDB',original);else delete globalThis.indexedDB;
+  if(originalWindow)Object.defineProperty(globalThis,'window',originalWindow);else delete globalThis.window;
+ }
+});

@@ -35,7 +35,7 @@ const sorted=rows=>copy(rows).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
 const keyOf=area=>'sync-checkpoint-'+area;
 // Small local-only metadata: excluded from backups and scoped cloud snapshots.
 const statusKey=area=>'sync-checkpoint-status-'+area;
-const successRecord=(area,cp)=>({id:statusKey(area),workspaceId:cp.workspaceId,revision:cp.revision,endpoint:cp.endpoint,successfulAt:new Date().toISOString()});
+const successRecord=(area,cp)=>({id:statusKey(area),workspaceId:cp.workspaceId,revision:cp.revision,endpoint:cp.endpoint,successfulAt:new Date().toISOString(),...(cp.protocol==='delta-v3'?{protocol:'delta-v3'}:{})});
 export const isSyncCheckpoint=r=>typeof r?.id==='string'&&r.id.startsWith('sync-checkpoint-');
 const validArea=a=>Object.hasOwn(syncAreas,a);
 const keysFor=area=>area==='school'?[...school,'workRecords','meta']:[...coach,'workRecords'];
@@ -378,12 +378,13 @@ export async function replaySyncDeltas({base,baseRevision,area,workspaceId,entri
 
 /* Local synthetic relay only. No change to the production v1/v2 client.
    Keep credential roles separate; never persist tokens or plaintext snapshots. */
-export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sealToken,fetcher=globalThis.fetch,timeoutMs=15000}={}){
+function deltaWireClient(endpoint,area,token,{compactToken,rotateToken,sealToken,fetcher=globalThis.fetch,timeoutMs=15000,mode='lab'}={}){
  endpoint=normalizeEndpoint(endpoint);
- check(validArea(area)&&['localhost','127.0.0.1','[::1]'].includes(new URL(endpoint).hostname)&&new URL(endpoint).protocol==='http:','Delta LAB доступен только на localhost');
+ const u=new URL(endpoint),local=['localhost','127.0.0.1','[::1]'].includes(u.hostname);
+ check(validArea(area)&&(mode==='lab'?local&&u.protocol==='http:':mode==='candidate'&&!local&&u.protocol==='https:'&&u.origin===endpoint&&!u.port),'Delta LAB доступен только на localhost; кандидат требует отдельный HTTPS origin');
  const validToken=t=>typeof t==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(t);
  check(validToken(token)&&(compactToken===undefined||validToken(compactToken)&&compactToken!==token)&&(rotateToken===undefined||validToken(rotateToken)&&rotateToken!==token&&rotateToken!==compactToken)&&(sealToken===undefined||validToken(sealToken)&&![token,compactToken,rotateToken].includes(sealToken)),'Проверьте отдельные тестовые ключи');
- const url=endpoint+'/v1/delta/'+area+'/';
+ const url=endpoint+(mode==='candidate'?'/v3/delta/':'/v1/delta/')+area+'/';
  async function request(path,body,secret=token){
   const encoded=body===undefined?undefined:JSON.stringify(body);
   check(encoded===undefined||new TextEncoder().encode(encoded).length<=defaultCloudflarePacketLimit,'Пакет Delta LAB превышает лимит запроса');
@@ -395,6 +396,7 @@ export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sea
   }finally{clearTimeout(timer);}
  }
  async function writeAnchor(kind,expectedRevision,envelope,secret,rotation){
+  if(mode==='candidate')await readHead();
   const body={expectedRevision,envelope};
   if(kind!=='rotate'&&new TextEncoder().encode(JSON.stringify(body)).length<=defaultCloudflarePacketLimit)return writeAck(await request(kind,body,secret),expectedRevision);
   const {uploadId,manifest,chunks}=await splitDeltaAnchor(envelope,{kind,expectedRevision,rotation}),path='multipart/'+kind+'/'+uploadId+'/';
@@ -413,9 +415,13 @@ export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sea
  function rollbackState(state){
   check(exactFields(state,['revision','seal'])&&Number.isSafeInteger(state.revision)&&state.revision>=0&&(state.seal===null||state.revision===1&&exactFields(state.seal,['migrationId','revision'])&&state.seal.revision===1&&typeof state.seal.migrationId==='string'&&uuid.test(state.seal.migrationId)),'Некорректный ответ барьера назначения Delta LAB');return state;
  }
- return {head:async()=>{
-  const head=await request('head');check(validDeltaHead(head)&&exactFields(head,['revision','anchorRevision','count','bytes','maxEntries','maxBytes','keyEpoch'])&&Number.isSafeInteger(head.bytes)&&head.bytes>=0&&head.maxEntries===129&&head.maxBytes===16*1024*1024&&head.bytes<=head.maxBytes&&Number.isSafeInteger(head.keyEpoch)&&head.keyEpoch>=0&&(head.revision!==0||head.bytes===0&&head.keyEpoch===0),'Некорректная цепочка Delta LAB');return head;
- },rollbackStatus:async()=>rollbackState(await request('rollback-status')),rollbackReceipt:()=>request('rollback-receipt'),sealRollback:async migrationId=>{check(validToken(sealToken)&&typeof migrationId==='string'&&uuid.test(migrationId),'Нужен отдельный ключ закрытия назначения');const state=rollbackState(await request('rollback-seal',{expectedRevision:1,migrationId},sealToken));check(state.seal?.migrationId===migrationId,'Закрытие назначения не подтверждено');return state;},getRevision:async rev=>{
+ async function readHead(){
+  const head=await request('head');check(validDeltaHead(head)&&exactFields(head,['revision','anchorRevision','count','bytes','maxEntries','maxBytes','keyEpoch',...(mode==='candidate'?['protocolVersion']:[])])&&(mode!=='candidate'||head.protocolVersion===3)&&Number.isSafeInteger(head.bytes)&&head.bytes>=0&&head.maxEntries===129&&head.maxBytes===16*1024*1024&&head.bytes<=head.maxBytes&&Number.isSafeInteger(head.keyEpoch)&&head.keyEpoch>=0&&(head.revision!==0||head.bytes===0&&head.keyEpoch===0),'Некорректная цепочка Delta LAB или версия протокола');return head;
+ }
+ function migrationState(state){
+  check(exactFields(state,['gate','revision','seal'])&&Number.isSafeInteger(state.revision)&&state.revision>=0&&(state.gate===null||exactFields(state.gate,['migrationId','anchorCommitment','active'])&&uuid.test(state.gate.migrationId)&&/^(single|multipart):[a-f0-9]{64}$/.test(state.gate.anchorCommitment)&&typeof state.gate.active==='boolean')&&(state.seal===null||state.revision===1&&exactFields(state.seal,['migrationId','revision'])&&uuid.test(state.seal.migrationId)&&state.seal.revision===1),'Некорректное состояние переноса v3');return state;
+ }
+ return {head:readHead,...(mode==='candidate'?{migrationStatus:async()=>migrationState(await request('migration-status')),activateMigration:async({migrationId,anchorCommitment})=>{check(validToken(sealToken)&&uuid.test(migrationId)&&/^(single|multipart):[a-f0-9]{64}$/.test(anchorCommitment),'Нужен отдельный ключ активации');await readHead();return migrationState(await request('migration-activate',{migrationId,anchorCommitment,expectedRevision:1},sealToken));}}:{}),rollbackStatus:async()=>rollbackState(await request('rollback-status')),rollbackReceipt:()=>request('rollback-receipt'),sealRollback:async migrationId=>{check(validToken(sealToken)&&typeof migrationId==='string'&&uuid.test(migrationId),'Нужен отдельный ключ закрытия назначения');if(mode==='candidate')await readHead();const state=rollbackState(await request('rollback-seal',{expectedRevision:1,migrationId},sealToken));check(state.seal?.migrationId===migrationId,'Закрытие назначения не подтверждено');return state;},getRevision:async rev=>{
    check(revision(rev),'Некорректная ревизия');const row=await request('revision/'+rev);
    check(plain(row)&&row.revision===rev&&['anchor','delta'].includes(row.kind),'Пропущена или подменена ревизия изменений');
    if(!Object.hasOwn(row,'multipart')){check(exactFields(row,['revision','kind','envelope'])&&isEncryptedBackup(row.envelope),'Некорректный снимок Delta LAB');return row;}
@@ -428,10 +434,16 @@ export function deltaLabClient(endpoint,area,token,{compactToken,rotateToken,sea
    return {revision:rev,kind:'anchor',envelope};
   },
   anchor:envelope=>writeAnchor('anchor',0,envelope,token),
-  append:async(expectedRevision,envelope)=>writeAck(await request('append',{expectedRevision,envelope}),expectedRevision),
+  append:async(expectedRevision,envelope)=>{if(mode==='candidate')await readHead();return writeAck(await request('append',{expectedRevision,envelope}),expectedRevision);},
   compact:(expectedRevision,envelope)=>{check(validToken(compactToken),'Нужен отдельный ключ компактизации');return writeAnchor('compact',expectedRevision,envelope,compactToken);},
   rotate:(expectedRevision,envelope,rotation)=>{check(validToken(rotateToken)&&normalizeRotationHashes(rotation),'Нужен отдельный ключ ротации');return writeAnchor('rotate',expectedRevision,envelope,rotateToken,rotation);}
  };
+}
+export function deltaLabClient(endpoint,area,token,options={}){return deltaWireClient(endpoint,area,token,{...options,mode:'lab'});}
+/** Explicit HTTPS v3 candidate; no auto discovery, fallback or migration. */
+export function deltaCandidateClient(endpoint,area,token,{confirmed=false,...options}={}){
+ check(confirmed===true,'Подтвердите отдельный сервер Delta v3');
+ return deltaWireClient(endpoint,area,token,{...options,mode:'candidate'});
 }
 function validDeltaHead(h){
  return plain(h)&&Number.isSafeInteger(h.revision)&&h.revision>=0&&Number.isSafeInteger(h.anchorRevision)&&Number.isInteger(h.count)&&h.count>=0&&h.count<=129&&
@@ -644,6 +656,7 @@ export async function openDeltaDeviceRecovery({endpoint,area,file,devicePassword
 // Rebind only the encrypted local ancestor, never the local business records
 // or the remote head. An explicitly reviewed normal three-way merge follows.
 export async function rebindDeltaDevice({endpoint,area,file,devicePassword,oldPassword,synthetic=false,confirmed=false,expectedRemoteRevision,expectedLocalRevision,acceptHistoricalBase=false,fetcher}){
+ check(!db.isEncryptedStorage(),'Delta LAB не подключён к рабочему v11; операция остановлена до сетевого запроса');
  const p=await openDeltaDeviceRecovery({endpoint,area,file,devicePassword,synthetic}),current=await db.dumpAll(),cp=getCheckpoint(current,area);
  check(cp&&cp.endpoint===p.endpoint&&cp.workspaceId===p.workspaceId&&revision(cp.revision)&&cp.revision<p.anchorRevision,'Нет подходящей прежней контрольной точки; не заменяйте локальные данные');
  check(typeof oldPassword==='string'&&oldPassword!==p.password,'Нужен прежний пароль контрольной точки');
@@ -679,7 +692,12 @@ export async function rebindDeltaDevice({endpoint,area,file,devicePassword,oldPa
 // One-way migration rehearsal. No production endpoints, source writes, ordinary
 // profile changes or IndexedDB writes. The new workspace has its own revision
 // sequence and encryption password, never a continuation of the old relay.
-function migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic){
+function migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic,candidate=false){
+ if(candidate===true){
+  check(synthetic!==true,'Режимы переноса несовместимы');
+  const source=normalizeEndpoint(sourceEndpoint),destination=normalizeEndpoint(destinationEndpoint),valid=x=>{const u=new URL(x);return u.protocol==='https:'&&u.origin===x&&!u.port&&!['localhost','127.0.0.1','[::1]'].includes(u.hostname);};
+  check(valid(source)&&valid(destination)&&source!==destination,'Нужны два разных HTTPS origin');return {source,destination};
+ }
  check(synthetic===true,'Перенос доступен только в синтетическом Delta LAB');
  const source=labEndpoint(sourceEndpoint),destination=labEndpoint(destinationEndpoint);
  check(new URL(source).origin===source&&new URL(destination).origin===destination&&new URL(source).port&&new URL(destination).port&&source!==destination,'Нужны разные локальные серверы с явными портами');
@@ -689,12 +707,12 @@ function migrationPasswords(sourcePassword,destinationPassword,backupPassword){
  check([sourcePassword,destinationPassword,backupPassword].every(p=>typeof p==='string'&&p.length>=12&&p.length<=1024)&&new Set([sourcePassword,destinationPassword,backupPassword]).size===3,'Используйте три разных пароля для источника, назначения и файла переноса');
 }
 const migrationRecordCount=s=>Object.values(s).reduce((n,a)=>n+a.length,0);
-function migrationClients({sourceEndpoint,destinationEndpoint,sourceToken,destinationToken,area,protocolVersion=1,synthetic,fetcher}){
- const {source,destination}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
+function migrationClients({sourceEndpoint,destinationEndpoint,sourceToken,destinationToken,area,protocolVersion=1,synthetic,candidate=false,fetcher}){
+ const {source,destination}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic,candidate);
  check(validArea(area)&&sourceToken!==destinationToken&&(protocolVersion===1||protocolVersion===2),'Нужны разные ключи и корректный контур');
  // Only the read method is exposed internally for the source.
  const sourceRead=relayClient(source,area,sourceToken,{protocolVersion,fetcher}).get;
- const target=deltaLabClient(destination,area,destinationToken,{fetcher});
+ const target=candidate?deltaCandidateClient(destination,area,destinationToken,{confirmed:true,fetcher}):deltaLabClient(destination,area,destinationToken,{fetcher});
  return {source,destination,sourceRead,target};
 }
 export async function prepareDeltaMigration(args){
@@ -710,15 +728,15 @@ export async function prepareDeltaMigration(args){
  check(syncUploadBytes(packet.snapshot,{area,workspaceId,expectedRevision:0})<=DELTA_MAX_DATA+1024,'Снимок превышает лимит нового контура');
  const envelope=await encryptBackup(packetPayload(packet.snapshot,area,workspaceId,1),destinationPassword);
  check(envelope.data.length<=DELTA_MAX_DATA&&old.envelope.data.length<=DELTA_MAX_DATA,'Снимок превышает лимит переноса');
- const payload={app:'teachapp-delta-migration',version:1,source,destination,area,protocolVersion,sourceRevision:old.revision,sourceWorkspaceId:packet.workspaceId,workspaceId,digest,sourceEnvelope:old.envelope,envelope};
+ const payload={app:'teachapp-delta-migration',version:args.candidate===true?2:1,source,destination,area,protocolVersion,sourceRevision:old.revision,sourceWorkspaceId:packet.workspaceId,workspaceId,digest,sourceEnvelope:old.envelope,envelope};
  const file=await encryptBackup(payload,backupPassword);
  return {area,migrationId:workspaceId,destinationAnchorCommitment:await migrationAnchorCommitment(envelope),sourceRevision:old.revision,destinationRevision:1,records:migrationRecordCount(packet.snapshot),encryptedBytes:envelope.data.length,file};
 }
-export async function openDeltaMigration({sourceEndpoint,destinationEndpoint,area,protocolVersion=1,current,file,sourcePassword,destinationPassword,backupPassword,synthetic=false}){
- const {source,destination}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
+export async function openDeltaMigration({sourceEndpoint,destinationEndpoint,area,protocolVersion=1,current,file,sourcePassword,destinationPassword,backupPassword,synthetic=false,candidate=false}){
+ const {source,destination}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic,candidate);
  migrationPasswords(sourcePassword,destinationPassword,backupPassword);
  const p=await decryptBackup(file,backupPassword);
- check(exactFields(p,['app','version','source','destination','area','protocolVersion','sourceRevision','sourceWorkspaceId','workspaceId','digest','sourceEnvelope','envelope'])&&p.app==='teachapp-delta-migration'&&p.version===1&&p.source===source&&p.destination===destination&&p.area===area&&p.protocolVersion===protocolVersion&&revision(p.sourceRevision)&&uuid.test(p.sourceWorkspaceId)&&uuid.test(p.workspaceId)&&p.workspaceId!==p.sourceWorkspaceId&&digestPattern.test(p.digest)&&isEncryptedBackup(p.sourceEnvelope)&&isEncryptedBackup(p.envelope)&&typeof p.sourceEnvelope.data==='string'&&p.sourceEnvelope.data.length<=DELTA_MAX_DATA&&typeof p.envelope.data==='string'&&p.envelope.data.length<=DELTA_MAX_DATA,'Неверный файл переноса или другой контур');
+ check(exactFields(p,['app','version','source','destination','area','protocolVersion','sourceRevision','sourceWorkspaceId','workspaceId','digest','sourceEnvelope','envelope'])&&p.app==='teachapp-delta-migration'&&p.version===(candidate?2:1)&&p.source===source&&p.destination===destination&&p.area===area&&p.protocolVersion===protocolVersion&&revision(p.sourceRevision)&&uuid.test(p.sourceWorkspaceId)&&uuid.test(p.workspaceId)&&p.workspaceId!==p.sourceWorkspaceId&&digestPattern.test(p.digest)&&isEncryptedBackup(p.sourceEnvelope)&&isEncryptedBackup(p.envelope)&&typeof p.sourceEnvelope.data==='string'&&p.sourceEnvelope.data.length<=DELTA_MAX_DATA&&typeof p.envelope.data==='string'&&p.envelope.data.length<=DELTA_MAX_DATA,'Неверный файл переноса или другой контур');
  const before=await readPacket(p.sourceEnvelope,sourcePassword,area,p.sourceRevision),after=await readPacket(p.envelope,destinationPassword,area,1);
  check(before.workspaceId===p.sourceWorkspaceId&&after.workspaceId===p.workspaceId&&await scopeDigest(before.snapshot,area)===p.digest&&await scopeDigest(after.snapshot,area)===p.digest&&same(before.snapshot,after.snapshot),'Содержимое снимков переноса не совпадает');
  combineScope(current,after.snapshot,area);
@@ -751,24 +769,24 @@ async function migrationFenceRequest(source,area,token,path,fetcher,body,version
   return state;
  }finally{clearTimeout(timer);}
 }
-export function deltaMigrationFenceClient({sourceEndpoint,destinationEndpoint,area,sourceToken,destinationToken,sourceFenceToken,protocolVersion=1,synthetic=false,fetcher=globalThis.fetch}){
- const {source}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
+export function deltaMigrationFenceClient({sourceEndpoint,destinationEndpoint,area,sourceToken,destinationToken,sourceFenceToken,protocolVersion=1,synthetic=false,candidate=false,fetcher=globalThis.fetch}){
+ const {source}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic,candidate);
  check([1,2].includes(protocolVersion)&&validArea(area)&&typeof sourceFenceToken==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(sourceFenceToken)&&sourceFenceToken!==sourceToken&&sourceFenceToken!==destinationToken,'Нужен отдельный ключ блокировки источника LAB');
  const request=body=>migrationFenceRequest(source,area,sourceFenceToken,'migration-fence',fetcher,body);
  return {get:()=>request(),freeze:({expectedRevision,migrationId,confirmed,backupVerified,destinationAnchorCommitment})=>{
   check(confirmed===true&&backupVerified===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите резервную копию и необратимую блокировку LAB');
-  check(destinationAnchorCommitment===undefined||typeof destinationAnchorCommitment==='string'&&/^(single|multipart):[a-f0-9]{64}$/.test(destinationAnchorCommitment),'Некорректная контрольная сумма назначения');
+  check((!candidate&&destinationAnchorCommitment===undefined)||typeof destinationAnchorCommitment==='string'&&/^(single|multipart):[a-f0-9]{64}$/.test(destinationAnchorCommitment),'Некорректная контрольная сумма назначения');
   return request({expectedRevision,migrationId:migrationId.toLowerCase(),...(destinationAnchorCommitment===undefined?{}:{destinationAnchorCommitment})});
  },resumeSource:({expectedRevision,migrationId,confirmed,backupVerified,allDevicesReconciled})=>{
-  check(protocolVersion===1&&confirmed===true&&backupVerified===true&&allDevicesReconciled===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите проверенные копии и возврат всех устройств');
+  check(!candidate&&protocolVersion===1&&confirmed===true&&backupVerified===true&&allDevicesReconciled===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId),'Подтвердите проверенные копии и возврат всех устройств');
   return migrationFenceRequest(source,area,sourceFenceToken,'migration-rollback',fetcher,{expectedRevision,migrationId:migrationId.toLowerCase()});
  },resumeCloudflareSource:({expectedRevision,migrationId,confirmed,backupVerified,allDevicesReconciled,receipt})=>{
   check(confirmed===true&&backupVerified===true&&allDevicesReconciled===true&&revision(expectedRevision)&&typeof migrationId==='string'&&uuid.test(migrationId)&&plain(receipt),'Подтвердите возврат всех устройств и подписанную квитанцию закрытия');
   return migrationFenceRequest(source,area,sourceFenceToken,'migration-rollback',fetcher,{expectedRevision,migrationId:migrationId.toLowerCase(),receipt});
  }};
 }
-export async function deltaMigrationFenceStatus({sourceEndpoint,destinationEndpoint,area,sourceToken,protocolVersion=1,synthetic=false,fetcher=globalThis.fetch}){
- const {source}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic);
+export async function deltaMigrationFenceStatus({sourceEndpoint,destinationEndpoint,area,sourceToken,protocolVersion=1,synthetic=false,candidate=false,fetcher=globalThis.fetch}){
+ const {source}=migrationEndpoints(sourceEndpoint,destinationEndpoint,synthetic,candidate);
  check([1,2].includes(protocolVersion)&&validArea(area)&&typeof sourceToken==='string'&&/^[A-Za-z0-9_-]{32,256}$/.test(sourceToken),'Нужен ключ исходного контура LAB');
  return migrationFenceRequest(source,area,sourceToken,'migration-fence-status',fetcher,undefined,protocolVersion);
 }
@@ -777,10 +795,12 @@ export async function commitDeltaMigration(args){
  const p=await openDeltaMigration(args);
  const {sourceRead,target}=migrationClients(args);
  const fenced=args.sourceFenceToken!==undefined||args.sourceFenceId!==undefined;
+ if(args.candidate)check(fenced&&args.sourceFenceId===p.workspaceId,'Для v3 обязателен серверный барьер');
  const fenceClient=fenced?deltaMigrationFenceClient(args):null;
  if(fenced)check(args.sourceFenceId===p.workspaceId,'ID барьера должен совпадать с ID нового пространства из проверенного файла');
  const verifyFence=async()=>{if(!fenced)return;const state=await fenceClient.get();check(state.revision===p.sourceRevision&&state.fence?.migrationId===args.sourceFenceId.toLowerCase(),'Источник не заблокирован на ревизии файла переноса');};
  await verifyFence();
+ if(args.candidate)await verifyCandidateGate(p,target,false);
  const before=await sourceRead(),h=await target.head();
  check((await target.rollbackStatus()).seal===null,'Назначение необратимо закрыто для отката');
  check(validDeltaHead(h),'Некорректная история назначения');
@@ -800,7 +820,7 @@ export async function commitDeltaMigration(args){
  const row=await target.getRevision(1),remote=await readDeltaLab({client:target,area:p.area,password:args.destinationPassword,current:args.current});
  check(row.revision===1&&row.kind==='anchor'&&same(row.envelope,p.envelope)&&remote.revision===1&&remote.workspaceId===p.workspaceId&&await scopeDigest(remote.snapshot,p.area)===p.digest&&same(remote.snapshot,p.snapshot),'Назначение изменилось; переход запрещён');
  const after=await sourceRead();
- await verifyFence();
+ await verifyFence();if(args.candidate)await verifyCandidateGate(p,target,false);
  check((await target.rollbackStatus()).seal===null,'Назначение необратимо закрыто для отката');
  // Client-side confirmation cannot actually freeze a legacy server. A late
  // source write leaves a verified *copy*, not permission to change devices.
@@ -808,18 +828,27 @@ export async function commitDeltaMigration(args){
  return {area:p.area,sourceRevision:p.sourceRevision,observedSourceRevision:after.revision,destinationRevision:1,replayed,status:unchanged?(fenced?'verified-fenced-copy':'verified-copy'):'source-changed',cutoverAllowed:false,requiresManualCutover:true};
 }
 
+async function verifyCandidateGate(p,target,active){
+ const state=await target.migrationStatus(),commitment=await migrationAnchorCommitment(p.envelope);
+ check(state.gate?.migrationId===p.workspaceId&&state.gate.anchorCommitment===commitment&&state.gate.active===active,'Барьер назначения v3 не соответствует проверенному файлу');return state;
+}
 // Local-only Delta LAB binding and checkpoint are committed together. Credentials
 // stay in the operator's encrypted files; never change the ordinary TAP1/TAD2 profile.
 const migrationBindingKey=area=>'sync-checkpoint-migration-'+area;
 const migrationBinding=(data,area)=>data.meta.find(r=>r.id===migrationBindingKey(area))??null;
-const labAdapters=new WeakMap();
+const labAdapters=new WeakMap(),candidateAdapters=new WeakMap();
 function migrationGuardError(){return Object.assign(Error('Контур привязан к экспериментальному переносу Delta LAB. Обычный обмен запрещён; используйте проверенный файл переноса и согласованный возврат.'),{code:'migration-binding'});}
 function bindingMatches(binding,cp,area){
  return binding?.protocol==='delta-lab-v1'&&[1,2].includes(binding.sourceProtocolVersion)&&binding.area===area&&typeof binding.migrationId==='string'&&uuid.test(binding.migrationId)&&binding.destinationWorkspaceId===binding.migrationId&&cp&&typeof binding.destinationEndpoint==='string'&&cp.endpoint===binding.destinationEndpoint&&cp.workspaceId===binding.destinationWorkspaceId&&revision(cp.revision)&&cp.revision>=binding.destinationRevision&&binding.destinationRevision===1;
 }
 function guardBinding(data,area,endpoint,client){
- const binding=migrationBinding(data,area);if(!binding)return null;
- const adapter=labAdapters.get(client),cp=getCheckpoint(data,area);
+ const binding=migrationBinding(data,area),cp=getCheckpoint(data,area),candidate=candidateAdapters.get(client);
+ // A candidate checkpoint may never be reused by a snapshot or LAB client.
+ // Existing legacy checkpoint must not be reinterpreted as a v3 checkpoint.
+ if(candidate){check(candidate.area===area&&candidate.endpoint===endpoint&&!binding&&(!cp||cp.protocol==='delta-v3'),'Нужен проверенный перенос на Delta v3');}
+ else if(cp?.protocol==='delta-v3')throw Object.assign(Error('Контур использует Delta v3; обычный обмен запрещён'),{code:'delta-version-barrier'});
+ if(!binding)return null;
+ const adapter=labAdapters.get(client);
  if(!adapter||adapter.area!==area||adapter.endpoint!==endpoint||!bindingMatches(binding,cp,area)||cp.endpoint!==endpoint)throw migrationGuardError();
  return binding;
 }
@@ -828,9 +857,10 @@ export async function migrationBindingStatus(area,data){
  check(validArea(area),'Выберите рабочую область');const current=data||{meta:await db.getAll('meta')},binding=migrationBinding(current,area);
  if(!binding)return {area,status:'none'};
  const cp=getCheckpoint(current,area);
- return {area,status:bindingMatches(binding,cp,area)?'lab-bound':'review',revision:revision(cp?.revision)?cp.revision:null};
+ return {area,status:binding.protocol==='delta-v3'?'v3-pending':bindingMatches(binding,cp,area)?'lab-bound':'review',revision:revision(cp?.revision)?cp.revision:null};
 }
 export async function cutoverDeltaMigrationDevice(args){
+ check(!db.isEncryptedStorage(),'Delta LAB не подключён к рабочему v11; операция остановлена до сетевого запроса');
  check(args.synthetic===true,'Переключение доступно только для Delta LAB');
  check(args.sourceFenceToken===undefined,'Не передавайте административный ключ устройству');
  const current=await db.dumpAll(),p=await openDeltaMigration({...args,current}),{sourceRead,target}=migrationClients(args);
@@ -893,7 +923,9 @@ export async function sealDeltaMigrationRollback(args){
  const p=await openDeltaMigration(args),{sourceRead}=migrationClients(args);
  check(args.confirmed===true&&args.backupVerified===true&&args.expectedMigrationId===p.workspaceId&&args.expectedSourceRevision===p.sourceRevision,'Подтвердите проверенный файл и точную ревизию отката');
  check(typeof args.destinationSealToken==='string'&&![args.sourceToken,args.destinationToken,args.sourceFenceToken].includes(args.destinationSealToken),'Нужен отдельный ключ закрытия назначения');
- const target=deltaLabClient(p.destination,p.area,args.destinationToken,{sealToken:args.destinationSealToken,fetcher:args.fetcher});
+ const options={sealToken:args.destinationSealToken,fetcher:args.fetcher};
+ const target=args.candidate?deltaCandidateClient(p.destination,p.area,args.destinationToken,{...options,confirmed:true}):deltaLabClient(p.destination,p.area,args.destinationToken,options);
+ if(args.candidate)await verifyCandidateGate(p,target,false);
  await verifyRollbackSource(p,args,sourceRead);
  const before=await verifyRollbackDestination(p,target,false);
  const ack=await target.sealRollback(p.workspaceId);
@@ -902,6 +934,7 @@ export async function sealDeltaMigrationRollback(args){
  return {area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision,destinationRevision:1,replayed:before.seal!==null,status:'rollback-sealed'};
 }
 export async function rollbackDeltaMigrationDevice(args){
+ check(!db.isEncryptedStorage(),'Delta LAB не подключён к рабочему v11; операция остановлена до сетевого запроса');
  check(args.synthetic===true&&args.sourceFenceToken===undefined&&args.destinationSealToken===undefined,'Возврат устройства только в LAB, без административных ключей');
  const current=await db.dumpAll(),p=await openDeltaMigration({...args,current}),{sourceRead,target}=migrationClients(args);
  const cp=getCheckpoint(current,p.area),local=projectScope(current,p.area),bindingId=migrationBindingKey(p.area);
@@ -928,11 +961,11 @@ export async function rollbackDeltaMigrationDevice(args){
    The full envelopes returned to that pipeline are generated locally; only
    an initial anchor or encrypted delta travels across the network.
    No normal app callers: data access is injected by the synthetic test harness. */
-export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synthetic=false,acceptCompactedHistory=false,fetcher,timeoutMs}){
- check(synthetic===true&&typeof readData==='function','Интеграция Delta LAB только для синтетических данных');
+function deltaSyncAdapter({endpoint,area,token,password,readData,synthetic=false,confirmed=false,mode='lab',acceptCompactedHistory=false,fetcher,timeoutMs}){
+ check((mode==='lab'?synthetic===true:confirmed===true)&&typeof readData==='function',mode==='lab'?'Интеграция Delta LAB только для синтетических данных':'Требуется явное подтверждение Delta и backend');
  check(typeof password==='string'&&password.length>=12,'Проверьте пароль Delta LAB');
  endpoint=normalizeEndpoint(endpoint);
- const client=deltaLabClient(endpoint,area,token,{fetcher,timeoutMs});
+ const client=mode==='candidate'?deltaCandidateClient(endpoint,area,token,{fetcher,timeoutMs,confirmed}):deltaLabClient(endpoint,area,token,{fetcher,timeoutMs});
  let baseline=null,pending=null,busy=false;
  async function exclusive(task){
   check(!busy,'Дождитесь завершения обмена Delta LAB');busy=true;
@@ -943,6 +976,7 @@ export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synth
    baseline=null;pending=null;
    const current=await readData(),cp=getCheckpoint(current,area);
    guardBinding(current,area,endpoint,adapter);
+   if(mode==='candidate')check(!migrationBinding(current,area),'Незавершённый перенос LAB; v3 запрещён');
    let checkpoint=null;
    if(cp){
     check(cp.endpoint===endpoint&&revision(cp.revision)&&uuid.test(cp.workspaceId),'Этот контур связан с другим сервером или повреждён');
@@ -950,6 +984,7 @@ export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synth
     check(packet.workspaceId===cp.workspaceId,'Неверная общая ревизия');
     checkpoint={revision:cp.revision,workspaceId:cp.workspaceId,snapshot:packet.snapshot};
    }
+   if(mode==='candidate'){const state=await client.migrationStatus();check(!state.seal&&(!state.gate||state.gate.active),'Назначение ожидает подтверждения переноса v3');}
    const remote=await readDeltaLab({client,area,password,current,checkpoint});
    check(!remote.compactedPastCheckpoint||acceptCompactedHistory,'История уплотнена после локальной ревизии. Нужно явное согласование с проверенным снимком.');
    const envelope=!remote.revision?null:checkpoint?.revision===remote.revision?cp.envelope:
@@ -985,8 +1020,10 @@ export function deltaLabSyncAdapter({endpoint,area,token,password,readData,synth
    return copy(pending.ack);
   })
  };
- labAdapters.set(adapter,{area,endpoint});return adapter;
+ if(mode==='lab')labAdapters.set(adapter,{area,endpoint});else candidateAdapters.set(adapter,{area,endpoint});return adapter;
 }
+export function deltaLabSyncAdapter(options){return deltaSyncAdapter({...options,mode:'lab'});}
+export function deltaCandidateSyncAdapter(options){return deltaSyncAdapter({...options,mode:'candidate'});}
 
 export async function prepareSync({area,endpoint,password,client,data}){
  endpoint=normalizeEndpoint(endpoint);
@@ -1021,7 +1058,7 @@ export async function prepareSync({area,endpoint,password,client,data}){
   }
  }
  const draft=mergeScopes(base,local,remoteSnapshot,area);
- return {area,endpoint,workspaceId,revision:remote.revision,checkpoint,...(binding?{migrationBinding:binding}:{}),base,local,remote:remoteSnapshot,remoteEnvelope:remote.envelope,conflicts:draft.conflicts};
+ return {area,endpoint,workspaceId,revision:remote.revision,checkpoint,...(candidateAdapters.has(client)?{protocol:'delta-v3'}:{}),...(binding?{migrationBinding:binding}:{}),base,local,remote:remoteSnapshot,remoteEnvelope:remote.envelope,conflicts:draft.conflicts};
 }
 export function previewSync(current,plan,choices={}){
  if(!same(migrationBinding(current,plan.area),plan.migrationBinding??null))throw migrationGuardError();
@@ -1036,10 +1073,16 @@ export function previewSync(current,plan,choices={}){
 function guardSync(stillAllowed,remoteMayHaveCommitted=false){
  if(!stillAllowed())throw Object.assign(Error(remoteMayHaveCommitted?'Обмен остановлен. Сервер мог принять пакет; локальные изменения не применены. При повторном подключении сравните ревизии.':'Обмен остановлен до записи.'),{code:'sync-paused',remoteMayHaveCommitted});
 }
-export async function executeSync({plan,choices,password,client,confirmed=false,reuseRemote=false,stillAllowed=()=>true}){
+/** Fixed backend for the explicitly selected sync executor. The published
+ * wrapper below always uses native IndexedDB; no mutable global routing. */
+export function createSyncExecutor(access){
+ check(access&&typeof access.dumpAll==='function'&&typeof access.transaction==='function','Требуется явный backend синхронизации');
+ return async function executeBoundSync({plan,choices,password,client,confirmed=false,reuseRemote=false,stillAllowed=()=>true}){
  check(confirmed,'Подтвердите синхронизацию');
+ check((plan.protocol==='delta-v3')===candidateAdapters.has(client),'Протокол предварительного просмотра изменился');
+ if(candidateAdapters.has(client))reuseRemote=true;
  guardSync(stillAllowed);
- const initial=await db.dumpAll();guardBinding(initial,plan.area,plan.endpoint,client);
+ const initial=await access.dumpAll();guardBinding(initial,plan.area,plan.endpoint,client);
  const preview=previewSync(initial,plan,choices);
  guardSync(stillAllowed);
  check(!preview.conflicts.length,'Сначала разрешите все конфликты');
@@ -1047,7 +1090,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
  if(pullOnly&&plan.checkpoint?.revision===plan.revision&&same(plan.local,plan.remote)){
   // No network write and no rewrite of the potentially large encrypted checkpoint.
   const stores=[...new Set([...keysFor(plan.area),'meta'])];
-  await db.transaction(stores,'readwrite',async s=>{
+  await access.transaction(stores,'readwrite',async s=>{
    guardSync(stillAllowed);
    const current=Object.fromEntries(await Promise.all(stores.map(async n=>[n,await s[n].getAll()])));
    guardBinding(current,plan.area,plan.endpoint,client);
@@ -1063,7 +1106,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
  const envelope=pullOnly?plan.remoteEnvelope:await encryptBackup(packetPayload(preview.snapshot,plan.area,plan.workspaceId,nextRevision),password);
  // Recheck after expensive encryption; the transaction below checks again after CAS.
  guardSync(stillAllowed);
- const beforeWrite=await db.dumpAll();guardBinding(beforeWrite,plan.area,plan.endpoint,client);previewSync(beforeWrite,plan,choices);
+ const beforeWrite=await access.dumpAll();guardBinding(beforeWrite,plan.area,plan.endpoint,client);previewSync(beforeWrite,plan,choices);
  guardSync(stillAllowed);
  if(!pullOnly){
   let committed;
@@ -1072,7 +1115,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
   if(committed?.revision!==nextRevision||!same(committed.envelope,envelope))throw Object.assign(Error('Сервер не подтвердил запись ожидаемой ревизии'),{remoteMayHaveCommitted:true});
  }
  try{
-  return await db.transaction(names,'readwrite',async s=>{
+  return await access.transaction(names,'readwrite',async s=>{
    guardSync(stillAllowed,!pullOnly);
    const current=Object.fromEntries(await Promise.all(names.map(async n=>[n,await s[n].getAll()])));
    guardSync(stillAllowed,!pullOnly);
@@ -1080,7 +1123,7 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
    const final=previewSync(current,plan,choices);
    check(!final.conflicts.length&&same(final.snapshot,preview.snapshot),'Изменился результат слияния');
    const data=combineScope(current,final.snapshot,plan.area);
-   const cp={id:keyOf(plan.area),endpoint:plan.endpoint,workspaceId:plan.workspaceId,revision:nextRevision,envelope};
+   const cp={id:keyOf(plan.area),endpoint:plan.endpoint,workspaceId:plan.workspaceId,revision:nextRevision,envelope,...(candidateAdapters.has(client)?{protocol:'delta-v3'}:{})};
    data.meta=data.meta.filter(r=>r.id!==cp.id&&r.id!==statusKey(plan.area)).concat(cp,successRecord(plan.area,cp));
    // Delete changed keys first to avoid transient unique-index collisions. One atomic transaction.
    for(const n of [...new Set([...keysFor(plan.area),'meta'])]){
@@ -1093,11 +1136,15 @@ export async function executeSync({plan,choices,password,client,confirmed=false,
    return {revision:nextRevision,counts:final.counts};
   });
  }catch(e){if(e?.code==='sync-paused')throw e;throw Error((pullOnly?'Локальная запись не завершилась.':'Сервер принял пакет, но локальная запись не завершилась.')+' Ваши данные не заменены этой операцией. Повторите синхронизацию; при конфликте проверьте обе версии.');}
+};
 }
+export async function executeSync(options){const permitted=options.stillAllowed??(()=>true);return createSyncExecutor({dumpAll:db.dumpAll,transaction:db.syncTransaction})({...options,stillAllowed:()=>db.encryptedStorageAllowed()&&permitted()});}
 // Automatic sync only for an already confirmed workspace; never auto-propagate deletions.
 export async function syncPersonalArea({area,endpoint,password,client,stillAllowed=()=>true,initialize=false}){
  const binding=await migrationBindingStatus(area);if(binding.status!=='none')return {area,status:'review',reason:'migration-binding'};
- if(!initialize&&!await syncStatus(area))return {area,status:'setup'};
+ const status=await syncStatus(area);
+ if(status?.protocol==='delta-v3'&&!candidateAdapters.has(client))return {area,status:'review',reason:'delta-version-barrier'};
+ if(!initialize&&!status)return {area,status:'setup'};
  if(!stillAllowed())return {area,status:'paused'};
  const plan=await prepareSync({area,endpoint,password,client});
  if(!stillAllowed())return {area,status:'paused'};
@@ -1114,9 +1161,16 @@ export async function syncPersonalArea({area,endpoint,password,client,stillAllow
 export async function syncStatus(area){
  check(validArea(area),'Выберите рабочую область');
  const cp=await db.get('meta',keyOf(area));
- return cp?{endpoint:cp.endpoint,revision:cp.revision}:null;
+ return cp?{endpoint:cp.endpoint,revision:cp.revision,...(cp.protocol==='delta-v3'?{protocol:cp.protocol}:{})}:null;
 }
 // Local read-only comparison, no relay calls and no upload of personal data.
+/** Authenticate a retained checkpoint without clearing a pending migration barrier. */
+export async function verifyLocalCheckpoint({area,data,password}){
+ check(validArea(area),'Неверный контур');const cp=getCheckpoint(data,area);check(cp&&revision(cp.revision),'Нет контрольной точки');
+ const packet=await readPacket(cp.envelope,password,area,cp.revision);check(packet.workspaceId===cp.workspaceId,'Неверная общая ревизия');
+ const binding=migrationBinding(data,area);if(binding){check(binding.protocol==='delta-v3'&&cp.protocol==='delta-v3'&&binding.destinationWorkspaceId===cp.workspaceId&&binding.destinationRevision===cp.revision&&await scopeDigest(packet.snapshot,area)===binding.digest,'Контрольная точка переноса не прошла проверку');}
+ return true;
+}
 export async function localSyncState({area,endpoint,password,data}){
  check(validArea(area),'Выберите рабочую область');
  const current=data||await db.dumpAll(),cp=getCheckpoint(current,area);
@@ -1134,9 +1188,79 @@ export async function localSyncState({area,endpoint,password,data}){
 }
 export async function disconnectSync(area,confirmed=false){
  check(validArea(area)&&confirmed,'Подтвердите отключение');
- await db.transaction(['meta'],'readwrite',async s=>{
+ await db.syncTransaction(['meta'],'readwrite',async s=>{
   if(await s.meta.get(migrationBindingKey(area)))throw migrationGuardError();
+  if((await s.meta.get(keyOf(area)))?.protocol==='delta-v3')throw Object.assign(Error('Delta v3 нельзя забыть без согласованного возврата и независимой копии'),{code:'delta-version-barrier'});
   await s.meta.delete(keyOf(area));
   await s.meta.delete(statusKey(area));
  });
+}
+
+function candidateBinding(p){return {id:migrationBindingKey(p.area),protocol:'delta-v3',sourceProtocolVersion:p.protocolVersion,area:p.area,migrationId:p.workspaceId,sourceEndpoint:p.source,sourceWorkspaceId:p.sourceWorkspaceId,sourceRevision:p.sourceRevision,destinationEndpoint:p.destination,destinationWorkspaceId:p.workspaceId,destinationRevision:1,digest:p.digest};}
+function candidateCheckpoint(p){return {id:keyOf(p.area),endpoint:p.destination,workspaceId:p.workspaceId,revision:1,envelope:p.envelope,protocol:'delta-v3'};}
+function sourceCheckpoint(p){return {id:keyOf(p.area),endpoint:p.source,workspaceId:p.sourceWorkspaceId,revision:p.sourceRevision,envelope:p.sourceEnvelope};}
+function candidateDeviceArgs(args){check(args.candidate===true&&args.synthetic!==true&&db.isEncryptedStorage()&&args.sourceFenceToken===undefined&&args.destinationSealToken===undefined,'Перенос v3 требует защищённый v11 и только ключи устройства');}
+function confirmCandidate(args,p){check(args.backupVerified===true&&args.expectedMigrationId===p.workspaceId&&args.expectedSourceRevision===p.sourceRevision,'Подтвердите проверенную копию и точную ревизию');}
+async function candidateLocalTransaction(p,current,cp,binding,local,apply,stillAllowed,args){
+ guardSync(stillAllowed);
+ check(typeof args.deviceBackupPassword==='string'&&![args.sourcePassword,args.destinationPassword,args.backupPassword].includes(args.deviceBackupPassword),'Требуется отдельный пароль независимой копии устройства');
+ await (await import('./encrypted-storage.js')).verifyCurrentEncryptedRecoveryCopy({data:current,file:args.deviceBackupFile,backupPassword:args.deviceBackupPassword});guardSync(stillAllowed);await db.syncTransaction(names,'readwrite',async stores=>{
+  guardSync(stillAllowed);const latest=Object.fromEntries(await Promise.all(names.map(async n=>[n,await stores[n].getAll()])));
+  check(names.every(n=>same(sorted(latest[n]),sorted(current[n])))&&same(getCheckpoint(latest,p.area),cp)&&same(migrationBinding(latest,p.area),binding)&&same(projectScope(latest,p.area),local),'Локальные данные изменились; создайте новую независимую копию и повторите предпросмотр');
+  await apply(stores.meta);guardSync(stillAllowed);
+ });
+}
+export async function cutoverDeltaCandidateDevice(args){
+ candidateDeviceArgs(args);const stillAllowed=args.stillAllowed??(()=>db.encryptedStorageAllowed());guardSync(stillAllowed);
+ const current=await db.dumpAll(),p=await openDeltaMigration({...args,current}),{sourceRead,target}=migrationClients(args),cp=getCheckpoint(current,p.area),binding=migrationBinding(current,p.area),local=projectScope(current,p.area),next=candidateCheckpoint(p),expected=candidateBinding(p);
+ const replay=same(binding,expected)&&same(cp,next);
+ if(!replay){check(!binding&&cp&&!cp.protocol&&cp.endpoint===p.source&&cp.workspaceId===p.sourceWorkspaceId&&cp.revision===p.sourceRevision,'Исходная контрольная точка отсутствует или устарела');const packet=await readPacket(cp.envelope,args.sourcePassword,p.area,cp.revision);check(packet.workspaceId===p.sourceWorkspaceId&&same(packet.snapshot,p.snapshot),'Исходная контрольная точка не соответствует файлу');}
+ check(same(local,p.snapshot),'Локальные изменения не согласованы');
+ await verifyRollbackSource(p,args,sourceRead);await verifyCandidateGate(p,target,false);await verifyRollbackDestination(p,target,false);
+ const gate=await target.migrationStatus();check(gate.seal===null&&gate.revision===1,'Назначение закрыто или изменилось');guardSync(stillAllowed);
+ const result={area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision,destinationRevision:1,replayed:replay};
+ if(args.confirmed!==true)return {...result,status:'cutover-preview'};
+ confirmCandidate(args,p);if(!replay)await candidateLocalTransaction(p,current,cp,binding,local,async meta=>{await meta.put(next);await meta.put(expected);await meta.delete(statusKey(p.area));},stillAllowed,args);
+ return {...result,status:'cutover-completed'};
+}
+/** Freeze only after the saved file and separately pinned destination are verified. */
+export async function freezeDeltaCandidateSource(args){
+ check(args.candidate===true&&args.confirmed===true&&args.allDevicesReconciled===true,'Подтвердите проверенные копии и согласование всех устройств');
+ const p=await openDeltaMigration(args);confirmCandidate(args,p);const {sourceRead,target}=migrationClients(args);
+ const gate=await verifyCandidateGate(p,target,false);check(gate.revision===0&&!gate.seal,'Назначение должно быть пустым до блокировки источника');
+ const source=await sourceRead();check(source.revision===p.sourceRevision&&same(source.envelope,p.sourceEnvelope),'Источник изменился; нужен новый план');
+ const state=await deltaMigrationFenceClient(args).freeze({expectedRevision:p.sourceRevision,migrationId:p.workspaceId,confirmed:true,backupVerified:true,destinationAnchorCommitment:await migrationAnchorCommitment(p.envelope)});
+ await verifyRollbackSource(p,args,sourceRead);return {status:'source-frozen',area:p.area,migrationId:p.workspaceId,sourceRevision:state.revision};
+}
+export async function activateDeltaCandidateMigration(args){
+ check(args.candidate===true&&args.confirmed===true&&args.allDevicesReconciled===true,'Подтвердите перенос всех устройств');
+ const p=await openDeltaMigration(args);confirmCandidate(args,p);const {sourceRead}=migrationClients(args);
+ check(typeof args.destinationSealToken==='string'&&![args.sourceToken,args.destinationToken,args.sourceFenceToken].includes(args.destinationSealToken),'Нужен отдельный ключ активации назначения');
+ const target=deltaCandidateClient(p.destination,p.area,args.destinationToken,{confirmed:true,sealToken:args.destinationSealToken,fetcher:args.fetcher});
+ await verifyRollbackSource(p,args,sourceRead);const gate=await target.migrationStatus();if(gate.gate?.active===true){await verifyCandidateGate(p,target,true);check(!gate.seal,'Назначение закрыто');return {status:'activated',area:p.area,migrationId:p.workspaceId,replayed:true};}
+ const state=await verifyCandidateGate(p,target,false);check(state.revision===1&&state.seal===null,'Назначение закрыто или изменилось');
+ await verifyRollbackDestination(p,target,false);const result=await target.activateMigration({migrationId:p.workspaceId,anchorCommitment:await migrationAnchorCommitment(p.envelope)});check(result.gate?.active===true&&result.gate.migrationId===p.workspaceId&&result.seal===null,'Активация не подтверждена');
+ return {status:'activated',area:p.area,migrationId:p.workspaceId};
+}
+export async function finalizeDeltaCandidateDevice(args){
+ candidateDeviceArgs(args);const stillAllowed=args.stillAllowed??(()=>db.encryptedStorageAllowed());guardSync(stillAllowed);
+ const current=await db.dumpAll(),p=await openDeltaMigration({...args,current}),{sourceRead,target}=migrationClients(args),cp=getCheckpoint(current,p.area),binding=migrationBinding(current,p.area),local=projectScope(current,p.area);
+ check(same(binding,candidateBinding(p))&&same(cp,candidateCheckpoint(p)),'Устройство не переключено на этот файл');
+ await verifyRollbackSource(p,args,sourceRead);const state=await verifyCandidateGate(p,target,true);check(!state.seal&&state.revision>=1,'Назначение не активно');
+ // Verify the exact ancestor; if already compacted, explicit reconciliation is required.
+ const head=await target.head();check(head.anchorRevision===1,'История уже уплотнена; требуется отдельное согласование');
+ const row=await target.getRevision(1);check(row.kind==='anchor'&&same(row.envelope,p.envelope),'Якорь назначения подменён');
+ if(args.confirmed!==true)return {status:'finalize-preview',area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision};
+ confirmCandidate(args,p);await candidateLocalTransaction(p,current,cp,binding,local,meta=>meta.delete(binding.id),stillAllowed,args);
+ return {status:'finalize-completed',area:p.area,migrationId:p.workspaceId};
+}
+export async function rollbackDeltaCandidateDevice(args){
+ candidateDeviceArgs(args);const stillAllowed=args.stillAllowed??(()=>db.encryptedStorageAllowed());guardSync(stillAllowed);
+ const current=await db.dumpAll(),p=await openDeltaMigration({...args,current}),{sourceRead,target}=migrationClients(args),cp=getCheckpoint(current,p.area),binding=migrationBinding(current,p.area),local=projectScope(current,p.area);
+ const next=sourceCheckpoint(p),replay=!binding&&same(cp,next);
+ check(replay||same(binding,candidateBinding(p))&&same(cp,candidateCheckpoint(p)),'Контрольная точка изменилась; возврат запрещён');check(same(local,p.snapshot),'Есть несогласованные локальные изменения');
+ await verifyRollbackSource(p,args,sourceRead);await verifyCandidateGate(p,target,false);await verifyRollbackDestination(p,target,true);
+ if(args.confirmed!==true)return {status:'rollback-preview',area:p.area,migrationId:p.workspaceId,sourceRevision:p.sourceRevision};
+ confirmCandidate(args,p);if(!replay)await candidateLocalTransaction(p,current,cp,binding,local,async meta=>{await meta.put(next);await meta.delete(binding.id);await meta.delete(statusKey(p.area));},stillAllowed,args);
+ return {status:'rollback-completed',area:p.area,migrationId:p.workspaceId,replayed:replay};
 }

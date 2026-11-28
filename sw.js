@@ -1,4 +1,4 @@
-const VERSION = 'v6.0.7';
+const VERSION = 'v8.0.0-rc.9';
 const PREFIX = `teachapp:${self.registration.scope}:`;
 const CACHE = PREFIX + VERSION;
 
@@ -16,14 +16,14 @@ const PRECACHE = [
   './js/school-tools.js',
   './js/screens/school-tools.js',
   './js/screens/attention.js',
-  './js/device-trust.js','./js/screens/trusted-devices.js','./js/privacy-shield.js',
-  './js/app.js','./js/search.js','./js/screens/search.js',
-  './js/version.js',
+  './js/device-trust.js','./js/screens/trusted-devices.js','./js/privacy-shield.js','./js/vault-owner-lifecycle.js',
+  './js/app.js','./js/storage-bootstrap.js','./js/encrypted-storage.js','./js/vault-cipher.js','./js/vault-snapshot-transaction.js','./js/sync-credential-storage.js','./js/search.js','./js/screens/search.js',
+  './js/version.js','./js/rollout-policy.js',
   './js/delta-anchor.js','./js/db.js',
   './js/backup.js',
   './js/sync.js','./js/sync-pairing.js','./js/personal-sync.js','./js/device-invite.js','./js/auto-sync.js',
   './js/screens/sync.js',
-  './js/store.js',
+  './js/store.js','./js/journal-commands.js',
   './js/model.js',
   './js/health.js',
   './js/assessment.js','./js/attendance-index.js',
@@ -32,12 +32,12 @@ const PRECACHE = [
   './js/screens/session.js',
   './js/team-generator.js',
   './js/screens/team-generator.js',
-  './js/coach.js','./js/training-dynamics.js','./js/screens/training-dynamics.js','./js/coach-opponents.js','./js/screens/coach-opponents.js','./js/media-studio.js','./js/screens/studio.js',
-  './js/workbench.js','./js/methodical.js','./js/portable-library.js','./js/library-materials.js','./js/student-goals.js','./js/norm-retakes.js','./js/teacher-portfolio.js','./js/screens/teacher-portfolio.js',
+  './js/coach.js','./js/coach-analytics.js','./js/training-dynamics.js','./js/screens/training-dynamics.js','./js/coach-opponents.js','./js/screens/coach-opponents.js','./js/media-studio.js','./js/screens/studio.js',
+  './js/workbench.js','./js/work-scope.js','./js/methodical.js','./js/portable-library.js','./js/library-materials.js','./js/student-goals.js','./js/norm-retakes.js','./js/teacher-portfolio.js','./js/screens/teacher-portfolio.js',
   './js/tournaments.js',
   './js/screens/tournaments.js',
   './js/work-calendar.js',
-  './js/screens/work-calendar.js',
+  './js/screens/work-calendar.js','./js/reminder-controller.js',
   './js/school-archive.js',
   './js/screens/school-archive.js',
   './js/screens/library.js','./js/screens/methodical.js',
@@ -69,9 +69,9 @@ const PRECACHE = [
   './js/screens/match-protocol.js',
   './js/screens/lineup-picker.js',
   './js/screens/volleyball.js',
-  './js/privacy.js','./js/backup-verify.js','./js/migration-preflight.js',
+  './js/privacy.js','./js/backup-verify.js','./js/migration-preflight.js','./js/vault-layout.js','./js/device-checkpoint-migration.js',
   './js/retention.js',
-  './js/analytics.js','./js/school-review.js',
+  './js/analytics.js','./js/school-analytics-core.js','./js/school-review.js',
   './js/screens/analytics.js','./js/screens/school-review.js',
   './js/screens/coach.js',
   './js/screens/norms.js',
@@ -137,3 +137,14 @@ self.addEventListener('message', event => {
   if (event.data === 'skipWaiting') event.waitUntil(self.skipWaiting());
 });
 
+self.addEventListener('notificationclick',event=>{
+ if(event.notification.tag!=='teachapp-calendar-reminders')return;
+ event.notification.close();
+ event.waitUntil((async()=>{
+  const target=new URL('index.html',self.registration.scope),root=new URL(self.registration.scope);
+  const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});
+  const existing=windows.find(c=>{const u=new URL(c.url);return u.origin===target.origin&&(u.pathname===target.pathname||u.pathname===root.pathname);});
+  if(existing?.focus)return existing.focus();
+  if(self.clients.openWindow)return self.clients.openWindow(target.href);
+ })());
+});

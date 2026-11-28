@@ -27,3 +27,14 @@ test('Season target attainment counts only covered held sessions and reports gap
  assert.deepEqual(a.minuteProgress,{target:45,actual:120,remaining:0,over:75,percent:267});assert.equal(a.phases[0].status,'completed');assert.equal(a.phases[1].status,'future');assert.equal(a.phases[1].sessionProgress.percent,null);assert.equal(a.phases[1].held,0);
  assert.deepEqual(a.gaps.map(x=>[x.from,x.to,x.held]),[['2026-11-01','2026-11-02',1],['2026-11-08','2026-11-11',0],['2026-11-16','2026-11-30',0]]);
 });
+
+test('Indexed season progress matches independent range scans and reads each date once across 105 weeks',()=>{
+ const plan={id:'p',kind:'seasonPlan',teamId:'t',name:'S',from:'2025-01-01',to:'2026-12-31',revision:0,phases:[{...phase,from:'2025-01-15',to:'2025-09-30'},{...phase,from:'2026-01-01',to:'2026-11-30'}]},today='2026-06-01';
+ let reads=0;const days=Array.from({length:730},(_,i)=>new Date(Date.UTC(2025,0,1+i)).toISOString().slice(0,10));
+ const trainings=Array.from({length:8000},(_,i)=>({teamId:i%7?'t':'other',date:days[i%730],held:i%3!==0,minutes:30+i%60})),matches=Array.from({length:1200},(_,i)=>({teamId:i%5?'t':'other',date:days[(i*7)%730]}));
+ const proxy=r=>new Proxy(r,{get(t,k){if(k==='date')reads++;return t[k];}});
+ const actual=seasonPlanProgress(plan,trainings.map(proxy),matches.map(proxy),today);
+ const expected=(from,to)=>{const t=trainings.filter(t=>t.teamId==='t'&&t.date>=from&&t.date<=to),held=t.filter(t=>t.held&&t.date<=today);return {scheduled:t.length,held:held.length,unconfirmed:t.filter(t=>!t.held&&t.date<today).length,future:t.filter(t=>t.date>today||t.date===today&&!t.held).length,recordedMinutes:held.reduce((n,t)=>n+t.minutes,0),matches:matches.filter(m=>m.teamId==='t'&&m.date>=from&&m.date<=to&&m.date<=today).length};};
+ assert.equal(reads,trainings.filter(t=>t.teamId==='t').length+matches.filter(t=>t.teamId==='t').length);
+ assert.equal(actual.weeks.length,105);assert.deepEqual(actual.total,expected(plan.from,plan.to));for(const row of [...actual.weeks,...actual.phases,...actual.gaps])for(const [k,v] of Object.entries(expected(row.from,row.to)))assert.equal(row[k],v);
+});

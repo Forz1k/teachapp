@@ -38,6 +38,148 @@ try{
   finally{db.close();dest.close();}
  });assert.deepEqual(vault,{changed:true,independent:true,name:'Changed',plaintext:false});
  console.log('WEBKIT VAULT LAB PASS: independent encrypted snapshot update and recovery using real IndexedDB and WebCrypto.');
+ const oldFence=await page.evaluate(async()=>{
+  const F=await import('/tools/prototypes/vault-version-fence-lab.mjs'),D=await import('./js/db.js'),id='webkit-fence',data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));
+  data.meta=[{id:'synthetic-fence',value:42}];const old=await F.openLegacyFenceLab(id);
+  await new Promise((resolve,reject)=>{const tx=old.transaction('meta','readwrite');tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);tx.objectStore('meta').put(data.meta[0]);});
+  const result=await F.fenceLegacyLab(id,data);let rejected=null,closed=null;
+  try{const unexpected=await F.openLegacyFenceLab(id);unexpected.close();}catch(e){rejected=e.name;}
+  try{old.transaction('meta','readwrite');}catch(e){closed=e.name;}
+  return {fenced:result.fenced,rejected,closed};
+ });assert.deepEqual(oldFence,{fenced:true,rejected:'VersionError',closed:'InvalidStateError'});
+ console.log('WEBKIT OLD CLIENT FENCE LAB PASS: native versionchange closes old connection and explicit v10 reopen is refused.');
+ const routedFacade=await page.evaluate(async()=>{
+  const R=await import('/tools/prototypes/vault-router-lab.mjs'),D=await import('./js/db.js'),id='webkit-facade',password='synthetic-facade-webkit';
+  if(!navigator.locks?.request)return {supported:false};
+  const router=R.vaultRouterLab(id);await router.initialize();const source=R.routedDataAccessLab(router,{expectedGeneration:1});
+  await source.put('meta',{id:'synthetic-facade',value:1});await router.stage({password});await router.activate({password});
+  let stale=false;try{await source.put('meta',{id:'synthetic-facade',value:99});}catch{stale=true;}
+  const vault=R.routedDataAccessLab(router,{expectedGeneration:2,password});await vault.put('meta',{id:'synthetic-facade',value:2});
+  const row=await vault.get('meta','synthetic-facade');vault.close();let closed=false;try{await vault.getAll('meta');}catch{closed=true;}
+  const live=await D.get('meta','synthetic-facade');return {supported:true,stale,closed,value:row.value,isolated:live===undefined};
+ });if(routedFacade.supported)assert.deepEqual(routedFacade,{supported:true,stale:true,closed:true,value:2,isolated:true});
+ console.log('WEBKIT SHARED DATA FACADE LAB '+(routedFacade.supported?'PASS: native app remains isolated; stale handle rejected.':'SKIPPED: Web Locks unavailable.'));
+ const writableContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block'});
+ try{
+  const url=origin+'/vault-writable-smoke.html';
+  await writableContext.route(url,route=>route.fulfill({status:200,contentType:'text/html; charset=utf-8',body:'<!doctype html><title>Writable vault lifecycle LAB</title>'}));
+  const writableTab=await writableContext.newPage();await writableTab.goto(url);await writableTab.bringToFront();
+  const writableLifecycle=await writableTab.evaluate(async()=>{
+  const R=await import('/tools/prototypes/vault-router-lab.mjs'),L=await import('/tools/prototypes/vault-routed-lifecycle-lab.mjs'),id='webkit-writable-life',password='synthetic-writable-webkit';
+  if(!navigator.locks?.request||!globalThis.BroadcastChannel)return {supported:false};
+  const router=R.vaultRouterLab(id);await router.initialize();await router.put('meta',{id:'x',value:1});await router.stage({password});await router.activate({password});
+  const lifecycle=L.routedVaultLifecycleLab(router,{id});try{
+   const a=await lifecycle.unlock(password);await a.put('meta',{id:'x',value:2});
+   const V=await import('/tools/prototypes/local-vault.mjs'),raw=await V.openVaultLab('teachapp-vault-lab-routing-'+id);let compatible;
+   try{compatible=(await V.readVaultLab(raw,{scope:'workspace',password})).data.meta[0].value===2;}finally{raw.close();}
+   let blocked=false;try{await a.transaction('meta','readwrite',async s=>{await s.meta.put({id:'x',value:9});lifecycle.lock();});}catch{blocked=true;}
+   const b=await lifecycle.unlock(password);const row=await b.get('meta','x');
+   window.dispatchEvent(new Event('pagehide'));let hidden=false;try{await b.getAll('meta');}catch{hidden=true;}
+   return {supported:true,blocked,hidden,value:row.value,locked:!lifecycle.isUnlocked(),compatible};
+  }finally{lifecycle.dispose();}
+ });if(writableLifecycle.supported)assert.deepEqual(writableLifecycle,{supported:true,blocked:true,hidden:true,value:2,locked:true,compatible:true});
+ console.log('WEBKIT WRITABLE LIFECYCLE LAB '+(writableLifecycle.supported?'PASS: guarded write rollback and pagehide lock.':'SKIPPED: browser capabilities unavailable.'));
+
+ const coachSession=await writableTab.evaluate(async()=>{
+  const R=await import('/tools/prototypes/vault-router-lab.mjs'),L=await import('/tools/prototypes/vault-routed-lifecycle-lab.mjs'),C=await import('/js/coach.js');
+  if(!navigator.locks?.request||!globalThis.BroadcastChannel)return {supported:false};
+  const id='webkit-coach-session',password='synthetic-coach-webkit',router=R.vaultRouterLab(id);
+  await router.initialize();await router.stage({password});await router.activate({password});
+  let session;const lifecycle=L.routedVaultLifecycleLab(router,{id,onLock:()=>session?.close()});
+  try{
+   session=C.createCoachSession(await lifecycle.unlock(password));
+   const team=await session.saveTeam({name:'Synthetic WebKit team'}),p=await session.savePlayer({teamId:team.id,name:'Synthetic WebKit player',number:1,position:'setter'});
+   await session.saveTraining({teamId:team.id,date:'2025-09-01',time:'16:00',title:'Synthetic',minutes:60,exercises:[],roster:[p.id],held:true,attendance:{[p.id]:'present'}});
+   await session.saveMatch({teamId:team.id,date:'2025-09-01',opponent:'Synthetic',competition:'Cup',sets:[{ours:25,theirs:20}],roster:[p.id],stats:{}});
+   const view=await session.loadCoachForView(team.id);const counts=[view.data.coachPlayers.length,view.data.coachTrainings.length,view.data.coachMatches.length];
+   window.dispatchEvent(new Event('pagehide'));let blocked=false;try{await session.loadCoach();}catch{blocked=true;}
+   const cleared=view.selectedTeamId===null&&Object.values(view.data).every(rows=>rows.length===0)&&session.isClosed();
+   session=C.createCoachSession(await lifecycle.unlock(password));const restored=await session.loadCoachForView(team.id);
+   return {supported:true,counts,blocked,cleared,reopened:restored.data.coachMatches.length};
+  }finally{lifecycle.dispose();}
+ });if(coachSession.supported)assert.deepEqual(coachSession,{supported:true,counts:[1,1,1],blocked:true,cleared:true,reopened:1});
+ console.log('WEBKIT COACH SESSION LAB '+(coachSession.supported?'PASS: native commands, encrypted team view, lifecycle revocation and reopen.':'SKIPPED: browser capabilities unavailable.'));
+ const workSession=await writableTab.evaluate(async()=>{
+  const R=await import('/tools/prototypes/vault-router-lab.mjs'),L=await import('/tools/prototypes/vault-routed-lifecycle-lab.mjs'),W=await import('/js/workbench.js');
+  if(!navigator.locks?.request||!globalThis.BroadcastChannel)return {supported:false};
+  const id='webkit-work-session',password='synthetic-work-webkit',router=R.vaultRouterLab(id);
+  await router.initialize();await router.stage({password});await router.activate({password});
+  let session;const lifecycle=L.routedVaultLifecycleLab(router,{id,onLock:()=>session?.close()});
+  try{
+   session=W.createWorkSession(await lifecycle.unlock(password),'workspace');
+   const event=await session.saveWork({kind:'event',name:'Synthetic',date:'2025-09-01',time:'16:00',minutes:30,eventType:'meeting',note:'',remind:15,done:false});
+   const count=(await session.listWork('event')).length;
+   window.dispatchEvent(new Event('pagehide'));let blocked=false;try{await session.listWork('event');}catch{blocked=true;}
+   session=W.createWorkSession(await lifecycle.unlock(password),'school');
+   const hidden=(await session.listWork('event')).length===0;
+   let denied=false;try{await session.deleteWork(event.id,'event');}catch{denied=true;}
+   const still=(await router.snapshot({password})).workRecords.some(r=>r.id===event.id);
+   return {supported:true,count,blocked,hidden,denied,still,closed:session.isClosed()};
+  }finally{lifecycle.dispose();}
+ });if(workSession.supported)assert.deepEqual(workSession,{supported:true,count:1,blocked:true,hidden:true,denied:true,still:true,closed:true});
+ console.log('WEBKIT WORK SESSION LAB '+(workSession.supported?'PASS: encrypted event, cross-scope denial, lifecycle revocation.':'SKIPPED: browser capabilities unavailable.'));
+ const partitioned=await writableTab.evaluate(async()=>{
+  const P=await import('/tools/prototypes/vault-partitioned-lab.mjs'),D=await import('/js/db.js'),W=await import('/js/workbench.js'),C=await import('/js/coach.js');
+  const lab=P.partitionedVaultLab('webkit-scope-write'),passwords={school:'synthetic-school-webkit',coach:'synthetic-coach-webkit',workspace:'synthetic-owner-webkit'};
+  const data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));data.classes=[{id:'c',name:'Synthetic class',gradeLevel:7}];data.students=[{id:'p',classId:'c',fullName:'Synthetic pupil',number:1,normGroup:'girls'}];
+  const before=await lab.stage({data,passwords}),open=scope=>lab.openScope({scope,password:passwords[scope]});
+  const school=W.createWorkSession(await open('school'),'school'),coach=C.createCoachSession(await open('coach')),stale=await open('coach');
+  try{
+   await Promise.all([school.saveBriefing({classId:'c',participantIds:['p'],date:'2025-09-01',category:'lesson',topic:'Synthetic safety',note:''},true),coach.saveTeam({name:'Synthetic team'})]);
+   const next=await lab.status(),changed=next.revisions.school!==before.revisions.school&&next.revisions.coach!==before.revisions.coach&&next.revisions.workspace===before.revisions.workspace;
+   let denied=false;try{await stale.getAll('coachTeams');}catch(e){denied=String(e.message).includes('Ревизия');}
+   const failing=await open('school'),proto=IDBObjectStore.prototype,put=proto.put;let rolled=false;
+   proto.put=function(...args){if(this.transaction.db.name==='teachapp-vault-mutable-lab-webkit-scope-write'&&this.name==='state')throw new DOMException('Synthetic pointer quota','QuotaExceededError');return put.apply(this,args);};
+   try{await failing.put('classes',{id:'bad',name:'Uncommitted'});}catch(e){rolled=e.name==='QuotaExceededError';}finally{proto.put=put;failing.close();}
+   const restored=await lab.snapshot({passwords}),latest=await lab.status();
+   const backupPasswords={school:'synthetic-backup-school',coach:'synthetic-backup-coach',workspace:'synthetic-backup-owner'},newPasswords={school:'synthetic-new-school',coach:'synthetic-new-coach',workspace:'synthetic-new-owner'},restorePasswords={school:'synthetic-restore-school',coach:'synthetic-restore-coach',workspace:'synthetic-restore-owner'};
+   const copy=await lab.prepareRecoveryCopy({passwords,backupPasswords});
+   const rotation=await lab.rotatePasswords({passwords,newPasswords,backupPasswords,backupFile:copy.file,saved:true});
+   const rotated=Object.keys(passwords).every(s=>rotation.revisions[s]!==latest.revisions[s]);
+   let oldDenied=false;try{await lab.snapshot({passwords});}catch(e){oldDenied=String(e.message).includes('неверный пароль');}
+   const target=P.partitionedVaultLab('webkit-scope-recovery');await target.restoreRecoveryCopy({file:copy.file,backupPasswords,newPasswords:restorePasswords,confirmed:true});
+   const recovered=await target.snapshot({passwords:restorePasswords}),after=await lab.snapshot({passwords:newPasswords});
+   const recovery=JSON.stringify(recovered)===JSON.stringify(after)&&JSON.stringify(after)===JSON.stringify(restored);
+   return {changed,denied,rolled,school:restored.classes.length,coach:restored.coachTeams.length,records:restored.workRecords.length,stable:JSON.stringify(latest)===JSON.stringify(next),rotated,oldDenied,recovery,private:!copy.file.includes('Synthetic pupil')};
+  }finally{school.close();coach.close();stale.close();}
+ });assert.deepEqual(partitioned,{changed:true,denied:true,rolled:true,school:1,coach:1,records:1,stable:true,rotated:true,oldDenied:true,recovery:true,private:true});
+ console.log('WEBKIT PARTITIONED VAULT PASS: independent writable keys, native pointer/ciphertext CAS, rollback, full-key rotation and independent recovery.');
+ const schoolLayout=await writableTab.evaluate(async()=>{
+  const P=await import('/tools/prototypes/vault-partitioned-lab.mjs'),D=await import('/js/db.js'),S=await import('/js/store.js');
+  const lab=P.partitionedVaultLab('webkit-school-layout',{layout:'school-v2'}),passwords={school:'synthetic-school-webkit',coach:'synthetic-coach-webkit',workspace:'synthetic-owner-webkit'};
+  const data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));data.meta=[{id:'settings',year:{from:'2025-09-01',to:'2026-08-31'},theme:'dark',ownerField:'Synthetic owner only'}];
+  await lab.stage({data,passwords});
+  const school=S.createSchoolSession(await lab.openScope({scope:'school',password:passwords.school}));
+  try{
+   await school.load();const hidden=school.state.settings.ownerField===undefined&&school.state.settings.theme===undefined;
+   const cls=await school.addClass('7А'),p=await school.addStudent(cls.id,'Synthetic pupil',1,'girls'),l=await school.addLesson(cls.id,'2025-10-01',null,'',{slot:1,time:'09:00'});
+   await school.setMark(p.id,l.id,{value:'5'});await school.setRules({capAt3OnBad:true});
+   const saved=await lab.snapshot({passwords}),settings=saved.meta.find(r=>r.id==='settings');
+   return {hidden,grade:saved.marks[0]?.value,history:saved.workRecords.filter(r=>r.kind==='gradeHistory').length,owner:settings.ownerField,theme:settings.theme,rule:settings.rules.capAt3OnBad};
+  }finally{school.close();}
+ });assert.deepEqual(schoolLayout,{hidden:true,grade:'5',history:1,owner:'Synthetic owner only',theme:'dark',rule:true});
+ console.log('WEBKIT SCHOOL PARTITION PASS: real school store and journal, isolated school settings, owner metadata preserved.');
+ const migrated=await writableTab.evaluate(async()=>{
+  const M=await import('/tools/prototypes/vault-partition-migration-lab.mjs'),P=await import('/tools/prototypes/vault-partitioned-lab.mjs'),S=await import('/js/store.js');
+  const id='webkit-atomic-migration',passwords={school:'synthetic-school-key',coach:'synthetic-coach-key',workspace:'synthetic-owner-key'},backupPasswords={school:'synthetic-backup-school',coach:'synthetic-backup-coach',workspace:'synthetic-backup-owner'};
+  const old=await M.openPartitionLegacyLab(id);
+  await new Promise((resolve,reject)=>{const tx=old.transaction(['classes','students'],'readwrite');tx.objectStore('classes').add({id:'c',name:'Synthetic class',gradeLevel:7});tx.objectStore('students').add({id:'p',classId:'c',fullName:'Synthetic pupil',number:1,normGroup:'girls'});tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});
+  const copy=await M.preparePartitionLegacyMigrationLab(id,{backupPasswords});
+  await M.migratePartitionLegacyLab(id,{passwords,backupPasswords,backupFile:copy.file,saved:true,confirmed:true});old.close();
+  let fenced=false;try{const bad=await M.openPartitionLegacyLab(id);bad.close();}catch(e){fenced=e.name==='VersionError';}
+  const lab=P.partitionedVaultLab(id,{layout:'school-v2-migrated'}),school=S.createSchoolSession(await lab.openScope({scope:'school',password:passwords.school}));
+  try{
+   await school.load();const l=await school.addLesson('c','2025-10-01',null,'',{slot:1,time:'09:00'});await school.setMark('p',l.id,{value:'5'});
+   const latest=await lab.prepareRecoveryCopy({passwords,backupPasswords}),recovered=await M.restorePartitionLegacyCopyLab('webkit-atomic-rollback',{file:latest.file,backupPasswords,confirmed:true});
+   const raw=await new Promise((resolve,reject)=>{const q=indexedDB.open(M.partitionMigrationNameLab(id),11);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+   const names=Array.from(raw.objectStoreNames).sort();raw.close();
+   return {fenced,grade:(await lab.snapshot({passwords})).marks[0].value,rollback:recovered.verified,names,private:!latest.file.includes('Synthetic pupil')};
+  }finally{school.close();}
+ });assert.deepEqual(migrated,{fenced:true,grade:'5',rollback:true,names:['coach','school','state','workspace'],private:true});
+ console.log('WEBKIT ATOMIC MIGRATION PASS: native schema upgrade, old-client version fence, encrypted journal write and independent legacy rollback.');
+
+
+ }finally{await writableContext.close();await page.bringToFront();}
  const schemaVault=await page.evaluate(async()=>{
   const V=await import('/tools/prototypes/local-vault.mjs'),A=await import('/tools/prototypes/vault-schema-adapter.mjs'),D=await import('./js/db.js'),B=await import('./js/backup.js'),password='synthetic-schema-webkit',data=Object.fromEntries(Object.keys(D.SCHEMA).map(n=>[n,[]]));
   data.classes=[{id:'c',name:'Synthetic class',gradeLevel:7}];data.students=[{id:'p',classId:'c',fullName:'Synthetic pupil',number:1,normGroup:'girls'}];data.lessons=[{id:'l',classId:'c',date:'2026-11-24',slot:1,time:'09:00'}];data.marks=[{id:'m',studentId:'p',lessonId:'l',value:'4',source:'manual'}];
@@ -156,6 +298,77 @@ try{
  }finally{await vaultUiContext.close();}
 
 
+
+ const writableUiContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block'});
+ try{
+  const tab=await writableUiContext.newPage(),errors=[];tab.on('pageerror',e=>errors.push(e.message));
+  const url=origin+'/tools/prototypes/vault-ui/writable.html?id=webkit';
+  await tab.goto(url);await tab.bringToFront();
+  if(await tab.evaluate(()=>typeof navigator.locks?.request==='function'&&typeof BroadcastChannel==='function')){
+   await tab.getByRole('button',{name:'Создать синтетический журнал'}).click();
+   await tab.getByText('Журнал активен. Разблокируйте сеанс.').waitFor();
+   await tab.getByLabel('Демо-пароль',{exact:true}).fill('incorrect-demo');await tab.getByRole('button',{name:'Разблокировать'}).click();
+   await tab.getByText('Введите указанный демо-пароль.').waitFor();assert.equal(await tab.locator('#record').textContent(),'');
+   const unlock=async()=>{await tab.getByLabel('Демо-пароль',{exact:true}).fill('teachapp-writable-demo');await tab.getByRole('button',{name:'Разблокировать'}).click();};
+   await unlock();await tab.getByText('Демо-оценка: 4 · Ревизия: 1').waitFor();
+   await tab.getByLabel('Демо-оценка',{exact:true}).selectOption('5');await tab.getByRole('button',{name:'Сохранить оценку'}).click();
+   await tab.getByText('Демо-оценка: 5 · Ревизия: 2').waitFor();
+   // An independent cooperative writer changes the encrypted grade before the UI saves.
+   await tab.evaluate(async()=>{const {vaultRouterLab,routedDataAccessLab}=await import('/tools/prototypes/vault-router-lab.mjs'),J=await import('/js/journal-commands.js');const r=vaultRouterLab('ui-write-webkit'),a=routedDataAccessLab(r,{expectedGeneration:2,password:'teachapp-writable-demo'});try{const [m,p,l]=await Promise.all([a.get('marks','demo-mark'),a.get('students','demo-pupil'),a.get('lessons','demo-lesson')]);await J.writeJournalPaste(a,p.classId,[{studentId:p.id,studentName:p.fullName,lessonId:l.id,date:l.date,slot:l.slot,time:l.time,value:'3',expectedMark:J.journalMarkSnapshot(m),expectedLesson:J.journalLessonSnapshot(l)}],true,{replace:true,requireLessonSnapshot:true});}finally{a.close();}});
+   await tab.getByLabel('Демо-оценка',{exact:true}).selectOption('2');await tab.getByRole('button',{name:'Сохранить оценку'}).click();await tab.getByText('Журнал заблокирован.',{exact:true}).waitFor();
+   assert.equal(await tab.locator('#record').textContent(),'');assert.equal(await tab.locator('#grade').inputValue(),'');
+   await unlock();await tab.getByText('Демо-оценка: 3 · Ревизия: 3').waitFor();
+   await tab.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
+   assert.equal(await tab.locator('#record').textContent(),'');assert.equal(await tab.locator('#grade').inputValue(),'');
+   await tab.reload();await tab.getByText('Журнал активен. Разблокируйте сеанс.').waitFor();await unlock();await tab.getByText('Демо-оценка: 3 · Ревизия: 3').waitFor();
+   await tab.getByRole('button',{name:'Заблокировать',exact:true}).click();assert.equal(await tab.locator('#record').textContent(),'');
+   assert.ok(await tab.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+   console.log('WEBKIT WRITABLE UI LAB PASS: encrypted grade edit, stale write rejection, screen clearing, reload and mobile layout.');
+  }else{await tab.getByText('Web Locks или BroadcastChannel недоступны. Журнал закрыт.').waitFor();assert.equal(await tab.locator('#session').isVisible(),false);}
+  assert.deepEqual(errors,[]);
+ }finally{await writableUiContext.close();await page.bringToFront();}
+
+
+ const partitionUiContext=await browser.newContext({...devices['iPhone 13'],serviceWorkers:'block',acceptDownloads:true});
+ try{
+  const tab=await partitionUiContext.newPage(),errors=[];tab.on('pageerror',e=>errors.push(e.message));
+  const url=origin+'/tools/prototypes/vault-ui/partitioned.html?id=webkit';
+  await tab.goto(url);await tab.bringToFront();
+  if(await tab.evaluate(()=>typeof BroadcastChannel==='function')){
+   await tab.getByRole('button',{name:'Подготовить демо-копию'}).click();
+   await tab.getByText('Сохраните файл отдельно, затем выберите сохранённую копию.').waitFor({timeout:60000});
+   const [download]=await Promise.all([tab.waitForEvent('download'),tab.getByRole('link',{name:'Скачать демо-копию'}).click()]);
+   const bytes=await readFile(await download.path());assert.doesNotMatch(bytes.toString('utf8'),/Демо-ученик/);
+   await tab.locator('#copy').setInputFiles({name:'invalid.json',mimeType:'application/json',buffer:Buffer.from('{}')});await tab.locator('#confirm').check();
+   await tab.getByRole('button',{name:'Проверить файл и перенести'}).click();await tab.getByText('Перенос не подтверждён. Исходник не заменяется при ошибке.').waitFor();
+   assert.equal(await tab.locator('#scopes').isVisible(),false);
+   await tab.locator('#copy').setInputFiles({name:'teachapp-demo-recovery.json',mimeType:'application/json',buffer:bytes});
+   await tab.getByRole('button',{name:'Проверить файл и перенести'}).click();await tab.getByText('Перенос завершён. Откройте нужную область.').waitFor({timeout:60000});
+   const row=scope=>tab.locator('[data-scope="'+scope+'"]'),open=async(scope,password)=>{await row(scope).getByLabel('Демо-пароль',{exact:true}).fill(password);await row(scope).getByRole('button',{name:'Открыть',exact:true}).click();};
+   await open('school','incorrect-demo');await tab.getByText('Введите указанный демо-пароль.').waitFor();
+   await open('school','teachapp-school-demo');await row('school').getByText('Демо-оценка: 4').waitFor();
+   await open('coach','teachapp-coach-demo');await row('coach').locator('.result').filter({hasText:'Демо-команда'}).waitFor();
+   await open('workspace','teachapp-owner-demo');await row('workspace').getByText('Демо-событие · Запланировано').waitFor();
+   await row('school').getByLabel('Демо-оценка',{exact:true}).selectOption('5');await row('school').getByRole('button',{name:'Сохранить оценку'}).click();await row('school').getByText('Демо-оценка: 5').waitFor();
+   await row('coach').getByRole('button',{name:'Изменить демо-команду'}).click();await row('coach').getByText('Демо-команда 2',{exact:true}).waitFor();
+   await row('workspace').getByRole('button',{name:'Изменить статус события'}).click();await row('workspace').getByText('Демо-событие · Выполнено').waitFor();
+   await row('school').getByRole('button',{name:'Заблокировать',exact:true}).click();assert.equal(await row('school').locator('.result').textContent(),'');assert.equal(await row('coach').locator('.result').textContent(),'Демо-команда 2');
+   await tab.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
+   for(const scope of ['school','coach','workspace'])assert.equal(await row(scope).locator('.result').textContent(),'');
+   await tab.reload();await tab.getByText('Перенос завершён. Откройте нужную область.').waitFor();
+   await open('school','teachapp-school-demo');await row('school').getByText('Демо-оценка: 5').waitFor();
+   const sender=await partitionUiContext.newPage();try{
+    await sender.goto(url);await tab.bringToFront();await tab.waitForFunction(()=>document.visibilityState==='visible');
+    if(await row('school').getByRole('button',{name:'Открыть',exact:true}).isVisible())await open('school','teachapp-school-demo');
+    await row('school').getByText('Демо-оценка: 5').waitFor();
+    await sender.evaluate(()=>{window.partitionSender=new BroadcastChannel('teachapp-vault-partition-lock-lab-school-v2-migrated-ui-part-webkit');window.partitionSender.postMessage({kind:'lock-all',version:1});});
+    await row('school').locator('.state').filter({hasText:'Заблокировано'}).waitFor();assert.equal(await row('school').locator('.result').textContent(),'');
+   }finally{await sender.close();}
+   assert.ok(await tab.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+   console.log('WEBKIT PARTITION UI PASS: actual saved file, invalid copy rejected, migrated school/coach/owner writes, independent lock, reload and cross-tab revoke.');
+  }else{await tab.getByText('Межвкладочная блокировка недоступна. Доступ закрыт.').waitFor();assert.equal(await tab.locator('#scopes').isVisible(),false);}
+  assert.deepEqual(errors,[]);
+ }finally{await partitionUiContext.close();await page.bringToFront();}
 
  // A separate same-origin context with two actual tabs, no application boot
  // or service worker; all records and keys below are synthetic.
@@ -323,6 +536,12 @@ try{
   await rp.waitForFunction(()=>document.querySelector('.vp-score-side.ours strong')?.textContent==='1');
   assert.match(await rp.locator('[data-live-save-status]').textContent(),/Сохранено/);
   assert.equal(await rp.evaluate(()=>JSON.parse(localStorage.getItem('teachapp.live.rehearsal.v1')).events[0].assist),'test-a-2');
+  await rp.getByRole('button',{name:'Статистика',exact:true}).click();
+  await rp.getByRole('heading',{name:'Результативные связки (ассисты)',exact:true}).waitFor();
+  assert.match(await rp.locator('.sheet.show').textContent(),/Отмеченные ассисты: 1 из 1/);
+  await rp.getByRole('heading',{name:/Фактический порядок P1–P6/}).waitFor();
+  await rp.getByRole('heading',{name:'Серии набранных и потерянных очков',exact:true}).waitFor();
+  await rp.getByRole('button',{name:'Матч',exact:true}).click();
   await rehearsalContext.setOffline(false);
   await rp.reload();await rp.locator('.workspace-nav').waitFor();
   await rp.locator('.vp-board-points').waitFor(); // same-tab automatic recovery
@@ -451,6 +670,13 @@ try{
  await shown.getByLabel('Только привязанные события',{exact:true}).uncheck();
  await shown.locator('[data-review-rally="2"]').getByRole('button',{name:'☆ Добавить в подборку',exact:true}).click();await shown.locator('[data-review-rally="2"]').getByRole('button',{name:'★ Убрать из подборки',exact:true}).waitFor();
  await shown.getByLabel('Только подборка',{exact:true}).check();assert.equal(await shown.locator('[data-review-rally]').count(),1);assert.match(await shown.textContent(),/Без привязки/);
+ await shown.getByRole('heading',{name:'Отчёт по видеоразбору',exact:true}).waitFor();
+ assert.match(await shown.textContent(),/Розыгрышей: 1 · ручных: 0 · оценочных: 0 · без привязки: 1/);
+ assert.equal(await shown.getByRole('checkbox',{name:'Включить имена игроков и приватные заметки',exact:true}).isChecked(),false);
+ assert.equal(await shown.getByRole('button',{name:'Сохранить отчёт CSV',exact:true}).isEnabled(),true);
+ await shown.getByLabel('Только привязанные события',{exact:true}).check();
+ assert.equal(await shown.getByRole('button',{name:'Сохранить отчёт CSV',exact:true}).isDisabled(),true);
+ await shown.getByLabel('Только привязанные события',{exact:true}).uncheck();
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'historical video review overflow');
  await shown.getByRole('button',{name:'Закрыть',exact:true}).click();
  console.log('WEBKIT HISTORICAL VIDEO PASS: imported journal, manually saved anchors, unlinked seek disabled, favorite and linked filters, local-only UI.');
@@ -484,6 +710,13 @@ try{
  assert.equal(await page.getByLabel('Масштаб фотографии',{exact:true}).inputValue(),'150');
  await page.getByRole('button',{name:'Сохранить фирменный стиль',exact:true}).click();
  assert.equal(await page.evaluate(async()=> (await import('./js/media-studio.js')).readStudioStyle('test').photoZoom),150);
+ await page.getByLabel('Положение фотографии',{exact:true}).selectOption('custom');
+ await page.getByLabel('Горизонтальное положение фото',{exact:true}).fill('25');await page.getByLabel('Вертикальное положение фото',{exact:true}).fill('75');
+ await page.getByRole('button',{name:'Сохранить фирменный стиль',exact:true}).click();
+ assert.deepEqual(await page.evaluate(async()=>{const d=(await import('./js/media-studio.js')).readStudioStyle('test');return [d.focus,d.photoX,d.photoY];}),['custom',25,75]);
+ await page.getByLabel('Положение фотографии',{exact:true}).selectOption('center');
+ assert.equal(await page.getByLabel('Горизонтальное положение фото',{exact:true}).isVisible(),false);
+ await page.getByLabel('Положение фотографии',{exact:true}).selectOption('custom');assert.equal(await page.getByLabel('Горизонтальное положение фото',{exact:true}).inputValue(),'25');
  await page.getByRole('button',{name:'+ Текстовый слой',exact:true}).click();
  await page.getByLabel('Текст слоя 1',{exact:true}).fill('Синтетический слой');
  await page.getByLabel('Выравнивание текста слоя 1',{exact:true}).selectOption('center');
@@ -502,6 +735,11 @@ try{
  assert.doesNotMatch(await page.getByLabel('Текст публикации',{exact:true}).inputValue(),/Синтетический слой/);
  await page.locator('.studio-editor fieldset').getByRole('button',{name:'Удалить слой',exact:true}).first().click();
  assert.equal(await page.getByLabel('Текст слоя 1',{exact:true}).inputValue(),'Синтетический слой');
+ await page.getByRole('button',{name:'+ Эллипс',exact:true}).click();
+ await page.locator('.studio-editor fieldset').getByRole('heading',{name:'2 · Эллипс',exact:true}).waitFor();
+ await page.getByLabel('Непрозрачность (%) слоя 2',{exact:true}).fill('40');await page.getByLabel('Непрозрачность (%) слоя 2',{exact:true}).press('Tab');
+ assert.equal(await page.getByLabel('Непрозрачность (%) слоя 2',{exact:true}).inputValue(),'40');
+ await page.locator('.studio-editor fieldset').getByRole('button',{name:'Удалить слой',exact:true}).last().click();
  const kitFiles=await page.evaluate(async()=>{const m=await import('./js/media-studio.js'),b=await m.studioMatchPackage(document.createElement('canvas'),{team:'Демо',opponent:'Гости',score:'2:1'},['square'],{eventDetails:'Зал',includeText:true});const v=new DataView(await b.arrayBuffer());return v.getUint16(v.byteLength-12,true);});assert.equal(kitFiles,4);
  const studioBatch=await page.evaluate(async()=>{const m=await import('./js/media-studio.js'),b=await m.studioBatch(document.createElement('canvas'),{team:'Демо'},['square','story','wide'],{text:'Демо'});const v=new DataView(await b.arrayBuffer());return {signature:v.getUint32(0,true),count:v.getUint16(v.byteLength-12,true)};});assert.deepEqual(studioBatch,{signature:0x04034b50,count:4});
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'studio overflow');await page.locator('.studio-editor').getByRole('button',{name:'Назад',exact:true}).click();
@@ -523,9 +761,32 @@ try{
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'season document overflow');
  await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();});
  console.log('WEBKIT DOCUMENTS PASS: actual school-year and season plan selectors, preview, privacy and mobile layout.');
+ // Browser-level reminder UI and app-wide dispatch; mock only the operating
+ // system notification transport. Real PWA permission UI requires a device.
+ await page.evaluate(async()=>{
+  const W=await import('./js/workbench.js'),M=await import('./js/model.js'),R=await import('./js/reminder-controller.js');
+  const desc=Object.getOwnPropertyDescriptor(window,'Notification'),proto=navigator.serviceWorker,old=Object.getOwnPropertyDescriptor(proto,'getRegistration');
+  window.__reminderTest={sent:[],restore(){if(desc)Object.defineProperty(window,'Notification',desc);else delete window.Notification;if(old)Object.defineProperty(proto,'getRegistration',old);else delete proto.getRegistration;}};
+  class MockNotification{static permission='granted';static async requestPermission(){return 'granted';}}
+  Object.defineProperty(window,'Notification',{configurable:true,value:MockNotification});
+  Object.defineProperty(proto,'getRegistration',{configurable:true,value:async()=>({showNotification:async(title,opts)=>window.__reminderTest.sent.push({title,...opts})})});
+  R.saveReminderPreferences({enabled:false,sources:['custom']});
+  await W.saveWork({kind:'event',name:'PRIVATE TEST EVENT',date:M.todayIso(),time:'00:00',minutes:0,eventType:'task',note:'PRIVATE NOTE',remind:0,done:false});
+  await (await import('./js/screens/work-calendar.js')).openWorkCalendar();
+ });
+ await shown.getByRole('heading',{name:'Рабочий календарь',exact:true}).waitFor();
+ await shown.getByRole('button',{name:'Включить / выключить системные напоминания',exact:true}).click();
+ await page.waitForFunction(()=>window.__reminderTest.sent.length===1);
+ await page.evaluate(async()=>{(await import('./js/ui.js')).closeSheet();const W=await import('./js/workbench.js'),M=await import('./js/model.js');await W.saveWork({kind:'event',name:'PRIVATE SECOND EVENT',date:M.todayIso(),time:'00:00',minutes:0,eventType:'task',note:'',remind:0,done:false});window.dispatchEvent(new Event('focus'));});
+ await page.waitForFunction(()=>window.__reminderTest.sent.length===2);
+ assert.doesNotMatch(JSON.stringify(await page.evaluate(()=>window.__reminderTest.sent)),/PRIVATE/);
+ await page.evaluate(async()=>{const R=await import('./js/reminder-controller.js');R.saveReminderPreferences({enabled:false,sources:['custom']});window.__reminderTest.restore();delete window.__reminderTest;});
+ console.log('WEBKIT REMINDERS PASS: opt-in, generic notification, app-wide foreground after closing calendar; simulated OS transport.');
+
+
  // Public viewer uses a synthetic stream; no production Firebase access.
  const fan=await context.newPage();fan.on('pageerror',error=>errors.push(error.message));
- await fan.addInitScript(()=>{window.EventSource=class{constructor(){this.handlers={};window.__fanPush=data=>this.handlers.put?.({type:'put',data:JSON.stringify({path:'/',data})});setTimeout(()=>this.onopen?.(),0);}addEventListener(k,f){this.handlers[k]=f;}close(){}};});
+ await fan.addInitScript(()=>{window.EventSource=class{constructor(){this.handlers={};window.__fanPush=data=>this.handlers.put?.({type:'put',data:JSON.stringify({path:'/',data})});window.__fanPatch=(path,data)=>this.handlers.put?.({type:'put',data:JSON.stringify({path,data})});window.__fanError=()=>this.onerror?.();window.__fanOpen=()=>this.onopen?.();setTimeout(()=>this.onopen?.(),0);}addEventListener(k,f){this.handlers[k]=f;}close(){}};});
  await fan.goto(origin+'/live/index.html');
  await fan.waitForFunction(()=>typeof window.__fanPush==='function');
  const future={schema:1,team:'Тестовая команда',updatedAt:Date.now(),schedule:[{id:'fixture1',opponent:'Гости',startAt:Date.now()+3600000}],archive:[]};
@@ -533,6 +794,14 @@ try{
  assert.equal(await fan.locator('.credit a').getAttribute('href'),'https://github.com/Forz1k/teachapp');
  await fan.locator('[data-tab="schedule"]').click();await fan.locator('.fixture').waitFor();
  const fixtureHref=await fan.locator('.fixture a').getAttribute('href');assert.equal(new URL(fixtureHref).searchParams.get('fixture'),'fixture1');await fan.goto(fixtureHref);await fan.waitForFunction(()=>typeof window.__fanPush==='function');await fan.evaluate(x=>window.__fanPush(x),future);await fan.locator('.clock').waitFor();await fan.locator('.scoreboard-toggle').click();assert.equal(await fan.locator('.scoreboard-toggle').getAttribute('aria-pressed'),'true');await fan.locator('.scoreboard-toggle').click();await fan.goto(origin+'/live/index.html');await fan.waitForFunction(()=>typeof window.__fanPush==='function');await fan.evaluate(x=>window.__fanPush(x),future);await fan.locator('.clock').waitFor();
+ const live={id:'viewer-live',opponent:'Гости',startedAt:Date.now(),status:'live',set:1,score:{ours:8,theirs:6},setsWon:{ours:0,theirs:0},sets:[],serve:'ours',colors:{ours:'blue',theirs:'red'},events:[],stats:[{side:'ours',number:1,points:5,attack:4,tip:0,ace:1,block:0},{side:'ours',number:2,points:3,attack:0,tip:0,ace:3,block:0}]};
+ await fan.evaluate(x=>window.__fanPush(x),{...future,match:live,updatedAt:Date.now()-95000});await fan.getByText('Счёт не обновляется',{exact:true}).waitFor();assert.equal(await fan.locator('.status-pill').textContent(),'ПОСЛЕДНИЙ СЧЁТ');
+ await fan.getByRole('button',{name:'Обновить соединение',exact:true}).click();await fan.evaluate(()=>window.__fanOpen());await fan.evaluate(()=>window.__fanPatch('/match/score/ours',99));assert.equal(await fan.locator('[data-score-side=ours]').textContent(),'8');
+ await fan.evaluate(x=>window.__fanPush(x),{...future,match:live,updatedAt:Date.now()});await fan.getByText('LIVE',{exact:true}).waitFor();await fan.locator('.fan-stat-sort').selectOption('ace');assert.equal(await fan.locator('.fan-stat-lead').textContent(),'Эйсы: 3 · №2');
+ await fan.evaluate(()=>window.__fanError());await fan.getByText('Нет актуальной связи',{exact:true}).waitFor();assert.equal(await fan.locator('.status-pill').textContent(),'ПОСЛЕДНИЙ СЧЁТ');
+ await fan.evaluate(x=>{window.__fanOpen();window.__fanPush(x);},{...future,match:live,updatedAt:Date.now()});await fan.getByText('LIVE',{exact:true}).waitFor();assert.equal(await fan.locator('.fan-stat-sort').inputValue(),'ace');
+ await fan.evaluate(x=>window.__fanPush(x),future);await fan.locator('.clock').waitFor();
+ console.log('WEBKIT VIEWER RECONNECT PASS: stale heartbeat, patch before root ignored, fresh snapshot, player sort and offline status.');
  await fan.locator('#theme').click();assert.equal(await fan.locator('html').getAttribute('data-theme'),'light');
  assert.ok(await fan.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'public viewport overflow');
  await fan.locator('#fan-motion').click();await fan.locator('#fan-motion').click();assert.equal(await fan.locator('html').getAttribute('data-motion'),'off');

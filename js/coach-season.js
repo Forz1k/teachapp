@@ -1,8 +1,9 @@
-import {timedMatchPlayers,timedRate,indexPlayerRecords,matchAssistCounts} from './coach.js';
+import {timedMatchPlayers,timedRate,indexPlayerRecords,matchAssistCounts} from './coach-analytics.js';
 import {replayDetailed} from './match-protocol.js';
-import {definitionKey,testHistory,summarizeTests} from './coach-tests.js';
+import {setterAnalysis} from './match-tactics.js';
+import {definitionKey,testHistory,indexTestHistory,summarizeTests} from './coach-tests.js';
 export const sourceLabels={all:'Все матчи',live:'Подробные матчи TeachApp',imported:'VolleyPoint PDF',manual:'Ручные / прежние матчи'};
-export const matchMetrics={aces:'Эйсы',points:'Личные очки',assists:'Результативные передачи (ассисты)',contribution:'Баллы: очки + ассисты',attackKills:'Результативные атаки',blocks:'Блоки',serveRate:'Успешность подачи',receiveRate:'Положительный приём',attackRate:'Результативность атаки',pointsPer10:'Личные очки за 10 минут LIVE'};
+export const matchMetrics={aces:'Эйсы',points:'Личные очки',assists:'Результативные передачи (ассисты)',contribution:'Баллы: очки + ассисты',setPositiveRate:'Положительные передачи (PRO)',setErrorRate:'Ошибки передач (PRO)',attackKills:'Результативные атаки',blocks:'Блоки',serveRate:'Успешность подачи',receiveRate:'Положительный приём',attackRate:'Результативность атаки',pointsPer10:'Личные очки за 10 минут LIVE'};
 export const testMetrics={success:'Успешность',target:'Попадания в цель',errors:'Доля ошибок',stability:'Стабильность',progress:'Прогресс',latest:'Последний замер',best:'Лучший замер'};
 const inRange=(d,{from='',to=''}={})=>(!from||d>=from)&&(!to||d<=to);
 const count=n=>Number.isFinite(n)&&n>=0;
@@ -22,19 +23,28 @@ export function eligiblePlayers(players,filter={}){
 }
 export function matchComparison(view,metric,filter={}){
  if(!Object.hasOwn(matchMetrics,metric))throw Error('Неизвестный показатель');
- const matches=filteredMatches(view.matches,filter),rosters=indexPlayerRecords(matches);
+ const players=eligiblePlayers(view.players,filter);
+ if(!players.length)return [];
+ const selected=new Set(players.map(p=>p.id));
+ // A match without an eligible roster member cannot contribute to any row.
+ // Exclude it before building indexes or replaying potentially large logs.
+ const matches=filteredMatches(view.matches,filter).filter(m=>m.roster.some(id=>selected.has(id))),rosters=indexPlayerRecords(matches);
  if(metric==='pointsPer10'){
   const data=new Map(matches.filter(m=>m.detail).map(m=>[m,timedMatchPlayers(replayDetailed(m.detail))]));
-  return eligiblePlayers(view.players,filter).map(player=>{
+  return players.map(player=>{
    const roster=(rosters.get(player.id)||[]),history=[],sum={ms:0,rallies:0,points:0};let recorded=0;
    for(const m of roster){const a=data.get(m)?.get(player.id);if(!a||a.ms<=0)continue;sum.ms+=a.ms;sum.rallies+=a.rallies;sum.points+=a.points;recorded+=Number(a.rallies>0);const value=timedRate(a);if(value!==null)history.push({date:m.date,label:m.opponent,value});}
    const value=timedRate(sum);
    return {player,value,recorded,total:roster.length,attempts:sum.rallies,success:sum.points,eligible:value!==null&&recorded>=2,history:history.sort((a,b)=>a.date.localeCompare(b.date)),lower:false,unit:'очк./10 мин',sample:sum.points+' очков · '+Math.round(sum.ms/60000*10)/10+' мин · '+sum.rallies+' роз. · матчей с розыгрышами '+recorded+'/'+roster.length};
   });
  }
+ if(['setPositiveRate','setErrorRate'].includes(metric)){
+  const positive=metric==='setPositiveRate',data=new Map(matches.filter(m=>m.detail?.mode==='dual').map(m=>[m,new Map(setterAnalysis([replayDetailed(m.detail).timeline]).rows.map(r=>[r.id,r]))]));
+  return players.map(player=>{const roster=rosters.get(player.id)||[],history=[];let attempts=0,success=0;for(const m of roster){const r=data.get(m)?.get(player.id);if(!r?.attempts||positive&&r.qualityKnown!==r.attempts)continue;const n=positive?r.positive:r.errors;attempts+=r.attempts;success+=n;history.push({date:m.date,label:m.opponent,value:100*n/r.attempts,attempts:r.attempts,success:n});}const value=percent(success,attempts);return {player,value,recorded:history.length,total:roster.length,attempts,success,eligible:attempts>=30&&history.length>=2,history:history.sort((a,b)=>a.date.localeCompare(b.date)),lower:!positive,unit:'%',sample:success+'/'+attempts+' · матчей '+history.length+'/'+roster.length};});
+ }
  const assistByMatch=metric==='assists'||metric==='contribution'?new Map(matches.map(m=>[m,matchAssistCounts(m)])):null;
  const pair={serveRate:['serves','serveErrors',true],receiveRate:['receptions','receptionGood',false],attackRate:['attacks','attackKills',false]}[metric];
- return eligiblePlayers(view.players,filter).map(player=>{
+ return players.map(player=>{
   const roster=(rosters.get(player.id)||[]);
   const rows=[];let attempts=0,success=0;
   for(const m of roster){
@@ -58,8 +68,9 @@ export function testComparison(view,key,metric,filter={}){
  if(!d||!Object.hasOwn(testMetrics,metric))return [];
  const skill=d.kind==='skill';
  if(skill&&!['success','target','errors','stability','progress'].includes(metric)||!skill&&!['latest','best','progress'].includes(metric))return [];
- return eligiblePlayers(view.players,filter).map(player=>{
-  const all=testHistory(view.tests,player.id,filter).filter(x=>definitionKey(x.definition)===key);
+ const players=eligiblePlayers(view.players,filter),history=indexTestHistory(view.tests,players.map(p=>p.id),key,filter);
+ return players.map(player=>{
+  const all=history.get(player.id);
   const h=validHistory(all),g=summarizeTests(all)[0],rows=[];
   for(const x of h){const r=x.result;let value=null;
    if(skill){if(metric==='target'){if(r.target!==null)value=percent(r.target,r.attempts);}else value=percent(metric==='errors'?r.errors:r.success,r.attempts);}

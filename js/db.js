@@ -98,9 +98,22 @@ const migrations = {
 
 let _db = null;
 let _opening = null;
+let nativeFenced = false, encryptedRoute=null,nativeStarted=false;
+export const isEncryptedStorage=()=>encryptedRoute!==null;
+export const encryptedStorageAllowed=()=>encryptedRoute===null||encryptedRoute.isUnlocked();
+export function configureEncryptedStorage(route){
+ if(nativeStarted||nativeFenced||encryptedRoute||!route||typeof route.transaction!=='function'||typeof route.syncTransaction!=='function'||typeof route.isUnlocked!=='function')throw Error('Маршрут хранилища уже выбран или некорректен');
+ encryptedRoute=Object.freeze(route);
+}
+export const ENCRYPTED_STORAGE_MARKER='teachapp.encrypted-storage.v11';
+export const NATIVE_STORAGE_FENCED_EVENT='teachapp:native-storage-fenced';
+const fencedError=()=>new DOMException('Версия локального хранилища изменилась. Повторный доступ в этом документе запрещён.','NativeStorageFencedError');
 
 /** Открывает базу. Параллельные обращения используют один запрос IndexedDB. */
 export function open() {
+  if(nativeFenced||encryptedRoute)return Promise.reject(fencedError());
+  try{if(globalThis.localStorage?.getItem(ENCRYPTED_STORAGE_MARKER)!=null){nativeFenced=true;return Promise.reject(fencedError());}}catch{nativeFenced=true;return Promise.reject(fencedError());}
+  nativeStarted=true;
   if (_db) return Promise.resolve(_db);
   if (_opening) return _opening;
   const pending = new Promise((resolve, reject) => {
@@ -123,16 +136,23 @@ export function open() {
       const connection = req.result;
       if (blocked) { connection.close(); return; }
       _db = connection;
-      connection.onversionchange = () => {
+      connection.onversionchange = event => {
         connection.close();
         if (_db === connection) _db = null;
+        if(event?.newVersion===null||event?.newVersion>DB_VERSION){
+          nativeFenced=true;
+          globalThis.window?.dispatchEvent(new Event(NATIVE_STORAGE_FENCED_EVENT));
+        }
       };
       connection.onclose = () => {
         if (_db === connection) _db = null;
       };
       resolve(connection);
     };
-    req.onerror = () => reject(req.error);
+    req.onerror = () => {
+      if(req.error?.name==='VersionError'){nativeFenced=true;reject(fencedError());}
+      else reject(req.error);
+    };
   });
   _opening = pending.finally(() => { _opening = null; });
   return _opening;
@@ -203,76 +223,86 @@ function wrapStore(store) {
   };
 }
 
-/** Массовая запись одной транзакцией — для импорта и seed-данных. */
-export function bulkPut(storeName, items) {
-  if (!items.length) return Promise.resolve();
-  return tx(storeName, 'readwrite', async s => {
-    await Promise.all(items.map(item=>s[storeName].put(item)));
-  });
+/** Shared Promise data-access contract. A backend is fixed at creation;
+ * callers cannot mutate the native singleton or install a global fallback.
+ * Native readBoundedSnapshot/open stay separate: LAB materializes full data. */
+export function createDataAccess(run){
+  if(typeof run!=='function')throw TypeError('Требуется backend транзакций');
+  const all=Object.keys(STORES);
+  const access={
+    bulkPut(store,items){
+      if(!items.length)return Promise.resolve();
+      return run(store,'readwrite',async s=>{await Promise.all(items.map(item=>s[store].put(item)));});
+    },
+    get:(store,key)=>run(store,'readonly',s=>s[store].get(key)),
+    getAll:store=>run(store,'readonly',s=>s[store].getAll()),
+    put:(store,value)=>run(store,'readwrite',s=>s[store].put(value)),
+    del:(store,key)=>run(store,'readwrite',s=>s[store].delete(key)),
+    clear:store=>run(store,'readwrite',s=>s[store].clear()),
+    count:store=>run(store,'readonly',s=>s[store].count()),
+    byIndex:(store,index,query)=>run(store,'readonly',s=>s[store].index(index).getAll(query)),
+    transaction:(stores,mode,fn)=>run(stores,mode,s=>fn(s)),
+    async clearAll(){
+      return run(all,'readwrite',async s=>{await Promise.all(all.map(n=>s[n].clear()));});
+    },
+    async dumpAll(){return access.readSnapshot(all);},
+    readSnapshot(names){
+      if(!Array.isArray(names)||!names.length||new Set(names).size!==names.length||names.some(n=>!Object.hasOwn(STORES,n)))throw Error('Некорректный набор хранилищ');
+      return run(names,'readonly',async stores=>Object.fromEntries(await Promise.all(names.map(async name=>[name,await stores[name].getAll()]))));
+    },
+    replaceAll(data,{guardMigration=false}={}){
+      return run(all,'readwrite',async stores=>{
+        if(guardMigration&&(await stores.meta.getAll()).some(r=>typeof r.id==='string'&&r.id.startsWith('sync-checkpoint-migration-')))throw Error('Нельзя заменять базу во время незавершённого Delta LAB переноса. Сначала согласуйте возврат контрольной точки.');
+        for(const name of all){
+          await stores[name].clear();
+          for(const row of data[name])await stores[name].add(row);
+        }
+      });
+    }
+  };
+  return Object.freeze(access);
 }
 
-export const get    = (store, key)      => tx(store, 'readonly',  (s) => s[store].get(key));
-export const getAll = (store)           => tx(store, 'readonly',  (s) => s[store].getAll());
-export const put    = (store, value)    => tx(store, 'readwrite', (s) => s[store].put(value));
-export const del    = (store, key)      => tx(store, 'readwrite', (s) => s[store].delete(key));
-export const clear  = (store)           => tx(store, 'readwrite', (s) => s[store].clear());
-export const count  = (store)           => tx(store, 'readonly',  (s) => s[store].count());
-export const byIndex = (store, index, query) =>
-  tx(store, 'readonly', (s) => s[store].index(index).getAll(query));
-
-/**
- * Атомарная операция над несколькими хранилищами.
- * Нужна там, где нельзя допустить частичной записи: снятие освобождения + удаление auto-osv.
- */
-export function transaction(storeNames, mode, fn) {
-  return tx(storeNames, mode, (stores) => fn(stores));
-}
-
-/** Полное стирание базы (для «стереть демо» и восстановления из бэкапа). */
-export async function clearAll() {
-  const names = Object.keys(STORES);
-  return tx(names, 'readwrite', async s => {
-    await Promise.all(names.map(n=>s[n].clear()));
-  });
-}
-
-/** Полная выгрузка базы в один объект — для JSON-бэкапа. */
-export async function dumpAll() {
-  return readSnapshot(Object.keys(STORES));
-}
-
-/** Atomic read of exactly the requested stores, without cloning unrelated archives.
- * Full backup continues to use dumpAll; no schema or transaction changes. */
-export function readSnapshot(names) {
-  if (!Array.isArray(names) || !names.length || new Set(names).size !== names.length || names.some(n => !Object.hasOwn(STORES,n))) throw Error('Некорректный набор хранилищ');
-  return tx(names, 'readonly', async stores => Object.fromEntries(await Promise.all(
-    names.map(async name => [name, await stores[name].getAll()]))));
-}
+// Bootstrap fixes the encrypted route before importing the app. Native is
+// the default only for legacy installations; no fallback after route choice.
+const routed=(n,m,fn)=>encryptedRoute?encryptedRoute.transaction(n,m,fn):tx(n,m,fn);
+export const {bulkPut,get,getAll,put,del,clear,count,byIndex,transaction,clearAll,dumpAll,readSnapshot,replaceAll}=createDataAccess(routed);
+export const syncTransaction=(n,m,fn)=>encryptedRoute?encryptedRoute.syncTransaction(n,m,fn):tx(n,m,fn);
 
 /** Count before materializing a full snapshot. Both operations use the same
  * readonly transaction, so a concurrent writer cannot bypass the row cap.
  * If above limit, return counts only: no getAll, cursor or data export. */
+/** Exact native schema guard for migration diagnostics. Does not upgrade or
+ * repair stores/indexes; unexpected definitions must block a migration. */
+export function assertMigrationSchema(t){
+ const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ const fail=()=>{throw new DOMException('Неожиданная схема базы для переноса','MigrationSchemaError');};
+ const names=Object.keys(STORES);
+ if(t.db.version!==DB_VERSION||t.db.objectStoreNames.length!==names.length||names.some(n=>!t.db.objectStoreNames.contains(n)))fail();
+ for(const [name,def] of Object.entries(STORES)){
+  const s=t.objectStore(name);
+  if(!same(s.keyPath,def.keyPath)||s.autoIncrement||s.indexNames.length!==def.indexes.length)fail();
+  for(const [index,keyPath,options] of def.indexes){
+   if(!s.indexNames.contains(index))fail();
+   const actual=s.index(index);
+   if(!same(actual.keyPath,keyPath)||actual.unique!==!!options?.unique||actual.multiEntry!==!!options?.multiEntry)fail();
+  }
+ }
+}
 export function readBoundedSnapshot(limit){
  if(!Number.isSafeInteger(limit)||limit<0)throw Error('Некорректный лимит снимка');
  const names=Object.keys(STORES);
- return tx(names,'readonly',async stores=>{
+ if(encryptedRoute)return encryptedRoute.transaction(names,'readonly',async stores=>{
+  const records=(await Promise.all(names.map(n=>stores[n].count()))).reduce((a,b)=>a+b,0);
+  return {records,data:records>limit?null:Object.fromEntries(await Promise.all(names.map(async n=>[n,await stores[n].getAll()]))) };
+ });
+ return tx(names,'readonly',async (stores,t)=>{
+  assertMigrationSchema(t);
   const records=(await Promise.all(names.map(name=>stores[name].count()))).reduce((a,b)=>a+b,0);
   if(records>limit)return {records,data:null};
   const data=Object.fromEntries(await Promise.all(names.map(async name=>[name,await stores[name].getAll()])));
   return {records,data};
  });
-}
-
-/** Замена базы одной транзакцией. add отклоняет повторяющиеся ключи. */
-export function replaceAll(data,{guardMigration=false}={}) {
-  const names = Object.keys(STORES);
-  return tx(names, 'readwrite', async stores => {
-    if(guardMigration&&(await stores.meta.getAll()).some(r=>typeof r.id==='string'&&r.id.startsWith('sync-checkpoint-migration-')))throw Error('Нельзя заменять базу во время незавершённого Delta LAB переноса. Сначала согласуйте возврат контрольной точки.');
-    for (const name of names) {
-      await stores[name].clear();
-      for (const row of data[name]) await stores[name].add(row);
-    }
-  });
 }
 
 export const SCHEMA = STORES;

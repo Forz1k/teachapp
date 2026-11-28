@@ -1,0 +1,26 @@
+{
+  "name": "teachapp-delta-v3-candidate",
+  "main": "server/delta-worker.mjs",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DELTA_LEDGERS",
+        "class_name": "DeltaLedger"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "DeltaLedger"
+      ]
+    }
+  ]
+}
