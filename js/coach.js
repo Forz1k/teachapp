@@ -165,18 +165,35 @@ async function saveLineup(input){
  return write('coachLineups',r,(d,old)=>teamGuard(d,old,r));
 }
 async function deleteLineup(id){await db.del('coachLineups',id);}
+// A LIVE transition changes one draft or one result. Validate the affected
+// team and records only; full archive validation remains on backup/import.
+// Keep the team, roster and write in the same readwrite transaction so a
+// concurrent roster change cannot invalidate an accepted match.
+async function liveTeamData(s,teamId){
+ const team=await s.coachTeams.get(teamId);assert(team,'Команда недоступна');
+ const players=await s.coachPlayers.index('teamId').getAll(teamId);
+ return {...Object.fromEntries(coachStores.map(n=>[n,[]])),coachTeams:[team],coachPlayers:players};
+}
+async function insertLiveDraft(d){
+ return db.transaction(['coachTeams','coachPlayers','coachLive'],'readwrite',async s=>{
+  const data=await liveTeamData(s,d.teamId);teamGuard(data,null,d);
+  assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&!p.archived)),'Состав изменился');
+  data.coachLive=[d];validateCoachData(data);
+  await s.coachLive.add(d);return d;
+ });
+}
 async function startLiveMatch(input){
  const d={id:uid('live'),teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),
    scheme:input.scheme,roster:[...input.roster],lineup:[...input.lineup],libero:input.libero||null,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,events:[],revision:0};
  assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
- return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&!p.archived)),'Состав изменился');});
+ return insertLiveDraft(d);
 }
 async function startDetailedMatch(input){
  const d={id:uid('live'),mode:'dual',teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),venue:String(input.venue||'').trim(),
    teamName:String(input.teamName||'').trim(),roster:[...input.roster],ourPlayers:input.ourPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),awayPlayers:input.awayPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),
    lineup:[...input.lineup],awayLineup:[...input.awayLineup],libero:input.libero||null,...(input.libero2?{libero2:input.libero2}:{}),...(input.substitutionMode!==undefined?{substitutionMode:input.substitutionMode}:{}),...(input.limits!==undefined?{limits:{...input.limits}}:{}),...(input.regulation!==undefined?{regulation:structuredClone(input.regulation)}:{}),...(input.boardColors!==undefined?{boardColors:{...input.boardColors}}:{}),...(input.boardLogos!==undefined?{boardLogos:{...input.boardLogos}}:{}),scheme:input.scheme,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,...(input.ourSide!==undefined?{ourSide:input.ourSide}:{}),...(input.liveTiming!==undefined?{liveTiming:input.liveTiming}:{}),startedAt:new Date().toISOString(),events:[],revision:0};
  assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
- return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&p.teamId===d.teamId&&!p.archived)),'Состав изменился');});
+ return insertLiveDraft(d);
 }
 async function changeLiveMatch(id,revision,event){
  return db.transaction(['coachLive'],'readwrite',async s=>{
@@ -200,15 +217,18 @@ async function discardLiveMatch(id,revision){
  });
 }
 async function finishLiveMatch(id,revision){
- return db.transaction(coachStores,'readwrite',async s=>{
-  const data=Object.fromEntries(await Promise.all(coachStores.map(async n=>[n,await s[n].getAll()])));
-  const d=data.coachLive.find(x=>x.id===id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');
+ return db.transaction(['coachTeams','coachPlayers','coachLive','coachMatches'],'readwrite',async s=>{
+  const d=await s.coachLive.get(id);assert(d&&d.revision===revision,'Матч изменился. Откройте его заново');
   const state=replay(d);assert(state.finished,'Сначала завершите матч по партиям');
+  const data=await liveTeamData(s,d.teamId);
   const m={id:uid('match'),teamId:d.teamId,date:d.date,opponent:d.opponent,competition:d.competition,sets:state.sets,roster:d.roster,stats:state.stats,...(d.mode==='dual'?{detail:d}:{})};
-  data.coachMatches.push(m);data.coachLive=data.coachLive.filter(x=>x.id!==id);validateCoachData(data);
+  data.coachLive=[d];data.coachMatches=[m];validateCoachData(data);
+  // add rather than put: a collision aborts the whole transaction. The draft
+  // is deleted only together with the new result, never on a failed check.
   await s.coachMatches.add(m);await s.coachLive.delete(id);return m;
  });
 }
+
  return Object.freeze({loadCoach,loadCoachForView,loadCoachTeamScope,readLiveMatch,listLiveMatches,listLineups,probeLiveStorage,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch});
 }
 
