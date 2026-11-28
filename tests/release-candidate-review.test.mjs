@@ -46,3 +46,20 @@ test('RC8 review fails if live refs, stable ancestry or artifact metadata change
  await assert.rejects(collectCandidateReview(sha,{fetcher:fake({getCompare:()=>({base_commit:{sha:base},merge_base_commit:{sha:'c'.repeat(40)},behind_by:1,ahead_by:9,status:'diverged'})})}),/current stable main/);
  await assert.rejects(collectCandidateReview(sha,{fetcher:fake({getArtifacts:n=>n===1?artifacts:artifacts.map((a,i)=>i===0?{...a,digest:'sha256:'+'d'.repeat(64)}:a)})}),/Artifacts changed/);
 });
+
+test('final review binds an explicit new draft PR and final branch, not the closed RC8 PR or arbitrary refs',async()=>{
+ const final='roadmap/8.0-final',number=214,p={...pr,number,head:{...pr.head,ref:final}};
+ const fr=runs.map(r=>({...r,head_branch:final,pull_requests:[p]}));
+ const fa=artifacts.map(a=>({...a,workflow_run:{...a.workflow_run,head_branch:final}}));
+ const fetcher=async(url,opts)=>{
+  const u=new URL(url);assert.equal(opts.method,'GET');assert.equal(u.origin,'https://api.github.com');
+  if(u.pathname.endsWith('/pulls/'+number))return {ok:true,status:200,json:async()=>structuredClone(p)};
+  if(u.pathname.includes('/git/ref/heads/')){const name=u.pathname.split('/git/ref/heads/')[1];assert.ok([final,'main'].includes(name));return {ok:true,status:200,json:async()=>({ref:'refs/heads/'+name,object:{type:'commit',sha:name==='main'?base:sha}})};}
+  if(u.pathname.endsWith('/actions/runs'))return {ok:true,status:200,json:async()=>({total_count:fr.length,workflow_runs:structuredClone(fr)})};
+  if(u.pathname.includes('/compare/'))return {ok:true,status:200,json:async()=>({base_commit:{sha:base},merge_base_commit:{sha:base},behind_by:0,ahead_by:1,status:'ahead'})};
+  assert.ok(u.pathname.endsWith('/actions/runs/100/artifacts'));return {ok:true,status:200,json:async()=>({total_count:fa.length,artifacts:structuredClone(fa)})};
+ };
+ const result=await collectCandidateReview(sha,{fetcher,finalPr:number});assert.equal(result.pr,number);assert.equal(result.automaticReviewReady,true);assert.equal(result.releaseAuthorized,false);
+ await assert.rejects(collectCandidateReview(sha,{fetcher,finalPr:116}),/final PR/);
+ await assert.rejects(collectCandidateReview(sha,{fetcher:fake(),finalPr:number}));
+});

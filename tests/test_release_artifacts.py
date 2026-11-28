@@ -95,6 +95,15 @@ class ReviewTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 R.verify_archives(bad, SHA, paths)
 
+    def test_explicit_final_pr(self):
+        review, paths = self.check()
+        review["pr"] = 214
+        with self.assertRaises(ValueError):
+            R.verify_archives(review, SHA, paths)
+        self.assertFalse(R.verify_archives(review, SHA, paths, expected_pr=214)["releaseAuthorized"])
+        with self.assertRaises(ValueError):
+            R.verify_archives(review, SHA, paths, expected_pr=215)
+
     def test_changed_static_even_with_matching_zip_digest(self):
         self.files["js/app.js"] = b"modified"
         review, paths = self.check()

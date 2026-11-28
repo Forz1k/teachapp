@@ -572,3 +572,13 @@ RC7: сохранены новые LIVE-события, регламенты и 
 ## 8.0.0-rc.8 — безопасность и финальная приёмка
 
 Отдельная ветка RC8 поверх RC7, резервный кодовый ref. Durable replay fence, epoch для opaque сессий при смене конфигурации identity, раздельные ключи и origin, read-only проверка актуального base/head и артефактов, ZIP-проверяющий инструмент, уникальные ID актов, операционный runbook. Автоматические проверки не закрывают 18 ручных актов и не разрешают production deploy.
+
+
+## RC10 — финальная разработка после опубликованного RC9
+
+Новая ветка roadmap/8.0-final на exact main 0df7c36e2593014fb0d28a9228999db11fbccb06; кодовая копия RC9. Explicit PR / final branch evidence, 12 exact workflow checks, offline ZIP verification, real update/rollback from RC9, non-identifying local PWA diagnostics. Physical and production acceptance remains open. No OBS, no production data.
+
+
+## RC11 — LIVE write scope
+
+Start and finish validate affected team, indexed roster and draft/result in one transaction instead of scanning all coach stores. Full validation remains for backup/import/diagnostics; unrelated existing records are not rewritten. Concurrent/stale finish rejected; atomic result/draft transition, 1200-match regression and real WebKit benchmark. Physical acceptance and production migration remain pending; main RC9 unchanged.

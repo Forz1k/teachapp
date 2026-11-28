@@ -112,11 +112,12 @@ def inspect_zip(raw, *, total_limit, entry_limit, file_limit, read_contents):
         return files
 
 
-def review_metadata(review, sha):
+def review_metadata(review, sha, expected_pr=116):
     require(sha_ok(sha) and exact(review, ("format", "sha", "base", "pr", "checks", "artifacts",
                                           "automaticReviewReady", "manualPending", "releaseAuthorized")) and
             review["format"] == 1 and review["sha"] == sha and sha_ok(review["base"]) and
-            review["base"] != sha and review["pr"] == 116 and
+            review["base"] != sha and positive(expected_pr) and expected_pr >= 116 and
+            type(review["pr"]) is int and review["pr"] == expected_pr and
             review["automaticReviewReady"] is True and review["releaseAuthorized"] is False,
             "Review snapshot not ready or wrong SHA")
     checks = review["checks"]
@@ -149,8 +150,8 @@ def review_metadata(review, sha):
     return result
 
 
-def verify_archives(review, sha, paths):
-    records = review_metadata(review, sha)
+def verify_archives(review, sha, paths, expected_pr=116):
+    records = review_metadata(review, sha, expected_pr)
     require(set(paths) == set(ARTIFACTS), "Missing local artifact")
     raw = {}
     for name, record in records.items():
@@ -202,6 +203,7 @@ def verify_archives(review, sha, paths):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--pr", type=int, default=116, help="Expected review PR number (explicit for final candidate)")
     parser.add_argument("sha")
     parser.add_argument("review")
     parser.add_argument("static_zip")
@@ -211,7 +213,7 @@ def main():
     try:
         review = strict_json(bounded_file(args.review, 1024 * 1024))
         result = verify_archives(review, args.sha, dict(zip(ARTIFACTS,
-                                 (args.static_zip, args.manifest_zip, args.ui_zip))))
+                                 (args.static_zip, args.manifest_zip, args.ui_zip))), expected_pr=args.pr)
         print(json.dumps(result, indent=2))
         return 0
     except (OSError, ValueError, TypeError, KeyError, zipfile.BadZipFile, RuntimeError, UnicodeError) as exc:

@@ -3,7 +3,7 @@
 import {pathToFileURL} from 'node:url';
 import {workflowIds} from './release-ci-evidence.mjs';
 import {releaseEvidenceTemplate,assessReleaseEvidence} from './release-readiness.mjs';
-const repo='Forz1k/teachapp',repoId=1456225721,branch='roadmap/8.0-integration',prNumber=116,api='https://api.github.com';
+const repo='Forz1k/teachapp',repoId=1456225721,legacyBranch='roadmap/8.0-integration',api='https://api.github.com';
 const shaOK=s=>typeof s==='string'&&/^[a-f0-9]{40}$/.test(s);
 const positive=x=>Number.isSafeInteger(x)&&x>0;
 const require=(ok,message)=>{if(!ok)throw Error(message);};
@@ -11,7 +11,9 @@ const repoOK=r=>r?.id===repoId&&r.full_name?.toLowerCase()===repo.toLowerCase();
 const linkedRepo=r=>r?.id===repoId;
 const requiredArtifacts=['teachapp-static-review','teachapp-static-manifest','teachapp-ui-smoke'];
 const workflowNames=Object.keys(workflowIds);
-export async function collectCandidateReview(sha,{fetcher=globalThis.fetch,token}={}){
+export async function collectCandidateReview(sha,{fetcher=globalThis.fetch,token,finalPr}={}){
+ const branch=finalPr===undefined?legacyBranch:'roadmap/8.0-final',prNumber=finalPr===undefined?116:finalPr;
+ require(positive(prNumber)&&(finalPr===undefined||prNumber>116),'Explicit final PR number required');
  const report=releaseEvidenceTemplate(sha);
  require(typeof fetcher==='function','Fetch unavailable');
  if(token!==undefined)require(typeof token==='string'&&/^[A-Za-z0-9_]{1,512}$/.test(token),'Invalid API token');
@@ -84,9 +86,10 @@ export async function collectCandidateReview(sha,{fetcher=globalThis.fetch,token
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  try{
-  const [sha,...extra]=process.argv.slice(2);
-  require(shaOK(sha)&&!extra.length,'Usage: node tools/release-candidate-review.mjs SHA');
-  const result=await collectCandidateReview(sha,{token:process.env.GH_TOKEN||undefined});
+  const args=process.argv.slice(2),final=args[0]==='--final';
+  const sha=final?args[2]:args[0],finalPr=final?Number(args[1]):undefined;
+  require(shaOK(sha)&&args.length===(final?3:1)&&(!final||/^[1-9][0-9]{0,9}$/.test(args[1])),'Usage: node tools/release-candidate-review.mjs [--final PR] SHA');
+  const result=await collectCandidateReview(sha,{token:process.env.GH_TOKEN||undefined,finalPr});
   console.log(JSON.stringify(result,null,2));
   process.exitCode=result.automaticReviewReady?0:2;
  }catch(e){console.error('Candidate review refused: '+e.message);process.exitCode=1;}

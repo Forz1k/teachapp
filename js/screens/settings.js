@@ -1,3 +1,4 @@
+import {collectUpdateDiagnostics,updateDiagnosticsText} from '../update-diagnostics.js';
 import {migrationLabAllowed} from '../rollout-policy.js';
 import {privacyIdleOptions,readShieldPreferences,saveShieldPreferences,screenLockEnabled,changeScreenLock,PRIVACY_VISIBILITY_EVENT} from '../privacy-shield.js';
 import {openBriefings,openGymBoards} from './methodical.js';
@@ -308,6 +309,15 @@ export function renderSettings(root, ctx = {}) {
       diagnostics.textContent='Структура и связи корректны · записей '+Object.values(payload.data).reduce((n,a)=>n+a.length,0)+storage;
     }catch{diagnostics.textContent='Проверка не пройдена. Не удаляйте приложение и не очищайте хранилище. Сохраните защищённую копию для диагностики.';}finally{button.disabled=false;}
   }}),el('button',{class:'btn wide',type:'button',text:'Проверить и исправить КТП',onclick:openKtpDiagnostics})]));
+  const updateStatus=el('p',{role:'status',text:'Локальная проверка версии и офлайн-кэша. Без сетевых запросов и чтения записей.'});
+  let updateReport=null;
+  const saveReport=el('button',{class:'btn wide',type:'button',text:'Скачать технический отчёт (JSON)',disabled:true,onclick:()=>{if(updateReport)ui.downloadBlob(new Blob([JSON.stringify(updateReport,null,2)],{type:'application/json'}),'teachapp-update-diagnostics.json');}});
+  const runReport=el('button',{class:'btn wide',type:'button',text:'Проверить состояние обновления',onclick:async e=>{
+   const button=e.currentTarget;button.disabled=true;saveReport.disabled=true;updateReport=null;
+   try{const report=await collectUpdateDiagnostics({encrypted:isEncryptedStorage()});if(!updateStatus.isConnected||document.body.classList.contains('privacy-covered'))return;updateReport=report;updateStatus.textContent=updateDiagnosticsText(report)+'. Совпадение одного файла кэша не заменяет полную проверку сборки или базы.';saveReport.disabled=false;}
+   catch{if(updateStatus.isConnected)updateStatus.textContent='Проверка недоступна. Данные не изменены.';}finally{button.disabled=false;}
+  }});
+  body.append(el('div',{class:'card-block'},[el('div',{class:'head',text:'Диагностика базы и обновления'}),updateStatus,runReport,saveReport]));
   const secured=isEncryptedStorage(),lab=migrationLabAllowed();
   const securePanel=el('div',{class:'card-block'},[el('div',{class:'head',text:'Шифрование локальной базы · RC3'}),el('p',{text:secured?'Записи IndexedDB зашифрованы. Коды синхронизации действуют только в сеансе. Отдельные браузерные настройки и данные публичного портала не входят в это хранилище.':lab?'Перенос экспериментальный; используйте только после независимой приёмки и сохранения проверенной копии.':'В публичной предварительной версии перенос v11 отключён. Обычные данные не переносятся автоматически.'}),...(secured||lab?[el('button',{class:'btn wide',type:'button',text:secured?'Заблокировать защищённый сеанс':'Подготовить перенос в v11',onclick:()=>{if(secured)window.dispatchEvent(new Event('teachapp:lock-encrypted'));else{const u=new URL(location.href);u.searchParams.set('secure-migration','1');location.assign(u.href);}}})]:[])]);
   if(secured)securePanel.append(el('button',{class:'btn wide',type:'button',text:'Независимая копия v11',onclick:async()=>{let password=await ui.promptDialog({title:'Независимый пароль копии',text:'Отдельный пароль от 12 символов. Копия содержит локальные контрольные точки; восстановление только в новый профиль.',password:true,ok:'Создать'});if(password===null)return;try{const file=await exportEncryptedRecoveryCopy({data:await dumpAll(),backupPassword:password});if(encryptedStorageAllowed())ui.downloadBlob(new Blob([file],{type:'application/json'}),'teachapp-v11-recovery.json');}catch(e){if(encryptedStorageAllowed())ui.toast(e.message);}finally{password=undefined;}}}));

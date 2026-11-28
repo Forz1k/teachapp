@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - 'roadmap/8.0-integration'
+      - 'roadmap/8.0-final'
       - main
   pull_request:
   workflow_dispatch:
@@ -30,6 +31,8 @@ jobs:
           node tools/release-package-integrity.mjs --verify "$RUNNER_TEMP/teachapp-candidate" "$(git rev-parse HEAD)" "$RUNNER_TEMP/teachapp-candidate-manifest.json"
       - name: Verify public preview migration fence on packaged PWA
         run: node tools/public-preview-smoke.mjs "$RUNNER_TEMP/teachapp-candidate"
+      - name: Rehearse LIVE start and finish on a 1200-match archive
+        run: node tools/live-archive-smoke.mjs "$RUNNER_TEMP/teachapp-candidate"
       - name: Verify actual static v11 migration, login and journal
         run: node tools/encrypted-app-smoke.mjs "$RUNNER_TEMP/teachapp-candidate"
       - name: Prepare published 5.1.1 baseline
@@ -67,3 +70,10 @@ jobs:
           git archive 1017f187a3cc8c26b46e4936f9c60773b4512783 | tar -x -C "$RUNNER_TEMP/teachapp-6.0.7"
       - name: Verify real PWA update and native rollback from 6.0.7
         run: node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-6.0.7" "$RUNNER_TEMP/teachapp-candidate"
+      - name: Prepare current public RC9 baseline
+        run: |
+          git fetch --no-tags --depth=1 origin 0df7c36e2593014fb0d28a9228999db11fbccb06
+          mkdir -p "$RUNNER_TEMP/teachapp-rc9"
+          git archive 0df7c36e2593014fb0d28a9228999db11fbccb06 | tar -x -C "$RUNNER_TEMP/teachapp-rc9"
+      - name: Verify actual update and native rollback from public RC9
+        run: node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-rc9" "$RUNNER_TEMP/teachapp-candidate"
