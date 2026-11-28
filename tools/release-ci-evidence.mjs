@@ -10,8 +10,8 @@ const positive=n=>Number.isSafeInteger(n)&&n>0;
 function validRun(run,id,name,sha,branch){
  return run&&positive(run.id)&&run.workflow_id===id&&run.name===name&&run.head_sha===sha&&run.head_branch===branch&&run.event==='push'&&run.repository?.full_name?.toLowerCase()===repo.toLowerCase()&&run.head_repository?.full_name?.toLowerCase()===repo.toLowerCase()&&positive(run.run_number)&&positive(run.run_attempt)&&typeof run.status==='string';
 }
-export async function collectReleaseCI(sha,{fetcher=globalThis.fetch,token,final=false}={}){
- check(typeof final==='boolean','Invalid final mode');const branch=final?'roadmap/8.0-final':legacyBranch;
+export async function collectReleaseCI(sha,{fetcher=globalThis.fetch,token,final=false,published=false}={}){
+ check(typeof final==='boolean'&&typeof published==='boolean'&&!(final&&published),'Invalid release evidence mode');const branch=published?'main':final?'roadmap/8.0-final':legacyBranch;
  const report=releaseEvidenceTemplate(sha);
  check(typeof fetcher==='function','Fetch unavailable');
  if(token!==undefined)check(typeof token==='string'&&/^[A-Za-z0-9_]{1,512}$/.test(token),'Invalid API token');
@@ -39,8 +39,8 @@ export async function collectReleaseCI(sha,{fetcher=globalThis.fetch,token,final
 }
 /** Keep independently declared manual evidence; replace all CI declarations
  * with a fresh API read, and fence the branch before and after collection. */
-export async function refreshReleaseEvidence(report,sha,{fetcher=globalThis.fetch,token,final=false}={}){
- check(typeof final==='boolean','Invalid final mode');const branch=final?'roadmap/8.0-final':legacyBranch;
+export async function refreshReleaseEvidence(report,sha,{fetcher=globalThis.fetch,token,final=false,published=false}={}){
+ check(typeof final==='boolean'&&typeof published==='boolean'&&!(final&&published),'Invalid release evidence mode');const branch=published?'main':final?'roadmap/8.0-final':legacyBranch;
  assessReleaseEvidence(report,sha);
  check(typeof fetcher==='function','Fetch unavailable');
  if(token!==undefined)check(typeof token==='string'&&/^[A-Za-z0-9_]{1,512}$/.test(token),'Invalid API token');
@@ -54,7 +54,7 @@ export async function refreshReleaseEvidence(report,sha,{fetcher=globalThis.fetc
  }
  const acceptance=structuredClone(report.acceptance);
  await verifyHead();
- const fresh=await collectReleaseCI(sha,{fetcher,token,final});
+ const fresh=await collectReleaseCI(sha,{fetcher,token,final,published});
  await verifyHead();
  fresh.acceptance=acceptance;
  assessReleaseEvidence(fresh,sha);
@@ -62,18 +62,19 @@ export async function refreshReleaseEvidence(report,sha,{fetcher=globalThis.fetc
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  try{
-  const args=process.argv.slice(2),final=args[0]==='--final';if(final)args.shift();
+  const args=process.argv.slice(2),final=args[0]==='--final',published=args[0]==='--published';if(final||published)args.shift();
   const [first,second,file,...extra]=args,token=process.env.GH_TOKEN||undefined;
   if(first==='--refresh'||first==='--verify'){
    check(second&&file&&!extra.length,'Usage: node tools/release-ci-evidence.mjs --refresh|--verify SHA FILE');
    const raw=readFileSync(file,'utf8');check(Buffer.byteLength(raw)<=32768,'Evidence too large');
-   const refreshed=await refreshReleaseEvidence(JSON.parse(raw),second,{token,final});
+   const refreshed=await refreshReleaseEvidence(JSON.parse(raw),second,{token,final,published});
    const result=assessReleaseEvidence(refreshed,second);
    console.log(JSON.stringify(first==='--refresh'?refreshed:result,null,2));
    process.exitCode=result.readyForManualReleaseReview?0:2;
   }else{
    check(first&&!second&&!file&&!extra.length,'Usage: node tools/release-ci-evidence.mjs SHA');
-   console.log(JSON.stringify(await collectReleaseCI(first,{token,final}),null,2));
+   const report=published?await refreshReleaseEvidence(releaseEvidenceTemplate(first),first,{token,published}):await collectReleaseCI(first,{token,final,published});
+   console.log(JSON.stringify(report,null,2));
   }
  }catch(e){console.error('CI evidence unavailable: '+e.message);process.exitCode=1;}
 }

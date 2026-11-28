@@ -53,3 +53,18 @@ test('final CI evidence selects only final branch pushes and fences the final he
  assert.ok(refreshed.acceptance.every(x=>x.status==='pending'));
  await assert.rejects(collectReleaseCI(sha,{fetcher:fake(n=>[run(n)]),final:true}));
 });
+
+test('published acceptance evidence fences actual main SHA, never auto-passes manual acts',async()=>{
+ const report=releaseEvidenceTemplate(sha);let heads=0;
+ const fetcher=async(url,opts)=>{
+  const u=new URL(url);assert.equal(opts.method,'GET');
+  if(u.pathname.includes('/git/ref/heads/')){heads++;assert.ok(u.pathname.endsWith('/main'));return {ok:true,status:200,json:async()=>({ref:'refs/heads/main',object:{type:'commit',sha}})};}
+  assert.equal(u.searchParams.get('branch'),'main');
+  const id=Number(u.pathname.split('/').at(-2)),name=Object.keys(workflowIds).find(k=>workflowIds[k]===id);
+  return {ok:true,status:200,json:async()=>({total_count:1,workflow_runs:[run(name,{head_branch:'main'})]})};
+ };
+ const result=await refreshReleaseEvidence(report,sha,{fetcher,published:true});assert.equal(heads,2);assert.equal(result.workflows.filter(r=>r.status==='passed').length,6);
+ assert.ok(result.acceptance.every(r=>r.status==='pending'&&r.evidence===null));assert.equal(assessReleaseEvidence(result,sha).readyForManualReleaseReview,false);
+ await assert.rejects(collectReleaseCI(sha,{fetcher,published:true,final:true}),/mode/);
+ await assert.rejects(refreshReleaseEvidence(report,sha,{published:true,fetcher:async(url,opts)=>url.includes('/git/ref/heads/')?{ok:true,status:200,json:async()=>({ref:'refs/heads/main',object:{type:'commit',sha:'b'.repeat(40)}})}:fetcher(url,opts)}),/head changed/);
+});
