@@ -40,3 +40,16 @@ test('Refresh preserves only exact-SHA manual declarations and rechecks integrat
  assert.equal(headReads,2);
  headReads=0;await assert.rejects(refreshReleaseEvidence(input,'b'.repeat(40),{fetcher:wrap()}),/SHA/);assert.equal(headReads,0);
 });
+
+test('final CI evidence selects only final branch pushes and fences the final head',async()=>{
+ const final='roadmap/8.0-final',report=releaseEvidenceTemplate(sha);let refs=0;
+ const fetcher=async(url,opts)=>{const u=new URL(url);assert.equal(opts.method,'GET');
+  if(u.pathname.includes('/git/ref/heads/')){refs++;assert.ok(u.pathname.endsWith('/'+final));return {ok:true,status:200,json:async()=>({ref:'refs/heads/'+final,object:{type:'commit',sha}})};}
+  assert.equal(u.searchParams.get('branch'),final);
+  const id=Number(u.pathname.split('/').at(-2)),name=Object.keys(workflowIds).find(k=>workflowIds[k]===id);
+  return {ok:true,status:200,json:async()=>({total_count:1,workflow_runs:[run(name,{head_branch:final})]})};
+ };
+ const refreshed=await refreshReleaseEvidence(report,sha,{fetcher,final:true});assert.equal(refs,2);assert.equal(refreshed.workflows.filter(x=>x.status==='passed').length,6);
+ assert.ok(refreshed.acceptance.every(x=>x.status==='pending'));
+ await assert.rejects(collectReleaseCI(sha,{fetcher:fake(n=>[run(n)]),final:true}));
+});
