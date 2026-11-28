@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - 'roadmap/8.0-integration'
+      - 'roadmap/8.0-final'
       - main
   pull_request:
     paths:

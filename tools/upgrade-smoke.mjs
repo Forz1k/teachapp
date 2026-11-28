@@ -7,7 +7,7 @@ import {webkit,devices} from 'playwright';
 
 const candidate=resolve(process.argv[3]||process.cwd()),baseline=resolve(process.argv[2]||'');
 const readVersion=async root=>{const raw=await readFile(resolve(root,'js/version.js'),'utf8'),m=/^export const APP_VERSION = '([^']+)';\s*$/.exec(raw);assert.ok(m,'Missing packaged application version');return m[1];};
-const baselineVersion=await readVersion(baseline);assert.ok(['5.1.0','5.1.1','6.0.0','6.0.2','6.0.6','6.0.7'].includes(baselineVersion));
+const baselineVersion=await readVersion(baseline);assert.ok(['5.1.0','5.1.1','6.0.0','6.0.2','6.0.6','6.0.7','8.0.0-rc.9'].includes(baselineVersion));
 const expected=await readVersion(candidate);assert.notEqual(expected,baselineVersion);
 let root=baseline;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png'};
@@ -45,11 +45,11 @@ try{
   const ids=players.map(x=>x.id);
   await C.saveTraining({teamId:team.id,date,time:'10:00',title:'Синтетическая тренировка',minutes:60,exercises:[],roster:ids,held:true,attendance:{[ids[0]]:'present'},effort:{[ids[0]]:{minutes:55,rpe:4}}});
   await C.saveMatch({teamId:team.id,date,opponent:'Тестовые гости',competition:'',sets:[{ours:25,theirs:18}],roster:ids,stats:{}});
-  let d=await C.startDetailedMatch({teamId:team.id,date,teamName:team.name,opponent:'Тестовый черновик',competition:'',venue:'',ourPlayers:players,awayPlayers:[],roster:ids,lineup:ids,awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours',...(baseline==='6.0.7'?{liveTiming:true,ourSide:'right'}:{})});
-  if(baseline==='6.0.7'){await C.saveLineup({teamId:team.id,name:'Подача',scheme:'5-1',roster:ids,lineup:ids,libero:null,purpose:'serve'});await C.saveLineup({teamId:team.id,name:'Приём',scheme:'5-1',roster:ids,lineup:[...ids.slice(1),ids[0]],libero:null,purpose:'receive'});}
-  d=await C.changeLiveMatch(d.id,d.revision,['6.0.6','6.0.7'].includes(baseline)?{type:'rally',side:'ours',kind:'kill',player:ids[0],assist:ids[1]}:{type:'rally',side:'ours',kind:'point'});
-  let rehearsal=null;if(['6.0.6','6.0.7'].includes(baseline)){const {rehearsalStore}=await import('./js/volleyball.js'),test=rehearsalStore();const draft=await test.start({short:true});rehearsal=await test.change(draft.id,draft.revision,{type:'rally',side:'ours',kind:'kill',player:'test-a-1',assist:'test-a-2'});}
-  if(baseline==='6.0.7')d=await C.changeLiveMatch(d.id,d.revision,{type:'timeout',side:'theirs'});
+  let d=await C.startDetailedMatch({teamId:team.id,date,teamName:team.name,opponent:'Тестовый черновик',competition:'',venue:'',ourPlayers:players,awayPlayers:[],roster:ids,lineup:ids,awayLineup:[],libero:null,scheme:'5-1',bestOf:3,target:15,decider:15,firstServe:'ours',...(['6.0.7','8.0.0-rc.9'].includes(baseline)?{liveTiming:true,ourSide:'right'}:{})});
+  if(['6.0.7','8.0.0-rc.9'].includes(baseline)){await C.saveLineup({teamId:team.id,name:'Подача',scheme:'5-1',roster:ids,lineup:ids,libero:null,purpose:'serve'});await C.saveLineup({teamId:team.id,name:'Приём',scheme:'5-1',roster:ids,lineup:[...ids.slice(1),ids[0]],libero:null,purpose:'receive'});}
+  d=await C.changeLiveMatch(d.id,d.revision,['6.0.6','6.0.7','8.0.0-rc.9'].includes(baseline)?{type:'rally',side:'ours',kind:'kill',player:ids[0],assist:ids[1]}:{type:'rally',side:'ours',kind:'point'});
+  let rehearsal=null;if(['6.0.6','6.0.7','8.0.0-rc.9'].includes(baseline)){const {rehearsalStore}=await import('./js/volleyball.js'),test=rehearsalStore();const draft=await test.start({short:true});rehearsal=await test.change(draft.id,draft.revision,{type:'rally',side:'ours',kind:'kill',player:'test-a-1',assist:'test-a-2'});}
+  if(['6.0.7','8.0.0-rc.9'].includes(baseline))d=await C.changeLiveMatch(d.id,d.revision,{type:'timeout',side:'theirs'});
   const password='synthetic-upgrade-password',endpoint='https://synthetic.example.test',area='school';
   let remote={revision:0,envelope:null};const client={get:async()=>structuredClone(remote),put:async(revision,envelope)=>{if(revision!==remote.revision)throw Error('CAS');remote={revision:revision+1,envelope};return structuredClone(remote);}};
   const plan=await sync.prepareSync({area,endpoint,password,client});await sync.executeSync({plan,choices:{},password,client,confirmed:true});
@@ -66,7 +66,7 @@ try{
   const futureVersion=backup.version+1,futureEnvelope=await encryptBackup({...oldPacket,backupVersion:futureVersion},password);
   let oldRejected=false;try{await sync.verifySyncSnapshot({revision:1,envelope:futureEnvelope},password,area);}catch{oldRejected=true;}
   let oldBackupRejected=false;try{(await import('./js/backup.js')).validateBackup({...backup,version:futureVersion});}catch{oldBackupRejected=true;}
-  return {rehearsal,assist:['6.0.6','6.0.7'].includes(baseline)?ids[1]:null,profile,data:await db.dumpAll(),backupData:backup.data,protectedBackup:await encryptBackup(backup,password),remote,matchId:d.id,password,endpoint,futureEnvelope,futureVersion,oldRejected,oldBackupRejected};
+  return {rehearsal,assist:['6.0.6','6.0.7','8.0.0-rc.9'].includes(baseline)?ids[1]:null,profile,data:await db.dumpAll(),backupData:backup.data,protectedBackup:await encryptBackup(backup,password),remote,matchId:d.id,password,endpoint,futureEnvelope,futureVersion,oldRejected,oldBackupRejected};
  },baselineVersion);
  assert.equal(fixture.oldRejected,true,'old published client must reject a newer sync format');assert.equal(fixture.oldBackupRejected,true,'old client must reject a newer backup format');
  assert.equal(fixture.remote.revision,1);assert.equal(fixture.data.lessons.length,2);assert.equal(fixture.data.coachLive.length,1);
@@ -111,7 +111,7 @@ try{
  // Reverse compatibility is only rehearsed for the current stable schema and
  // actual 6.0.6. Capture the *latest* data, not the pre-upgrade backup.
  let latest=null;
- if(['6.0.6','6.0.7'].includes(baselineVersion)){
+ if(['6.0.6','6.0.7','8.0.0-rc.9'].includes(baselineVersion)){
   latest=await page.evaluate(async({id,password})=>{
    const S=await import('./js/store.js'),C=await import('./js/coach.js'),V=await import('./js/volleyball.js'),db=await import('./js/db.js'),{encryptBackup,decryptBackup}=await import('./js/privacy.js');
    const draft=await C.readLiveMatch(id),next=await C.changeLiveMatch(id,draft.revision,{type:'rally',side:'ours',kind:'kill',player:draft.lineup[0],assist:draft.lineup[1]});
@@ -121,7 +121,7 @@ try{
    const decoded=await decryptBackup(protectedBackup,password);
    return {data:await db.dumpAll(),backupData:backup.data,verified:JSON.stringify(decoded)===JSON.stringify(backup),protectedBackup,rehearsal,revision:next.revision,assist:next.events.at(-1).assist};
   },{id:fixture.matchId,password:fixture.password});
-  assert.equal(latest.verified,true);assert.equal(latest.revision,baselineVersion==='6.0.7'?5:3);assert.equal(latest.assist,fixture.assist);
+  assert.equal(latest.verified,true);assert.equal(latest.revision,['6.0.7','8.0.0-rc.9'].includes(baselineVersion)?5:3);assert.equal(latest.assist,fixture.assist);
  }
  await context.setOffline(false);
  const restoredContext=await browser.newContext({...devices['iPhone 13'],locale:'ru-RU',serviceWorkers:'allow'}),fresh=await restoredContext.newPage();fresh.on('pageerror',e=>errors.push(e.message));
