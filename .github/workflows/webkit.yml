@@ -57,3 +57,10 @@ jobs:
           git archive 4d04398ee48d5f9ea359e50d5f43cd5dfb9b2d0c | tar -x -C "$RUNNER_TEMP/teachapp-6.0.6"
       - name: Verify real PWA update from 6.0.6
         run: node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-6.0.6" "$RUNNER_TEMP/teachapp-candidate"
+      - name: Prepare stable 6.0.7 baseline
+        run: |
+          git fetch --no-tags --depth=1 origin 1017f187a3cc8c26b46e4936f9c60773b4512783
+          mkdir -p "$RUNNER_TEMP/teachapp-6.0.7"
+          git archive 1017f187a3cc8c26b46e4936f9c60773b4512783 | tar -x -C "$RUNNER_TEMP/teachapp-6.0.7"
+      - name: Verify real PWA update and native rollback from 6.0.7
+        run: node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-6.0.7" "$RUNNER_TEMP/teachapp-candidate"

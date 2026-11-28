@@ -121,11 +121,20 @@ try{
  await clickText('button','Тестовый LIVE-матч');await clickText('.sheet button','Быстрый тест · до 5 очков');await ready('.vp-board-points');
  assert.ok(await evalJs('document.querySelector(".match-live-label").textContent.includes("ТЕСТ")'));
  assert.equal(await evalJs('document.querySelectorAll(".vp-mini-player").length'),12);
- await click('.vp-points .vp-ours');await click('[data-reason="tip"]');await evalJs(`(()=>{const n=document.querySelector('select[aria-label="Автор результативной передачи"]');n.value='test-a-2';n.dispatchEvent(new Event('change'));return true;})()`);await click('.vp-author-grid [data-player]');
+ await click('.vp-points .vp-ours');await click('[data-reason="tip"]');await click('.vp-author-grid [data-player]');await ready('[data-assist-player="test-a-2"]');await click('[data-assist-player="test-a-2"]');
  await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="1"'),'rehearsal first point');
  assert.ok(await evalJs('document.querySelector("[data-live-save-status]").textContent.includes("Сохранено")'));
  assert.equal(await evalJs('JSON.parse(localStorage.getItem("teachapp.live.rehearsal.v1")).events[0].assist'),'test-a-2');
  await capture('390-live-rehearsal');
+ assert.ok(await evalJs('document.querySelector(".court-time-panel").textContent.includes("Пауза времени")'));
+ await click('.vp-score-side.ours .vp-timeout-button');await ready('[data-timeout-remaining]');
+ assert.ok(await evalJs('document.querySelector(".vp-points .vp-ours").disabled'));
+ const heldClock=await evalJs('document.querySelector(".court-time-panel [data-court-time]").textContent');await sleep(1100);assert.equal(await evalJs('document.querySelector(".court-time-panel [data-court-time]").textContent'),heldClock);
+ await clickText('.sheet button','Закончить тайм-аут');await wait(()=>evalJs('!document.querySelector("[data-timeout-remaining]")'),'timeout ended');
+ await wait(()=>evalJs('document.querySelector(".court-time-panel").textContent.includes("Пауза времени")'),'timeout resume');
+ // Undo only the two timeout events so the subsequent replay fixture stays unchanged.
+ await click('.vp-undo');await ready('[data-timeout-remaining]');await click('.vp-undo');await wait(()=>evalJs('!document.querySelector("[data-timeout-remaining]")'),'undo timeout');
+ console.log('LIVE 6.0.7 PASS: auto-start clock, assist step, timeout countdown and early resume.');
  const smokeFixture=await evalJs('window.__smoke');
  await send('Page.reload',{ignoreCache:false});await ready('.vp-board-points');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="1"'),'automatic rehearsal recovery');
  await evalJs('window.__smoke='+JSON.stringify(smokeFixture));
@@ -157,7 +166,7 @@ try{
  await capture('390-live-reasons');await clickText('.sheet button','Отмена');await ready('.vp-points');
  assert.equal(await evalJs('document.querySelector(".vp-score-side.ours strong").textContent'),'0');
  await click('.vp-points .vp-ours');await ready('.match-attribution');await click('[data-reason="tip"]');await ready('.vp-author-grid [data-player]');await capture('390-live-author');
- await click('.vp-author-grid [data-player]');await ready('.vp-points');
+ await click('.vp-author-grid [data-player]');await clickText('.sheet button','Без ассиста');await ready('.vp-points');
  assert.equal(await evalJs('document.querySelector(".vp-score-side.ours strong").textContent'),'1');
  await clickText('.sheet summary','Детали последнего очка');await click('[data-zone="4"]');
  await wait(()=>evalJs('document.querySelector(".vp-last-event")?.textContent.includes("зона 4")'),'placement saved');
@@ -171,7 +180,7 @@ try{
  await click('.vp-scout-open');await ready('.vp-scout-panel');await capture('390-live-scout');await click('.vp-radar-grid .vp-scout-cell');assert.equal(await evalJs('document.querySelector(".vp-scout-cell[aria-pressed=true]")?.getAttribute("aria-pressed")'),'true');
  await click('[data-scout-entry]');await clickText('.sheet button','Вернуться к матчу');await ready('.vp-undo');
  await click('.vp-undo');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="0"'),'undo score');
- await click('.vp-points .vp-ours');await click('[data-reason="tip"]');await click('.vp-author-grid [data-player]');await ready('[data-scout-zone]');await click('[data-scout-zone="6"]');await clickText('.sheet button','Начислить очко');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="1"'),'scout point saved');
+ await click('.vp-points .vp-ours');await click('[data-reason="tip"]');await click('.vp-author-grid [data-player]');await clickText('.sheet button','Без ассиста');await ready('[data-scout-zone]');await click('[data-scout-zone="6"]');await clickText('.sheet button','Начислить очко');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="1"'),'scout point saved');
  await click('.vp-scout-open');await ready('.vp-scout-panel');assert.ok(await evalJs('document.querySelector(".vp-scout-panel").textContent.includes("с зоной: 1 из 1")'));await clickText('.sheet button','Вернуться к матчу');await click('.vp-undo');await wait(()=>evalJs('document.querySelector(".vp-score-side.ours strong")?.textContent==="0"'),'scout undo');
  await clickText('.sheet button','Пауза времени');await wait(()=>evalJs('document.querySelector(".court-time-panel")?.textContent.includes("Возобновить время")'),'clock paused before leaving');
  await closeSheet();

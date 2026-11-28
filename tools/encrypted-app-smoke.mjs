@@ -27,6 +27,8 @@ try{
  await page.locator('input[name=backup]').fill(backupPassword);
  const downloadPromise=page.waitForEvent('download',{timeout:90000});await page.getByRole('button',{name:'Создать защищённую копию'}).click();const dl=await downloadPromise,bytes=await readFile(await dl.path());assert.doesNotMatch(bytes.toString(),/Демо Ученик/);
  await page.locator('input[type=file]').setInputFiles({name:'recovery.json',mimeType:'application/json',buffer:bytes});
+ await page.locator('input[name=backup]').fill(backupPassword);await page.getByRole('button',{name:'Проверить сохранённую копию',exact:true}).click();await page.getByText(/Копия проверена:.*Совпадает с текущей базой/).waitFor({timeout:90000});
+ assert.equal(await page.evaluate(async()=> (await (await import('/js/db.js')).open()).version),10);
  await page.locator('input[name=backup]').fill(backupPassword);for(const [scope,password] of Object.entries(passwords))await page.locator('input[name='+scope+']').fill(password);
  await page.locator('input[type=checkbox]').check();await page.getByRole('button',{name:'Перенести в зашифрованную базу'}).click();
  await page.getByRole('heading',{name:'Защищённый TeachApp'}).waitFor({timeout:90000});assert.equal(await page.locator('.workspace-nav').count(),0);

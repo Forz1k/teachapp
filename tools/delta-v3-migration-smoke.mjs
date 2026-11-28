@@ -12,7 +12,7 @@ import {defaultSettings} from '../js/model.js';
 import {encryptBackup} from '../js/privacy.js';
 import {BACKUP_VERSION} from '../js/backup.js';
 import {digestToken} from '../server/cloudflare-protocol.mjs';
-import {prepareNativeEncryptionCopy,activateNativeEncryption,openEncryptedStorage,exportEncryptedRecoveryCopy,recoverIntoEmptyEncryptedStorage} from '../js/encrypted-storage.js';
+import {prepareNativeEncryptionCopy,activateNativeEncryption,openEncryptedStorage,exportEncryptedRecoveryCopy,recoverIntoEmptyEncryptedStorage,inspectEncryptedRecoveryCopy} from '../js/encrypted-storage.js';
 import {projectScope,relayClient,deltaCandidateClient,prepareDeltaMigration,freezeDeltaCandidateSource,commitDeltaMigration,cutoverDeltaCandidateDevice,activateDeltaCandidateMigration,finalizeDeltaCandidateDevice,rollbackDeltaCandidateDevice,sealDeltaMigrationRollback,deltaMigrationFenceClient,deltaCandidateSyncAdapter,prepareSync,executeSync,migrationBindingStatus,verifyLocalCheckpoint} from '../js/sync.js';
 
 const [sourceDir,deltaDir]=process.argv.slice(2),entry=async dir=>{const js=(await readdir(dir)).filter(n=>/\.(m?js)$/.test(n));assert.equal(js.length,1,'Expected one bundled entrypoint in '+dir);return resolve(dir,js[0]);};
@@ -76,7 +76,8 @@ try{
  await target.dispose();target=start(deltaScript,'DELTA_LEDGERS','DeltaLedger',vars,'target');
  assert.equal((await clientFor('school').migrationStatus()).gate.active,false);
  // Exact independent recovery in a separate empty profile retains both pending bindings.
- const pending=await fresh(),originalDB=indexedDB,originalStorage=localStorage;
+ const pending=await fresh(),report=await inspectEncryptedRecoveryCopy({file:pending,backupPassword:deviceBackupPassword,checkpointPasswords:destinationPassword,current:await D.dumpAll()});assert.equal(report.pendingMigrations,2);assert.equal(report.checkpoints,2);assert.equal(report.currentVerified,true);assert.equal(report.activationAllowed,false);await assert.rejects(inspectEncryptedRecoveryCopy({file:pending,backupPassword:deviceBackupPassword,checkpointPasswords:{...destinationPassword,coach:'wrong-password-for-checkpoint'}}));
+ const originalDB=indexedDB,originalStorage=localStorage;
  globalThis.indexedDB=new IDBFactory();globalThis.localStorage=store();
  try{await recoverIntoEmptyEncryptedStorage({passwords,backupPassword:deviceBackupPassword,file:pending,checkpointPasswords:destinationPassword,confirmed:true});
   const recovered=await openEncryptedStorage({passwords});try{const meta=await recovered.transaction('meta','readonly',s=>s.meta.getAll());assert.equal(meta.filter(r=>r.id.startsWith('sync-checkpoint-migration-')).length,2);}finally{recovered.close();}

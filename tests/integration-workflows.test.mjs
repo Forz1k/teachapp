@@ -11,9 +11,11 @@ test('Exact-SHA evidence workflows run on integration pushes without production 
 test('Published 6.0.2 is pinned for a real PWA upgrade check',()=>{
  const yaml=read('.github/workflows/webkit.yml'),sha='d4cb5bb3c4cae0658e7b2d4816679f367f8d4a19';
  assert.ok(yaml.includes('git fetch --no-tags --depth=1 origin '+sha));assert.ok(yaml.includes('git archive '+sha));assert.ok(yaml.includes('node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-6.0.2"'));
- assert.match(read('tools/upgrade-smoke.mjs'),/\['5\.1\.0','5\.1\.1','6\.0\.0','6\.0\.2','6\.0\.6'\]\.includes\(baselineVersion\)/);
+ assert.match(read('tools/upgrade-smoke.mjs'),/\['5\.1\.0','5\.1\.1','6\.0\.0','6\.0\.2','6\.0\.6','6\.0\.7'\]\.includes\(baselineVersion\)/);
 });
 
 test('Stable 6.0.6 upgrade is pinned and includes live assist and rehearsal',()=>{const yaml=read('.github/workflows/webkit.yml'),sha='4d04398ee48d5f9ea359e50d5f43cd5dfb9b2d0c';assert.ok(yaml.includes('git fetch --no-tags --depth=1 origin '+sha));assert.ok(yaml.includes('node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-6.0.6"'));assert.match(read('tools/upgrade-smoke.mjs'),/LIVE UPGRADE PASS/);});
 
 test('Actual candidate upgrades run against the allowlisted static package and exercise rollback',()=>{const yaml=read('.github/workflows/webkit.yml');assert.ok(yaml.includes('node tools/release-package-integrity.mjs --verify'));assert.ok(yaml.includes('node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-6.0.6" "$RUNNER_TEMP/teachapp-candidate"'));assert.match(read('tools/upgrade-smoke.mjs'),/PWA ROLLBACK PASS/);assert.match(read('.github/workflows/check.yml'),/name: teachapp-static-manifest/);});
+
+test('Stable 6.0.7 is pinned for exact candidate upgrade and rollback',()=>{const yaml=read('.github/workflows/webkit.yml'),sha='1017f187a3cc8c26b46e4936f9c60773b4512783';assert.ok(yaml.includes('git fetch --no-tags --depth=1 origin '+sha));assert.ok(yaml.includes('git archive '+sha));assert.ok(yaml.includes('node tools/upgrade-smoke.mjs "$RUNNER_TEMP/teachapp-6.0.7" "$RUNNER_TEMP/teachapp-candidate"'));const script=read('tools/upgrade-smoke.mjs');assert.match(script,/6\.0\.7/);assert.match(script,/PWA ROLLBACK PASS/);});

@@ -3,7 +3,7 @@ import {IDBFactory} from 'fake-indexeddb';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as D from '../js/db.js';
-import {probeStorageMode,prepareNativeEncryptionCopy,activateNativeEncryption,openEncryptedStorage,exportEncryptedRecoveryCopy,recoverIntoEmptyEncryptedStorage,rotateEncryptedStorage} from '../js/encrypted-storage.js';
+import {probeStorageMode,prepareNativeEncryptionCopy,activateNativeEncryption,openEncryptedStorage,exportEncryptedRecoveryCopy,inspectEncryptedRecoveryCopy,inspectNativeRecoveryCopy,recoverIntoEmptyEncryptedStorage,rotateEncryptedStorage} from '../js/encrypted-storage.js';
 import {createVaultCipher,storageCipher} from '../js/vault-cipher.js';
 import {BACKUP_VERSION} from '../js/backup.js';
 import {encryptBackup} from '../js/privacy.js';
@@ -42,9 +42,11 @@ test('Actual v10 → v11 requires verified independent file and checkpoint passw
  localStorage.setItem('teachapp.personal-sync.v1','unsafe');await assert.rejects(prepareNativeEncryptionCopy({backupPassword}),/код/);localStorage.removeItem('teachapp.personal-sync.v1');
  const file=await prepareNativeEncryptionCopy({backupPassword});assert.doesNotMatch(file,/Synthetic|sync-checkpoint/);
  const args={passwords,backupPassword,file,checkpointPasswords:{school:syncPassword},confirmed:true};
+ const report=await inspectNativeRecoveryCopy(args);assert.deepEqual(report,{records:3,checkpoints:1,pendingMigrations:0,currentVerified:true,authenticated:true,activationAllowed:false});assert.doesNotMatch(JSON.stringify(report),/Synthetic|synthetic.invalid|12345678/);assert.equal(await probeStorageMode(),'native');
+ await assert.rejects(inspectNativeRecoveryCopy({...args,backupPassword:'wrong-copy-password'}));await assert.rejects(inspectNativeRecoveryCopy({...args,checkpointPasswords:{school:'wrong-password'}}));await assert.rejects(inspectNativeRecoveryCopy({...args,stillAllowed:()=>false}),/отменена/);assert.equal(await probeStorageMode(),'native');
  await assert.rejects(activateNativeEncryption({...args,checkpointPasswords:{school:'wrong-password'}}),/аутентификацию/);assert.equal(await probeStorageMode(),'native');
  await assert.rejects(activateNativeEncryption({...args,confirmed:false}),/подтверждение/);
- await editNativeClass({...data.classes[0],name:'Changed after copy'});await assert.rejects(activateNativeEncryption(args),/не соответствует/);assert.equal(await probeStorageMode(),'native');await editNativeClass(data.classes[0]);
+ await editNativeClass({...data.classes[0],name:'Changed after copy'});await assert.rejects(inspectNativeRecoveryCopy(args),/устарела/);await assert.rejects(activateNativeEncryption(args),/не соответствует/);assert.equal(await probeStorageMode(),'native');await editNativeClass(data.classes[0]);
  const add=IDBObjectStore.prototype.add;let injected=false;
  IDBObjectStore.prototype.add=function(...values){if(this.transaction.mode==='versionchange'&&this.name==='school'){injected=true;throw new DOMException('Synthetic quota','QuotaExceededError');}return add.apply(this,values);};
  try{await assert.rejects(activateNativeEncryption(args),{name:'QuotaExceededError'});}finally{IDBObjectStore.prototype.add=add;}
@@ -66,13 +68,13 @@ test('Actual v10 → v11 requires verified independent file and checkpoint passw
  const plan=await prepareSync({area,endpoint,password:syncPassword,client});await executeSync({plan,choices:{},password:syncPassword,client,confirmed:true});
  assert.equal((await D.get('meta','sync-checkpoint-school')).revision,2);assert.equal((await localSyncState({area,endpoint,password:syncPassword})).status,'clean');
  await assert.rejects(rotateEncryptedStorage({...args,newPasswords:next}),/устарела/);
- const latest=await exportEncryptedRecoveryCopy({data:await D.dumpAll(),backupPassword});
+ const latestData=await D.dumpAll(),latest=await exportEncryptedRecoveryCopy({data:latestData,backupPassword});assert.equal((await inspectEncryptedRecoveryCopy({...args,file:latest,current:latestData})).currentVerified,true);await assert.rejects(inspectEncryptedRecoveryCopy({...args,file,current:latestData}),/устарела/);
  await rotateEncryptedStorage({...args,file:latest,newPasswords:next});
  await assert.rejects(D.getAll('classes'),/не удалось открыть/i);assert.equal(access.isClosed(),true);active=false;clearSessionSyncCredentials();assert.equal(readPersonalCode(),null);
  const newAccess=await openEncryptedStorage({passwords:next});assert.equal((await read(newAccess,'classes'))[0].name,'Edited class');
  await assert.rejects(recoverIntoEmptyEncryptedStorage({...args,file:latest}),/зашифрованная|native fallback|заменена|существует/i);
  const original=indexedDB;newAccess.close();globalThis.indexedDB=new IDBFactory();globalThis.localStorage=storage();
- assert.equal(await probeStorageMode(),'empty');await recoverIntoEmptyEncryptedStorage({...args,file:latest,passwords:next});
+ assert.equal(await probeStorageMode(),'empty');assert.equal((await inspectEncryptedRecoveryCopy({...args,file:latest})).currentVerified,false);assert.equal(await probeStorageMode(),'empty');await recoverIntoEmptyEncryptedStorage({...args,file:latest,passwords:next});
  const recovered=await openEncryptedStorage({passwords:next});assert.equal((await read(recovered,'classes'))[0].name,'Edited class');assert.equal((await read(recovered,'meta')).find(r=>r.id==='sync-checkpoint-school').revision,2);assert.equal((await read(recovered,'coachLive'))[0].revision,1);recovered.close();
  globalThis.indexedDB=original;assert.equal(await probeStorageMode(),'encrypted');
  globalThis.indexedDB=new IDBFactory();await assert.rejects(probeStorageMode(),/fallback/);

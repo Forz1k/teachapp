@@ -1,5 +1,5 @@
 import {mediaTarget,readMediaVersion,writePublicMedia,removePublicMedia,mediaProjection} from './public-media.js';
-import {archiveTarget,archiveKey,equalArchiveResult,queueArchiveResult,archiveProjection,resolveArchiveRoute,routedArchivePage,routedArchiveVersion,routedArchiveFind,routedArchiveWrite,requireWritableArchive,inspectArchiveV3Control,transitionArchiveV3,captureFrozenArchiveV3Backup,prepareFrozenArchiveV3Copy,executeFrozenArchiveV3Copy} from './public-archive.js';
+import {archiveTarget,archiveKey,equalArchiveResult,queueArchiveResult,archiveProjection,resolveArchiveRoute,routedArchivePage,routedArchiveVersion,routedArchiveFind,routedArchiveWrite,requireWritableArchive,inspectArchiveV3Control,transitionArchiveV3,capturePublicMigrationBundle,preparePublicMigrationBundle,copyPublicMigrationBundle,activatePublicMigrationBundle} from './public-archive.js';
 /* Team portal state is separate from school/coach records. Opt-in publishing only. */
 import {primaryPortal,buildPortal,readPortal,projectMatch,archiveMatch,matchingSchedule,sortedSchedule,scheduleItem,firebaseOrigin,portalAddress,shareUrl,savedResult,sortedArchive,resultFixtures,checkHandoffMatch} from './public-portal.js';
 import {firebaseSignIn,firebasePublisher,samePortalContent} from './firebase-portal.js';
@@ -348,10 +348,11 @@ export function archiveMigrationOperation(id,operation,{expected,backup,confirme
  return withArchiveMutation(id,async()=>{
   const {portal,opts}=migrationAccess(id,fetcher);
   if(operation==='inspect')return inspectArchiveV3Control(portal,opts);
-  if(operation==='backup')return captureFrozenArchiveV3Backup(portal,opts);
-  if(operation==='verify')return prepareFrozenArchiveV3Copy(portal,backup,opts);
-  if(operation==='copy')return executeFrozenArchiveV3Copy(portal,backup,{...opts,confirmed});
-  if(['freeze','thaw','activate'].includes(operation))return transitionArchiveV3(portal,operation,{...opts,expected,backup,confirmed});
+  if(operation==='backup')return capturePublicMigrationBundle(portal,opts);
+  if(operation==='verify')return preparePublicMigrationBundle(portal,backup,opts);
+  if(operation==='copy')return copyPublicMigrationBundle(portal,backup,{...opts,confirmed});
+  if(operation==='activate')return activatePublicMigrationBundle(portal,backup,{...opts,expected,confirmed});
+  if(['freeze','thaw'].includes(operation))return transitionArchiveV3(portal,operation,{...opts,expected,confirmed});
   throw Error('Неизвестная операция миграции');
  });
 }

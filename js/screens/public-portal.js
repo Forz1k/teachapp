@@ -1,4 +1,4 @@
-import {resultLink,archiveKey,verifyFrozenArchiveV3Backup} from '../public-archive.js';
+import {resultLink,archiveKey,verifyPublicMigrationBundle} from '../public-archive.js';
 import {openStudio} from './studio.js';
 import {openMediaCenter} from './public-media.js';
 import * as P from '../public-publisher.js';
@@ -111,19 +111,19 @@ function openArchiveMigration(team,back){
  let state=null,backup=null,plan=null,busy=false;
  const op=(name,options={})=>P.archiveMigrationOperation(id,name,options);
  const run=async fn=>{if(busy)return;busy=true;draw();try{await fn();}catch(e){plan=null;notice.textContent=e.message;}finally{busy=false;draw();}};
- const refresh=async()=>{state=await op('inspect');if(backup&&backup.generation!==state.generation)backup=null;plan=null;notice.textContent='Состояние подтверждено сервером.';};
+ const refresh=async()=>{state=await op('inspect');if(backup&&backup.archive.generation!==state.generation)backup=null;plan=null;notice.textContent='Состояние подтверждено сервером.';};
  const change=(action,title,text,ok)=>run(async()=>{
   const expected={...state};
   if(!await confirmDialog({title,text,ok,danger:true}))return;
   state=await op(action,{expected,backup,confirmed:true});backup=null;plan=null;notice.textContent='Переход подтверждён сервером: '+state.phase;
  });
- const verify=async()=>{plan=await op('verify',{backup});notice.textContent='Сверено: V2 '+plan.sourceCount+' · V3 '+plan.destinationCount+' · осталось '+plan.ready.length;};
+ const verify=async()=>{plan=await op('verify',{backup});notice.textContent='Сверено: V2 '+plan.sourceCount+' · V3 '+plan.destinationCount+' · осталось '+plan.ready.length+' · новости '+plan.news+' · турнир '+(plan.tournament?'есть':'нет');};
  function draw(){
   const items=[p(state?'Фаза: '+state.phase+' · поколение '+state.generation:'Сначала проверьте подключение и состояние.'),btn('Проверить состояние',()=>run(refresh),'wide')];
-  if(state?.phase==='legacy')items.push(btn('Заморозить архив V2',()=>change('freeze','Заморозить архив?','Постоянный архив будет закрыт для изменений. Согласуйте остановку публикации с другими устройствами.','Заморозить'),'wide'));
+  if(state?.phase==='legacy')items.push(btn('Заморозить архив V2',()=>change('freeze','Заморозить архив?','Постоянный архив и медиацентр будут закрыты для изменений. Согласуйте остановку публикации с другими устройствами.','Заморозить'),'wide'));
   if(state?.phase==='frozen'){
    items.push(btn('Сохранить независимую JSON-копию',()=>run(async()=>{
-    const saved=await op('backup'),url=URL.createObjectURL(new Blob([JSON.stringify(saved,null,2)],{type:'application/json'})),a=el('a',{href:url,download:'teachapp-archive-v3-g'+saved.generation+'.json'});
+    const saved=await op('backup'),url=URL.createObjectURL(new Blob([JSON.stringify(saved,null,2)],{type:'application/json'})),a=el('a',{href:url,download:'teachapp-archive-v3-g'+saved.archive.generation+'.json'});
     document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
     notice.textContent='Сохраните файл отдельно, затем выберите его ниже. SHA-256: '+saved.sha256;
    }),'wide'));
@@ -131,10 +131,10 @@ function openArchiveMigration(team,back){
    file.onchange=()=>run(async()=>{
     backup=null;plan=null;const f=file.files?.[0];if(!f)return;
     if(f.size>10000000)throw Error('Файл слишком большой');
-    const value=JSON.parse(await f.text()),report=await verifyFrozenArchiveV3Backup(value);
+    const value=JSON.parse(await f.text()),report=await verifyPublicMigrationBundle(value);
     if(report.generation!==state.generation)throw Error('Поколение миграции изменилось');
     plan=await op('verify',{backup:value});backup=value;
-    notice.textContent='Сверено: V2 '+plan.sourceCount+' · V3 '+plan.destinationCount+' · осталось '+plan.ready.length;
+    notice.textContent='Сверено: V2 '+plan.sourceCount+' · V3 '+plan.destinationCount+' · осталось '+plan.ready.length+' · новости '+plan.news+' · турнир '+(plan.tournament?'есть':'нет');
    });
    items.push(field('Загрузить сохранённую копию',file),p(backup?'Копия проверена: '+backup.sha256:'Копия не загружена.'));
    if(backup){
@@ -143,13 +143,13 @@ function openArchiveMigration(team,back){
      if(!await confirmDialog({title:'Копировать результаты?',text:'Только отсутствующие публичные счета. Записи не заменяются.',ok:'Копировать'}))return;
      const result=await op('copy',{backup,confirmed:true});await verify();notice.textContent='Скопировано: '+result.copied+' · осталось: '+result.remaining;
     }),'primary wide'));
-    if(plan?.complete)items.push(btn('Активировать V3',()=>change('activate','Активировать архив V3?','Оба архива будут повторно сверены. Переход необратим: старые клиенты V2 требуют обновления.','Активировать'),'primary wide'));
+    if(plan?.complete)items.push(btn('Активировать V3',()=>change('activate','Активировать архив V3?','Оба архива и медиацентр будут повторно сверены. Переход необратим: старые клиенты V2 требуют обновления.','Активировать'),'primary wide'));
    }
    items.push(btn('Отменить заморозку',()=>change('thaw','Вернуться к V2?','Скопированные записи V3 останутся. Для нового переноса потребуется новая копия.','Отменить заморозку'),'wide'));
   }
   if(state?.phase==='v3')items.push(p('V3 активен. Автоматический откат недоступен.'));
   controls.replaceChildren(...items);for(const node of controls.querySelectorAll('button,input'))node.disabled=busy;
  }
- body.append(el('h2',{text:'Миграция Firebase Archive V3'}),p('Кандидат: используйте только согласованный тестовый контур с правилами V3. Не развёртывает правила и не переносит частные матчи. Активация необратима.'),notice,controls,btn('Назад',()=>{if(!busy)back();},'wide'));
+ body.append(el('h2',{text:'Миграция Firebase Archive V3 и медиа'}),p('Кандидат: используйте только согласованный тестовый контур с правилами V3. Не развёртывает правила и не переносит частные матчи. Активация необратима.'),notice,controls,btn('Назад',()=>{if(!busy)back();},'wide'));
  openSheet(body,{fullHeight:true});draw();
 }

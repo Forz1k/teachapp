@@ -69,6 +69,7 @@ export function validateCoachData(data){
 function buildCoachCommands(db){
 async function readLiveMatch(id){return db.transaction(['coachLive'],'readonly',async s=>{const d=await s.coachLive.get(id);if(d)replay(d);return d||null;});}
 async function listLiveMatches(teamId){return db.transaction(['coachLive'],'readonly',s=>teamId===undefined?s.coachLive.getAll():s.coachLive.index('teamId').getAll(teamId));}
+async function listLineups(teamId){return db.transaction(['coachLineups'],'readonly',s=>s.coachLineups.index('teamId').getAll(teamId));}
 // The probe is an atomic write/delete; no committed dummy or native backend escape.
 async function probeLiveStorage(){const id=uid('live-probe');await db.transaction(['coachLive'],'readwrite',async s=>{await s.coachLive.add({id});await s.coachLive.delete(id);});return true;}
 async function loadCoach(){
@@ -160,7 +161,7 @@ async function removeEvent(name,id){
 }
 
 async function saveLineup(input){
- const r={id:input.id||uid('lineup'),teamId:input.teamId,name:String(input.name||'').trim(),scheme:input.scheme,roster:[...input.roster],lineup:[...input.lineup],libero:input.libero||null};
+ const r={id:input.id||uid('lineup'),teamId:input.teamId,name:String(input.name||'').trim(),scheme:input.scheme,roster:[...input.roster],lineup:[...input.lineup],libero:input.libero||null,...(input.libero2?{libero2:input.libero2}:{}),...(input.purpose!==undefined?{purpose:input.purpose}:{})};
  return write('coachLineups',r,(d,old)=>teamGuard(d,old,r));
 }
 async function deleteLineup(id){await db.del('coachLineups',id);}
@@ -173,7 +174,7 @@ async function startLiveMatch(input){
 async function startDetailedMatch(input){
  const d={id:uid('live'),mode:'dual',teamId:input.teamId,date:input.date,opponent:String(input.opponent||'').trim(),competition:String(input.competition||'').trim(),venue:String(input.venue||'').trim(),
    teamName:String(input.teamName||'').trim(),roster:[...input.roster],ourPlayers:input.ourPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),awayPlayers:input.awayPlayers.map(p=>({id:p.id,name:p.name,number:p.number??null})),
-   lineup:[...input.lineup],awayLineup:[...input.awayLineup],libero:input.libero||null,...(input.libero2?{libero2:input.libero2}:{}),...(input.substitutionMode!==undefined?{substitutionMode:input.substitutionMode}:{}),...(input.limits!==undefined?{limits:{...input.limits}}:{}),...(input.regulation!==undefined?{regulation:structuredClone(input.regulation)}:{}),...(input.boardColors!==undefined?{boardColors:{...input.boardColors}}:{}),...(input.boardLogos!==undefined?{boardLogos:{...input.boardLogos}}:{}),scheme:input.scheme,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,startedAt:new Date().toISOString(),events:[],revision:0};
+   lineup:[...input.lineup],awayLineup:[...input.awayLineup],libero:input.libero||null,...(input.libero2?{libero2:input.libero2}:{}),...(input.substitutionMode!==undefined?{substitutionMode:input.substitutionMode}:{}),...(input.limits!==undefined?{limits:{...input.limits}}:{}),...(input.regulation!==undefined?{regulation:structuredClone(input.regulation)}:{}),...(input.boardColors!==undefined?{boardColors:{...input.boardColors}}:{}),...(input.boardLogos!==undefined?{boardLogos:{...input.boardLogos}}:{}),scheme:input.scheme,bestOf:input.bestOf,target:input.target,decider:input.decider,firstServe:input.firstServe,...(input.ourSide!==undefined?{ourSide:input.ourSide}:{}),...(input.liveTiming!==undefined?{liveTiming:input.liveTiming}:{}),startedAt:new Date().toISOString(),events:[],revision:0};
  assert(date(d.date)&&d.date<=todayIso(),'Проверьте дату матча');
  return write('coachLive',d,(data,old)=>{teamGuard(data,old,d);assert(d.roster.every(id=>data.coachPlayers.some(p=>p.id===id&&p.teamId===d.teamId&&!p.archived)),'Состав изменился');});
 }
@@ -208,11 +209,11 @@ async function finishLiveMatch(id,revision){
   await s.coachMatches.add(m);await s.coachLive.delete(id);return m;
  });
 }
- return Object.freeze({loadCoach,loadCoachForView,loadCoachTeamScope,readLiveMatch,listLiveMatches,probeLiveStorage,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch});
+ return Object.freeze({loadCoach,loadCoachForView,loadCoachTeamScope,readLiveMatch,listLiveMatches,listLineups,probeLiveStorage,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch});
 }
 
 // Native API stays permanently bound to the existing IndexedDB backend.
-export const {loadCoach,loadCoachForView,loadCoachTeamScope,readLiveMatch,listLiveMatches,probeLiveStorage,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch}=buildCoachCommands(nativeDb);
+export const {loadCoach,loadCoachForView,loadCoachTeamScope,readLiveMatch,listLiveMatches,listLineups,probeLiveStorage,saveTeam,savePlayer,saveCoachTest,deleteCoachTest,saveTraining,saveMatch,saveVolleyImport,enrichVolleyImport,removeEvent,saveLineup,deleteLineup,startLiveMatch,startDetailedMatch,changeLiveMatch,changeLiveColors,discardLiveMatch,finishLiveMatch}=buildCoachCommands(nativeDb);
 
 const coachSessionStores=new Set(coachStores);
 const emptyCoachView=()=>({selectedTeamId:null,data:Object.fromEntries([...coachSessionStores].map(n=>[n,[]]))});
@@ -246,7 +247,7 @@ export function createCoachSession(access){
       cell.facade=Object.freeze({get selectedTeamId(){return cell.snapshot.selectedTeamId;},get data(){return cell.snapshot.data;}});
       view=cell;return cell.facade;
      }
-     if(!['loadCoach','readLiveMatch','listLiveMatches','probeLiveStorage'].includes(name))invalidateView();
+     if(!['loadCoach','readLiveMatch','listLiveMatches','listLineups','probeLiveStorage'].includes(name))invalidateView();
      return result;
     }catch(e){close();throw e;}
    });
