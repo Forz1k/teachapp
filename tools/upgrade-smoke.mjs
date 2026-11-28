@@ -108,6 +108,9 @@ try{
   return {version:(await import('./js/version.js')).APP_VERSION,previous:previous.ours,score:score.ours,marks:(await db.getAll('marks')).length};
  },fixture.matchId);
  assert.deepEqual(offline,{version:expected,previous:1,score:2,marks:2});
+ const diagnostic=await page.evaluate(async()=> (await import('./js/update-diagnostics.js')).collectUpdateDiagnostics());
+ assert.equal(diagnostic.version,expected);assert.equal(diagnostic.storageRoute,'native');assert.equal(diagnostic.network,'offline');assert.equal(diagnostic.worker,'controlled');assert.equal(diagnostic.versionCache,'matching');
+ console.log('UPDATE DIAGNOSTICS PASS: actual offline controlled PWA and matching version cache, no record content.');
  // Reverse compatibility is only rehearsed for the current stable schema and
  // actual 6.0.6. Capture the *latest* data, not the pre-upgrade backup.
  let latest=null;
