@@ -19,6 +19,12 @@ jobs:
         run: |
           node tools/release-package-integrity.mjs --create "$RUNNER_TEMP/teachapp-static" "$(git rev-parse HEAD)" "$RUNNER_TEMP/teachapp-static-manifest.json"
           node tools/release-package-integrity.mjs --verify "$RUNNER_TEMP/teachapp-static" "$(git rev-parse HEAD)" "$RUNNER_TEMP/teachapp-static-manifest.json"
+      - name: RC8 archive integrity rehearsal
+        env:
+          TEACHAPP_STATIC_REHEARSAL: ${{ runner.temp }}/teachapp-static
+          TEACHAPP_MANIFEST_REHEARSAL: ${{ runner.temp }}/teachapp-static-manifest.json
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m unittest discover -s tests -p 'test_release_artifacts.py'
       - uses: actions/upload-artifact@v4
         with:
           name: teachapp-static-manifest
