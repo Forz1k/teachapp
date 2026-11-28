@@ -21,11 +21,12 @@ async function token(sub,extra={}){
  return unsigned+'.'+b64(await crypto.subtle.sign('RSASSA-PKCS1-v1_5',signing.privateKey,new TextEncoder().encode(unsigned)));
 }
 const endpoint='https://fcm.googleapis.com/fcm/send/synthetic-candidate',sent=[];
-const mf=new Miniflare(convertV4MiniflareOptions({name:'teachapp-platform-candidate',modules:true,script,compatibilityDate:'2026-11-01',bindings,durableObjects:{WORKSPACES:{className:'PlatformWorkspace',useSQLite:true},INGRESS:{className:'PlatformIngress',useSQLite:true}},ratelimits:{EDGE_LIMIT:{namespace_id:'80000601',simple:{limit:120,period:60}}},resourcePersistencePath:dir,enableDevRegistry:false,cf:{colo:'TST',country:'GB'},upstream:apiOrigin,verbose:false,outboundService:async req=>{
+const createRuntime=()=>new Miniflare(convertV4MiniflareOptions({name:'teachapp-platform-candidate',modules:true,script,compatibilityDate:'2026-11-01',bindings,durableObjects:{WORKSPACES:{className:'PlatformWorkspace',useSQLite:true},INGRESS:{className:'PlatformIngress',useSQLite:true}},ratelimits:{EDGE_LIMIT:{namespace_id:'80000601',simple:{limit:120,period:60}}},resourcePersistencePath:dir,enableDevRegistry:false,cf:{colo:'TST',country:'GB'},upstream:apiOrigin,verbose:false,outboundService:async req=>{
   const bytes=new Uint8Array(await req.arrayBuffer());
   sent.push({url:req.url,method:req.method,encoding:req.headers.get('Content-Encoding'),authorization:req.headers.get('Authorization'),bytes});
   return new Response(null,{status:req.url===endpoint?201:403});
 }}));
+let mf=createRuntime();
 async function call(w,path,secret,method='GET',body){
  const res=await mf.dispatchFetch(apiOrigin+'/v1/workspaces/'+w+'/'+path,{method,headers:{Origin:origin,'CF-Connecting-IP':'192.0.2.10',Authorization:'Bearer '+secret,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});
  return {status:res.status,...await res.json()};
@@ -70,7 +71,11 @@ try{
  const short=await token('athlete',{exp:Math.floor(Date.now()/1000)+3}),fresh=await call('w','identity/session',short,'POST',{});assert.equal(fresh.status,200);
  assert.equal((await call('w','me',member.token)).status,401);
  await sleep(3500);assert.equal((await call('w','me',fresh.token)).status,401);
- const again=await call('w','identity/session',await token('athlete'),'POST',{});assert.equal(again.status,200);assert.equal(again.member.role,'athlete');
+ const againJwt=await token('athlete'),again=await call('w','identity/session',againJwt,'POST',{});assert.equal(again.status,200);assert.equal(again.member.role,'athlete');
+ await mf.dispose();mf=createRuntime();
+ assert.equal((await call('w','identity/session',againJwt,'POST',{})).status,401);
+ assert.equal((await call('w','me',again.token)).status,200);
+ console.log('RC8 IDENTITY REPLAY PASS: successful exchange survives runtime restart without invalidating replacement session.');
  assert.equal((await call('w','revoke',owner.token,'POST',{memberId:again.member.id})).status,200);
  assert.equal((await call('w','identity/session',athleteJwt,'POST',{})).status,401);
  console.log('PLATFORM HTTPS CANDIDATE PASS: signed bootstrap/enrollment, single-use assertion race, expiry, role isolation, encrypted subscription, actual durable alarm and intercepted provider POST, acknowledgement, opt-out, encrypted restore.');
