@@ -24,6 +24,8 @@ export async function collectCandidateReview(sha,{fetcher=globalThis.fetch,token
  async function readPR(){
   const p=await get('/pulls/'+prNumber,'PR');
   require(p.number===prNumber&&p.state==='open'&&p.draft===true&&p.head?.ref===branch&&p.head.sha===sha&&repoOK(p.head.repo)&&p.base?.ref==='main'&&shaOK(p.base.sha)&&repoOK(p.base.repo),'PR identity, draft state, head or base changed');
+  const [head,main]=await Promise.all([get('/git/ref/heads/'+branch,'Integration ref'),get('/git/ref/heads/main','Stable ref')]);
+  require(head.ref==='refs/heads/'+branch&&head.object?.type==='commit'&&head.object.sha===sha&&main.ref==='refs/heads/main'&&main.object?.type==='commit'&&main.object.sha===p.base.sha,'Live refs do not match PR');
   return p.base.sha;
  }
  function list(payload,key,label){
@@ -50,7 +52,7 @@ export async function collectCandidateReview(sha,{fetcher=globalThis.fetch,token
   }
   return result;
  }
- const base=await readPR(),checks=await readRuns(base),primary=checks.find(c=>c.name==='TeachApp'&&c.event==='push');
+ async function readArtifacts(primary){
  const artifacts=[];
  if(primary.status==='passed'){
   const rows=list(await get('/actions/runs/'+primary.id+'/artifacts?per_page=100','Artifacts'),'artifacts','Artifacts');
@@ -63,8 +65,15 @@ export async function collectCandidateReview(sha,{fetcher=globalThis.fetch,token
    artifacts.push({name,id:a.id,digest:a.digest,bytes:a.size_in_bytes,runId:primary.id});
   }
  }
+ return artifacts;
+ }
+ const base=await readPR();
+ const comparison=await get('/compare/'+base+'...'+sha,'Candidate ancestry');
+ require(comparison.base_commit?.sha===base&&comparison.merge_base_commit?.sha===base&&comparison.behind_by===0&&positive(comparison.ahead_by)&&comparison.status==='ahead','Candidate is not based on current stable main');
+ const checks=await readRuns(base),primary=checks.find(c=>c.name==='TeachApp'&&c.event==='push'),artifacts=await readArtifacts(primary);
  const after=await readRuns(base);
  require(JSON.stringify(after)===JSON.stringify(checks),'CI changed during collection; collect again');
+ require(JSON.stringify(await readArtifacts(primary))===JSON.stringify(artifacts),'Artifacts changed during collection; collect again');
  require(await readPR()===base,'PR base changed during collection');
  for(const row of report.workflows){
   const check=checks.find(c=>c.name===row.id&&c.event==='push');

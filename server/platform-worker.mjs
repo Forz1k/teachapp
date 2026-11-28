@@ -3,7 +3,7 @@ import {DurableObject} from 'cloudflare:workers';
 import {digestToken} from './cloudflare-protocol.mjs';
 import {dispatchWorkspace,BODY_LIMIT,STATE_LIMIT,workspaceRatePolicy,consumeWorkspaceRate} from './platform-api.mjs';
 import {platformConfig,edgeAddress} from './platform-config.mjs';
-import {identityConfig,verifyIdentityAssertion,identityPlan,bindIdentityResult,candidateSessionAllowed} from './platform-identity.mjs';
+import {identityConfig,verifyIdentityAssertion,identityPlan,bindIdentityResult,candidateSessionAllowed,identitySessionEpoch} from './platform-identity.mjs';
 import {sealWorkspaceBackup,openWorkspaceBackup,restoreWorkspaceData,BACKUP_BODY_LIMIT} from './platform-backup.mjs';
 import {providerConfiguration,sealProviderSubscription,openProviderSubscription,providerStatus,changeProviderSubscription,providerDeliveryDue} from './platform-provider-state.mjs';
 import {claimNoticeDeliveryLab,noticeDeliveryCurrentLab,finishNoticeDeliveryLab,notificationInboxLab} from './platform-notification-lab.mjs';
@@ -43,13 +43,14 @@ export default {async fetch(request,env){
  const assertion=identityRoute&&/^Bearer ([A-Za-z0-9_.-]{1,8192})$/.exec(request.headers.get('Authorization')||'');
  if(identityRoute?(!assertion||request.method!=='POST'):!token)return json(401,{error:'unauthorized'},cors);
  try{
-  let auth=null,identityHash=null,identityExpiresAt=null,path=r[2];
+  let auth=null,identityHash=null,identityExpiresAt=null,assertionHash=null,path=r[2];
+  const epoch=settings.candidate?await identitySessionEpoch(settings.identity,settings.operatorIdentity):null;
   if(identityRoute){
    const config=settings.identity??identityConfig(env.TEACHAPP_PLATFORM_IDENTITY);
    if(!config)return json(503,{error:'identity-disabled'},cors);
    const verified=await verifyIdentityAssertion(config,assertion[1]);
    if(!verified)return json(401,{error:'unauthorized'},cors);
-   ({identityHash,expiresAt:identityExpiresAt}=verified);
+   ({identityHash,assertionHash,expiresAt:identityExpiresAt}=verified);
   }else auth=await digestToken(token[1]);
   const signedRestore=settings.candidate&&path==='identity/restore',restore=path==='workspace/restore'||signedRestore;
   if(restore&&(request.method!=='POST'||(signedRestore?identityHash!==settings.operatorIdentity:auth!==settings.rootHash)))return json(401,{error:'unauthorized'},cors);
@@ -66,12 +67,12 @@ export default {async fetch(request,env){
   }
   const issuedSecret=secret(),issued={id:crypto.randomUUID(),hash:await digestToken(issuedSecret),secret:issuedSecret};
   const stub=env.WORKSPACES.get(env.WORKSPACES.idFromName(r[1]));
-  const response=await stub.fetch(new Request('https://internal/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({workspaceId:r[1],path,method:request.method,auth,identityHash,identityExpiresAt,candidate:settings.candidate===true,operatorIdentity:settings.operatorIdentity,rootHash:settings.rootHash,body:packet.body,issued})}));
+  const response=await stub.fetch(new Request('https://internal/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({workspaceId:r[1],path,method:request.method,auth,identityHash,identityExpiresAt,assertionHash,epoch,candidate:settings.candidate===true,operatorIdentity:settings.operatorIdentity,rootHash:settings.rootHash,body:packet.body,issued})}));
   const retry=response.headers.get('Retry-After');return new Response(response.body,{status:response.status,headers:{...H,...cors,...(retry?{'Retry-After':retry}:{})}});
  }catch{return json(503,{error:'unavailable'},cors);}
 }};
 export class PlatformWorkspace extends DurableObject{
- constructor(ctx,env){super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;this.backupKey=env.TEACHAPP_PLATFORM_BACKUP_KEY;this.candidate=env.TEACHAPP_PLATFORM_STAGE==='candidate';this.pushConfig=this.candidate?providerConfiguration(env):Promise.resolve(null);this.sql.exec('CREATE TABLE IF NOT EXISTS workspace_state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)');this.sql.exec('CREATE TABLE IF NOT EXISTS rate_buckets (key TEXT PRIMARY KEY, start INTEGER NOT NULL, count INTEGER NOT NULL)');}
+ constructor(ctx,env){super(ctx,env);this.storage=ctx.storage;this.sql=ctx.storage.sql;this.backupKey=env.TEACHAPP_PLATFORM_BACKUP_KEY;this.candidate=env.TEACHAPP_PLATFORM_STAGE==='candidate';this.pushConfig=this.candidate?providerConfiguration(env):Promise.resolve(null);this.sql.exec('CREATE TABLE IF NOT EXISTS workspace_state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)');this.sql.exec('CREATE TABLE IF NOT EXISTS rate_buckets (key TEXT PRIMARY KEY, start INTEGER NOT NULL, count INTEGER NOT NULL)');this.sql.exec('CREATE TABLE IF NOT EXISTS identity_exchanges (digest TEXT PRIMARY KEY, expires INTEGER NOT NULL)');this.sql.exec('CREATE INDEX IF NOT EXISTS identity_exchanges_expiry ON identity_exchanges(expires)');}
  readState(){const row=this.sql.exec('SELECT body FROM workspace_state WHERE id=1').toArray()[0];return row?JSON.parse(row.body):null;}
  saveState(state){const body=JSON.stringify(state);if(new TextEncoder().encode(body).length>STATE_LIMIT)throw Error('workspace-limit');this.sql.exec('INSERT INTO workspace_state(id,body) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',body);}
  async ensureAlarm(at){const prior=await this.storage.getAlarm();if(prior===null||prior>at)await this.storage.setAlarm(at);}
@@ -110,7 +111,7 @@ export class PlatformWorkspace extends DurableObject{
    if(providerRoute){
     if(!input.candidate)return json(404,{error:'route'});
     const state=this.readState(),now=Date.now();
-    if(!candidateSessionAllowed(state,input.auth,now))return json(401,{error:'unauthorized'});
+    if(!candidateSessionAllowed(state,input.auth,now,input.epoch))return json(401,{error:'unauthorized'});
     providerActor=state.members.find(m=>m.tokenHash===input.auth);
     if(providerActor.role!=='athlete')return json(403,{error:'forbidden'});
     push=await this.pushConfig;if(!push)return json(503,{error:'push-disabled'});
@@ -120,7 +121,7 @@ export class PlatformWorkspace extends DurableObject{
      if(b.subscription!==null){try{sealed=await sealProviderSubscription(push,b.subscription,state.id,providerActor.id,b.expectedRevision+1,now);}catch{return json(400,{error:'subscription'});}}
     }else if(!((input.method==='GET'&&['notification/provider','notification/provider/inbox'].includes(input.path))||(input.method==='POST'&&input.path==='notification/provider/ack')))return json(404,{error:'route'});
    }
-   const profileWrite=input.candidate&&input.method==='PUT'&&/^teams\/[A-Za-z0-9_-]{1,64}\/athletes\/[A-Za-z0-9_-]{1,64}$/.test(input.path)&&candidateSessionAllowed(this.readState(),input.auth,Date.now())&&await this.pushConfig;
+   const profileWrite=input.candidate&&input.method==='PUT'&&/^teams\/[A-Za-z0-9_-]{1,64}\/athletes\/[A-Za-z0-9_-]{1,64}$/.test(input.path)&&candidateSessionAllowed(this.readState(),input.auth,Date.now(),input.epoch)&&await this.pushConfig;
    if(profileWrite)await this.ensureAlarm(Date.now()+5000);
    if(input.path==='workspace/restore'){
     if(input.auth!==input.rootHash||input.method!=='POST'||input.candidate&&(input.identityHash!==input.operatorIdentity||!Number.isSafeInteger(input.identityExpiresAt)||input.identityExpiresAt<=Date.now()))return json(401,{error:'unauthorized'});
@@ -131,7 +132,14 @@ export class PlatformWorkspace extends DurableObject{
    const out=this.storage.transactionSync(()=>{
    const row=this.sql.exec('SELECT body FROM workspace_state WHERE id=1').toArray()[0],current=row?JSON.parse(row.body):null,now=Date.now();
    const identityRoute=input.path.startsWith('identity/');
-   if(input.candidate&&!identityRoute&&!recovery&&!candidateSessionAllowed(current,input.auth,now))return {status:401,body:{error:'unauthorized'}};
+   if(input.candidate&&!identityRoute&&!recovery&&!candidateSessionAllowed(current,input.auth,now,input.epoch))return {status:401,body:{error:'unauthorized'}};
+   const exchange=input.candidate&&(identityRoute||recovery!==null);
+   if(exchange){
+    if(typeof input.assertionHash!=='string'||! /^[a-f0-9]{64}$/.test(input.assertionHash)||!Number.isSafeInteger(input.identityExpiresAt)||input.identityExpiresAt<=now)return {status:401,body:{error:'unauthorized'}};
+    this.sql.exec('DELETE FROM identity_exchanges WHERE expires<=?',now);
+    if(this.sql.exec('SELECT digest FROM identity_exchanges WHERE digest=?',input.assertionHash).toArray().length)return {status:401,body:{error:'unauthorized'}};
+    if(this.sql.exec('SELECT count(*) AS count FROM identity_exchanges').one().count>=4096)return {status:429,body:{error:'rate-limit',retryAfter:60},retryAfter:60};
+   }
    const plan=identityRoute?identityPlan(current,{...input,now}):null;
    if(plan?.error)return plan.error;
    const effective=plan?.input??{...input,now};
@@ -158,8 +166,8 @@ export class PlatformWorkspace extends DurableObject{
    }
    let result=dispatchWorkspace(current,recovery?{...effective,path:'bootstrap',body:{name:recovery.name}}:effective);
    if(recovery&&result.changed){try{result=restoreWorkspaceData(result,recovery,now);}catch{return {status:409,body:{error:'backup-invalid'}};}}
-   if(plan?.bind||input.candidate&&(plan||recovery))result=bindIdentityResult(result,input.identityHash,STATE_LIMIT,{candidate:input.candidate,expiresAt:input.identityExpiresAt,now,bind:plan?.bind??true});
-   if(result.changed)this.saveState(result.state);return result;
+   if(plan?.bind||input.candidate&&(plan||recovery))result=bindIdentityResult(result,input.identityHash,STATE_LIMIT,{candidate:input.candidate,expiresAt:input.identityExpiresAt,now,bind:plan?.bind??true,epoch:input.epoch});
+   if(result.changed){this.saveState(result.state);if(exchange)this.sql.exec('INSERT INTO identity_exchanges(digest,expires) VALUES(?,?)',input.assertionHash,input.identityExpiresAt);}return result;
   });
   if(profileWrite&&out.changed)await this.ensureAlarm(Date.now()+1000);
   if(out.backupState){

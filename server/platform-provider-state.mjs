@@ -10,7 +10,7 @@ const id=s=>typeof s==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(s);
 const context=(w,m,r)=>{if(!id(w)||!id(m)||!Number.isSafeInteger(r)||r<1)throw Error('context');return enc.encode(JSON.stringify(['teachapp-provider-sub-v1',w,m,r]));};
 export async function providerConfiguration(env){
  try{
-  if(env.TEACHAPP_PLATFORM_STAGE!=='candidate'||env.TEACHAPP_PLATFORM_PUSH_ENABLED!=='true'||typeof env.TEACHAPP_PLATFORM_PUSH_STORAGE_KEY!=='string'||! /^[a-f0-9]{64}$/.test(env.TEACHAPP_PLATFORM_PUSH_STORAGE_KEY)||env.TEACHAPP_PLATFORM_PUSH_STORAGE_KEY===env.TEACHAPP_PLATFORM_BACKUP_KEY)return null;
+  if(env.TEACHAPP_PLATFORM_STAGE!=='candidate'||env.TEACHAPP_PLATFORM_PUSH_ENABLED!=='true'||typeof env.TEACHAPP_PLATFORM_PUSH_STORAGE_KEY!=='string'||! /^[a-f0-9]{64}$/.test(env.TEACHAPP_PLATFORM_PUSH_STORAGE_KEY)||[env.TEACHAPP_PLATFORM_BACKUP_KEY,env.TEACHAPP_PLATFORM_ROOT_HASH,env.TEACHAPP_PLATFORM_OPERATOR_IDENTITY].includes(env.TEACHAPP_PLATFORM_PUSH_STORAGE_KEY))return null;
   const rules=JSON.parse(env.TEACHAPP_PLATFORM_PUSH_PROVIDERS),policy=pushProviderPolicy(rules),contact=env.TEACHAPP_PLATFORM_PUSH_CONTACT;
   if(typeof contact!=='string'||!/^mailto:[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(contact))return null;
   const j=JSON.parse(env.TEACHAPP_PLATFORM_VAPID_PRIVATE_JWK);

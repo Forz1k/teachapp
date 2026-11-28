@@ -35,8 +35,8 @@ export async function verifyIdentityAssertion(config,token,now=Date.now()){
   if(claims.nbf!==undefined&&(!Number.isSafeInteger(claims.nbf)||claims.nbf<0||claims.nbf>t||claims.nbf>=claims.exp))return null;
   const key=await crypto.subtle.importKey('jwk',config.key,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);
   if(!await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,decode(s,1024),enc.encode(h+'.'+p)))return null;
-  const bytes=await crypto.subtle.digest('SHA-256',enc.encode(JSON.stringify([claims.iss,claims.sub])));
-  return {identityHash:Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join(''),expiresAt:claims.exp*1000};
+  const digest=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(JSON.stringify(value)))),b=>b.toString(16).padStart(2,'0')).join('');
+  return {identityHash:await digest([claims.iss,claims.sub]),assertionHash:await digest(['teachapp-identity-exchange-v1',claims.iss,claims.sub,claims.jti]),expiresAt:claims.exp*1000};
  }catch{return null;}
 }
 export async function verifyIdentityAccessToken(config,token,now=Date.now()){return (await verifyIdentityAssertion(config,token,now))?.identityHash??null;}
@@ -60,7 +60,7 @@ export function identityPlan(current,input){
  if(!current)return {error:fail(401,'unauthorized')};
  const active=current.members.filter(m=>m.revokedAt===null&&m.expiresAt>now),bound=active.filter(m=>m.identityHash===identityHash);
  if(path==='identity/session'){
-  if(!exact(body,[])||bound.length!==1)return {error:fail(401,'unauthorized')};
+  if(!exact(body,[])||bound.length!==1||input.candidate&&bound[0].role==='owner'&&identityHash!==input.operatorIdentity)return {error:fail(401,'unauthorized')};
   return {input:{...input,path:input.candidate?'session/identity-refresh':'session/rotate',body:{},auth:bound[0].tokenHash},bind:false};
  }
  if(!['identity/bind','identity/redeem'].includes(path)||!exact(body,['credentialHash'])||!hash(body.credentialHash))return {error:fail(400,'packet')};
@@ -72,19 +72,27 @@ export function identityPlan(current,input){
  }
  return {input:{...input,path:path==='identity/bind'?'session/rotate':'redeem',auth:body.credentialHash,body:{}},bind:true};
 }
-export function bindIdentityResult(result,identityHash,stateLimit,{candidate=false,expiresAt=null,now=0,bind=true}={}){
+export function bindIdentityResult(result,identityHash,stateLimit,{candidate=false,expiresAt=null,now=0,bind=true,epoch=null}={}){
  if(!result.changed||!result.state)return result;
  const member=result.state.members.find(m=>m.id===result.body.member?.id);
  if(!member||!hash(identityHash)||bind&&member.identityHash||!bind&&member.identityHash!==identityHash)return fail(409,'identity-bound');
  member.identityHash=identityHash;
  if(candidate){
-  if(!Number.isSafeInteger(expiresAt)||expiresAt<=now)return fail(401,'unauthorized');
-  member.identitySessionUntil=Math.min(expiresAt,member.expiresAt,now+900000);
+  if(!Number.isSafeInteger(expiresAt)||expiresAt<=now||!hash(epoch))return fail(401,'unauthorized');
+  member.identitySessionUntil=Math.min(expiresAt,member.expiresAt,now+900000);member.identityEpoch=epoch;
  }
  if(enc.encode(JSON.stringify(result.state)).length>stateLimit)return fail(409,'workspace-limit');
  return result;
 }
 
-export function candidateSessionAllowed(state,auth,now){
- return !!state?.members?.some(m=>m.tokenHash===auth&&m.revokedAt===null&&m.expiresAt>now&&hash(m.identityHash)&&Number.isSafeInteger(m.identitySessionUntil)&&m.identitySessionUntil>now);
+export function candidateSessionAllowed(state,auth,now,epoch){
+ return hash(epoch)&&!!state?.members?.some(m=>m.identityEpoch===epoch&&m.tokenHash===auth&&m.revokedAt===null&&m.expiresAt>now&&hash(m.identityHash)&&Number.isSafeInteger(m.identitySessionUntil)&&m.identitySessionUntil>now);
+}
+
+/** Changing an approved signing pin or operator identity invalidates every
+ * existing opaque candidate bearer without deleting memberships or consent. */
+export async function identitySessionEpoch(config,operatorIdentity){
+ if(!config||!hash(operatorIdentity))throw Error('identity configuration');
+ const bytes=await crypto.subtle.digest('SHA-256',enc.encode(JSON.stringify(['teachapp-candidate-session-v1',config.issuer,config.audience,config.clientId,config.key.kid,config.key.n,config.key.e,operatorIdentity])));
+ return Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
 }

@@ -14,7 +14,7 @@ test('Release evidence never considers a clean CI equivalent to physical or prod
 test('Release evidence rejects stale SHA, incomplete or duplicate gates, missing evidence and unexpected fields',()=>{
  assert.throws(()=>releaseEvidenceTemplate('abcdef'),/SHA/);
  assert.throws(()=>assessReleaseEvidence(complete(),'b'.repeat(40)),/SHA/);
- for(const mutate of [r=>r.workflows.pop(),r=>r.acceptance[1].id=r.acceptance[0].id,r=>r.workflows[1].evidence=r.workflows[0].evidence,r=>r.acceptance[0].evidence=null,r=>r.acceptance[0].evidence='contains private data',r=>r.workflows[0].extra='unexpected',r=>r.acceptance[0].status='unknown']){
+ for(const mutate of [r=>r.workflows.pop(),r=>r.acceptance[1].id=r.acceptance[0].id,r=>r.workflows[1].evidence=r.workflows[0].evidence,r=>r.acceptance[1].evidence=r.acceptance[0].evidence,r=>r.acceptance[0].evidence=null,r=>r.acceptance[0].evidence='contains private data',r=>r.workflows[0].extra='unexpected',r=>r.acceptance[0].status='unknown']){
   const r=complete();mutate(r);assert.throws(()=>assessReleaseEvidence(r,sha));
  }
 });

@@ -17,7 +17,7 @@ export function releaseEvidenceTemplate(sha){
 export function assessReleaseEvidence(report,expectedSha){
  check(shaOK(expectedSha),'Требуется полный SHA кандидата');
  check(exact(report,['format','target','sha','workflows','acceptance'])&&report.format===1&&report.target==='8.0.0'&&report.sha===expectedSha,'Отчёт относится к другому формату, версии или SHA');
- const pending=[],failed=[],passed=[],runIds=new Set();
+ const pending=[],failed=[],passed=[],runIds=new Set(),actIds=new Set();
  for(const kind of ['workflows','acceptance']){
   const rows=report[kind],required=releaseGates[kind];
   check(Array.isArray(rows)&&rows.length===required.length,'Неполный набор '+kind);
@@ -29,7 +29,7 @@ export function assessReleaseEvidence(report,expectedSha){
    else if(kind==='workflows'){
     check(typeof row.evidence==='string'&&/^[1-9][0-9]{0,19}$/.test(row.evidence)&&!runIds.has(row.evidence),'Требуется уникальный ID workflow run');
     runIds.add(row.evidence);
-   }else check(typeof row.evidence==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{2,79}$/.test(row.evidence),'Требуется ID локального акта, без содержимого и секретов');
+   }else {check(typeof row.evidence==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{2,79}$/.test(row.evidence)&&!actIds.has(row.evidence),'Требуется уникальный ID локального акта, без содержимого и секретов');actIds.add(row.evidence);}
    ({pending,failed,passed})[row.status].push(row.id);
   }
  }
