@@ -31,6 +31,8 @@ jobs:
           node tools/release-package-integrity.mjs --verify "$RUNNER_TEMP/teachapp-candidate" "$(git rev-parse HEAD)" "$RUNNER_TEMP/teachapp-candidate-manifest.json"
       - name: Verify public preview migration fence on packaged PWA
         run: node tools/public-preview-smoke.mjs "$RUNNER_TEMP/teachapp-candidate"
+      - name: Rehearse LIVE start and finish on a 1200-match archive
+        run: node tools/live-archive-smoke.mjs "$RUNNER_TEMP/teachapp-candidate"
       - name: Verify actual static v11 migration, login and journal
         run: node tools/encrypted-app-smoke.mjs "$RUNNER_TEMP/teachapp-candidate"
       - name: Prepare published 5.1.1 baseline

@@ -14,7 +14,7 @@ async function fixture(){
  const roster=players.filter(p=>p.teamId==='a'),ids=roster.map(p=>p.id),other=players.filter(p=>p.teamId==='b').map(p=>p.id);
  const matches=Array.from({length:1200},(_,i)=>({id:'arch'+i,teamId:i%2?'a':'b',date:todayIso(),opponent:'Synthetic archive',competition:'',sets:[{ours:25,theirs:10}],roster:i%2?ids:other,stats:{}}));
  await D.bulkPut('coachTeams',teams);await D.bulkPut('coachPlayers',players);await D.bulkPut('coachMatches',matches);
- const input={teamId:'a',teamName:teams[0].name,date:todayIso(),opponent:'Synthetic guests',competition:'',venue:'',roster:ids,ourPlayers:roster,awayPlayers:[],lineup:ids,awayLineup:[],libero:null,scheme:'5-1',bestOf:1,target:3,decider:3,firstServe:'ours',liveTiming:true,ourSide:'right'};
+ const input={teamId:'a',teamName:teams[0].name,date:todayIso(),opponent:'Synthetic guests',competition:'',venue:'',roster:ids,ourPlayers:roster,awayPlayers:[],lineup:ids,awayLineup:[],libero:null,scheme:'5-1',bestOf:1,target:3,decider:3,regulation:{name:'Synthetic short',winBy:2,pointCap:null,liberoInterval:'oneRally',ends:'manual',deciderSwitchAt:2},firstServe:'ours',liveTiming:true,ourSide:'right'};
  return {input,matches};
 }
 const point={type:'rally',side:'ours',kind:'point'};
@@ -49,11 +49,11 @@ test('LIVE scoped write rejects missing or cross-team/archived roster, stale rev
  await D.put('coachPlayers',{...(await D.get('coachPlayers','a0')),archived:true});
  await assert.rejects(C.startDetailedMatch(input),/Состав изменился/);
  await D.put('coachPlayers',{...(await D.get('coachPlayers','a0')),archived:false});
- let d=await C.startLiveMatch(input);for(let n=0;n<3;n++)d=await C.changeLiveMatch(d.id,d.revision,point);
+ let d=await C.startLiveMatch({...input,bestOf:3,target:15,decider:15});for(let set=0;set<2;set++){for(let n=0;n<15;n++)d=await C.changeLiveMatch(d.id,d.revision,point);if(set===0)d=await C.changeLiveMatch(d.id,d.revision,{type:'next',lineup:input.lineup,serve:'ours'});}
  await assert.rejects(C.finishLiveMatch(d.id,d.revision-1),/Матч изменился/);
  await D.del('coachPlayers','a0');
  await assert.rejects(C.finishLiveMatch(d.id,d.revision));
  assert.deepEqual(await D.get('coachLive',d.id),d);assert.equal((await D.getAll('coachMatches')).length,1200);
  await D.put('coachPlayers',player('a0','a',1));
- const m=await C.finishLiveMatch(d.id,d.revision);assert.deepEqual(m.sets,[{ours:3,theirs:0}]);assert.equal(m.detail,undefined);
+ const m=await C.finishLiveMatch(d.id,d.revision);assert.deepEqual(m.sets,[{ours:15,theirs:0},{ours:15,theirs:0}]);assert.equal(m.detail,undefined);
 });

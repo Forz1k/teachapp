@@ -61,3 +61,5 @@
 По разрешению владельца после резервного копирования допускается отдельная публикация PWA-кандидата с закрытыми экспериментальными переносами на публичном origin. Никакие акты не считаются выполненными автоматически. Перед stable остаются все 18 критериев, включая реальную физическую приёмку и отдельные production-миграции. При изменении SHA повторить проверки.
 
 RC10: в Настройки → Данные и безопасность → Диагностика базы и обновления можно локально проверить версию, режим базы и кэш онлайн/офлайн, скачать технический JSON без записей или адресов. Отчёт не подтверждает физический акт автоматически.
+
+RC11: `tools/live-archive-smoke.mjs` uses the actual packaged PWA and native IndexedDB in a fresh WebKit context (12 teams, 168 players, 1200 historic matches). Twenty start/rally/undo/finish command samples check atomicity and read footprint. CI timings are command-only synthetic evidence, not physical iPhone latency or full archive performance acceptance. No manual act is closed.
