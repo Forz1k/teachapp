@@ -14,7 +14,7 @@ function createClient(endpoint,workspace,secret,identity,{fetcher=globalThis.fet
  let origin;
  if(candidate){
   const ui=new URL(candidate.origin),api=new URL(endpoint);
-  if(ui.protocol!=='https:'||api.protocol!=='https:'||ui.origin!==candidate.origin||api.origin!==endpoint||location?.origin!==ui.origin||ui.username||api.username||loopback.has(ui.hostname)||loopback.has(api.hostname))throw Error('HTTPS-кандидат не настроен');
+  if(ui.protocol!=='https:'||api.protocol!=='https:'||ui.origin!==candidate.origin||api.origin!==endpoint||ui.origin===api.origin||location?.origin!==ui.origin||ui.username||api.username||loopback.has(ui.hostname)||loopback.has(api.hostname))throw Error('HTTPS-кандидат не настроен');
   origin=api.origin;
  }else{if(!isLocalPlatformPage(location))throw Error('Тестовые кабинеты доступны только на localhost');origin=platformEndpoint(endpoint);}
  if(!id(workspace)||!(identity?typeof secret==='string'&&secret.length<=8192&&/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(secret):token(secret)))throw Error('Проверьте ID пространства и секретный код');
