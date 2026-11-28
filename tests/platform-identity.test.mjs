@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {identityConfig,verifyIdentityAccessToken,identityPlan,bindIdentityResult} from '../server/platform-identity.mjs';
+import {identityConfig,verifyIdentityAccessToken,verifyIdentityAssertion,identityPlan,bindIdentityResult} from '../server/platform-identity.mjs';
 import {dispatchWorkspace,STATE_LIMIT} from '../server/platform-api.mjs';
 const now=1800000000000,sec=now/1000,root='a'.repeat(64),enc=new TextEncoder();
 const b64=v=>Buffer.from(v).toString('base64url'),json=v=>b64(JSON.stringify(v));
@@ -61,4 +61,9 @@ test('RC6 binds verified subject through single-use invitation and never accepts
  assert.equal(call('owner/recovery',o,{recoveryHash:'d'.repeat(64),expectedVersion:0}).status,200);
  const owner=call('identity/bind',null,{credentialHash:o},second);assert.equal(owner.status,200);assert.equal(owner.body.member.role,'owner');
  assert.equal(call('identity/session',null,{},second).status,200);
+});
+
+test('RC8 replay digest is bound to signed issuer, subject and jti, not the token serialization',async()=>{
+ const a=await verifyIdentityAssertion(config,await sign(),now),b=await verifyIdentityAssertion(config,await sign({...claims,exp:sec+301}),now),c=await verifyIdentityAssertion(config,await sign({...claims,jti:'new-jti'}),now),d=await verifyIdentityAssertion(config,await sign({...claims,sub:'new-sub'}),now);
+ assert.match(a.assertionHash,/^[a-f0-9]{64}$/);assert.equal(a.assertionHash,b.assertionHash);assert.equal(a.identityHash,c.identityHash);assert.notEqual(a.assertionHash,c.assertionHash);assert.notEqual(a.assertionHash,d.assertionHash);assert.equal(a.expiresAt,(sec+300)*1000);
 });
