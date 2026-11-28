@@ -36,6 +36,10 @@ jobs:
           path: ${{ runner.temp }}/teachapp-static/
           include-hidden-files: true
           retention-days: 7
+      - name: Verify deployed public Pages bytes (main push only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        timeout-minutes: 6
+        run: node tools/pages-public-verify.mjs "$(git rev-parse HEAD)" "$RUNNER_TEMP/teachapp-static-manifest.json"
       - run: node tools/performance-benchmark.mjs
       - run: npm run test:browser
       - uses: actions/upload-artifact@v4
