@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - 'roadmap/8.0-integration'
+      - main
   pull_request:
   workflow_dispatch:
 permissions:

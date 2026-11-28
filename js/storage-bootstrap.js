@@ -1,4 +1,5 @@
 /* Determine the real storage mode before the normal application starts. */
+import {migrationLabAllowed} from './rollout-policy.js';
 import {configureEncryptedStorage} from './db.js';
 import {probeStorageMode,openEncryptedStorage,prepareNativeEncryptionCopy,inspectEncryptedRecoveryCopy,inspectNativeRecoveryCopy,activateNativeEncryption,recoverIntoEmptyEncryptedStorage,migrationFileLimit,legacySyncCredentialKeys,hasPersistentSyncCredentials,forgetLegacySyncCredentials} from './encrypted-storage.js';
 import {createOwnerSessionLifecycle,scrubPrivateDocument} from './vault-owner-lifecycle.js';
@@ -49,7 +50,7 @@ async function encryptedScreen(){
  if(hasPersistentSyncCredentials()){
   n.append(el('p','Обнаружены прежние незашифрованные коды синхронизации. Сохраните код отдельно, затем явно забудьте его на этом устройстве. Контрольные точки и записи останутся.'),button('Забыть прежние локальные коды',()=>{if(window.confirm('Удалить только сохранённые коды синхронизации? Данные и ревизии останутся.')){forgetLegacySyncCredentials(true);location.reload();}}));return;
  }
- const form=el('form'),fields=Object.fromEntries(scopes.map(([k,label])=>[k,secret(form,label,k)])),status=el('p','',{role:'status'}),submit=el('button','Войти',{type:'submit',class:'btn primary wide'});form.append(status,submit);n.append(form,el('p','Если пароли утеряны, сохраните существующий профиль и восстановите независимую копию в новом профиле через ?secure-recovery=1.'));
+ const form=el('form'),fields=Object.fromEntries(scopes.map(([k,label])=>[k,secret(form,label,k)])),status=el('p','',{role:'status'}),submit=el('button','Войти',{type:'submit',class:'btn primary wide'});form.append(status,submit);n.append(form,el('p','Если пароли утеряны, сохраните существующий профиль. Не удаляйте базу; согласуйте отдельное восстановление на тестовом стенде.'));
  const gate=createOwnerSessionLifecycle({channelName:'teachapp-encrypted-owner-v11',openSession:openEncryptedStorage,onLock:reason=>{
   clearSessionSyncCredentials();window.dispatchEvent(new Event('teachapp:encrypted-locked'));scrubPrivateDocument();
   if(!['pagehide','freeze','dispose'].includes(reason))location.reload();
@@ -68,6 +69,9 @@ async function encryptedScreen(){
 async function boot(){
  const mode=await probeStorageMode(),query=new URL(location.href).searchParams;
  if(mode==='encrypted')return encryptedScreen();
+ if((query.get('secure-recovery')==='1'||query.get('secure-migration')==='1')&&!migrationLabAllowed()){
+  const n=panel('Экспериментальный перенос отключён','Публичная предварительная версия сохраняет обычную базу. Перенос и восстановление v11 доступны только на изолированном тестовом стенде. Данные не изменены.');n.append(button('Вернуться без изменений',resetURL));return;
+ }
  if(query.get('secure-recovery')==='1'){
   if(mode!=='empty'){const n=panel('Восстановление остановлено','База уже существует. Используйте новый профиль браузера; не удаляйте данные.');n.append(button('Назад',resetURL));return;}
   return migrationScreen(true);

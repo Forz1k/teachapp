@@ -1,4 +1,4 @@
-const VERSION = 'v8.0.0-rc.8';
+const VERSION = 'v8.0.0-rc.9';
 const PREFIX = `teachapp:${self.registration.scope}:`;
 const CACHE = PREFIX + VERSION;
 
@@ -18,7 +18,7 @@ const PRECACHE = [
   './js/screens/attention.js',
   './js/device-trust.js','./js/screens/trusted-devices.js','./js/privacy-shield.js','./js/vault-owner-lifecycle.js',
   './js/app.js','./js/storage-bootstrap.js','./js/encrypted-storage.js','./js/vault-cipher.js','./js/vault-snapshot-transaction.js','./js/sync-credential-storage.js','./js/search.js','./js/screens/search.js',
-  './js/version.js',
+  './js/version.js','./js/rollout-policy.js',
   './js/delta-anchor.js','./js/db.js',
   './js/backup.js',
   './js/sync.js','./js/sync-pairing.js','./js/personal-sync.js','./js/device-invite.js','./js/auto-sync.js',

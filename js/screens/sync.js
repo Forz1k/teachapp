@@ -1,3 +1,4 @@
+import {migrationLabAllowed} from '../rollout-policy.js';
 import {readSyncIdentity,identityCredentials,identityAreas,readTrustedProfile,forgetTrustedProfile,trustedCredentials,hasTrustedProfileRecord} from '../device-trust.js';
 import {openTrustedDevices} from './trusted-devices.js';
 import * as S from '../store.js';
@@ -70,7 +71,8 @@ export async function openKtpDiagnostics(){
 }
 export function openSync(){
  const area=el('select',{'aria-label':'Контур синхронизации'},Object.entries(syncAreas).map(([value,text])=>el('option',{value,text})));
- const protocol=el('select',{'aria-label':'Протокол обмена'},[el('option',{value:'snapshot',text:'Обычная синхронизация v1/v2'}),el('option',{value:'delta-v3',text:'Delta v3 · кандидат (только тестовые данные)'})]);
+ const lab=migrationLabAllowed();
+ const protocol=el('select',{'aria-label':'Протокол обмена'},[el('option',{value:'snapshot',text:'Обычная синхронизация v1/v2'}),...(lab?[el('option',{value:'delta-v3',text:'Delta v3 · кандидат (только тестовые данные)'})]:[])]);
  const endpoint=el('input',{type:'url',placeholder:'https://ваш-сервер',autocomplete:'off',spellcheck:'false'});
  const token=el('input',{type:'password',autocomplete:'off',spellcheck:'false'});
  const password=el('input',{type:'password',autocomplete:'off'});
@@ -128,6 +130,7 @@ export function openSync(){
  const preview=btn('Получить и сравнить ревизии',async()=>{
   if(busy)return;
   const selected=area.value,t=token.value,pw=password.value,delta=protocol.value==='delta-v3';
+  try{if(!lab&&(delta||(await syncStatus(selected))?.protocol==='delta-v3')){toast('Экспериментальный контур отключён на публичном адресе.');return;}}catch(e){toast(e.message);return;}
   try{if((await migrationBindingStatus(selected)).status!=='none'){toast('Сначала согласуйте возврат экспериментального переноса Delta LAB');return;}}catch(e){toast(e.message);return;}
   let address;
   try{address=normalizeEndpoint(endpoint.value);}catch(e){toast(e.message);return;}
@@ -314,13 +317,14 @@ export function openSync(){
  area.onchange=()=>{clear();refresh();};
  protocol.onchange=()=>{clear();};
  for(const input of [endpoint,token,password])input.oninput=()=>{if(plan){plan=null;client=null;secret=null;choices={};results.replaceChildren();choicesStatus.textContent='';apply.disabled=true;}};
- const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p(db.isEncryptedStorage()?'Защищённый сеанс: коды и ключи синхронизации действуют до блокировки; повторно введите их после входа. Контрольные точки сохраняются в шифрованной базе.':'Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,localStatus,sizeCheck,sizeStatus,btn('Доверенные устройства v2',()=>openTrustedDevices(openSync)),personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,...(db.isEncryptedStorage()?[btn('Перенос / возврат Delta v3 · RC4',()=>openDeltaCandidateDevice())]:[]),field('Протокол',protocol),field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
+ const root=el('div',{class:'coach-form'},[el('h2',{text:'Синхронизация устройств · бета'}),p(db.isEncryptedStorage()?'Защищённый сеанс: коды и ключи синхронизации действуют до блокировки; повторно введите их после входа. Контрольные точки сохраняются в шифрованной базе.':'Личное пространство: один секретный код на всех доверенных устройствах. Приложение остаётся автономным. Первую синхронизацию каждого контура подтвердите вручную. После этого обмен без конфликтов и удалений выполняется автоматически при открытии и на главном экране; спорные изменения подтверждаются здесь.'),personalStatus,localStatus,sizeCheck,sizeStatus,btn('Доверенные устройства v2',()=>openTrustedDevices(openSync)),personalConnect,inviteImport,inviteCreate,both,simpleResult,btn('Проверить и исправить КТП',openKtpDiagnostics),personalForget,el('details',{},[el('summary',{text:'Расширенные настройки'}),p('Школа и тренер разделены. Общие упражнения, инвентарь, календарные события и турниры пока остаются локальными. Активные черновики матчей не синхронизируются. Закройте другие окна приложения.'),pairImport,field('Рабочая область',area),status,...(lab&&db.isEncryptedStorage()?[btn('Перенос / возврат Delta v3 · RC4',()=>openDeltaCandidateDevice())]:[]),field('Протокол',protocol),field('Адрес собственного сервера',endpoint),field('Индивидуальный ключ доступа',token),field('Общий пароль шифрования контура',password),pairCreate,preview,results,choicesStatus,apply,detach]),btn('Закрыть',closeSheet)]);
  openSheet(root,{fullHeight:true,onClose:()=>{closed=true;clear();}});
  refresh();
 }
 
 /** Device-only operator screen. No server-admin credentials or implicit cutover. */
 function openDeltaCandidateDevice(){
+ if(!migrationLabAllowed()){toast('Экспериментальный перенос отключён на публичном адресе.');return;}
  if(!db.isEncryptedStorage()||readSyncIdentity()){toast('Требуется защищённый тестовый v11 профиль без сохранённого обычного кода. Контрольные точки не удаляйте.');return;}
  const root=el('div',{class:'coach-form'}),area=el('select',{},Object.entries(syncAreas).map(([value,text])=>el('option',{value,text}))),version=el('select',{},[el('option',{value:'1',text:'v1'}),el('option',{value:'2',text:'v2'})]),action=el('select',{},[el('option',{value:'cutover',text:'Переключить устройство (назначение ещё закрыто)'}),el('option',{value:'finalize',text:'Завершить переключение после активации'}),el('option',{value:'rollback',text:'Вернуть устройство после необратимого закрытия назначения'})]);
  const input=(type='password')=>el('input',{type,autocomplete:'off',spellcheck:'false',maxlength:1024});

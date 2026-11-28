@@ -1,3 +1,4 @@
+import {migrationLabAllowed} from '../rollout-policy.js';
 import {resultLink,archiveKey,verifyPublicMigrationBundle} from '../public-archive.js';
 import {openStudio} from './studio.js';
 import {openMediaCenter} from './public-media.js';
@@ -102,11 +103,12 @@ async function openExtendedArchive(team,back){
    return card(r.opponent+' · '+r.setsWon.ours+':'+r.setsWon.theirs,p(date(r.startedAt)),p(r.sets.map(x=>x.ours+':'+x.theirs).join(' / ')),link?el('a',{class:'btn wide',href:resultLink(link,r),target:'_blank',rel:'noopener noreferrer',text:'Постоянная ссылка матча'}):null,remove);
   }),cursor?more:null,loaded&&!rows.length?p('Архив пуст.'):null);
  }
- body.append(el('h2',{text:'Расширенный архив'}),p('Расширенная история хранится отдельно от последних 20 матчей. Снятие страницы с публикации скрывает архив; повторная публикация снова открывает оставленные записи. Чтобы удалить результат полностью, уберите его из обоих публичных списков.'),notice,pending,send,refresh,copy,btn('Миграция архива V3 · кандидат',()=>openArchiveMigration(team,()=>openExtendedArchive(team,back)),'wide'),list,btn('Назад',back,'wide'));openSheet(body,{fullHeight:true});await run(()=>load());
+ body.append(el('h2',{text:'Расширенный архив'}),p('Расширенная история хранится отдельно от последних 20 матчей. Снятие страницы с публикации скрывает архив; повторная публикация снова открывает оставленные записи. Чтобы удалить результат полностью, уберите его из обоих публичных списков.'),notice,pending,send,refresh,copy,...(migrationLabAllowed()?[btn('Миграция архива V3 · кандидат',()=>openArchiveMigration(team,()=>openExtendedArchive(team,back)),'wide')]:[]),list,btn('Назад',back,'wide'));openSheet(body,{fullHeight:true});await run(()=>load());
 }
 
 /** Explicit operator workflow. The saved backup must be re-imported from a file. */
 function openArchiveMigration(team,back){
+ if(!migrationLabAllowed()){toast('Миграция V3 отключена на публичном адресе.');return;}
  const id=team.id,body=el('div',{class:'vb-stack'}),notice=el('p',{role:'status'}),controls=el('div',{class:'vb-stack'});
  let state=null,backup=null,plan=null,busy=false;
  const op=(name,options={})=>P.archiveMigrationOperation(id,name,options);
