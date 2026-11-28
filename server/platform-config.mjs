@@ -23,7 +23,7 @@ export function candidatePlatformConfig(env,requestURL){
  try{
   if(env.TEACHAPP_PLATFORM_STAGE!=='candidate'||env.TEACHAPP_PLATFORM_SYNTHETIC==='true')return null;
   const origin=httpsOrigin(env.TEACHAPP_PLATFORM_ORIGIN),apiOrigin=httpsOrigin(env.TEACHAPP_PLATFORM_API_ORIGIN),url=new URL(requestURL),identity=identityConfig(env.TEACHAPP_PLATFORM_IDENTITY);
-  if(!origin||!apiOrigin||url.origin!==apiOrigin||url.username||url.password||!identity||!hash(env.TEACHAPP_PLATFORM_ROOT_HASH)||!hash(env.TEACHAPP_PLATFORM_OPERATOR_IDENTITY)||!hash(env.TEACHAPP_PLATFORM_BACKUP_KEY)||typeof env.EDGE_LIMIT?.limit!=='function')return null;
+  if(!origin||!apiOrigin||origin===apiOrigin||url.origin!==apiOrigin||url.username||url.password||!identity||!hash(env.TEACHAPP_PLATFORM_ROOT_HASH)||!hash(env.TEACHAPP_PLATFORM_OPERATOR_IDENTITY)||!hash(env.TEACHAPP_PLATFORM_BACKUP_KEY)||new Set([env.TEACHAPP_PLATFORM_ROOT_HASH,env.TEACHAPP_PLATFORM_OPERATOR_IDENTITY,env.TEACHAPP_PLATFORM_BACKUP_KEY]).size!==3||typeof env.EDGE_LIMIT?.limit!=='function'||typeof env.INGRESS?.idFromName!=='function'||typeof env.WORKSPACES?.idFromName!=='function')return null;
   return {origin,apiOrigin,rootHash:env.TEACHAPP_PLATFORM_ROOT_HASH,operatorIdentity:env.TEACHAPP_PLATFORM_OPERATOR_IDENTITY,identity,candidate:true};
  }catch{return null;}
 }
